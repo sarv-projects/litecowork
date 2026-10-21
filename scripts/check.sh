@@ -208,6 +208,8 @@ run_stage "V1 contract audit" \
   run_freshness_check \
   implementation/V1-CONTRACT-CHECK.md -- \
   uv run --locked python scripts/audit_v1_contracts.py --strict --write-report
+run_stage "Served route inventory" \
+  uv run --locked python scripts/audit_served_routes.py
 run_stage "V1 markdown inventory" \
   run_freshness_check \
   implementation/V1-AUDIT-INVENTORY.md \

@@ -1,0 +1,1311 @@
+{
+  "version": 1,
+  "served": [
+    {
+      "method": "GET",
+      "path": "/v1/agent-bindings",
+      "openapi_path": "/agent-bindings",
+      "operation_id": "listAgentBindings"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-bindings/{agent_binding_id}",
+      "openapi_path": "/agent-bindings/{agentBindingId}",
+      "operation_id": "getAgentBinding"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-bindings/{agent_binding_id}/quota-observation",
+      "openapi_path": "/agent-bindings/{agentBindingId}/quota-observation",
+      "operation_id": "getAgentQuotaObservation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-installations",
+      "openapi_path": "/agent-installations",
+      "operation_id": "listLocalAgentInstallations"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-profiles",
+      "openapi_path": "/agent-profiles",
+      "operation_id": "listAgentProfiles"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-profiles/{agent_profile_id}/control-descriptor",
+      "openapi_path": "/agent-profiles/{agentProfileId}/control-descriptor",
+      "operation_id": "getAgentControlDescriptor"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-registry",
+      "openapi_path": "/agent-registry",
+      "operation_id": "listAgentRegistry"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/approvals",
+      "openapi_path": "/approvals",
+      "operation_id": "listApprovals"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/approvals/{approval_id}",
+      "openapi_path": "/approvals/{approvalId}",
+      "operation_id": "getApproval"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/artifacts",
+      "openapi_path": "/artifacts",
+      "operation_id": "listArtifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/artifacts/{artifact_id}",
+      "openapi_path": "/artifacts/{artifactId}",
+      "operation_id": "getArtifact"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/artifacts/{artifact_id}/edit-head",
+      "openapi_path": "/artifacts/{artifactId}/edit-head",
+      "operation_id": "getArtifactTextEditHead"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/artifacts/{artifact_id}/versions/{version}",
+      "openapi_path": "/artifacts/{artifactId}/versions/{version}",
+      "operation_id": "getArtifactVersion"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/artifacts/{artifact_id}/versions/{version}/content",
+      "openapi_path": "/artifacts/{artifactId}/versions/{version}/content",
+      "operation_id": "downloadArtifactVersion"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations",
+      "openapi_path": "/automations",
+      "operation_id": "listAutomations"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations/{automation_id}",
+      "openapi_path": "/automations/{automationId}",
+      "operation_id": "getAutomation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations/{automation_id}/health",
+      "openapi_path": "/automations/{automationId}/health",
+      "operation_id": "getAutomationHealth"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations/{automation_id}/occurrences",
+      "openapi_path": "/automations/{automationId}/occurrences",
+      "operation_id": "listAutomationOccurrences"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/automations/{automation_id}/revisions",
+      "openapi_path": "/automations/{automationId}/revisions",
+      "operation_id": "listAutomationRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/capabilities/local-models",
+      "openapi_path": "/capabilities/local-models",
+      "operation_id": "getLocalModelAvailability"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/capabilities/zip-intake",
+      "openapi_path": "/capabilities/zip-intake",
+      "operation_id": "getZipIntakeReadiness"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/capability-invocations/{invocation_id}",
+      "openapi_path": "/capability-invocations/{invocationId}",
+      "operation_id": "getCapabilityInvocation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations",
+      "openapi_path": "/conversations",
+      "operation_id": "listConversations"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation_id}",
+      "openapi_path": "/conversations/{conversationId}",
+      "operation_id": "getConversation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation_id}/presentation",
+      "openapi_path": "/conversations/{conversationId}/presentation",
+      "operation_id": "getConversationPresentation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/conversations/{conversation_id}/tasks",
+      "openapi_path": "/conversations/{conversationId}/tasks",
+      "operation_id": "listConversationTasks"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/coworkers",
+      "openapi_path": "/coworkers",
+      "operation_id": "listCoworkers"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/coworkers/{coworker_id}",
+      "openapi_path": "/coworkers/{coworkerId}",
+      "operation_id": "getCoworker"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/coworkers/{coworker_id}/presence",
+      "openapi_path": "/coworkers/{coworkerId}/presence",
+      "operation_id": "getCoworkerPresence"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/coworkers/{coworker_id}/revisions/{revision}",
+      "openapi_path": "/coworkers/{coworkerId}/revisions/{revision}",
+      "operation_id": "getCoworkerRevision"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/delegation-profiles",
+      "openapi_path": "/delegation-profiles",
+      "operation_id": "listDelegationProfiles"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/delegation-profiles/{delegation_profile_id}",
+      "openapi_path": "/delegation-profiles/{delegationProfileId}",
+      "operation_id": "getDelegationProfile"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/delegation-profiles/{delegation_profile_id}/performance",
+      "openapi_path": "/delegation-profiles/{delegationProfileId}/performance",
+      "operation_id": "getDelegationProfilePerformance"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/delegation-profiles/{delegation_profile_id}/revisions",
+      "openapi_path": "/delegation-profiles/{delegationProfileId}/revisions",
+      "operation_id": "listDelegationProfileRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/dependency-edges/{dependency_edge_id}/invalidations",
+      "openapi_path": "/dependency-edges/{dependencyEdgeId}/invalidations",
+      "operation_id": "listDependencyInvalidations"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/discover/items/{item_id}",
+      "openapi_path": "/discover/items/{itemId}",
+      "operation_id": "describeDiscoverItem"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/discover/search",
+      "openapi_path": "/discover/search",
+      "operation_id": "searchDiscover"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/goals",
+      "openapi_path": "/goals",
+      "operation_id": "listGoals"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/goals/{goal_id}",
+      "openapi_path": "/goals/{goalId}",
+      "operation_id": "getGoal"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/library",
+      "openapi_path": "/library",
+      "operation_id": "listLibrary"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/needs-you",
+      "openapi_path": "/needs-you",
+      "operation_id": "listNeedsYou"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notification-preferences",
+      "openapi_path": "/notification-preferences",
+      "operation_id": "listNotificationPreferences"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/notifications",
+      "openapi_path": "/notifications",
+      "operation_id": "listNotifications"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/operator/readiness",
+      "openapi_path": "/operator/readiness",
+      "operation_id": "getLocalOperatorReadiness"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources",
+      "openapi_path": "/resources",
+      "operation_id": "listLocalResources"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/search",
+      "openapi_path": "/resources/search",
+      "operation_id": "searchResources"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/uploads/{upload_id}",
+      "openapi_path": "/resources/uploads/{uploadId}",
+      "operation_id": "getResourceUpload"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/{resource_id}",
+      "openapi_path": "/resources/{resourceId}",
+      "operation_id": "getResource"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/{resource_id}/content",
+      "openapi_path": "/resources/{resourceId}/content",
+      "operation_id": "readLocalResourceContent"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/{resource_id}/context-document/deletion",
+      "openapi_path": "/resources/{resourceId}/context-document/deletion",
+      "operation_id": "getContextDocumentDeletionStatus"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/{resource_id}/dependents",
+      "openapi_path": "/resources/{resourceId}/dependents",
+      "operation_id": "listResourceDependents"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/{resource_id}/index-state",
+      "openapi_path": "/resources/{resourceId}/index-state",
+      "operation_id": "getResourceIndexState"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/{resource_id}/locations",
+      "openapi_path": "/resources/{resourceId}/locations",
+      "operation_id": "listResourceLocations"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/resources/{resource_id}/revisions",
+      "openapi_path": "/resources/{resourceId}/revisions",
+      "operation_id": "listResourceRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/rich-presentations/{presentation_id}",
+      "openapi_path": "/rich-presentations/{presentationId}",
+      "operation_id": "getRichPresentation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/routines",
+      "openapi_path": "/routines",
+      "operation_id": "listRoutines"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/routines/{routine_id}",
+      "openapi_path": "/routines/{routineId}",
+      "operation_id": "getRoutine"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/routines/{routine_id}/health",
+      "openapi_path": "/routines/{routineId}/health",
+      "operation_id": "getRoutineHealth"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/routines/{routine_id}/revisions",
+      "openapi_path": "/routines/{routineId}/revisions",
+      "operation_id": "listRoutineRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/runtime-lifecycle",
+      "openapi_path": "/runtime-lifecycle",
+      "operation_id": "getLocalRuntimeLifecycle"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/runtimes/{runtime_id}/capability-hosts",
+      "openapi_path": "/runtimes/{runtimeId}/capability-hosts",
+      "operation_id": "listRuntimeCapabilityHosts"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/runtimes/{runtime_id}/offers",
+      "openapi_path": "/runtimes/{runtimeId}/offers",
+      "operation_id": "getRuntimeOffers"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/skill-proposals",
+      "openapi_path": "/skill-proposals",
+      "operation_id": "listSkillProposals"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/skills",
+      "openapi_path": "/skills",
+      "operation_id": "listSkills"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/skills/{skill_id}",
+      "openapi_path": "/skills/{skillId}",
+      "operation_id": "getSkill"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/suggestions",
+      "openapi_path": "/suggestions",
+      "operation_id": "listSuggestions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks",
+      "openapi_path": "/tasks",
+      "operation_id": "listTasks"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}",
+      "openapi_path": "/tasks/{taskId}",
+      "operation_id": "getTask"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/artifacts",
+      "openapi_path": "/tasks/{taskId}/artifacts",
+      "operation_id": "listTaskArtifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/invocations",
+      "openapi_path": "/tasks/{taskId}/invocations",
+      "operation_id": "listTaskCapabilityInvocations"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/plan-revisions",
+      "openapi_path": "/tasks/{taskId}/plan-revisions",
+      "operation_id": "listPlanRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/planning-readiness",
+      "openapi_path": "/tasks/{taskId}/planning-readiness",
+      "operation_id": "getTaskPlanningReadiness"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/presentation",
+      "openapi_path": "/tasks/{taskId}/presentation",
+      "operation_id": "getTaskPresentation"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/progress",
+      "openapi_path": "/tasks/{taskId}/progress",
+      "operation_id": "getTaskProgress"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/spec-revisions",
+      "openapi_path": "/tasks/{taskId}/spec-revisions",
+      "operation_id": "listTaskSpecRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/steps",
+      "openapi_path": "/tasks/{taskId}/steps",
+      "operation_id": "listTaskSteps"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tasks/{task_id}/verification-runs",
+      "openapi_path": "/tasks/{taskId}/verification-runs",
+      "operation_id": "listTaskVerificationRuns"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/user-requests",
+      "openapi_path": "/user-requests",
+      "operation_id": "listUserRequests"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/user-requests/{request_id}",
+      "openapi_path": "/user-requests/{requestId}",
+      "operation_id": "getUserRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspace-roots",
+      "openapi_path": "/workspace-roots",
+      "operation_id": "listWorkspaceRoots"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspace-roots/{workspace_root_id}/observations",
+      "openapi_path": "/workspace-roots/{rootId}/observations",
+      "operation_id": "searchWorkspaceRootObservations"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspaces",
+      "openapi_path": "/workspaces",
+      "operation_id": "listWorkspaces"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}",
+      "openapi_path": "/workspaces/{workspaceId}",
+      "operation_id": "getWorkspace"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/instructions/revisions",
+      "openapi_path": "/workspaces/{workspaceId}/instructions/revisions",
+      "operation_id": "listWorkspaceInstructionRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runtime-bindings",
+      "openapi_path": "/workspaces/{workspaceId}/runtime-bindings",
+      "operation_id": "listWorkspaceRuntimeBindings"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runtime-bindings/current-local",
+      "openapi_path": "/workspaces/{workspaceId}/runtime-bindings/current-local",
+      "operation_id": "getCurrentLocalRuntimeWorkspaceBinding"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/suggestion-preferences",
+      "openapi_path": "/workspaces/{workspaceId}/suggestion-preferences",
+      "operation_id": "listSuggestionPreferences"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/automations/{automation_id}",
+      "openapi_path": "/automations/{automationId}",
+      "operation_id": "updateAutomation"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/resources/{resource_id}/context-document/status",
+      "openapi_path": "/resources/{resourceId}/context-document/status",
+      "operation_id": "setContextDocumentStatus"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/workspaces/{workspace_id}",
+      "openapi_path": "/workspaces/{workspaceId}",
+      "operation_id": "updateWorkspacePolicy"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/workspaces/{workspace_id}/default-agent-binding",
+      "openapi_path": "/workspaces/{workspaceId}/default-agent-binding",
+      "operation_id": "setWorkspaceDefaultAgentBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-bindings",
+      "openapi_path": "/agent-bindings",
+      "operation_id": "createAgentBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-bindings/{agent_binding_id}/disable",
+      "openapi_path": "/agent-bindings/{agentBindingId}/disable",
+      "operation_id": "disableAgentBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-bindings/{agent_binding_id}/enable",
+      "openapi_path": "/agent-bindings/{agentBindingId}/enable",
+      "operation_id": "enableAgentBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-profiles/probe",
+      "openapi_path": "/agent-profiles/probe",
+      "operation_id": "probeLocalAgentProfile"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-profiles/{agent_profile_id}/credentials/{credential_slot_id}",
+      "openapi_path": "/agent-profiles/{agentProfileId}/credentials/{credentialSlotId}",
+      "operation_id": "submitAgentCredential"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-profiles/{agent_profile_id}/refresh",
+      "openapi_path": "/agent-profiles/{agentProfileId}/refresh",
+      "operation_id": "refreshAgentProfileControl"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-registry/refresh",
+      "openapi_path": "/agent-registry/refresh",
+      "operation_id": "refreshAgentRegistry"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/approvals/{approval_id}/resolve",
+      "openapi_path": "/approvals/{approvalId}/resolve",
+      "operation_id": "resolveApproval"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/artifacts/{artifact_id}/archive",
+      "openapi_path": "/artifacts/{artifactId}/archive",
+      "operation_id": "archiveArtifact"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/artifacts/{artifact_id}/promote",
+      "openapi_path": "/artifacts/{artifactId}/promote",
+      "operation_id": "promoteArtifact"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/artifacts/{artifact_id}/text-version",
+      "openapi_path": "/artifacts/{artifactId}/text-version",
+      "operation_id": "appendArtifactTextVersion"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations",
+      "openapi_path": "/automations",
+      "operation_id": "createAutomation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/host/settle",
+      "openapi_path": "/automations/host/settle",
+      "operation_id": "settleAutomationTriggers"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/{automation_id}/disable",
+      "openapi_path": "/automations/{automationId}/disable",
+      "operation_id": "disableAutomation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/{automation_id}/pause",
+      "openapi_path": "/automations/{automationId}/pause",
+      "operation_id": "pauseAutomation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/{automation_id}/resume",
+      "openapi_path": "/automations/{automationId}/resume",
+      "operation_id": "resumeAutomation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/{automation_id}/run",
+      "openapi_path": "/automations/{automationId}/run",
+      "operation_id": "runAutomationNow"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/automations/{automation_id}/test-runs",
+      "openapi_path": "/automations/{automationId}/test-runs",
+      "operation_id": "runAutomationTest"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/capabilities/{capability_id}/connect-or-install",
+      "openapi_path": "/capabilities/{capabilityId}/connect-or-install",
+      "operation_id": "connectOrInstallCapability"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/capabilities/{capability_id}/test",
+      "openapi_path": "/capabilities/{capabilityId}/test",
+      "operation_id": "testCapabilityConnection"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/capability-grants",
+      "openapi_path": "/capability-grants",
+      "operation_id": "createCapabilityGrant"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/capability-grants/{grant_id}/revoke",
+      "openapi_path": "/capability-grants/{grantId}/revoke",
+      "operation_id": "revokeCapabilityGrant"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations",
+      "openapi_path": "/conversations",
+      "operation_id": "createConversation"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations/{conversation_id}/turns",
+      "openapi_path": "/conversations/{conversationId}/turns",
+      "operation_id": "submitConversationTurn"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations/{conversation_id}/turns/{turn_id}/cancel",
+      "openapi_path": "/conversations/{conversationId}/turns/{turnId}/cancel",
+      "operation_id": "cancelConversationTurn"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/conversations/{conversation_id}/turns/{turn_id}/retry",
+      "openapi_path": "/conversations/{conversationId}/turns/{turnId}/retry",
+      "operation_id": "retryConversationTurn"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/coworkers",
+      "openapi_path": "/coworkers",
+      "operation_id": "createCoworker"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/coworkers/{coworker_id}/revisions",
+      "openapi_path": "/coworkers/{coworkerId}/revisions",
+      "operation_id": "reviseCoworker"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/coworkers/{coworker_id}/status",
+      "openapi_path": "/coworkers/{coworkerId}/status",
+      "operation_id": "changeCoworkerStatus"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/delegation-profiles",
+      "openapi_path": "/delegation-profiles",
+      "operation_id": "createDelegationProfile"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/delegation-profiles/{delegation_profile_id}/duplicate",
+      "openapi_path": "/delegation-profiles/{delegationProfileId}/duplicate",
+      "operation_id": "duplicateDelegationProfile"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/delegation-profiles/{delegation_profile_id}/revisions",
+      "openapi_path": "/delegation-profiles/{delegationProfileId}/revisions",
+      "operation_id": "reviseDelegationProfile"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/delegation-profiles/{delegation_profile_id}/status",
+      "openapi_path": "/delegation-profiles/{delegationProfileId}/status",
+      "operation_id": "changeDelegationProfileStatus"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/demonstrations",
+      "openapi_path": "/demonstrations",
+      "operation_id": "startDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/demonstrations/{demonstration_id}/abort",
+      "openapi_path": "/demonstrations/{demonstrationId}/abort",
+      "operation_id": "abortDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/demonstrations/{demonstration_id}/actions",
+      "openapi_path": "/demonstrations/{demonstrationId}/actions",
+      "operation_id": "appendDemonstrationAction"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/demonstrations/{demonstration_id}/complete",
+      "openapi_path": "/demonstrations/{demonstrationId}/complete",
+      "operation_id": "completeDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/demonstrations/{demonstration_id}/pause",
+      "openapi_path": "/demonstrations/{demonstrationId}/pause",
+      "operation_id": "pauseDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/demonstrations/{demonstration_id}/resume",
+      "openapi_path": "/demonstrations/{demonstrationId}/resume",
+      "operation_id": "resumeDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/goals",
+      "openapi_path": "/goals",
+      "operation_id": "createGoal"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/goals/{goal_id}/revisions",
+      "openapi_path": "/goals/{goalId}/revisions",
+      "operation_id": "reviseGoal"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/goals/{goal_id}/status",
+      "openapi_path": "/goals/{goalId}/status",
+      "operation_id": "changeGoalStatus"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp-apps/frames",
+      "openapi_path": "/mcp-apps/frames",
+      "operation_id": "issueMcpAppFrame"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mcp-apps/messages",
+      "openapi_path": "/mcp-apps/messages",
+      "operation_id": "validateMcpAppMessage"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/quick-import",
+      "openapi_path": "/resources/quick-import",
+      "operation_id": "quickImportResource"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/retrieval",
+      "openapi_path": "/resources/retrieval",
+      "operation_id": "groundedRetrieval"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/uploads",
+      "openapi_path": "/resources/uploads",
+      "operation_id": "createResourceUpload"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/uploads/{upload_id}/commit",
+      "openapi_path": "/resources/uploads/{uploadId}/commit",
+      "operation_id": "commitResourceUpload"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/{resource_id}/archive/preview",
+      "openapi_path": "/resources/{resourceId}/archive/preview",
+      "operation_id": "previewResourceArchive"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/{resource_id}/context-document/deletion",
+      "openapi_path": "/resources/{resourceId}/context-document/deletion",
+      "operation_id": "requestContextDocumentDeletion"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/{resource_id}/revision-uploads",
+      "openapi_path": "/resources/{resourceId}/revision-uploads",
+      "operation_id": "createResourceRevisionUpload"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/resources/{resource_id}/text-index/rebuild",
+      "openapi_path": "/resources/{resourceId}/text-index/rebuild",
+      "operation_id": "rebuildResourceTextIndex"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/routines",
+      "openapi_path": "/routines",
+      "operation_id": "createRoutine"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/routines/{routine_id}/archive",
+      "openapi_path": "/routines/{routineId}/archive",
+      "operation_id": "archiveRoutine"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/routines/{routine_id}/revisions",
+      "openapi_path": "/routines/{routineId}/revisions",
+      "operation_id": "reviseRoutine"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/routines/{routine_id}/run",
+      "openapi_path": "/routines/{routineId}/run",
+      "operation_id": "runRoutine"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/skill-proposals",
+      "openapi_path": "/skill-proposals",
+      "operation_id": "createSkillProposal"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/skill-proposals/{proposal_id}/approve",
+      "openapi_path": "/skill-proposals/{proposalId}/approve",
+      "operation_id": "approveSkillProposal"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/skill-proposals/{proposal_id}/reject",
+      "openapi_path": "/skill-proposals/{proposalId}/reject",
+      "operation_id": "rejectSkillProposal"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/skills",
+      "openapi_path": "/skills",
+      "operation_id": "createSkill"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/suggestions/{suggestion_id}/accept-task",
+      "openapi_path": "/suggestions/{suggestionId}/accept-task",
+      "operation_id": "acceptSuggestionTask"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/suggestions/{suggestion_id}/resolve",
+      "openapi_path": "/suggestions/{suggestionId}/resolve",
+      "operation_id": "resolveSuggestion"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/suggestions/{suggestion_id}/snooze",
+      "openapi_path": "/suggestions/{suggestionId}/snooze",
+      "operation_id": "snoozeSuggestion"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks",
+      "openapi_path": "/tasks",
+      "operation_id": "createTask"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task_id}/lead-agent",
+      "openapi_path": "/tasks/{taskId}/lead-agent",
+      "operation_id": "changeTaskLeadAgent"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/tasks/{task_id}/spec-revisions",
+      "openapi_path": "/tasks/{taskId}/spec-revisions",
+      "operation_id": "reviseTaskSpec"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/user-requests/{request_id}/dismiss",
+      "openapi_path": "/user-requests/{requestId}/dismiss",
+      "operation_id": "dismissUserRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/user-requests/{request_id}/respond",
+      "openapi_path": "/user-requests/{requestId}/respond",
+      "operation_id": "respondToUserRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspace-roots/{workspace_root_id}/pause",
+      "openapi_path": "/workspace-roots/{rootId}/pause",
+      "operation_id": "pauseWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspace-roots/{workspace_root_id}/resume",
+      "openapi_path": "/workspace-roots/{rootId}/resume",
+      "operation_id": "resumeWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspace-roots/{workspace_root_id}/revoke",
+      "openapi_path": "/workspace-roots/{rootId}/revoke",
+      "operation_id": "revokeWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspace-roots/{workspace_root_id}/scan",
+      "openapi_path": "/workspace-roots/{rootId}/scan",
+      "operation_id": "scanWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspaces",
+      "openapi_path": "/workspaces",
+      "operation_id": "createWorkspace"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/archive",
+      "openapi_path": "/workspaces/{workspaceId}/archive",
+      "operation_id": "archiveWorkspace"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/instructions/revisions",
+      "openapi_path": "/workspaces/{workspaceId}/instructions/revisions",
+      "operation_id": "createWorkspaceInstructionRevision"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/primary-coworker",
+      "openapi_path": "/workspaces/{workspaceId}/primary-coworker",
+      "operation_id": "setPrimaryCoworker"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/runtime-bindings/local-enrollment",
+      "openapi_path": "/workspaces/{workspaceId}/runtime-bindings/local-enrollment",
+      "operation_id": "enrollLocalRuntimeInWorkspace"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/notification-preferences/{event_class}",
+      "openapi_path": "/notification-preferences/{eventClass}",
+      "operation_id": "setNotificationPreference"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/resources/uploads/{upload_id}/chunks/{chunk_index}",
+      "openapi_path": "/resources/uploads/{uploadId}/chunks/{chunkIndex}",
+      "operation_id": "uploadResourceChunk"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/skills/{skill_id}",
+      "openapi_path": "/skills/{skillId}",
+      "operation_id": "reviseSkill"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/workspaces/{workspace_id}/suggestion-preferences/{kind}",
+      "openapi_path": "/workspaces/{workspaceId}/suggestion-preferences/{kind}",
+      "operation_id": "setSuggestionPreference"
+    }
+  ],
+  "served_outside_openapi": [
+    {
+      "method": "POST",
+      "path": "/v1/stream",
+      "source": "apps/litecoworkd/src/presentation_operator.rs"
+    }
+  ],
+  "target_only": [
+    {
+      "method": "GET",
+      "path": "/agent-bindings/{agentBindingId}/harness-capabilities",
+      "operation_id": "getAgentHarnessCapabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-bindings/{agentBindingId}/session-options",
+      "operation_id": "getAgentSessionOptions"
+    },
+    {
+      "method": "GET",
+      "path": "/channel-bindings",
+      "operation_id": "listChannelBindings"
+    },
+    {
+      "method": "GET",
+      "path": "/channel-bindings/{channelBindingId}",
+      "operation_id": "getChannelBinding"
+    },
+    {
+      "method": "GET",
+      "path": "/connections",
+      "operation_id": "listConnections"
+    },
+    {
+      "method": "GET",
+      "path": "/connections/{connectionId}",
+      "operation_id": "getConnection"
+    },
+    {
+      "method": "GET",
+      "path": "/conversations/{conversationId}/messages",
+      "operation_id": "listConversationMessages"
+    },
+    {
+      "method": "GET",
+      "path": "/runtime-lifecycle/stop-preview",
+      "operation_id": "previewLocalRuntimeStop"
+    },
+    {
+      "method": "GET",
+      "path": "/runtimes",
+      "operation_id": "listRuntimes"
+    },
+    {
+      "method": "GET",
+      "path": "/runtimes/{runtimeId}/incarnations",
+      "operation_id": "listRuntimeIncarnations"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/attempts",
+      "operation_id": "listTaskAttempts"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/effects",
+      "operation_id": "listTaskEffects"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/steps/{stepId}/execution-dependencies",
+      "operation_id": "getStepExecutionDependencies"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/timeline",
+      "operation_id": "getTaskTimeline"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/usage",
+      "operation_id": "listTaskUsage"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/backups",
+      "operation_id": "listWorkspaceBackups"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/backups/{backupId}",
+      "operation_id": "getWorkspaceBackup"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/environments",
+      "operation_id": "listWorkspaceEnvironments"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}",
+      "operation_id": "getWorkspaceEnvironment"
+    },
+    {
+      "method": "PATCH",
+      "path": "/channel-bindings/{channelBindingId}",
+      "operation_id": "updateChannelBindingActions"
+    },
+    {
+      "method": "PATCH",
+      "path": "/runtime-lifecycle/startup-policy",
+      "operation_id": "setLocalRuntimeStartupPolicy"
+    },
+    {
+      "method": "PATCH",
+      "path": "/workspace-roots/{rootId}",
+      "operation_id": "updateWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/agent-profiles/{agentProfileId}/auth/{authMethodId}/begin",
+      "operation_id": "beginAgentAuthentication"
+    },
+    {
+      "method": "POST",
+      "path": "/agent-profiles/{agentProfileId}/native-config/{targetId}/open",
+      "operation_id": "openAgentNativeConfiguration"
+    },
+    {
+      "method": "POST",
+      "path": "/agent-registry/{registryAgentId}/install",
+      "operation_id": "installRegistryAgent"
+    },
+    {
+      "method": "POST",
+      "path": "/agent-registry/{registryAgentId}/update",
+      "operation_id": "updateRegistryAgent"
+    },
+    {
+      "method": "POST",
+      "path": "/channel-bindings/{channelBindingId}/host-assignment",
+      "operation_id": "reassignChannelHost"
+    },
+    {
+      "method": "POST",
+      "path": "/channel-bindings/{channelBindingId}/revoke",
+      "operation_id": "revokeChannelBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/connections/{connectionId}/disconnect",
+      "operation_id": "disconnectConnection"
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversationId}/messages",
+      "operation_id": "appendConversationMessage"
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/backups/{backupId}/restore",
+      "operation_id": "restoreWorkspaceBackup"
+    },
+    {
+      "method": "POST",
+      "path": "/runtime-lifecycle/stop",
+      "operation_id": "requestLocalRuntimeStop"
+    },
+    {
+      "method": "POST",
+      "path": "/runtimes/pair-token",
+      "operation_id": "createRuntimePairToken"
+    },
+    {
+      "method": "POST",
+      "path": "/runtimes/{runtimeId}/revoke",
+      "operation_id": "revokeRuntime"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/attempts/{attemptId}/return-control",
+      "operation_id": "returnEnvironmentControl"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/attempts/{attemptId}/take-control",
+      "operation_id": "takeEnvironmentControl"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/cancel",
+      "operation_id": "cancelTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/pause",
+      "operation_id": "pauseTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/plan-revisions",
+      "operation_id": "submitTaskPlan"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/resume",
+      "operation_id": "resumeTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/steer",
+      "operation_id": "steerTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/steps/{stepId}/recover",
+      "operation_id": "recoverTaskStep"
+    },
+    {
+      "method": "POST",
+      "path": "/user-requests/{requestId}/external-handoff",
+      "operation_id": "openUserRequestExternalHandoff"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace-roots",
+      "operation_id": "addWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/backups",
+      "operation_id": "createWorkspaceBackup"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments",
+      "operation_id": "createPersistentWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/provision-preview",
+      "operation_id": "previewPersistentEnvironmentProvision"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/destroy",
+      "operation_id": "destroyWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/resume",
+      "operation_id": "resumeWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/sharing-scope",
+      "operation_id": "changeWorkspaceEnvironmentSharingScope"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/suspend",
+      "operation_id": "suspendWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/runtime-bindings/{bindingId}/revoke",
+      "operation_id": "revokeWorkspaceRuntimeBinding"
+    },
+    {
+      "method": "PUT",
+      "path": "/agent-bindings/{agentBindingId}/configuration",
+      "operation_id": "configureAgentBinding"
+    }
+  ]
+}
