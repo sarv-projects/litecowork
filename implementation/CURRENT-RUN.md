@@ -26,6 +26,8 @@
   key reuse conflict, archived refusal with nothing recorded, foreign owner, quiet-window
   persistence, and invalid policy/quiet-hours cases. `litecoworkd --bin litecoworkd
   notification_operator` 6/6 adds `If-Match` parsing (bare, quoted, missing, non-decimal).
+  Broad regression: `storage-sqlite --lib` 560/560 and `litecoworkd --bin litecoworkd`
+  521/521 with 1 ignored. The new files pass `rustfmt --edition 2024 --check`.
 - **Still open (not claimed).** The delivery pipeline that writes `notification_deliveries`
   and its `notification.delivery.changed.v1` transition events, the OS notification
   provider, the desktop surface, and the deep link. E09-S04 stays `PLANNED`.
