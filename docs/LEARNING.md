@@ -1,5 +1,12 @@
 # Coworker Learning, Memory, Instruction, and Skill Revision
 
+**Status:** accepted target architecture, not a claim that suggested
+`learning-candidates` endpoints or new target crates already exist.
+Use the actual `domain-responsibility`, `domain-rag`,
+`storage-core`/`storage-sqlite`, `apps/litecoworkd` and UI
+owners, and require separately reviewed boundaries for any new crates.
+Current release state: [acceptance matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+
 **Status:** accepted target architecture. This document defines how a Coworker can improve
 from corrections and successful work without allowing the model to silently widen authority
 or rewrite arbitrary persistent configuration.
@@ -642,3 +649,14 @@ V1-FUNCTION-FILE-CATALOG.md assigns Coworker memory candidate/extraction/conflic
 ## Native-agent-owned low-latency memory interface — V1
 
 [Agent Memory Fast Path](V1-AGENT-MEMORY-FAST-PATH-LLD.md) specifies a qualified agent-invoked, scoped search/fetch tool and bounded retrieval/caching. It does not replace this document's candidate eligibility, native memory ownership or purge policy. Automatic injection is opt-in and pinned to accepted Task/Workspace context; an agent need not search, and we cannot promise sub-millisecond uncached provider retrieval. User-facing Memory page may adopt a search/add/empty state while preserving exact Workspace/Coworker/provenance/revocation distinctions. TLM-024–034 are targets, not proof.
+
+## Reconciled implementation landing zones (2026-10-22)
+
+The originally proposed `crates/domain-learning/`, `crates/application/`,
+`crates/ports/` and `crates/adapters/` names in historical sketches **do not
+exist in this repository**. Those names are conceptual, not evidence of source.
+Prefer existing `domain-responsibility`, `storage-core`, `storage-sqlite`,
+`domain-rag`, `litecoworkd` and `litecowork-ui` owners unless a deliberate
+migration establishes a new crate and prevents duplicate writers. Target §18 API
+routes and §19 events require actual producers, router mounts, stored state and
+revocation/system tests before a served or qualified claim.

@@ -119,3 +119,18 @@ These were checked during this revision and deliberately stay out of the roster.
 - Harnesses with a cloud or provider data boundary (Grok Build, Devin CLI, and any agent that
   transmits workspace context) are qualified as **provider egress** under the Trust and
   credential rules, not as local-only tools.
+
+## 2026-10-22 — HorizonCode native-agent integration
+
+The 25 entries above remain this document's historical external agent roster.
+**HorizonCode**, developed separately in the same product family, is an
+**additional first-party-developed native agent candidate** eligible for
+the same qualified LiteCowork lead/worker role, not a privileged Core
+planner or guaranteed working integration.
+
+[HorizonCode AgentModule LLD](../docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
+specifies exact executable/protocol/OS/native session/auth/option/delegation
+tests. The actual adapter is not supported until code, real SYSTEM and
+owner USER evidence is present in the same qualification matrix as other
+harnesses. This section does not silently change the 25-entry third-party
+count or existing story states.

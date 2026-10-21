@@ -10,6 +10,17 @@ post-V1 tracks. The architecture and domain documents remain contract authority.
 folder owns execution ordering, story acceptance, evidence, research references, and
 release gates.
 
+## 2026-10-22 current V1 release-definition pass
+
+Start with [ten-area product contract](../docs/V1-PRODUCT-RELEASE-CONTRACT.md),
+[final screen contract](../docs/V1-UI-SCREEN-CONTRACT.md),
+[LiteSPM interop LLD](../docs/LITESPM-LITECOWORK-INTEROP-LLD.md),
+[HorizonCode native-agent LLD](../docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
+and [product acceptance matrix](V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+These are not a new Task engine, package database or story graph.
+The current native Send, Attempt admission, LiteSPM bridge and other
+end-to-end V1 journeys remain blocked pending qualified source evidence.
+
 ## Read in order
 
 1. [Current work and agent handoff](CURRENT-RUN.md)
