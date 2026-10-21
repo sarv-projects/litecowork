@@ -3,10 +3,14 @@
 
 ## LiteSPM cross-agent package boundary
 
-LiteSPM is the package-system authority for connectors, MCP servers, plugins, skills and
-related capability packages: discovery, verification, installation, updates, removal,
-package/provider supervision and exact package identity. LiteCowork must not duplicate
-that marketplace/lifecycle.
+LiteSPM is the independent package-system authority for **supported** MCP servers,
+plugins, skills and other eligible capabilities: discovery, native/existing inventory,
+package provenance, install, adopt, update, reconcile, unmanage and removal.
+**First-class connector packages/runtime are still design-only in LiteSPM**
+(ARCH/26 and ARCH/29). LiteCowork V1 app Connections require separately
+qualified provider/custody paths, not inference from a package kind enum.
+See [LiteSPM interoperability LLD](LITESPM-LITECOWORK-INTEROP-LLD.md).
+Do not duplicate its package manager or confuse native observation with grants.
 
 **Owner direction — shared Browser Harness package (2026-10-17):** The intended product
 shape is one LiteSPM-managed Browser Harness capability, made available by default to

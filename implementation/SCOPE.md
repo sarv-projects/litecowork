@@ -24,6 +24,20 @@ unavailable optional integration; it cannot be marked implemented using a fixtur
 actual reduction of committed local feature scope requires an explicit owner decision and
 a revised coverage/release record.
 
+## 2026-10-22 V1 release contract
+
+[Complete ten-area local V1 scope](../docs/V1-PRODUCT-RELEASE-CONTRACT.md)
+and [product acceptance matrix](V1-PRODUCT-ACCEPTANCE-MATRIX.md) are the
+product and evidence crosswalks. Ordinary New Chat must work without Task
+or Coworker materialization. LiteSPM must safely manage eligible existing
+native packages as well as new installs; full connector lifecycle remains
+unqualified pending LiteSPM's own package/runtime decision. HorizonCode is
+a separately qualified native chief/worker candidate alongside the
+25-entry external agent portfolio; it does not replace Core.
+Free local core **without a mandatory LiteCowork account or subscription**
+is a release requirement, separate from provider billing. Multi-device/cloud
+LiteCowork Runtime and teamwork remain post-V1.
+
 ## Included feature groups
 
 - Independent Operator/daemon, lifecycle, tray/startup, Quick Entry, Workspace policy,
