@@ -139,6 +139,9 @@ mod resource_content_gc_operator_tests;
 mod resource_dependencies_operator;
 #[path = "routine_operator.rs"]
 mod routine_operator;
+#[cfg(all(test, unix))]
+#[path = "routine_run_operator_tests.rs"]
+mod routine_run_operator_tests;
 #[path = "runtime_capability_hosts_operator.rs"]
 mod runtime_capability_hosts_operator;
 #[path = "runtime_offers_operator.rs"]
