@@ -1,3 +1,35 @@
+## 2026-10-21 — E09-S04 desktop Notifications surface
+
+- **Served.** The desktop Notifications page reads `GET /v1/notifications` with a status
+  filter and keyset continuation, and reads/edits `GET/PUT /v1/notification-preferences`
+  for the five contracted event classes. The page is reached from the main navigation and
+  needs a selected Workspace plus a ready local Operator.
+- **Finite bridge.** `apps/litecowork-ui/src-tauri/src/notification_bridge.rs` exposes only
+  `list`, `preferences`, and `set-preference`. It accepts no arbitrary URL, method, or
+  header; an event class is a single allowlisted path segment; status/policy/cursor/limit/
+  channel/quiet-hours/request-identity inputs are bounded before the Operator call; the
+  response is capped at 1 MiB.
+- **Versioned, idempotent save.** A policy Save sends the stored version as `If-Match`
+  (`0` for an unconfigured class) and a fresh UUID as `Idempotency-Key`. The committed
+  response replaces the row and its version. A conflict/stale version stops the save and
+  offers an explicit reload; an ARCHIVED Workspace is shown as read-only history. Saved
+  quiet hours are preserved; the page does not edit them.
+- **Truthful state.** The delivery list is empty in production because no served Task
+  transition settles its Automation occurrence yet, so nothing writes
+  `notification_deliveries`. The empty state says a delivery is recorded only after an
+  occurrence settles; no delivery or OS notification is claimed.
+- **Tests.** Tauri bridge unit tests 3/3 (path injection, status/policy tokens, channel
+  bounds). Node API tests 10/10 (Workspace binding, decoders, headers, version 0, archived
+  error). Serial desktop suite 488/488 on Node 24.21.0 (478 prior + 10). `tsc --noEmit`
+  and `pnpm run api:check` pass.
+- **Still open (not claimed).** The producer chain (Task outcome → occurrence settlement →
+  delivery record), `notification.delivery.changed.v1` attempts, the local OS provider and
+  permission state, the deep link, a packaged SYSTEM run, and owner USER acceptance.
+  E09-S04 stays `PLANNED`.
+- **Cleanup/disk.** One worktree, 26 branches, no agent processes. `target` 30 GB,
+  `apps/litecowork-ui/src-tauri/target` 2.6 GB, `/tmp/opencode` 84 KB; free disk 817 GB.
+  Temporary bridge/UI logs are removed after this entry.
+
 ## 2026-10-21 — E09-S04 versioned notification preference write
 
 - **Served.** `PUT /v1/notification-preferences/{event_class}` records one event-class
