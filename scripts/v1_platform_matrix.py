@@ -70,6 +70,23 @@ AGENT_EXECUTABLES: dict[str, tuple[str, ...]] = {
     "qwen": ("qwen",),
 }
 
+# Hosted agent providers are not launched by LiteCowork, so they are never probed on
+# the host. They are qualified per provider x capability x plan, and until such a record
+# exists they carry no support claim.
+HOSTED_AGENT_PROVIDERS: tuple[str, ...] = (
+    "anthropic-claude-code-hosted",
+    "cognition-devin-hosted",
+    "cursor-hosted",
+    "github-copilot-cloud",
+    "google-antigravity-hosted",
+    "meta-muse-code-hosted",
+    "minimax-code-hosted",
+    "moonshot-kimi-hosted",
+    "openai-codex-hosted",
+    "qwen-code-hosted",
+    "xai-grok-build-hosted",
+)
+
 # The exact browser executables the browser takeover surface can drive.
 BROWSER_EXECUTABLES: dict[str, tuple[str, ...]] = {
     "google-chrome": ("google-chrome", "google-chrome-stable", "chrome"),
@@ -496,6 +513,23 @@ def render(evidence: Evidence) -> str:
         lines.append(
             f"| {agent} | `{facts['executable'] or '-'}` | "
             f"`{facts['version'] or '-'}` | {facts['state']} |"
+        )
+    lines.append("")
+
+    lines.append("## Hosted agent provider matrix")
+    lines.append("")
+    lines.append(
+        "A hosted agent provider runs the agent in the provider's own environment. "
+        "LiteCowork connects the owner account, leases the authority it needs, and "
+        "receives only what the provider exposes. Support is claimed per exact provider, "
+        "capability, and plan, never per brand."
+    )
+    lines.append("")
+    lines.append("| Provider | State | Reason |")
+    lines.append("|---|---|---|")
+    for provider in HOSTED_AGENT_PROVIDERS:
+        lines.append(
+            f"| {provider} | NOT QUALIFIED | no provider conformance record |"
         )
     lines.append("")
 
