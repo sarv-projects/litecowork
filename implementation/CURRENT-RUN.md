@@ -1,3 +1,24 @@
+## 2026-10-21 — E09-S05 ResourceRef pin and refusal evidence
+
+- **No new route.** The served `/run` route already passes bounded `routine_inputs` through
+  the same materializer. This slice adds the missing ResourceRef CODE evidence to the storage
+  suite, not a new API.
+- **Exact pin.** A required `ref` object with a `RESOURCE_REF` binding on `/ref` and a real
+  same-Workspace FILE Resource revision materializes one READY Task. Its
+  `input_refs_json` contains the exact `{workspace_id, resource_id, revision_id}` pin; an
+  exact replay returns the same Task and writes no second row.
+- **Refusals.** A pin that exists only in another Workspace is `NotFound`; an unknown
+  revision of a real same-Workspace Resource is `NotFound`; a pin labelled with another
+  Workspace is `Invalid`. No Task or receipt is written in any case.
+- **Command.** `cargo test --locked --offline --jobs 2 -p storage-sqlite --lib
+  routine_admission_tests::` — 8/8 passed, 23.48 s after cached compile.
+- **Still open (not claimed).** A forced late-failure atomicity injection, route-through-UI
+  ResourceRef selection and pagination, SYSTEM through the Tauri page, and owner USER
+  acceptance. E09-S05 stays `IN_PROGRESS`.
+- **Cleanup/disk.** One worktree, 26 branches, no agent processes. `target` 29 GB, Tauri
+  target 2.6 GB, `/tmp/opencode` 28 KB; 818 GB free. The focused test log is removed after
+  this entry.
+
 ## 2026-10-21 — E09-S05 authenticated Routine run route evidence
 
 - **Served route exercised.** `apps/litecoworkd/src/routine_run_operator_tests.rs` drives the
