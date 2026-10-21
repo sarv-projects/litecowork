@@ -313,8 +313,7 @@ mod tests {
 
     #[test]
     fn a_cursor_round_trips_only_for_its_own_workspace() {
-        let Ok(encoded) = encode_cursor("workspace-1", "2026-10-21T09:00:00Z", "delivery-1")
-        else {
+        let Ok(encoded) = encode_cursor("workspace-1", "2026-10-21T09:00:00Z", "delivery-1") else {
             panic!("cursor encodes");
         };
         let Ok((created_at, delivery_id)) = decode_cursor(&encoded, "workspace-1") else {
@@ -329,8 +328,7 @@ mod tests {
     fn a_malformed_or_tampered_cursor_is_rejected() {
         assert!(decode_cursor("", "workspace-1").is_err());
         assert!(decode_cursor("not-base64", "workspace-1").is_err());
-        let Ok(encoded) = encode_cursor("workspace-1", "2026-10-21T09:00:00Z", "delivery-1")
-        else {
+        let Ok(encoded) = encode_cursor("workspace-1", "2026-10-21T09:00:00Z", "delivery-1") else {
             panic!("cursor encodes");
         };
         assert!(decode_cursor(&encoded, "workspace-1").is_ok());

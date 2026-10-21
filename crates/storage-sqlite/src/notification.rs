@@ -186,8 +186,8 @@ impl SqliteWorkspaceStore {
             let mut preferences = Vec::new();
             while let Some(row) = rows.next().map_err(map_database_error)? {
                 let channels_json: String = row.get(3).map_err(map_database_error)?;
-                let preferred_channels: Vec<String> =
-                    serde_json::from_str(&channels_json).map_err(|_| {
+                let preferred_channels: Vec<String> = serde_json::from_str(&channels_json)
+                    .map_err(|_| {
                         StoreError::Integrity(
                             "notification preference channels are unreadable".to_owned(),
                         )
@@ -285,11 +285,11 @@ impl SqliteWorkspaceStore {
             NOTIFICATION_PREFERENCE_MEDIA_TYPE,
         )?;
         if blob.size_bytes != state_bytes.len() as u64
-            || self.inner.blobs.get(
-                workspace_id,
-                BlobPurpose::AggregateState,
-                &blob,
-            )? != state_bytes
+            || self
+                .inner
+                .blobs
+                .get(workspace_id, BlobPurpose::AggregateState, &blob)?
+                != state_bytes
         {
             return Err(StoreError::Integrity(
                 "notification preference aggregate state failed BlobStore verification".to_owned(),
@@ -313,9 +313,14 @@ impl SqliteWorkspaceStore {
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(map_database_error)?;
             require_write_access(&tx, &workspace, &principal)?;
-            if let Some(prior) =
-                preference_receipt(&tx, &principal, &request_id, &fingerprint, &workspace, &event_class)?
-            {
+            if let Some(prior) = preference_receipt(
+                &tx,
+                &principal,
+                &request_id,
+                &fingerprint,
+                &workspace,
+                &event_class,
+            )? {
                 return Ok(prior);
             }
             let current: Option<i64> = tx
@@ -335,11 +340,7 @@ impl SqliteWorkspaceStore {
                 });
             }
             let channels_json = encode(&record.preferred_channels)?;
-            let quiet_hours_json = record
-                .quiet_hours
-                .as_ref()
-                .map(encode)
-                .transpose()?;
+            let quiet_hours_json = record.quiet_hours.as_ref().map(encode).transpose()?;
             tx.execute(
                 "INSERT INTO notification_preferences(workspace_id, event_class, policy, \
                      preferred_channels_json, quiet_hours_json, version) \

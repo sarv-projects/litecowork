@@ -1,5 +1,5 @@
 use super::*;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::time::Duration;
 use storage_core::QuietHours;
 
@@ -145,14 +145,7 @@ fn a_non_owner_cannot_distinguish_a_missing_workspace_from_a_foreign_one() {
     let store = fixture_store(&directory);
 
     assert_eq!(
-        store.list_notification_deliveries(
-            "owner-foreign",
-            WORKSPACE,
-            None,
-            None,
-            None,
-            50
-        ),
+        store.list_notification_deliveries("owner-foreign", WORKSPACE, None, None, None, 50),
         Err(StoreError::NotFound)
     );
     assert_eq!(
@@ -212,10 +205,7 @@ fn preferences_are_owner_scoped_ordered_and_parsed_from_their_stored_json() {
         .list_notification_preferences(OWNER, WORKSPACE)
         .expect("preferences read");
     assert_eq!(preferences.len(), 2);
-    assert_eq!(
-        preferences[0].event_class,
-        "AUTOMATION_OCCURRENCE_SETTLED"
-    );
+    assert_eq!(preferences[0].event_class, "AUTOMATION_OCCURRENCE_SETTLED");
     assert_eq!(preferences[0].policy, "ALWAYS");
     assert!(preferences[0].preferred_channels.is_empty());
     assert!(preferences[0].quiet_hours.is_none());
@@ -236,7 +226,14 @@ fn unreadable_preference_json_fails_closed_instead_of_dropping_the_policy() {
     let directory = tempfile::tempdir().expect("temporary store directory");
     let store = fixture_store(&directory);
     let connection = fixture_connection(&directory);
-    insert_preference(&connection, "TASK_FAILED", "ON_FAILURE", "not-json", None, 1);
+    insert_preference(
+        &connection,
+        "TASK_FAILED",
+        "ON_FAILURE",
+        "not-json",
+        None,
+        1,
+    );
 
     assert!(matches!(
         store.list_notification_preferences(OWNER, WORKSPACE),
