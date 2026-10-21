@@ -1,3 +1,31 @@
+## 2026-10-21 — Agent portfolio revision (25 entries) and per-roster qualification matrix
+
+- **Owner direction applied.** Gemini CLI is dropped from the roster (Google moved the
+  consumer path to Antigravity CLI), OpenCode is tracked on its **v2** line, and the roster
+  grows from 15 to 25 entries with Command Code, Aider, Pi, Oh My Pi, Muse Code, Grok Build,
+  MiMo Code, Devin CLI, Antigravity CLI, MiniMax Code, and Amp. The roster, each entry's
+  proposed adapter path, and the upstream evidence notes are in
+  [`AGENT-PORTFOLIO-2026-10-21.md`](AGENT-PORTFOLIO-2026-10-21.md); the 2026-10-16 list
+  is kept as the historical snapshot.
+- **Correction to my earlier audit wording.** "Codex CLI only" was wrong: `SCOPE.md` requires
+  the complete framework and module integration for every roster entry, and
+  `docs/AGENT-CONTROL.md` forbids Core branching on agent brand names. The decision I own is
+  the build order and the evidence matrix, not the scope.
+- **Matrix.** `scripts/v1_platform_matrix.py` now probes every roster executable, and
+  `implementation/QUALIFICATION-MATRIX.md` carries one row per entry: 17 observed on this
+  host (aider 0.86.2, antigravity `agy` 1.2.1, cline 3.0.73, codex 0.163.0,
+  command-code 1.46.0, copilot 1.0.78, droid 0.151.0, grok-build 1.0.44, junie PRESENT BUT
+  UNREPORTED, kiro-cli 2.16.1, mimocode 0.1.14, mistral-vibe `vibe-acp` 2.25.0, muse-code
+  1.4.11, oh-my-pi 18.12.2, opencode 2.1.2, pi 1.3.0, qwen 0.21.3) and 8 not installed on
+  this host. An observation is still not a qualification.
+- **New facts worth carrying into qualification.** Antigravity CLI has no native ACP mode
+  yet (an open feature request), Muse Code and Devin CLI are local-first but reach a cloud
+  service, and Grok Build transmits workspace context to xAI servers, so harnesses in that
+  class are qualified as **provider egress** under the Trust and credential rules rather than
+  as local-only tools.
+- **Still open.** No agent is qualified yet; the qualification-first set is Claude Code,
+  Codex CLI, OpenCode (v2), Cline CLI, and Antigravity CLI.
+
 ## 2026-10-21 — E09-S04 first notification producer
 
 - **Producer.** A persisted Automation outcome now records at most one local delivery row in

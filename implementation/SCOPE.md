@@ -50,7 +50,8 @@ a revised coverage/release record.
 ## Coverage versus integration breadth
 
 Implement the complete framework and module integration for every entry in the
-[owner-directed 15-agent local V1 portfolio](AGENT-PORTFOLIO-2026-10-16.md). This is an
+[owner-directed local V1 portfolio](AGENT-PORTFOLIO-2026-10-21.md) (25 entries; the
+2026-10-16 list is kept as the historical snapshot). This is an
 implementation and qualification target, not an empirically ranked popularity list or a
 claim of current support. E03-S06 tracks all entries as candidates; E03-S07–S10 apply to
 each roster entry; E03-S11 records evidence per exact agent, version, and operating

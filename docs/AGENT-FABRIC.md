@@ -96,9 +96,12 @@ metadata cannot establish that observation, Cline falls back to a bounded versio
 command invocation with inherited daemon environment cleared. The row is
 not an `AgentProfile`, `AgentEndpoint`, or `AgentBinding` and does not prove auth,
 provider/model access, session support, or lead/delegation eligibility. The curated
-15-agent inventory now covers Codex, OpenCode, Cline, Claude Code, Gemini CLI, Qwen Code,
-Kiro CLI, Goose, Mistral Vibe, Cursor CLI, JetBrains Junie CLI, GitHub Copilot CLI, Kimi
-Code CLI, Factory Droid, and Auggie. CLI-specific version flags/output formats remain
+roster inventory is the 25-entry owner-directed list in
+[`implementation/AGENT-PORTFOLIO-2026-10-21.md`](../implementation/AGENT-PORTFOLIO-2026-10-21.md):
+Codex, OpenCode (v2), Cline, Claude Code, Antigravity CLI, Command Code, Aider, Pi, Oh My
+Pi, Muse Code, Grok Build, MiMo Code, Devin CLI, Qwen Code, Kiro CLI, Goose, Mistral Vibe,
+Cursor CLI, Kimi Code CLI, JetBrains Junie CLI, Factory Droid, Auggie CLI, MiniMax Code, Amp,
+and GitHub Copilot CLI. Gemini CLI is not a roster entry. CLI-specific version flags/output formats remain
 version-only observations. Copilot has a ten-second cold-start bound; the other native
 CLI probes use two seconds. Only Codex and OpenCode have explicit profile-probe
 implementations, and neither has a qualified native session path. The inventory

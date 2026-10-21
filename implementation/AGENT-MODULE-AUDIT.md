@@ -497,7 +497,7 @@ Before E03-S06–S11 acceptance:
 - Codex native install/update/sign-in/model/options/input/command/reference surfaces;
 - Claude Agent equivalent;
 - OpenCode equivalent, including native provider/model configuration;
-- Gemini CLI/Cline only when chosen for launch support;
+- Antigravity CLI/Cline only when chosen for launch support;
 - OS keychain secret-slot behavior on supported Linux/Windows/macOS;
 - upstream update drift detection and supported version policy;
 - LiteSPM capability bridge compatibility matrix.

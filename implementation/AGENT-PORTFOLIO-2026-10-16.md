@@ -1,5 +1,10 @@
 # LiteCowork Agent Portfolio — 2026-10-16
 
+> **Superseded by [`AGENT-PORTFOLIO-2026-10-21.md`](AGENT-PORTFOLIO-2026-10-21.md).**
+> That revision drops Gemini CLI (Google moved the consumer path to Antigravity CLI),
+> tracks OpenCode on its v2 line, and grows the roster to 25 entries. This file is kept as
+> the historical 15-entry snapshot and its per-agent evidence notes still stand.
+
 ## Purpose and scope
 
 This document records the owner-directed high-value portfolio of 15 local agent

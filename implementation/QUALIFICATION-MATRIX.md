@@ -6,7 +6,7 @@ This file is generated. Do not edit it by hand: run the command below to regener
 .venv/bin/python scripts/v1_platform_matrix.py --out implementation/QUALIFICATION-MATRIX.md --evidence-out /tmp/litecowork-release-evidence
 ```
 
-- Generated at: `2026-10-21T08:05:08Z`
+- Generated at: `2026-10-21T19:18:31Z`
 - Probing host: `Linux 6.18.54.1-microsoft-standard-WSL2 x86_64` (python 3.13.12)
 - A cell is `PASSED` only when the probe actually ran on this host and observed success. Every other cell carries the reason it is not a pass.
 - `NOT RUN` means the probe exists but was not executed here.
@@ -137,8 +137,8 @@ no org.freedesktop.secrets service is registered
 - Observation:
 
 ```
-warning: `storage-sqlite` (lib test) generated 30 warnings (29 duplicates) (run `cargo fix --lib -p storage-sqlite --tests` to apply 1 suggestion)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 12s
+warning: `storage-sqlite` (lib) generated 12 warnings (7 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 21s
      Running unittests src/lib.rs (target/debug/deps/storage_sqlite-67974cd58333153e)
      Running tests/agent_registry_cache.rs (target/debug/deps/agent_registry_cache-0129b60b8c5171a0)
      Running tests/linux_secret_service.rs (target/debug/deps/linux_secret_service-f423a68f2ff2610d)
@@ -176,14 +176,30 @@ An agent is only supported when its exact version passes the native harness conf
 
 | Agent | Executable | Observed version | State |
 |---|---|---|---|
+| aider | `aider` | `aider 0.86.2` | PRESENT |
+| amp | `-` | `-` | NOT INSTALLED |
+| antigravity | `agy` | `1.2.1` | PRESENT |
+| auggie-cli | `-` | `-` | NOT INSTALLED |
 | claude-code | `-` | `-` | NOT INSTALLED |
 | cline | `cline` | `3.0.73` | PRESENT |
 | codex | `codex` | `codex-cli 0.163.0` | PRESENT |
+| command-code | `commandcode` | `1.46.0` | PRESENT |
 | copilot | `copilot` | `GitHub Copilot CLI 1.0.78.` | PRESENT |
+| cursor-cli | `-` | `-` | NOT INSTALLED |
+| devin-cli | `-` | `-` | NOT INSTALLED |
 | droid | `droid` | `0.151.0` | PRESENT |
-| gemini | `gemini` | `0.54.4` | PRESENT |
 | goose | `-` | `-` | NOT INSTALLED |
+| grok-build | `grok` | `grok 1.0.44 (5b807183dd79) [stable]` | PRESENT |
+| junie-cli | `junie` | `-` | PRESENT BUT UNREPORTED |
+| kimi-code | `-` | `-` | NOT INSTALLED |
+| kiro-cli | `kiro-cli` | `kiro-cli 2.16.1` | PRESENT |
+| mimocode | `mimo` | `0.1.14` | PRESENT |
+| minimax-code | `-` | `-` | NOT INSTALLED |
+| mistral-vibe | `vibe-acp` | `vibe-acp 2.25.0` | PRESENT |
+| muse-code | `muse` | `Muse Code 1.4.11 (1.4.11-R6667.1)` | PRESENT |
+| oh-my-pi | `omp` | `omp/18.12.2` | PRESENT |
 | opencode | `opencode` | `opencode v2.1.2` | PRESENT |
+| pi | `pi` | `1.3.0` | PRESENT |
 | qwen | `qwen` | `0.21.3` | PRESENT |
 
 ## Browser matrix

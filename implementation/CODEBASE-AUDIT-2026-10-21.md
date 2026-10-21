@@ -238,10 +238,20 @@ notification is no longer styled as a success, and the two inert chrome buttons 
 
 ## 9. Owner decisions that unblock multiple stories
 
-- **D1 — launch harness.** Codex CLI is the only candidate with a bounded install
-  inventory, an App Server profile probe and a pinned schema bundle today; qualifying
-  15 agents × (CODE+SYSTEM+USER) is not achievable in V1. Unblocks E03-S01..S11, E05-S01,
-  E05-S05, E07-S00, E13-S03.
+- **D1 — launch harness (corrected by owner direction, 2026-10-21).** My first phrasing
+  ("Codex CLI only, the other 14 become unsupported rows") was wrong: `implementation/SCOPE.md`
+  requires the complete framework and module integration for **every** roster entry, and
+  `docs/AGENT-CONTROL.md` forbids Core branching on agent brand names. The owner revised the
+  roster to **25 entries** in
+  [`AGENT-PORTFOLIO-2026-10-21.md`](AGENT-PORTFOLIO-2026-10-21.md): Gemini CLI is dropped
+  (Google moved the consumer path to **Antigravity CLI**), OpenCode is tracked on its **v2**
+  line, and Command Code, Aider, Pi, Oh My Pi, Muse Code, Grok Build, MiMo Code, Devin CLI,
+  MiniMax Code, and Amp are added. The qualification-first set stays the four agents named in
+  `SCOPE.md` (Claude Code, Codex CLI, OpenCode, Cline CLI) plus Antigravity CLI. What I decide
+  is the **build order and the matrix**, not the scope: every roster entry gets an adapter
+  path and a per-exact-version/OS matrix row, and an entry with no adapter is reported as
+  unqualified rather than removed. Unblocks E03-S01..S11, E05-S01, E05-S05, E07-S00,
+  E13-S03.
 - **D2 — Environment isolation mode.** Linux Bubblewrap only for V1
   (`crates/linux-process-scope`, `crates/local-environment-staging` already pass 107
   tests); Windows/macOS marked unsupported. Unblocks E07-S00/S01, E02-S03, E03-S03/S04.
@@ -257,6 +267,12 @@ notification is no longer styled as a success, and the two inert chrome buttons 
   the Needs You deep-link gap in E02-S04.
 
 ## 10. Verdict
+
+**Roster correction (2026-10-21).** The agent portfolio was revised by owner direction to
+25 entries; `implementation/QUALIFICATION-MATRIX.md` now carries one row per roster entry,
+and 17 of them are observed on this host (aider, antigravity, cline, codex, command-code,
+copilot, droid, grok-build, junie, kiro-cli, mimocode, mistral-vibe, muse-code, oh-my-pi,
+opencode, pi, qwen). An observation is still not a qualification.
 
 The repository is structurally sound: every machine contract validates, the daemon is
 authenticated and owner-scoped on every route, and the local storage layer is

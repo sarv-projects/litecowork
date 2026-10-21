@@ -1104,9 +1104,11 @@ These are named gates, not assumptions:
    current published registry.
 2. **ACP authentication methods:** exact protocol support for auth method discovery,
    browser/device-code/API-key flows, cancellation, expiry, and account observation.
-3. **Per-agent adapters:** Codex, Claude Agent, OpenCode, Gemini CLI, Cline, and any
+3. **Per-agent adapters:** Codex, Claude Agent, OpenCode, Antigravity CLI, Cline, and any
    launch-critical agent require a version matrix of install, update, auth, model/session
-   options, `/`, `@`, native resources, extensions, stop/quiescence, and config drift.
+   options, `/`, `@`, native resources, extensions, stop/quiescence, and config drift. The
+   agent roster and each entry's proposed adapter path are recorded in
+   [`implementation/AGENT-PORTFOLIO-2026-10-21.md`](../implementation/AGENT-PORTFOLIO-2026-10-21.md).
 4. **SecretStore UX:** OS keychain behavior on Windows/Linux, zeroization boundary,
    crash/log leakage tests, and migration/backup behavior of SecretRefs.
 5. **Native command discovery:** determine which agents expose a machine-readable command

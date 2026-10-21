@@ -106,7 +106,7 @@ story contracts to assign fresh, non-overlapping whole-epic owners when slots ex
    `target-windows` cache.
 5. Continue V1 implementation from the dependency-ready backlog. Resume IN_PROGRESS E01,
    E02, E03, E05, E07, E08, and E09 work before unrelated PLANNED features where their
-   source dependencies permit. The 15-agent portfolio is a target, not 15 qualified
+   source dependencies permit. The agent portfolio is a target, not a set of qualified
    adapters. Do not enable native Conversation/Task dispatch without the accepted Trust,
    Environment, fencing and containment gates.
 6. Use available subagents for distinct whole-epic write ownership; inspect every diff,
