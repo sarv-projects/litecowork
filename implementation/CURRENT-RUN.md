@@ -1,3 +1,34 @@
+## 2026-10-21 — Whole-repository audit and served-route drift gate
+
+- **Audit.** Five independent read-only lanes (Rust core, daemon/API, desktop UI,
+  docs↔code cross-check, remaining-work map) audited every crate, the Operator router, the
+  desktop and Tauri bridge, all of `docs/**`, and all of `implementation/**`. The
+  consolidated report is [`CODEBASE-AUDIT-2026-10-21.md`](CODEBASE-AUDIT-2026-10-21.md).
+- **Headline findings.** 53 published OpenAPI operations are target-only and had no
+  machine marker; 44 SQLite tables and 77 registered events have no producer; five domain
+  modules (notification decisions, occurrence settlement, capability-bridge qualification,
+  delegation benchmark, atomic capability dispatch) are called only from tests; the
+  persisted quiet-hours shape cannot be parsed by the domain; Automation occurrences never
+  leave `STARTED`, so `max_concurrent_occurrences` and Workspace archive eventually block;
+  automation cursors are never deleted, so any Workspace that enabled an Automation can
+  never be archived; 16 daemon error codes are outside the canonical enum; the desktop
+  renders a false empty Library state after a failed read and a green "Completed" pill that
+  overstates verification; several review packets cite paths that do not exist.
+- **New gate.** `scripts/audit_served_routes.py` parses the composed router, compares it
+  with the published OpenAPI operations, and writes
+  `implementation/served-route-inventory.json`: **172 served operations, 53 target-only
+  operations, 1 served route outside OpenAPI** (`POST /v1/stream`, a documented WebSocket
+  endpoint). `scripts/check.sh` now runs the gate, so a newly published operation that the
+  daemon does not serve fails instead of passing silently.
+- **Owner decisions recorded for follow-up** (not yet answered): launch harness, Environment
+  isolation mode, backup API surface, LiteSPM authority, and the V1 notification delivery
+  shape. Each unblocks multiple stories; each is listed in the audit report.
+- **Still open.** The audit's ranked local queue (items 2–10) is not yet implemented;
+  `E13-S03` flow/benchmark verdicts, packaged/owner gates, and E11/E12 remain out of
+  local reach.
+- **Cleanup/disk.** No schema, worktree, branch, or agent process change; temporary logs
+  removed.
+
 ## 2026-10-21 — E02-S04 owner-scoped UserRequest list
 
 - **Contract correction.** OpenAPI `UserRequestPage.items` now points at

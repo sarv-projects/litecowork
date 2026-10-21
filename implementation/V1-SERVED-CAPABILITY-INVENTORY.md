@@ -10,13 +10,35 @@ The OpenAPI server base is `/v1`; table paths show the resolved daemon path
 
 ## Router and transport boundary
 
-[`build_operator_router`](../apps/litecoworkd/src/operator.rs#L1349) composes **19
-merged route factories** plus inline registrations. One additional native folder-selection
-route is explicitly private to authenticated local IPC and excluded from OpenAPI
-([`operator.rs`](../apps/litecoworkd/src/operator.rs#L1384)). OpenAPI and structural
-coverage counts do not enumerate this Axum composition. The structural contract report
+[`build_operator_router`](../apps/litecoworkd/src/operator.rs) composes **36 merged route
+factories** plus inline registrations. The served/target split is now machine-checked:
+[`audit_served_routes.py`](../scripts/audit_served_routes.py) parses the composed router,
+compares it with the published OpenAPI operations, and writes
+[`served-route-inventory.json`](served-route-inventory.json). The gate
+`scripts/check.sh` runs it, so a newly published operation that the daemon does not serve
+cannot pass unnoticed again. One additional native folder-selection route is explicitly
+private to authenticated local IPC and excluded from OpenAPI
+([`operator.rs`](../apps/litecoworkd/src/operator.rs)). The structural contract report
 counts OpenAPI operations from YAML and checks catalog entries against that spec; it does
 not parse the daemon router ([`audit_v1_contracts.py`](../scripts/audit_v1_contracts.py#L20)).
+
+## Served versus published surface
+
+The generated inventory is the authority for what the daemon actually serves:
+
+- **172 published operations are served** by the composed router.
+- **53 published operations are target-only.** They are recorded by path, method, and
+  `operationId` in `implementation/served-route-inventory.json` and must not be described as
+  shipped. The largest groups are the Task control and read surface
+  (`steer`/`cancel`/`pause`/`resume`/`attempts`/`timeline`/`effects`), all Environment
+  operations, Connections and channel bindings, Runtime inventory, agent install and
+  binding configuration, backups, and `POST /v1/tasks/{taskId}/plan-revisions`.
+- **1 served route is outside OpenAPI by design:** `POST /v1/stream`, the reconnectable
+  presentation stream described in `docs/API.md` with its own
+  `docs/schemas/operator-stream.schema.json`.
+
+Regenerate with `scripts/audit_served_routes.py --write` after any route change, and review
+the diff: a new target-only operation is a contract decision, not a default.
 
 [`OperatorServer::start`](../apps/litecoworkd/src/operator.rs#L1109) derives and binds
 the local endpoint, then serves this router through authenticated IPC; the desktop

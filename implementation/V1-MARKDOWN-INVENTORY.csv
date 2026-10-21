@@ -104,10 +104,11 @@ docs/adr/0025-agent-module-registry-and-native-configuration.md,59,2979,79ff6908
 docs/adr/README.md,39,3349,54afa5933f64b39dbeed80004bc0410fc19759281af145ac7defe5b709c86099,agent/composer;workflow/recovery;trust/security,True
 implementation/AGENT-MODULE-AUDIT.md,532,17591,9507efb440a7f68667bd5b89fe90c9a4fb682e88fb816a54dc616f85dafc3632,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/AGENT-PORTFOLIO-2026-10-16.md,156,26139,c3c53ff30e9068100cd1659a241a460356afe7fb8af4830afd3b0aa0597c4a7a,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
-implementation/ARCHITECTURE-COVERAGE.md,177,15970,0a7b922779ae30313f513d509b08c740f4ddf4a7d3c2d7f54262bb08029c1039,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/ARCHITECTURE-COVERAGE.md,177,15970,30c6e3952228fd77337141be7763c1f944eb119a5d30b6c720657f6aaabf47d7,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/AUDIT.md,155,13284,a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/CODEBASE-AUDIT-2026-10-21.md,252,17706,770eb95bb804aadb8913d8bbd3ddd847d637b1f598fc4348ca3ffe26633bc13c,browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/COVERAGE.md,33,2007,de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945,rendering,True
-implementation/CURRENT-RUN.md,9665,708860,e67aeaf6757972c13ab777ac2710bfa03f4bd235c4a714f0eca80443afb95b0f,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/CURRENT-RUN.md,9696,711172,ad5ec130cf233bf32e6a069f66e2e1908723fee7dd87faf8881b732fb086a8f2,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/DOC-AUDIT-2026-10-10.md,173,18626,ff27abd7e23a2a34fde65ae200540a04bdc376cd3a9527f07304e2790345bc1c,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-13.md,316,19422,938e000f5933e0edaa3d08009202b5b9fc8a13f10128b939e6f732ffb488eaa0,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-20.md,149,13440,2bf8dbc19b03276796ef59bd749ac044666b109cc178bacbe30388ef81aedcfa,browser/computer;rendering;workflow/recovery;trust/security,True
@@ -132,7 +133,7 @@ implementation/V1-EVERY-MD-AUDIT-2026-10-12.md,179,18733,49fd6f683de5619982f2159
 implementation/V1-IMPLEMENTATION-REAUDIT-2026-10-13.md,292,35382,1b935ece7feb23bff2f1bebfdd24bd1a0c9ed537f96c9b7a0a2387503d526bd0,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md,81,9015,744ac1294a31c569833f0dc8e349751b562268bee4f6c4fcce1720f90db8a2db,browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/V1-SEMANTIC-MD-FINDINGS-2026-10-12.md,73,12463,716f85e04ed2ed99f385aabf8b41fa0e274f06b0d833136efa4ef647e285c68d,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-implementation/V1-SERVED-CAPABILITY-INVENTORY.md,64,14550,ea4f34c1f61a849a0eb78708d953311e310814d773301332d1d7388594d2c2f0,agent/composer;browser/computer;workflow/recovery;trust/security,True
+implementation/V1-SERVED-CAPABILITY-INVENTORY.md,86,15896,c986e36c180312d89717b25ccbd28576c5d5bd5eacec704a6e087632b67b6938,agent/composer;browser/computer;workflow/recovery;trust/security,True
 implementation/WORKFLOWS.md,70,7964,8c37420bf900ba80f557c7759021d3460ee7adf61cb42a5d4c37b0e8b6c6f322,browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/epics/E01.md,799,65888,0b72423e849da7538df24c91e5466d443972f843be6d66720853480009556eb5,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/epics/E02.md,618,97547,7a337ef1e29ed626127ab6bff0d48c70b332bd2f6b9ed8fe0d5932ea690fd669,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
