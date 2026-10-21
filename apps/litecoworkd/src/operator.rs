@@ -116,6 +116,8 @@ mod discover_operator;
 mod goal_operator;
 #[path = "needs_you_operator.rs"]
 mod needs_you_operator;
+#[path = "notification_operator.rs"]
+mod notification_operator;
 #[cfg(all(test, unix))]
 #[path = "operator_ipc_tests.rs"]
 mod operator_ipc_tests;
@@ -1546,6 +1548,7 @@ fn build_operator_router(state: ApiState) -> Router {
         .merge(goal_operator::routes())
         .merge(skill_operator::routes())
         .merge(discover_operator::routes())
+        .merge(notification_operator::routes())
         .merge(task_lead_handoff_operator::routes())
         .merge(suggestions_operator::routes())
         .merge(presentation_operator::routes())

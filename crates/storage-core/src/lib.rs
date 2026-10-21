@@ -198,6 +198,8 @@ pub use backup::{
     BackupPayloadDescriptor, BackupRestoreOutcome, BackupVerification, SchemaCompatibility,
     backup_integrity_payload, check_schema_compatibility,
 };
+mod notification;
+pub use notification::{NotificationPreferenceRecord, NotificationRecord, QuietHours};
 // Domain command values and their transactional write port are defined with the
 // domain service; storage-core re-exports the port as the adapter boundary.
 pub use domain_responsibility::{

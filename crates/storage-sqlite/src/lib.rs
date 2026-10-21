@@ -20,6 +20,7 @@ mod invocations;
 mod lead_handoff_boundary;
 mod lead_failover_choice_request;
 mod needs_you;
+mod notification;
 mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
 #[cfg(test)]

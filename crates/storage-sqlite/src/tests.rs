@@ -4,6 +4,8 @@ mod conversation_turn_tests;
 mod invocation_tests;
 #[path = "needs_you_tests.rs"]
 mod needs_you_tests;
+#[path = "notification_tests.rs"]
+mod notification_tests;
 #[path = "resource_upload_gc_tests.rs"]
 mod resource_upload_gc_tests;
 #[path = "rich_presentation_tests.rs"]

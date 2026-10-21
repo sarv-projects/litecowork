@@ -1,3 +1,33 @@
+## 2026-10-21 — E09-S04 notification read surface on the canonical tables
+
+- **Corrected blocker.** E09-S04 was recorded as `BLOCKED on a lead-owned migration` with
+  proposed `notification_deliveries` / `workspace_notification_preferences` DDL. Both
+  canonical tables already exist in `docs/schemas/sqlite-v1.sql`
+  (`notification_preferences`, `notification_deliveries`) and survive every later
+  migration. The packet's proposed names and columns conflicted with the applied schema
+  and would have failed. The correction is `492e3b4`.
+- **Served.** `GET /v1/notifications` (status filter, limit 1–200, keyset cursor) and
+  `GET /v1/notification-preferences` are served by
+  `apps/litecoworkd/src/notification_operator.rs`, reading through
+  `crates/storage-sqlite/src/notification.rs` and the contract-shaped records in
+  `crates/storage-core/src/notification.rs`. Both are owner-scoped Core-data reads
+  (`authorized_data_workspace`), so an ARCHIVED Workspace stays readable and a foreign
+  principal receives `NOT_FOUND`.
+- **Why the cursor carries two fields.** `created_at` is not unique; a page boundary on a
+  shared second could repeat or skip a delivery, so the cursor is
+  `(created_at, delivery_id)` and the route fetches one extra row so `next_cursor` reflects
+  a real next row.
+- **Tests.** `storage-sqlite --lib notification_tests` 7/7 (tied-timestamp paging, status
+  filter, archived readability, foreign principal, half-cursor/limit/status rejection,
+  preference parsing, unreadable JSON to `Integrity`); `litecoworkd --bin litecoworkd
+  notification_operator` covers the cursor round-trip, cross-Workspace refusal, malformed
+  and tampered cursors, a control character, and a wrong cursor version.
+  `cargo check --tests` for both crates passes.
+- **Still open (not claimed).** The delivery pipeline, the versioned
+  `PUT /v1/notification-preferences/{event_class}` with its request receipt, the
+  `notification.preference.changed.v1` / `notification.delivery.changed.v1` events, the OS
+  provider, the desktop surface, and the deep link. E09-S04 stays `PLANNED`.
+
 ## 2026-10-21 — Architecture review: seven candidates resolved in code and gates
 
 A cross-analysis of `ARCHITECTURE.md`, the contract corpus, and the current source produced
