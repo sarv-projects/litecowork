@@ -36,15 +36,37 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 # The agent roster the repository knows about. Each entry is the executable the
 # harness is expected to provide; the script records the version it observes.
+#
+# The roster is the owner-directed list in
+# `implementation/AGENT-PORTFOLIO-2026-10-21.md`. Every roster entry gets a row here,
+# so a missing harness is reported as a host observation instead of disappearing
+# from the matrix. Gemini CLI is intentionally absent: the owner replaced it with
+# Antigravity CLI, and OpenCode is tracked on its v2 line.
 AGENT_EXECUTABLES: dict[str, tuple[str, ...]] = {
+    "aider": ("aider",),
+    "amp": ("amp",),
+    "antigravity": ("agy",),
+    "auggie-cli": ("auggie",),
+    "claude-code": ("claude",),
     "cline": ("cline",),
     "codex": ("codex",),
-    "opencode": ("opencode",),
-    "claude-code": ("claude",),
+    "command-code": ("commandcode",),
     "copilot": ("copilot",),
+    "cursor-cli": ("cursor-agent", "cursor"),
+    "devin-cli": ("devin",),
     "droid": ("droid",),
-    "gemini": ("gemini",),
     "goose": ("goose",),
+    "grok-build": ("grok",),
+    "junie-cli": ("junie",),
+    "kimi-code": ("kimi",),
+    "kiro-cli": ("kiro-cli",),
+    "minimax-code": ("minimax",),
+    "mimocode": ("mimo",),
+    "mistral-vibe": ("vibe-acp",),
+    "muse-code": ("muse",),
+    "oh-my-pi": ("omp",),
+    "opencode": ("opencode",),
+    "pi": ("pi",),
     "qwen": ("qwen",),
 }
 
