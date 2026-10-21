@@ -158,7 +158,7 @@ pub mod user_request_details;
 pub use user_request_details::{
     USER_REQUEST_CHOICES_MAX_BYTES, USER_REQUEST_DETAIL_MAX_BYTES, USER_REQUEST_ID_MAX_BYTES,
     USER_REQUEST_PROMPT_MAX_BYTES, UserRequestChoice, UserRequestDetail,
-    UserRequestDetailReadStore, UserRequestScope,
+    UserRequestDetailReadStore, UserRequestScope, UserRequestSummary,
 };
 
 mod environment;

@@ -6272,50 +6272,6 @@ export type components = {
             items: components["schemas"]["ResourceRevisionView"][];
             next_cursor?: string | null;
         };
-        UserRequest: ({
-            request_id: string;
-            workspace_id: string;
-            conversation_id?: string | null;
-            conversation_turn_id?: string | null;
-            task_id?: string | null;
-            attempt_id?: string | null;
-            agent_session_id: string;
-            invocation_id?: string | null;
-            /** @enum {string} */
-            kind: "QUESTION" | "DECISION" | "RESOURCE_SELECTION" | "EXTERNAL_AUTHORIZATION";
-            /** @enum {string} */
-            interaction_mode: "FORM" | "EXTERNAL_URL";
-            prompt: string;
-            /** @description Always null in this projection. The pinned response schema is never returned to the UI, matching the choice value rule. */
-            response_schema?: null;
-            choices: components["schemas"]["UserRequestDetailChoice"][];
-            /** @enum {string} */
-            status: "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED";
-            /** Format: date-time */
-            expires_at?: string | null;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            resolved_at?: string | null;
-            resolved_by?: components["schemas"]["PrincipalRef"] | null;
-            response_digest?: string | null;
-            version: number;
-        } & (unknown & unknown)) & ({
-            conversation_id: string;
-            conversation_turn_id: string;
-            task_id?: null;
-            attempt_id?: null;
-        } | {
-            conversation_id?: null;
-            conversation_turn_id?: null;
-            task_id: string;
-            attempt_id?: null;
-        } | {
-            conversation_id?: null;
-            conversation_turn_id?: null;
-            task_id: string;
-            attempt_id: string;
-        });
         UserRequestDetailScope: {
             /** @constant */
             kind: "CONVERSATION";
@@ -6357,9 +6313,27 @@ export type components = {
             expires_at: string | null;
             /** Format: date-time */
             resolved_at: string | null;
+        } & (unknown & unknown);
+        UserRequestSummary: {
+            request_id: string;
+            workspace_id: string;
+            scope: components["schemas"]["UserRequestDetailScope"];
+            /** @enum {string} */
+            kind: "QUESTION" | "DECISION" | "RESOURCE_SELECTION" | "EXTERNAL_AUTHORIZATION";
+            /** @enum {string} */
+            interaction_mode: "FORM" | "EXTERNAL_URL";
+            /** @enum {string} */
+            status: "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** Format: date-time */
+            resolved_at: string | null;
+            version: number;
         };
         UserRequestPage: {
-            items: components["schemas"]["UserRequest"][];
+            items: components["schemas"]["UserRequestSummary"][];
             next_cursor?: string | null;
         };
         /** @description Submit either non-secret FORM data or a safe choice identifier. Choice identifiers are resolved against the immutable request inside the response transaction; their values and response schema are never returned to the UI. EXTERNAL_URL accepts only the response form with exactly {action: accept|decline|cancel}. */
@@ -12549,7 +12523,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Structured pending user decisions and questions */
+            /** @description Owner-scoped, prompt-free UserRequest summaries ordered by created_at descending then request_id ascending. Prompts, choices, response schemas, agent-session handles, and provider URLs are omitted; the cursor binds Workspace, status, and limit. */
             200: {
                 headers: {
                     [name: string]: unknown;

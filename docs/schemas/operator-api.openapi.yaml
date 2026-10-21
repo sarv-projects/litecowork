@@ -3594,7 +3594,7 @@ paths:
       - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Structured pending user decisions and questions
+          description: Owner-scoped, prompt-free UserRequest summaries ordered by created_at descending then request_id ascending. Prompts, choices, response schemas, agent-session handles, and provider URLs are omitted; the cursor binds Workspace, status, and limit.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/UserRequestPage'}
@@ -8416,70 +8416,6 @@ components:
           type: array
           items: {$ref: '#/components/schemas/ResourceRevisionView'}
         next_cursor: {type: [string, 'null']}
-    UserRequest:
-      type: object
-      oneOf:
-      - required: [conversation_id, conversation_turn_id]
-        properties:
-          conversation_id: {type: string}
-          conversation_turn_id: {type: string}
-          task_id: {type: 'null'}
-          attempt_id: {type: 'null'}
-      - required: [task_id]
-        properties:
-          conversation_id: {type: 'null'}
-          conversation_turn_id: {type: 'null'}
-          task_id: {type: string}
-          attempt_id: {type: 'null'}
-      - required: [task_id, attempt_id]
-        properties:
-          conversation_id: {type: 'null'}
-          conversation_turn_id: {type: 'null'}
-          task_id: {type: string}
-          attempt_id: {type: string}
-      required: [request_id, workspace_id, agent_session_id, kind, interaction_mode, prompt, choices, status, created_at, version]
-      properties:
-        request_id: {type: string}
-        workspace_id: {type: string}
-        conversation_id: {type: [string, 'null']}
-        conversation_turn_id: {type: [string, 'null']}
-        task_id: {type: [string, 'null']}
-        attempt_id: {type: [string, 'null']}
-        agent_session_id: {type: string}
-        invocation_id: {type: [string, 'null']}
-        kind: {type: string, enum: [QUESTION, DECISION, RESOURCE_SELECTION, EXTERNAL_AUTHORIZATION]}
-        interaction_mode: {type: string, enum: [FORM, EXTERNAL_URL]}
-        prompt: {type: string}
-        response_schema:
-          description: >-
-            Always null in this projection. The pinned response schema is never returned
-            to the UI, matching the choice value rule.
-          type: 'null'
-        choices:
-          type: array
-          items: {$ref: '#/components/schemas/UserRequestDetailChoice'}
-        status: {type: string, enum: [PENDING, ANSWERED, DISMISSED, EXPIRED, CANCELLED]}
-        expires_at: {type: [string, 'null'], format: date-time}
-        created_at: {type: string, format: date-time}
-        resolved_at: {type: [string, 'null'], format: date-time}
-        resolved_by:
-          oneOf: [{$ref: '#/components/schemas/PrincipalRef'}, {type: 'null'}]
-        response_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
-        version: {type: integer, minimum: 1}
-      allOf:
-      - if:
-          properties: {interaction_mode: {const: EXTERNAL_URL}}
-          required: [interaction_mode]
-        then:
-          properties:
-            kind: {const: EXTERNAL_AUTHORIZATION}
-            response_schema: {type: 'null'}
-            choices: {maxItems: 0}
-      - if:
-          properties: {kind: {const: EXTERNAL_AUTHORIZATION}}
-          required: [kind]
-        then:
-          properties: {interaction_mode: {const: EXTERNAL_URL}}
     UserRequestDetailScope:
       oneOf:
       - type: object
@@ -8531,13 +8467,42 @@ components:
         created_at: {type: string, format: date-time}
         expires_at: {type: [string, 'null'], format: date-time}
         resolved_at: {type: [string, 'null'], format: date-time}
+      allOf:
+      - if:
+          properties: {interaction_mode: {const: EXTERNAL_URL}}
+          required: [interaction_mode]
+        then:
+          properties:
+            kind: {const: EXTERNAL_AUTHORIZATION}
+            choices: {maxItems: 0}
+      - if:
+          properties: {kind: {const: EXTERNAL_AUTHORIZATION}}
+          required: [kind]
+        then:
+          properties: {interaction_mode: {const: EXTERNAL_URL}}
+    UserRequestSummary:
+      type: object
+      additionalProperties: false
+      required: [request_id, workspace_id, scope, kind, interaction_mode, status, created_at, expires_at, resolved_at, version]
+      properties:
+        request_id: {type: string, minLength: 1, maxLength: 512}
+        workspace_id: {type: string, minLength: 1, maxLength: 512}
+        scope: {$ref: '#/components/schemas/UserRequestDetailScope'}
+        kind: {type: string, enum: [QUESTION, DECISION, RESOURCE_SELECTION, EXTERNAL_AUTHORIZATION]}
+        interaction_mode: {type: string, enum: [FORM, EXTERNAL_URL]}
+        status: {type: string, enum: [PENDING, ANSWERED, DISMISSED, EXPIRED, CANCELLED]}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        resolved_at: {type: [string, 'null'], format: date-time}
+        version: {type: integer, minimum: 1}
     UserRequestPage:
       type: object
+      additionalProperties: false
       required: [items]
       properties:
         items:
           type: array
-          items: {$ref: '#/components/schemas/UserRequest'}
+          items: {$ref: '#/components/schemas/UserRequestSummary'}
         next_cursor: {type: [string, 'null']}
     UserRequestResponseInput:
       description: >-

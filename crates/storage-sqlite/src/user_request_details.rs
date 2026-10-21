@@ -1,4 +1,5 @@
 use super::{Command, SqliteWorkspaceStore, map_database_error};
+use crate::workspace_access::require_read_access;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 use serde::de::IgnoredAny;
@@ -6,7 +7,7 @@ use std::sync::mpsc;
 use storage_core::{
     StoreError, USER_REQUEST_CHOICES_MAX_BYTES, USER_REQUEST_DETAIL_MAX_BYTES,
     USER_REQUEST_ID_MAX_BYTES, USER_REQUEST_PROMPT_MAX_BYTES, UserRequestChoice, UserRequestDetail,
-    UserRequestDetailReadStore, UserRequestScope,
+    UserRequestDetailReadStore, UserRequestScope, UserRequestSummary,
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -20,6 +21,193 @@ struct StoredUserRequestChoice {
     // materialized in this read-only detail projection.
     #[serde(rename = "value")]
     _value: IgnoredAny,
+}
+
+impl SqliteWorkspaceStore {
+    /// Reads one owner-scoped page of prompt-free UserRequest summaries.
+    ///
+    /// Ordering is descending `created_at` and ascending `request_id`; the
+    /// all-or-nothing cursor pair follows that exact ordering. The caller asks
+    /// for one extra row so the route can decide whether `next_cursor` exists.
+    pub fn list_user_requests_page(
+        &self,
+        owner_principal_id: &str,
+        workspace_id: &str,
+        status: Option<&str>,
+        after_created_at: Option<&str>,
+        after_request_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<UserRequestSummary>, StoreError> {
+        if !(1..=101).contains(&limit)
+            || owner_principal_id.trim().is_empty()
+            || owner_principal_id.len() > 256
+            || workspace_id.trim().is_empty()
+            || workspace_id.len() > 256
+            || status.is_some_and(|value| {
+                !matches!(
+                    value,
+                    "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED"
+                )
+            })
+            || after_created_at.is_some() != after_request_id.is_some()
+            || after_created_at.is_some_and(|value| !valid_timestamp(value))
+            || after_request_id.is_some_and(|value| {
+                value.trim().is_empty() || value.len() > USER_REQUEST_ID_MAX_BYTES
+            })
+        {
+            return Err(StoreError::Invalid(
+                "UserRequest page query is invalid".to_owned(),
+            ));
+        }
+        let owner = owner_principal_id.to_owned();
+        let workspace = workspace_id.to_owned();
+        let status = status.map(str::to_owned);
+        let after = after_created_at
+            .zip(after_request_id)
+            .map(|(created_at, request_id)| (created_at.to_owned(), request_id.to_owned()));
+        let (send, recv) = mpsc::channel();
+        self.execute_command(
+            Command::Operation {
+                operation: Box::new(move |connection| {
+                    let result = (|| {
+                        require_read_access(connection, &workspace, &owner)?;
+                        let after_created = after.as_ref().map(|(created_at, _)| created_at);
+                        let after_id = after.as_ref().map(|(_, request_id)| request_id);
+                        let mut statement = connection
+                            .prepare(
+                                "SELECT request_id, workspace_id, conversation_id,
+                                        conversation_turn_id, task_id, attempt_id, kind,
+                                        interaction_mode, status, created_at, expires_at,
+                                        resolved_at, version
+                                 FROM user_requests
+                                 WHERE workspace_id = ?1
+                                   AND (?2 IS NULL OR status = ?2)
+                                   AND (?3 IS NULL OR created_at < ?3
+                                        OR (created_at = ?3 AND request_id > ?4))
+                                 ORDER BY created_at DESC, request_id ASC
+                                 LIMIT ?5",
+                            )
+                            .map_err(map_database_error)?;
+                        let mut rows = statement
+                            .query(params![workspace, status, after_created, after_id, limit as i64])
+                            .map_err(map_database_error)?;
+                        let mut items = Vec::new();
+                        while let Some(row) = rows.next().map_err(map_database_error)? {
+                            let request_id: String = row.get(0).map_err(map_database_error)?;
+                            let workspace_id: String = row.get(1).map_err(map_database_error)?;
+                            let conversation_id: Option<String> =
+                                row.get(2).map_err(map_database_error)?;
+                            let conversation_turn_id: Option<String> =
+                                row.get(3).map_err(map_database_error)?;
+                            let task_id: Option<String> = row.get(4).map_err(map_database_error)?;
+                            let attempt_id: Option<String> =
+                                row.get(5).map_err(map_database_error)?;
+                            let kind: String = row.get(6).map_err(map_database_error)?;
+                            let interaction_mode: String =
+                                row.get(7).map_err(map_database_error)?;
+                            let status: String = row.get(8).map_err(map_database_error)?;
+                            let created_at: String = row.get(9).map_err(map_database_error)?;
+                            let expires_at: Option<String> =
+                                row.get(10).map_err(map_database_error)?;
+                            let resolved_at: Option<String> =
+                                row.get(11).map_err(map_database_error)?;
+                            let version: i64 = row.get(12).map_err(map_database_error)?;
+                            validate_id(&request_id, "UserRequest ID")
+                                .map_err(as_integrity_error)?;
+                            validate_id(&workspace_id, "Workspace ID")
+                                .map_err(as_integrity_error)?;
+                            if workspace_id != workspace {
+                                return Err(StoreError::Integrity(
+                                    "UserRequest Workspace changed during the page read"
+                                        .to_owned(),
+                                ));
+                            }
+                            if !matches!(
+                                kind.as_str(),
+                                "QUESTION"
+                                    | "DECISION"
+                                    | "RESOURCE_SELECTION"
+                                    | "EXTERNAL_AUTHORIZATION"
+                            ) || !matches!(
+                                status.as_str(),
+                                "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED"
+                            ) || version < 1
+                                || !valid_timestamp(&created_at)
+                                || expires_at
+                                    .as_deref()
+                                    .is_some_and(|value| !valid_timestamp(value))
+                                || resolved_at
+                                    .as_deref()
+                                    .is_some_and(|value| !valid_timestamp(value))
+                            {
+                                return Err(StoreError::Integrity(
+                                    "UserRequest row is malformed".to_owned(),
+                                ));
+                            }
+                            items.push(UserRequestSummary {
+                                request_id,
+                                workspace_id,
+                                scope: user_request_scope(
+                                    conversation_id,
+                                    conversation_turn_id,
+                                    task_id,
+                                    attempt_id,
+                                )?,
+                                kind,
+                                interaction_mode,
+                                status,
+                                created_at,
+                                expires_at,
+                                resolved_at,
+                                version: u64::try_from(version).map_err(|_| {
+                                    StoreError::Integrity(
+                                        "UserRequest version is not positive".to_owned(),
+                                    )
+                                })?,
+                            });
+                        }
+                        Ok(items)
+                    })();
+                    let _ = send.send(result);
+                }),
+            },
+            recv,
+        )
+    }
+}
+
+fn user_request_scope(
+    conversation_id: Option<String>,
+    conversation_turn_id: Option<String>,
+    task_id: Option<String>,
+    attempt_id: Option<String>,
+) -> Result<UserRequestScope, StoreError> {
+    match (conversation_id, conversation_turn_id, task_id, attempt_id) {
+        (Some(conversation_id), Some(conversation_turn_id), None, None) => {
+            validate_id(&conversation_id, "Conversation ID").map_err(as_integrity_error)?;
+            validate_id(&conversation_turn_id, "Conversation turn ID")
+                .map_err(as_integrity_error)?;
+            Ok(UserRequestScope::Conversation {
+                conversation_id,
+                conversation_turn_id,
+            })
+        }
+        (None, None, Some(task_id), None) => {
+            validate_id(&task_id, "Task ID").map_err(as_integrity_error)?;
+            Ok(UserRequestScope::TaskPlanning { task_id })
+        }
+        (None, None, Some(task_id), Some(attempt_id)) => {
+            validate_id(&task_id, "Task ID").map_err(as_integrity_error)?;
+            validate_id(&attempt_id, "Attempt ID").map_err(as_integrity_error)?;
+            Ok(UserRequestScope::AttemptExecution {
+                task_id,
+                attempt_id,
+            })
+        }
+        _ => Err(StoreError::Integrity(
+            "UserRequest scope is malformed".to_owned(),
+        )),
+    }
 }
 
 impl UserRequestDetailReadStore for SqliteWorkspaceStore {

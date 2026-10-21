@@ -51,6 +51,24 @@ pub struct UserRequestDetail {
     pub resolved_at: Option<String>,
 }
 
+/// One safe, prompt-free row in the owner-scoped UserRequest list. The list
+/// intentionally excludes prompts, choices, response schemas, provider URLs,
+/// agent-session handles, and response records.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserRequestSummary {
+    pub request_id: String,
+    pub workspace_id: String,
+    pub scope: UserRequestScope,
+    pub kind: String,
+    pub interaction_mode: String,
+    pub status: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub resolved_at: Option<String>,
+    pub version: u64,
+}
+
 /// Looks up a UserRequest only within the already-authorized selected Workspace.
 /// A missing or foreign-Workspace request is represented by `None` so callers can
 /// return the same nondisclosing NOT_FOUND response for both cases.

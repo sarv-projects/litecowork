@@ -8,7 +8,7 @@ use storage_core::{
     DismissUserRequestCommit, EventDraft, RespondUserRequestCommit, USER_REQUEST_DETAIL_MAX_BYTES,
     USER_REQUEST_ID_MAX_BYTES, USER_REQUEST_RESPONSE_MAX_BYTES, UserRequestDetailReadStore,
     UserRequestResolutionActor, UserRequestResolutionStore, UserRequestResponseInput,
-    UserRequestResponseRecord,
+    UserRequestResponseRecord, UserRequestSummary,
 };
 use storage_sqlite::SqliteUserRequestResolutionStore;
 
@@ -33,6 +33,7 @@ impl FromRef<ApiState> for UserRequestApiState {
 
 pub(super) fn routes() -> Router<UserRequestApiState> {
     Router::new()
+        .route("/v1/user-requests", get(list_user_requests))
         .route(
             "/v1/user-requests/{request_id}",
             get(get_user_request_detail),
@@ -314,6 +315,157 @@ async fn dismiss_user_request(
 
 async fn user_request_no_store(request: Request<Body>, next: Next) -> Response {
     add_no_store(next.run(request).await)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequestListQuery {
+    status: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequestListCursor {
+    version: u8,
+    workspace_id: String,
+    status: Option<String>,
+    limit: usize,
+    created_at: String,
+    request_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequestPageView {
+    items: Vec<UserRequestSummary>,
+    next_cursor: Option<String>,
+}
+
+async fn list_user_requests(
+    State(state): State<UserRequestApiState>,
+    headers: HeaderMap,
+    query: Result<axum::extract::Query<UserRequestListQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let parsed = (|| -> Result<(String, Option<String>, usize, Option<(String, String)>), Response> {
+        let workspace_id = selected_workspace(&headers)?;
+        let query = query.map_err(|_| invalid_user_request("UserRequest page query is invalid"))?.0;
+        let status = match query.status {
+            Some(value)
+                if matches!(
+                    value.as_str(),
+                    "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED"
+                ) =>
+            {
+                Some(value)
+            }
+            Some(_) => return Err(invalid_user_request("UserRequest status is invalid")),
+            None => None,
+        };
+        let limit = query.limit.unwrap_or(50);
+        if !(1..=100).contains(&limit) {
+            return Err(invalid_user_request("UserRequest page limit is invalid"));
+        }
+        let cursor = match query.cursor {
+            None => None,
+            Some(encoded) => {
+                if encoded.is_empty() || encoded.len() > 2048 {
+                    return Err(invalid_user_request("UserRequest page cursor is invalid"));
+                }
+                let bytes = URL_SAFE_NO_PAD
+                    .decode(encoded.as_bytes())
+                    .map_err(|_| invalid_user_request("UserRequest page cursor is invalid"))?;
+                let cursor: UserRequestListCursor = serde_json::from_slice(&bytes)
+                    .map_err(|_| invalid_user_request("UserRequest page cursor is invalid"))?;
+                if cursor.version != 1
+                    || cursor.workspace_id != workspace_id
+                    || cursor.status != status
+                    || cursor.limit != limit
+                    || cursor.request_id.trim().is_empty()
+                    || cursor.request_id.len() > USER_REQUEST_ID_MAX_BYTES
+                    || !valid_cursor_timestamp(&cursor.created_at)
+                {
+                    return Err(invalid_user_request("UserRequest page cursor is invalid"));
+                }
+                Some((cursor.created_at, cursor.request_id))
+            }
+        };
+        Ok((workspace_id, status, limit, cursor))
+    })();
+    let (workspace_id, status, limit, cursor) = match parsed {
+        Ok(value) => value,
+        Err(response) => return add_no_store(response),
+    };
+    let owner = state.principal_id.clone();
+    let selected = workspace_id.clone();
+    let after_created = cursor.as_ref().map(|(created_at, _)| created_at.clone());
+    let after_request = cursor.as_ref().map(|(_, request_id)| request_id.clone());
+    let store = state.store.clone();
+    let status_for_read = status.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ensure_workspace_owner_for(&store, &owner, &selected)?;
+        store
+            .list_user_requests_page(
+                &owner,
+                &selected,
+                status_for_read.as_deref(),
+                after_created.as_deref(),
+                after_request.as_deref(),
+                limit + 1,
+            )
+            .map_err(user_request_detail_store_error)
+    })
+    .await;
+    let mut items = match result {
+        Ok(Ok(items)) => items,
+        Ok(Err(response)) => return add_no_store(response),
+        Err(_) => {
+            return add_no_store(operator_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "DEPENDENCY_UNAVAILABLE",
+                "UserRequest page is unavailable",
+            ));
+        }
+    };
+    let next_cursor = if items.len() > limit {
+        items.truncate(limit);
+        items.last().map(|last| {
+            URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(&UserRequestListCursor {
+                    version: 1,
+                    workspace_id,
+                    status,
+                    limit,
+                    created_at: last.created_at.clone(),
+                    request_id: last.request_id.clone(),
+                })
+                .expect("bounded UserRequest cursor serializes"),
+            )
+        })
+    } else {
+        None
+    };
+    add_no_store(
+        Json(UserRequestPageView {
+            items,
+            next_cursor,
+        })
+        .into_response(),
+    )
+}
+
+fn invalid_user_request(message: &'static str) -> Response {
+    operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", message)
+}
+
+fn valid_cursor_timestamp(value: &str) -> bool {
+    value.len() <= 64
+        && time::OffsetDateTime::parse(
+            value,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .is_ok()
 }
 
 async fn get_user_request_detail(
@@ -680,6 +832,33 @@ mod tests {
         (directory, store, router)
     }
 
+    async fn list(
+        router: Router,
+        workspace_id: &str,
+        query: &str,
+        authenticated: bool,
+    ) -> Response {
+        let mut request = Request::get(format!("/v1/user-requests{query}"))
+            .header("x-workspace-id", workspace_id)
+            .body(Body::empty())
+            .expect("list request builds");
+        if authenticated {
+            request.extensions_mut().insert(AuthenticatedLocalPeer);
+        }
+        router
+            .oneshot(request)
+            .await
+            .expect("router returns list response")
+    }
+
+    async fn list_json(response: Response) -> (StatusCode, Value) {
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 256 * 1024)
+            .await
+            .expect("list body reads");
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
     async fn get(router: Router, workspace_id: &str, request_id: &str) -> Response {
         let mut request = Request::get(format!("/v1/user-requests/{request_id}"))
             .header("x-workspace-id", workspace_id)
@@ -987,4 +1166,84 @@ mod tests {
         assert_eq!(body["status"], "DISMISSED");
         assert_eq!(body["version"], 2);
     }
+
+    #[tokio::test]
+    async fn owner_lists_prompt_free_user_requests_with_bound_cursor_pages() {
+        let (_directory, _store, router) = fixture();
+        let (status, _) = list_json(list(router.clone(), WORKSPACE, "", false).await).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let status = list(
+            router.clone(),
+            OTHER_OWNER_WORKSPACE,
+            "?status=PENDING",
+            true,
+        )
+        .await
+        .status();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let first_response = list(
+            router.clone(),
+            WORKSPACE,
+            "?status=PENDING&limit=2",
+            true,
+        )
+        .await;
+        assert_eq!(
+            first_response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+        let (status, first) = list_json(first_response).await;
+        assert_eq!(status, StatusCode::OK);
+        let items = first["items"].as_array().expect("items");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["request_id"], "request-choice");
+        assert_eq!(items[1]["request_id"], "request-dismiss");
+        assert!(items[0].get("prompt").is_none());
+        assert!(items[0].get("choices").is_none());
+        assert!(items[0].get("agent_session_id").is_none());
+        let cursor = first["next_cursor"].as_str().expect("next cursor").to_owned();
+
+        let (status, second) = list_json(
+            list(
+                router.clone(),
+                WORKSPACE,
+                &format!("?status=PENDING&limit=2&cursor={cursor}"),
+                true,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let second_items = second["items"].as_array().expect("items");
+        assert_eq!(second_items.len(), 2);
+        assert_eq!(second_items[0]["request_id"], "request-null-response");
+        assert_eq!(second_items[1]["request_id"], "request-visible");
+        assert!(second["next_cursor"].is_null());
+
+        let status = list(
+            router.clone(),
+            WORKSPACE,
+            &format!("?status=PENDING&limit=1&cursor={cursor}"),
+            true,
+        )
+        .await
+        .status();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let status = list(router.clone(), WORKSPACE, "?status=UNKNOWN", true)
+            .await
+            .status();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, empty) = list_json(
+            list(router, WORKSPACE, "?status=ANSWERED&limit=10", true).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(empty["items"], serde_json::json!([]));
+        assert!(empty["next_cursor"].is_null());
+    }
+
 }
