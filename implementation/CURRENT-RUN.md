@@ -1,3 +1,29 @@
+## 2026-10-21 — E09-S02 atomic settlement and replay evidence
+
+- **Served path unchanged.** The authenticated ManualTrigger/schedule settlement already
+  commits occurrence PENDING → CLAIMED → STARTED and one ordinary READY Task in one
+  transaction. This slice adds the missing storage evidence for the ordering and rollback
+  claims, not a new route.
+- **Replay before mutable admission.** After a slot materializes, pausing the Automation
+  would make a fresh settlement conflict. The identical retry still returns the committed
+  Task and event because the request receipt is resolved first; a different slot is
+  refused with `Conflict`. One Task and one occurrence remain.
+- **Changed payload.** Reusing the request identity with different request constraints is
+  `Conflict`; the original request still replays its committed receipt and no second
+  Task/occurrence is written.
+- **No partial write.** Reusing the materialized Task identity forces the Task insert to
+  fail after the occurrence claim. The occurrence, Task, and request receipt are absent
+  afterwards, proving the claim and insert share one transaction; the original occurrence
+  stays `STARTED` v3.
+- **Command.** `cargo test --locked --offline --jobs 2 -p storage-sqlite --lib
+  automation_host_tests::` — 25/25 passed (22 prior + 3), 34 s cached compile + 98 s test.
+- **Still open (not claimed).** SYSTEM restart/ambiguous-response/host-incarnation/
+  sleep-wake/duplicate-delivery runs, DST and handoff qualification, provider triggers,
+  and owner USER acceptance. E09-S02 stays `IN_PROGRESS`.
+- **Cleanup/disk.** One worktree, 26 branches, no agent processes. `target` 29 GB,
+  Tauri target 2.6 GB, `/tmp/opencode` 144 KB; 817 GB free. The focused test log is
+  removed after this entry.
+
 ## 2026-10-21 — E09-S04 desktop Notifications surface
 
 - **Served.** The desktop Notifications page reads `GET /v1/notifications` with a status
