@@ -247,6 +247,20 @@ revision when selected; editing an existing definition defaults to preserving it
 existing pin, including an older revision. Clearing or changing the pin is an explicit
 edit. Saving still creates a `PAUSED` Automation and does not admit a Task or run a trigger.
 
+## Exact-revision test runs
+
+An owner may create a real test Task from a saved AutomationRevision without creating an
+occurrence. The test Task pins the exact AutomationRevision and its exact RoutineRevision,
+uses the pinned Coworker revision when one is present (otherwise ordinary Routine/Workspace
+lead admission), and is recorded with `automation_test_run_id`. The Automation must be
+`PAUSED` or `ENABLED`; `DISABLED` is terminal and refuses new test runs. A test run requires
+no trigger identity and no TriggerHost binding, writes no AutomationOccurrence, and never
+advances or rewinds an AutomationCursor. The resulting Task is an ordinary authorized READY
+Task: it may start the same planning/execution path as any other Task, and it is not a
+dry-run or simulated preview. Exact idempotency receipts remain replayable after the
+Automation is disabled or the Workspace is archived; a new test run still requires an
+active Workspace and the exact current revision.
+
 ## Task inputs and trigger security
 
 ```text

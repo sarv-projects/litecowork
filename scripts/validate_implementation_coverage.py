@@ -482,6 +482,7 @@ MIGRATION_TABLE_STORY: dict[str, str] = {
     "agent_installation_observations": "E03-S07",
     "agent_lifecycle_operations": "E03-S07",
     "agent_registry_cache": "E03-S06",
+    "automation_test_runs": "E09-S03",
     "channel_host_continuity_proofs": "E11-S04",
     "channel_host_drain_proofs": "E11-S04",
     "channel_host_lease_releases": "E11-S04",

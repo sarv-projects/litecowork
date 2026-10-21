@@ -208,6 +208,7 @@ Task {
   routine_revision: u64?
   automation_id: AutomationId?
   automation_occurrence_id: OccurrenceId?
+  automation_test_run_id: TestRunId?
   origin_coworker_id: CoworkerId?
   origin_coworker_revision: u64?
   lead_agent_binding_id: AgentBindingId
@@ -1375,6 +1376,20 @@ AutomationRevision {
   created_at: Timestamp
 }
 
+AutomationTestRun {
+  test_run_id: TestRunId
+  workspace_id: WorkspaceId
+  command_key: Sha256Digest
+  automation_id: AutomationId
+  automation_revision: u64
+  routine_id: RoutineId
+  routine_revision: u64
+  task_id: TaskId?
+  requested_by: PrincipalRef
+  created_at: Timestamp
+  version: u64
+}
+
 AutomationOccurrence {
   occurrence_id: OccurrenceId
   version: u64
@@ -1397,6 +1412,13 @@ AutomationOccurrence {
   created_at: Timestamp
   updated_at: Timestamp
 }
+
+An `AutomationTestRun` is not an occurrence. It reserves one private command fingerprint
+(`command_key`) and links one ordinary Task to the exact AutomationRevision/RoutineRevision
+pins. The row is inserted and linked in the same transaction as the Task, starts at version
+1, advances once to version 2 when linked, and is then immutable. It has no cursor, trigger
+identity, or occurrence state, and a Task carrying `automation_test_run_id` must not carry
+`automation_id` or `automation_occurrence_id`.
 
 `AutomationOccurrence.version` is the monotonically increasing aggregate revision and is the
 `aggregate_state_ref.entity_revision` for every occurrence event. Creation starts at

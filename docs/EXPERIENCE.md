@@ -514,8 +514,11 @@ Each Automation run creates an ordinary Task from the pinned RoutineRevision. Us
 confirm schedule creation and material updates. `Run now` is shown when an Automation has
 a ManualTrigger and the local TriggerHost path is available. It works while the Automation
 is PAUSED, creates one request-idempotent occurrence plus a saved READY Task, and never
-enables recurring triggers. Otherwise the user can run its pinned Routine directly,
-without creating an AutomationOccurrence.
+enables recurring triggers. `Create test Task` is shown for the pinned revision even with
+no ManualTrigger; it uses the same bounded inputs, creates one ordinary READY Task with
+explicit test provenance and the exact Automation/Routine pins, and creates no occurrence
+or cursor. It is available while the definition is PAUSED or ENABLED and is refused when
+DISABLED; the UI says plainly that the test Task performs real work and is not a dry run.
 
 ## Discover
 

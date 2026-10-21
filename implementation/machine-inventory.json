@@ -691,7 +691,7 @@
     },
     {
       "name": "task_created",
-      "sha256": "82bb1b7d83b4e99efc84d06957fe3d147157d328bd5f423b2d74b028004d7138"
+      "sha256": "18a925892a0aa9b6ba30622fa4ecb82dbad199ef7ca07838299a36089a42d9a9"
     },
     {
       "name": "task_lead_agent_changed",
@@ -821,7 +821,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "68fe64d7d443b0291301c0d52f9f6b52d2d998b31a602c8172d996dbd533d268"
+      "sha256": "f7f41828b762df8919a75d764b26d3e3539507f983237396a1707a194d9c418d"
     },
     {
       "name": "pinned_resource_ref",
@@ -1449,6 +1449,12 @@
       "operationId": "runAutomationNow",
       "path": "/automations/{automationId}/run",
       "sha256": "8b864a972a88f321cb22b70262ae9be38e07b18f7680127c8a131c7e9d88219a"
+    },
+    {
+      "method": "POST",
+      "operationId": "runAutomationTest",
+      "path": "/automations/{automationId}/test-runs",
+      "sha256": "946df2e7b516f8a63aa5cebd8ba6466d6a39ad27bbcfab46b70f45b440d7b92b"
     },
     {
       "method": "GET",
@@ -2754,6 +2760,11 @@
       "path": "/automations/{automationId}/run"
     },
     {
+      "method": "POST",
+      "operationId": "runAutomationTest",
+      "path": "/automations/{automationId}/test-runs"
+    },
+    {
       "method": "GET",
       "operationId": "getLocalModelAvailability",
       "path": "/capabilities/local-models"
@@ -3952,6 +3963,14 @@
       "sha256": "df44d0744102532b6dfabb090d671cfc622961217d9e6e52b3e9aed9c6b24312"
     },
     {
+      "name": "AutomationTestRunRequest",
+      "sha256": "6cb178dbc98e2c4532a22ceda278585a381f2f4d01b6aa0038923e046482e001"
+    },
+    {
+      "name": "AutomationTestRunResponse",
+      "sha256": "bd9f4fc4bbb6ba4ea47cfba3315a9a177fce457c8a55031ac91311c77e656281"
+    },
+    {
       "name": "BlobRef",
       "sha256": "7365da3374dd35ff88fb053d612a5032285c85be24dbbe7da322c1a04281356a"
     },
@@ -5009,7 +5028,7 @@
     },
     {
       "name": "Task",
-      "sha256": "d4abac7ddad77d894378578118850f29a439b5e8e1183997eeea143fd4081661"
+      "sha256": "71f65863daed00903fb89115fa674a1c13276a4b89f9b2102be43424737aca9b"
     },
     {
       "name": "TaskEventTrigger",
@@ -5307,6 +5326,8 @@
     "AutomationRevision",
     "AutomationRevisionPage",
     "AutomationSummary",
+    "AutomationTestRunRequest",
+    "AutomationTestRunResponse",
     "BlobRef",
     "Blocker",
     "BudgetSpec",

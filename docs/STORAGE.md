@@ -1055,13 +1055,18 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
 
 ## Migrations
 
-- monotonically numbered schema migrations.
+- monotonically numbered schema migrations. Version 27 adds
+  `automation_test_runs` and the nullable `tasks.automation_test_run_id` provenance
+  column. A test-run row and its Task commit in one transaction; the row is linked to the
+  Task once and then becomes immutable. No AutomationOccurrence or AutomationCursor is
+  written, and the database triggers refuse a test Task that also carries occurrence
+  provenance or points at an unlinked reservation with different Workspace/Routine pins.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
   the schema-object fingerprint at that migration boundary. Reopening verifies every
   recorded migration name/source checksum and compares the active schema version's
   fingerprint with the current non-internal `sqlite_master` objects; historical
   fingerprints are retained because later migrations intentionally add schema objects.
-  The current schema version is 25, so the v25 fingerprint is checked against the full
+  The current schema version is 27, so the v27 fingerprint is checked against the full
   current schema. Missing migration records, changed source checksums, or changed current
   schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances

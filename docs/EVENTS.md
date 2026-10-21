@@ -471,7 +471,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `resource.created.v2` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `aggregate_version`, `context_document?` |
 | `resource.revision.created` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
 
-| `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by`, `origin_coworker_id`, `origin_coworker_revision`, `routine_id?`, `routine_revision?`, `automation_id?`, `automation_occurrence_id?` |
+| `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by`, `origin_coworker_id`, `origin_coworker_revision`, `routine_id?`, `routine_revision?`, `automation_id?`, `automation_occurrence_id?`, `automation_test_run_id?` |
 | `workspace.primary_coworker.changed` | `workspace_id`, `from_coworker_id`, `to_coworker_id`, `changed_by`, `aggregate_version` |
 | `suggestion.preference.changed` | `workspace_id`, `kind`, `from_muted`, `to_muted`, `changed_by`, `aggregate_version` |
 | `task.coworker.origin.pinned` | `task_id`, `coworker_id`, `coworker_revision`, `aggregate_version` |

@@ -593,6 +593,7 @@ GET  /v1/automations/{id}/revisions?cursor=
 GET  /v1/automations/{id}/occurrences?cursor=&limit=
 GET  /v1/automations/{id}/health
 POST /v1/automations/{id}/run
+POST /v1/automations/{id}/test-runs
 POST /v1/automations/host/settle
 ```
 
@@ -626,6 +627,23 @@ that planning or agent execution began. Authentication and immutable AutomationR
 lookup still precede receipt resolution; mutable Runtime binding, Resource, Coworker, and
 Automation-head admission checks do not.
 
+For an exact-revision Automation test, `POST /v1/automations/{id}/test-runs` requires the
+selected `X-Workspace-ID`, `Idempotency-Key`, `If-Match` Automation version, and body
+`{ "automation_revision": n, "inputs": {} }`. It is owner-only and accepts a `PAUSED` or
+`ENABLED` Automation whose exact current revision and pinned RoutineRevision still exist;
+a `DISABLED` Automation is refused with `AUTOMATION_DISABLED`. The command creates one
+ordinary `READY` Task pinned with `automation_test_run_id` and the Routine ID/revision. It
+creates no AutomationOccurrence, writes no trigger receipt, and advances no trigger cursor.
+When the AutomationRevision pins a Coworker, the test Task uses that exact Coworker
+revision's lead/failover defaults and the Coworker must remain `ACTIVE`; otherwise ordinary
+Routine/Workspace lead admission applies. The first response is `201` and an exact receipt
+replay is `200`; a changed payload under the same key is `409`. Authentication and
+immutable revision lookup precede receipt resolution, so an exact replay remains readable
+after the Automation is disabled or the Workspace is archived. The response is
+`{ "test_run_id": ..., "automation_id": ..., "automation_revision": n, "task": TaskView }`.
+The test Task does not start planning or agent execution and is not a dry-run claim: it is
+a real authorized Task.
+
 For local manual Routine Run now, `POST /v1/routines/{id}/run` requires the selected
 `X-Workspace-ID`, `Idempotency-Key`, and body `{ "routine_revision": n, "inputs": {} }`.
 It returns `201 TaskView` only after atomically committing an ordinary `READY` Task pinned
@@ -651,8 +669,8 @@ field is invalid, so a revision explicitly preserves, changes, or clears its Cow
 The daemon rechecks the referenced Coworker revision and Workspace in the same write
 boundary as the Automation revision. Creation persists `PAUSED`; revision requires the current Automation to be
 `PAUSED` and preserves that state. Revising an `ENABLED` Automation returns
-`AUTOMATION_NOT_PAUSED` (409), and a `DISABLED` Automation remains terminal. This route does not expose Automation resume,
-manual run, or trigger execution in the current local build.
+`AUTOMATION_NOT_PAUSED` (409), and a `DISABLED` Automation remains terminal. This route does not expose Automation resume;
+manual occurrence runs and exact-revision test runs use their separate routes.
 
 The local trigger host owns recurring schedule settlement. `POST /v1/automations/host/settle`
 is an authenticated, selected-Workspace command that requires the local Runtime to hold an

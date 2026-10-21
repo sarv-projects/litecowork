@@ -1,3 +1,51 @@
+## 2026-10-21 — E09-S03 exact-revision Automation test run
+
+- **Owner decision recorded.** The nullable `tasks.automation_test_run_id` plus
+  `automation_test_runs` design, owner-only route, PAUSED/ENABLED eligibility, and
+  pinned-Coworker-or-ordinary-lead behavior were approved before implementation.
+- **Schema v27.** `docs/schemas/sqlite-v27.sql` adds the reservation table and the nullable
+  Task provenance column without rebuilding `tasks`. Triggers require an unlinked
+  reservation with matching Workspace/Routine pins, reject combined occurrence/test
+  provenance, make the column immutable, and allow one link (version 1→2). The migration
+  rollback/replay test passes.
+- **Route.** `POST /v1/automations/{automation_id}/test-runs` pins the exact current
+  AutomationRevision and RoutineRevision, requires `Idempotency-Key` and `If-Match`, accepts
+  PAUSED/ENABLED, refuses DISABLED, and creates one ordinary READY Task with
+  `automation_test_run_id`. It creates no AutomationOccurrence and advances no
+  AutomationCursor. A pinned Coworker uses its exact lead/failover defaults and must remain
+  ACTIVE; otherwise ordinary Routine/Workspace lead precedence applies.
+- **Receipt ordering.** The exact immutable revision is resolved first, then the receipt;
+  mutable status/head/version checks follow. Exact replay remains readable after the
+  Automation advances to a new revision, is disabled, or the Workspace is archived; a new
+  run against an old revision conflicts. The real-router test covers 401, 403, 400, 422,
+  201, 200 replay, 409 changed payload, revision advance with replay, 409 disabled, 409
+  archived-new-run, and exact replay after archive, with zero occurrence and cursor rows.
+- **Identity fence.** Storage recomputes the canonical domain `TestRunIdentity` fingerprint
+  for the exact principal, request, Automation, and revision and refuses a mismatched
+  `command_key`.
+- **Storage failure.** A failed `request_dedup` insert rolls back the Task, test-run row,
+  event, and receipt; the same request key then commits normally. The Task aggregate-state
+  blob is written before the transaction and may remain unreferenced on rollback; no
+  domain row is visible.
+- **Desktop.** The Automation detail shares bounded Routine inputs between Manual Run and
+  Create test Task, labels the result as a real READY Task with no occurrence/cursor, and
+  preserves the exact test request in the bounded process-local retry registry.
+- **Commands/results.** Storage `automation_test_run_tests::` 8/8; migration rollback 1/1;
+  schema-reopen fast-path 1/1; full storage `--lib` 581 passed with one stale migration-list
+  assertion (fixed to include v27, focused rerun 1/1); domain-task 138/138; storage-core
+  27/27; local-environment-staging 107/107; real-router `automation_test_run_` 1/1; Tauri
+  bridge 4/4; daemon full `523/523` (1 ignored); UI API 12/12; full UI `491/491`;
+  `tsc --noEmit`; `api:check`; Vite build; workspace check clean. Architecture validator
+  145 events and OpenAPI 225 operations;
+  contract audit errors=0; Markdown broken_links=0; `git diff --check` clean.
+- **Still open (not claimed).** Create-preview-test-enable wizard completion, drift repair
+  proposal, packaged SYSTEM through the real Tauri page/local IPC, and owner USER
+  acceptance. E09-S03 stays `IN_PROGRESS`.
+- **Cleanup/disk.** One worktree, 26 branches; the full storage and daemon test runs
+  completed. No agent-created worktree, branch, or test process remains. `target` 29 GB,
+  Tauri target 4.6 GB, `/tmp/opencode` 604 KB; 815 GB free. The Tauri target grew during the
+  bridge test and is retained as a useful shared cache; temporary logs are removed.
+
 ## 2026-10-21 — E09-S05 injected late-failure rollback evidence
 
 - **No new route.** This closes the remaining storage CODE gate without changing the served

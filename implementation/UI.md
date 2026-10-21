@@ -44,7 +44,7 @@ First run: choose/create Workspace, select and authenticate a compatible native 
 | Global Needs You | Pending actual requests only | Open exact request, Approve/Deny/Answer/Sign in/Take over | resolved/expired/stale approval, wrong principal assurance, offline response | E02-S04, E04 |
 | Workbench and outputs | Right context panel, closed by default | Preview, compare, edit, Save As, restore version, open source | dirty navigation, revoked artifact, unsupported format, digest mismatch | E08-S07 |
 | Runtime/background | Shows real status and availability | Start, launch at login, keep background, stop/preview drain | sleep/lock/offline/crash, existing AMBIGUOUS actions, poweroff | E01/E07/E09 |
-| Global Automations | Cross-Coworker canonical list | Filter, new, edit, pause, run now, view trigger/occurrence | invalid scope, missed slots, duplicate run, host offline | E09 |
+| Global Automations | Cross-Coworker canonical list | Filter, new, edit, pause, run now, create test Task, view trigger/occurrence | invalid scope, missed slots, duplicate run/test, host offline, disabled/archived | E09 |
 
 ## Interaction inventory: exact action, prerequisites, outcomes, recovery
 
