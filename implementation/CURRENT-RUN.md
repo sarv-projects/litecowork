@@ -1,3 +1,30 @@
+## 2026-10-21 — E09-S05 Routine run transaction evidence
+
+- **Served path unchanged.** `POST /v1/routines/{id}/run` already materialized one ordinary
+  READY Task from an exact active Routine revision. This slice adds the missing storage
+  transaction evidence for the Task, TaskSpec, event, receipt, replay, and refusal paths.
+- **Direct suite.** `crates/storage-sqlite/src/routine_admission_tests.rs` (registered in
+  `tests.rs`) runs six tests against the real SQLite writer. It asserts one READY Task with
+  `routine_id`/`routine_revision` pins, TaskSpec revision 1 with no parents and the exact
+  materialized objective/constraints, one `task.created.v1` event with Routine keys, one
+  `request_dedup` receipt, and zero Plan/Step/Attempt/AgentSession rows.
+- **Replay and conflict.** An exact retry returns the same Task and event and writes no
+  second row. The same request key with a changed canonical `routine.run.v1` payload is
+  `Conflict`; the original receipt stays replayable.
+- **Refusals.** A head advanced to revision 2 refuses a revision-1 run (`Conflict`); missing
+  required input is `Invalid`; a disabled pinned lead is `Invalid`; a foreign principal
+  cannot reuse the owner's request key. Each rejected path leaves zero Task and zero receipt
+  rows.
+- **Command.** `cargo test --locked --offline --jobs 2 -p storage-sqlite --lib
+  routine_admission_tests::` — 6/6 passed, 13.44 s after cached compile.
+- **Still open (not claimed).** The authenticated Operator `/run` route test (auth before
+  replay, status mapping), a forced late-failure atomicity injection, the real ResourceRef
+  stale/cross-Workspace path, SYSTEM through the Tauri page, and owner USER acceptance.
+  E09-S05 stays `IN_PROGRESS`.
+- **Cleanup/disk.** One worktree, 26 branches, no agent processes. `target` 29 GB, Tauri
+  target 2.6 GB, `/tmp/opencode` 28 KB; 817 GB free. The focused test log is removed after
+  this entry.
+
 ## 2026-10-21 — E09-S02 atomic settlement and replay evidence
 
 - **Served path unchanged.** The authenticated ManualTrigger/schedule settlement already
