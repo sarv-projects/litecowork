@@ -613,34 +613,24 @@ candidate. A changed proposal creates a new candidate.
 14. UI can undo/revoke memory without rewriting historical Task state;
 15. LearningService outage does not fail ordinary conversation/task completion.
 
-## 23. Suggested implementation modules
+## 23. Implementation boundaries (logical, not a fictitious crate tree)
 
-```text
-crates/domain-learning/
-  candidate.rs
-  policy.rs
-  memory.rs
-  feedback.rs
-  events.rs
-  state_machine.rs
+Do **not** create a second `crates/application/`, `crates/ports/` or
+`crates/domain-learning/` tree merely because earlier target notes named one.
+Those paths do not exist in the current workspace. The domain policy, transition
+algorithms and classifier interfaces belong to the existing responsible owners:
 
-crates/application/
-  learning_service.rs
-  memory_conflict_service.rs
-  instruction_patch_service.rs
+| Role | Current existing landing zones / integration decision |
+|---|---|
+| Coworker learning policy, candidates and eligibility | `crates/domain-responsibility/` and existing `storage-core`/`storage-sqlite` |
+| Revisions, memory and retrieval scope | existing `domain-rag`, Resource/Context and scoped storage owners |
+| Authenticated commands, candidate generation and revocation | `apps/litecoworkd/` existing operator/service contracts; add typed ports only where required |
+| User-facing learning/memory and feedback | `apps/litecowork-ui/src/` Coworker/Resources/conversation modules |
+| Isolated skill tests and publication | E10 SkillProposal / LiteSPM boundary; do not invent `crates/ports/skill_test_runner.rs` as implemented |
 
-crates/ports/
-  learning_classifier.rs
-  sensitive_content_detector.rs
-  skill_test_runner.rs
-
-apps/litecowork-ui/
-  coworker/learning/
-  coworker/memory/
-  task/feedback/
-```
-
-The classifier and model are replaceable ports. The domain transition rules are deterministic.
+Classifier implementations may be replaceable; deterministic domain rules retain
+one canonical owner. New crate extraction requires a migration/ownership ADR,
+source implementation, tests and removal of duplicate writers.
 
 ## V1 detailed design integration — 2026-10-12
 
