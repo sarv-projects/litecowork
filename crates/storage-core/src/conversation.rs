@@ -1,4 +1,4 @@
-use crate::{DomainEvent, EventDraft, StoreError, WorkspaceCreateRequest};
+use crate::{AgentSessionRecord, DomainEvent, EventDraft, StoreError, WorkspaceCreateRequest};
 pub use domain_conversation::{
     ConversationTurn, ConversationTurnStatus, PresentationPreference, TurnCommand,
 };
@@ -114,8 +114,21 @@ pub trait ConversationTurnStore: Send + Sync {
         commit: CreateConversationTurnCommit,
     ) -> Result<CommittedConversationTurn, StoreError>;
 
+    /// Admits the Conversation-scoped AgentSession for an OPEN turn in one transaction.
+    ///
+    /// This is the only path that may move a turn OPEN -> RUNNING. It refuses when the
+    /// binding is not enabled and lead-eligible, when the session is not scoped to this
+    /// exact Conversation turn, when the turn is not OPEN at the expected version, or when
+    /// the Workspace is not ACTIVE for the principal. A refusal commits no session, no
+    /// turn transition, and no event.
+    fn admit_conversation_turn(
+        &self,
+        commit: AdmitConversationTurnCommit,
+    ) -> Result<AdmittedConversationTurn, StoreError>;
+
     /// Only lifecycle changes with a canonical event in EVENTS.md are accepted here.
-    /// Native session admission and the OPEN -> RUNNING start command remain closed.
+    /// The OPEN -> RUNNING start command is accepted only through
+    /// [`ConversationTurnStore::admit_conversation_turn`].
     #[allow(clippy::too_many_arguments)]
     fn transition_conversation_turn(
         &self,
@@ -127,6 +140,40 @@ pub trait ConversationTurnStore: Send + Sync {
         command: TurnCommand,
         event: EventDraft,
     ) -> Result<ConversationTurn, StoreError>;
+}
+
+/// Atomically admits a Conversation-scoped AgentSession for an OPEN turn and moves that
+/// turn OPEN -> RUNNING.
+///
+/// This is the one operation whose absence made native Conversation Send impossible: the
+/// turn may never be RUNNING without a bound session, and no session may exist for a turn
+/// that did not start. Session creation, the turn transition and both events therefore
+/// commit in a single transaction, and the idempotency receipt replays the same committed
+/// result instead of admitting a second session.
+///
+/// `session.scope_kind` must be `CONVERSATION`, its `conversation_id` and
+/// `conversation_turn_id` must name this turn, and its `agent_binding_id` must be the
+/// binding the Conversation resolved. Native handles are excluded by `AgentSessionRecord`
+/// and stay in Runtime-local bindings.
+#[derive(Clone, Debug)]
+pub struct AdmitConversationTurnCommit {
+    pub request: WorkspaceCreateRequest,
+    pub principal_id: String,
+    pub workspace_id: String,
+    pub conversation_id: String,
+    pub session: AgentSessionRecord,
+    pub turn_id: String,
+    pub expected_turn_version: u64,
+    pub session_event: EventDraft,
+    pub turn_event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdmittedConversationTurn {
+    pub session: AgentSessionRecord,
+    pub turn: ConversationTurn,
+    pub events: Vec<DomainEvent>,
 }
 
 pub fn validate_conversation_record(record: &ConversationRecord) -> Result<(), StoreError> {

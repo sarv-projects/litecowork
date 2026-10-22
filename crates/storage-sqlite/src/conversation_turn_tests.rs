@@ -797,3 +797,292 @@ fn unavailable_admission_settles_the_durable_turn_and_exact_replay_writes_nothin
         "a durable ordinary Conversation turn creates no Task, Attempt, session, lease, or Environment"
     );
 }
+
+/// Seeds a Runtime that is ONLINE, READY and EXECUTOR-entitled for this Workspace,
+/// bound to the fixture endpoint, so the admission readiness check can pass.
+fn seed_ready_runtime(directory: &tempfile::TempDir, expires_at: Option<&str>) {
+    let mut connection = Connection::open(state_database(directory)).expect("seed runtime");
+    connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    // The Runtime row first: `runtimes.current_incarnation_id` is a DEFERRABLE
+    // INITIALLY DEFERRED foreign key, while `runtime_incarnations.runtime_id` is
+    // immediate. A deferred foreign key only defers to COMMIT inside a transaction,
+    // so all four rows are written in one.
+    let tx = connection.transaction().unwrap();
+    tx
+        .execute(
+            "INSERT INTO runtimes(runtime_id,device_identity_json,runtime_version,platform,architecture,roles_json,trust_zone,availability,startup_policy,current_incarnation_id,resource_capacity_json,last_seen,version) VALUES('runtime-turn','{}','0.1.0','linux','x86_64','[]','LOCAL','ONLINE','MANUAL','inc-turn','{}',?1,1)",
+            [AT],
+        )
+        .unwrap();
+    tx
+        .execute(
+            "INSERT INTO runtime_incarnations(runtime_incarnation_id,runtime_id,process_started_at,litecowork_version,recovered_from_unclean_shutdown,recovery_state,ready_at,stopped_at,version) VALUES('inc-turn','runtime-turn',?1,'0.1.0',0,'READY',?1,NULL,1)",
+            [AT],
+        )
+        .unwrap();
+    tx
+        .execute(
+            "INSERT INTO runtime_workspace_bindings(runtime_workspace_binding_id,runtime_id,workspace_id,enrollment_mode,status,roles_json,created_at,activated_at,revoked_at,version) VALUES('rwb-turn','runtime-turn','workspace-turn','LOCAL_ENROLLMENT','ACTIVE','[\"EXECUTOR\"]',?1,?1,NULL,1)",
+            [AT],
+        )
+        .unwrap();
+    // A binding that declares no endpoint-selection mode fails the readiness check
+    // closed, because `json_extract(...,'$.mode') <> 'PINNED_ENDPOINT'` is NULL for
+    // `{}`. The fixture binding is therefore given an explicit compatible mode.
+    tx.execute(
+        "UPDATE agent_bindings SET endpoint_selection_policy_json=json_object('mode','AUTO_COMPATIBLE') WHERE agent_binding_id='binding-turn'",
+        [],
+    )
+    .unwrap();
+    tx
+        .execute(
+            "INSERT INTO agent_endpoint_bindings(endpoint_id,runtime_id,runtime_incarnation_id,endpoint_ref,observed_at,expires_at) VALUES('endpoint-turn','runtime-turn','inc-turn','local://codex',?1,?2)",
+            params![AT, expires_at],
+        )
+        .unwrap();
+    tx.commit().unwrap();
+    drop(connection);
+}
+
+/// Builds the Conversation-scoped session admission for the fixture turn.
+fn admission_commit(
+    session_id: &str,
+    binding_id: &str,
+    scope_kind: &str,
+    with_task: bool,
+) -> storage_core::conversation::AdmitConversationTurnCommit {
+    let session_ctx = context("event-session-starting", 11);
+    let turn_ctx = context("event-turn-started", 12);
+    storage_core::conversation::AdmitConversationTurnCommit {
+        request: WorkspaceCreateRequest {
+            principal_id: "owner-local".into(),
+            request_id: format!("admit-{session_id}"),
+            request_payload: serde_json::json!({
+                "operation":"conversation.turn.admit.v1",
+                "workspace_id":"workspace-turn",
+                "conversation_id":"conversation-turn",
+                "turn_id":"turn-one",
+                "agent_session_id":session_id
+            }),
+        },
+        principal_id: "owner-local".into(),
+        workspace_id: "workspace-turn".into(),
+        conversation_id: "conversation-turn".into(),
+        session: storage_core::AgentSessionRecord {
+            agent_session_id: session_id.into(),
+            workspace_id: "workspace-turn".into(),
+            scope_kind: scope_kind.into(),
+            conversation_id: Some("conversation-turn".into()),
+            conversation_turn_id: Some("turn-one".into()),
+            task_id: with_task.then(|| "task-foreign".into()),
+            task_spec_revision: None,
+            attempt_id: None,
+            agent_binding_id: binding_id.into(),
+            endpoint_id: "endpoint-turn".into(),
+            runtime_id: "runtime-turn".into(),
+            runtime_incarnation_id: "inc-turn".into(),
+            configuration_digest: None,
+            harness_descriptor_digest: None,
+            status: "STARTING".into(),
+            started_at: AT.into(),
+            last_event_at: None,
+            closed_at: None,
+            version: 1,
+        },
+        turn_id: "turn-one".into(),
+        expected_turn_version: 1,
+        session_event: EventDraft {
+            event_id: session_ctx.event_id,
+            workspace_id: "workspace-turn".into(),
+            entity_type: "AgentSession".into(),
+            entity_id: session_id.into(),
+            origin_runtime_id: session_ctx.origin_runtime_id,
+            entity_revision: 1,
+            hlc_timestamp: session_ctx.hlc_timestamp,
+            correlation_id: session_ctx.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "agent.session.starting.v1".into(),
+            payload: serde_json::json!({
+                "agent_session_id":session_id,"scope":"CONVERSATION",
+                "agent_binding_id":binding_id,"endpoint_id":"endpoint-turn",
+                "runtime_id":"runtime-turn","runtime_incarnation_id":"inc-turn",
+                "session_state":"STARTING","reported_at":AT
+            }),
+            recorded_at: session_ctx.recorded_at,
+        },
+        turn_event: EventDraft {
+            event_id: turn_ctx.event_id,
+            workspace_id: "workspace-turn".into(),
+            entity_type: "ConversationTurn".into(),
+            entity_id: "turn-one".into(),
+            origin_runtime_id: turn_ctx.origin_runtime_id,
+            entity_revision: 2,
+            hlc_timestamp: turn_ctx.hlc_timestamp,
+            correlation_id: turn_ctx.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.turn.status.changed.v1".into(),
+            payload: serde_json::json!({
+                "turn_id":"turn-one","from":"OPEN","to":"RUNNING",
+                "agent_session_id":session_id,"aggregate_version":2
+            }),
+            recorded_at: turn_ctx.recorded_at,
+        },
+    }
+}
+
+#[test]
+fn a_conversation_scoped_session_admits_the_turn_and_starts_it() {
+    let (directory, store, commit) = fixture();
+    let conversation_store = SqliteConversationStore::new(store.clone());
+    conversation_store
+        .create_conversation_turn(commit)
+        .expect("the user message and OPEN turn persist");
+    seed_ready_runtime(&directory, None);
+
+    let admitted = conversation_store
+        .admit_conversation_turn(admission_commit("session-one", "binding-turn", "CONVERSATION", false))
+        .expect("a ready Runtime admits the Conversation session");
+
+    assert_eq!(admitted.turn.status, ConversationTurnStatus::Running);
+    assert_eq!(
+        admitted.turn.agent_session_id.as_deref(),
+        Some("session-one"),
+        "the RUNNING turn is bound to the admitted session"
+    );
+    assert_eq!(admitted.session.status, "STARTING");
+    assert_eq!(admitted.events.len(), 2, "session event and turn event");
+
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let (scope, status, turn_ref): (String, String, Option<String>) = connection
+        .query_row(
+            "SELECT scope_kind,status,conversation_turn_id FROM agent_sessions WHERE agent_session_id='session-one'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(scope, "CONVERSATION");
+    assert_eq!(status, "STARTING");
+    assert_eq!(turn_ref.as_deref(), Some("turn-one"));
+
+    let (turn_status, bound): (String, Option<String>) = connection
+        .query_row(
+            "SELECT status,agent_session_id FROM conversation_turns WHERE turn_id='turn-one'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(turn_status, "RUNNING");
+    assert_eq!(bound.as_deref(), Some("session-one"));
+
+    // conversation.turn.created.v2 (from turn creation) + agent.session.starting.v1 +
+    // conversation.turn.status.changed.v1 — admission adds exactly the last two.
+    let events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE entity_id IN ('session-one','turn-one')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(events, 3);
+    let types: Vec<String> = connection
+        .prepare("SELECT type FROM domain_events WHERE entity_id IN ('session-one','turn-one') ORDER BY type")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        types,
+        vec![
+            "agent.session.starting.v1",
+            "conversation.turn.created.v2",
+            "conversation.turn.status.changed.v1"
+        ]
+    );
+
+    // A replay with the same request id returns the committed result and writes nothing.
+    let replay = conversation_store
+        .admit_conversation_turn(admission_commit("session-one", "binding-turn", "CONVERSATION", false))
+        .expect("the replayed admission returns the committed result");
+    assert_eq!(replay.turn.agent_session_id.as_deref(), Some("session-one"));
+    let sessions: i64 = connection
+        .query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 1, "a replay never admits a second session");
+}
+
+#[test]
+fn admission_refuses_a_session_that_is_not_scoped_to_this_conversation_turn() {
+    let (directory, store, commit) = fixture();
+    let conversation_store = SqliteConversationStore::new(store.clone());
+    conversation_store
+        .create_conversation_turn(commit)
+        .expect("the user message and OPEN turn persist");
+    seed_ready_runtime(&directory, None);
+
+    // A Task-scoped session may never start a Conversation turn.
+    let error = conversation_store
+        .admit_conversation_turn(admission_commit("session-task", "binding-turn", "TASK_PLANNING", false))
+        .expect_err("a planning-scoped session is refused");
+    assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+
+    // Nor may a session that also claims a Task.
+    let error = conversation_store
+        .admit_conversation_turn(admission_commit("session-tasked", "binding-turn", "CONVERSATION", true))
+        .expect_err("a session carrying a Task is refused");
+    assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let sessions: i64 = connection
+        .query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 0, "a refused admission writes no session row");
+}
+
+#[test]
+fn admission_refuses_an_unready_runtime_and_a_foreign_binding() {
+    let (directory, store, commit) = fixture();
+    let conversation_store = SqliteConversationStore::new(store.clone());
+    conversation_store
+        .create_conversation_turn(commit)
+        .expect("the user message and OPEN turn persists");
+
+    // No Runtime readiness rows at all: the endpoint has no live binding.
+    let error = conversation_store
+        .admit_conversation_turn(admission_commit("session-unready", "binding-turn", "CONVERSATION", false))
+        .expect_err("an unready Runtime is refused before any write");
+    assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+
+    // A ready Runtime whose endpoint binding already expired is still refused.
+    seed_ready_runtime(&directory, Some("2000-01-01T00:00:00Z"));
+    let error = conversation_store
+        .admit_conversation_turn(admission_commit("session-expired", "binding-turn", "CONVERSATION", false))
+        .expect_err("an expired endpoint binding is refused");
+    assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+
+    // A binding that is not the one this Conversation resolved is never substituted.
+    let error = conversation_store
+        .admit_conversation_turn(admission_commit("session-foreign", "binding-other", "CONVERSATION", false))
+        .expect_err("a foreign binding is refused");
+    assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let sessions: i64 = connection
+        .query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 0);
+
+    // Once the binding is live again the same shape of admission succeeds, which
+    // proves the expiry alone caused the refusal above.
+    connection
+        .execute(
+            "UPDATE agent_endpoint_bindings SET expires_at=NULL WHERE endpoint_id='endpoint-turn'",
+            [],
+        )
+        .unwrap();
+    conversation_store
+        .admit_conversation_turn(admission_commit("session-live", "binding-turn", "CONVERSATION", false))
+        .expect("a live endpoint binding admits the session");
+}
