@@ -23,7 +23,7 @@
 | LiteSPM | Observe native MCP → preview adopt → unchanged config → assign/grant → invoke → unmanage | E04-S02/S06, E10-S01; LiteSPM service | **BLOCKED** — upstream machine contract and real integration not qualified |
 | Task | Request durable outcome → accept plan → admit Attempt → perform/verify artifact → restart safely | E03-S03, E04-S03/S05, E07-S00 | **BLOCKED** — admission/lease proof producers not integrated |
 | Multi-agent | Chief delegates one bounded worker Step → verified integration/handoff | E05-S01–S05 | **BLOCKED** — native/host child execution and safe lead switch not qualified |
-| Automation | Schedule → exact occurrence → Task → settle/notify → recover from sleep/restart | E09-S01–S05, Runtime | **BLOCKED** — Task execution and complete trigger/notification settlement not proven |
+| Automation | Schedule → exact occurrence → Task → settle/notify → recover from sleep/restart | E09-S01–S05, Runtime | **BLOCKED** — Task execution is still unqualified, recurring trigger hosting and OS notification delivery do not exist, and the settlement producer is CODE (storage + served route tests) with no owner USER evidence |
 | Memory | Scoped source → grounded retrieval → eligible learning → review/revoke → no cross-scope leak | E06-S02/S03, E08-S03 | **BLOCKED** — full producer/retrieval/use path unqualified |
 | Artifacts | Real source → create supported doc/spreadsheet/code → preview/edit/version/export/reopen | E04-S05, E08-S07, E07-S04 | **BLOCKED** — format/provider-specific SYSTEM paths unqualified |
 | Desktop/release | Installer, accessibility, backup/restore, recovery, diagnostics, performance by OS | E02-S01, E13-S01–S04 | **BLOCKED for V1 GA** — individual code slices are not whole-platform proof |
@@ -42,7 +42,8 @@ These are product-level release verdicts, not a claim that their underlying isol
 | P1 | Discover mounted and real package use/management UI | `App.tsx`, `src/discover/` |
 | P1 | Real Browser/Terminal/Computer provider, Workbench and format writer qualification | E07/E08 |
 | P1 | Scope-respecting memories and real Knowledge retrieval | E06/E08 |
-| P1 | Recurrence settlement/host cursor retirement and OS notification delivery | E09; `automation_host.rs`, `notification.rs` |
+| P1 | Recurrence occurrence settlement from a terminal Task outcome: producer and served route are CODE-implemented; owner USER evidence still pending | `automation_host.rs` (`settle_started_occurrences_from_task_outcomes`), `occurrences.rs` |
+| P1 | Trigger-host cursor retirement on disable, plus real OS notification delivery (attempts, `notification.delivery.changed.v1`, OS bridge) | `workspace_archive.rs`-adjacent disable path, `notification.rs` |
 | P1 | Old nonexistent implementation-file references removed or target-labelled | `CONNECTORS-WORKFLOWS.md`, `LEARNING.md`, review packets |
 | P1 | Fix docs claiming LIVE for unserved operation/events | `API.md`, `EVENTS.md`, `STORAGE.md`, generated route inventory |
 | P2 | Consistent packaging/free local core and true format capability labels | PRODUCT, SCOPE, ARTIFACTS, E13 |

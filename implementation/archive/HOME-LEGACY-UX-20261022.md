@@ -5,7 +5,7 @@ Canonical [V1 screen contract](../../docs/V1-UI-SCREEN-CONTRACT.md).
 
 ## Home — legacy Task-first source surface during transition
 
-This section documents the current interim Home/Task-draft functionality. The accepted final default is ordinary New session/Conversation with optional chat-first Coworker navigation, not a mandatory primary-Coworker Home. The current Conversation page does not yet admit native agent turns; do not relabel its disabled composer as functional. See [Coworker target](COWORKERS-TARGET.md).
+This section documents the current interim Home/Task-draft functionality. The accepted final default is ordinary New session/Conversation with optional chat-first Coworker navigation, not a mandatory primary-Coworker Home. The current Conversation page does not yet admit native agent turns; do not relabel its disabled composer as functional. See [Coworker target](../../docs/COWORKERS-TARGET.md).
 
 Purpose of the interim Home: start or resume work.
 

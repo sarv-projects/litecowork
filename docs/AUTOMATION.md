@@ -1,16 +1,24 @@
 # Automation LLD
 
-> **Critical V1 settlement boundary (2026-10-22):**
+> **Critical V1 settlement boundary (2026-10-22; producer landed 2026-10-22):**
 > Occurrence completion is derived from authoritative Task outcome, not schedule
-> firing, UI status or an agent report. The current source
-> `crates/domain-responsibility/src/occurrences.rs` maps `INCOMPLETE` to
-> FAILED; however Task `INCOMPLETE` may permit an explicit recover/revise
-> transition in [State Machines](STATE-MACHINES.md).
-> This is an **OPEN CODE/CONTRACT DEFECT**, not an accepted terminal rule.
-> Repair must distinguish terminal failure from recoverable INCOMPLETE, with
-> idempotent occurrence status/event settlement, concurrent-run slot release
-> and crash/late-result tests. Trigger-host cursor retirement on disable and
-> real OS notification settlement are also release blockers.
+> firing, UI status or an agent report. Only a **terminal** Task status settles an
+> occurrence: `COMPLETED` → `COMPLETED`, terminal `FAILED` → `FAILED`,
+> `CANCELLED` → `SKIPPED` with an explicit reason. Every other status — including
+> recoverable `INCOMPLETE`, plus `PAUSED`, `WAITING_USER`, `BLOCKED`, `NEEDS_USER`,
+> `VERIFYING`, `READY`, `RUNNING`, `PAUSE_REQUESTED`, `CANCEL_REQUESTED` — leaves the
+> occurrence at `STARTED`, keeps holding its `max_concurrent_occurrences` slot, and is
+> retried by the next pass. The earlier `INCOMPLETE` → `FAILED` mapping is repaired.
+>
+> The producer is `SqliteAutomationHostStore::settle_started_occurrences_from_task_outcomes`,
+> which commits the occurrence update, its `automation.occurrence.settled.v1` event and
+> one local notification decision in a single transaction, and which the served local
+> trigger-host settlement pass runs before it counts non-terminal occurrences. A replay
+> finds no `STARTED` row and settles nothing.
+>
+> Still release-blocking: trigger-host cursor retirement on disable, real OS
+> notification settlement (delivery attempts, `notification.delivery.changed.v1`, the
+> local OS bridge), and owner USER evidence for the whole journey.
 > See [release matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
 
 An Automation defines when or why a pinned Routine should create ordinary Tasks. It is

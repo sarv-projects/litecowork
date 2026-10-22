@@ -68,8 +68,15 @@ together. Migration 11 persists the independent occurrence version and SQLite re
 each later update to increase it exactly once. This path is one-shot only: it does not
 create/advance an AutomationCursor, enable the Automation, create a Plan, or start agent
 execution. The desktop Automation page exposes this as explicit **Run once** for a valid
-ManualTrigger definition. Recurring TriggerCoordinator hosting, cursor/misfire recovery,
-and production occurrence settlement remain unavailable.
+ManualTrigger definition. Recurring TriggerCoordinator hosting and cursor/misfire
+recovery remain unavailable. Occurrence settlement from a **terminal** Task outcome is
+served: `SqliteAutomationHostStore::settle_started_occurrences_from_task_outcomes` reads
+every `STARTED` occurrence whose linked Task is terminal, and in one transaction per
+occurrence commits the status/version update, an `automation.occurrence.settled.v1`
+event and its aggregate-state blob, and the local notification decision, guarded by
+`status = 'STARTED' AND version`. A recoverable Task status (including `INCOMPLETE`)
+writes nothing and reports `Deferred`, so the concurrency slot stays held. The local
+trigger-host settlement pass runs this before it counts non-terminal occurrences.
 
 `ResourceStore::read_resource_content_bounded` accepts an optional immutable revision pin
 (omitted means current head) and requires providers to resolve that exact same-Resource,

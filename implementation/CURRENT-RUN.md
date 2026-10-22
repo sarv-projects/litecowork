@@ -1,3 +1,46 @@
+## 2026-10-22 — Occurrence settlement from an authoritative Task outcome
+
+- **Defect repaired.** `settle_from_task_outcome` mapped Task `INCOMPLETE` to a terminal
+  occurrence `FAILED`, which the 2026-10-22 `docs/AUTOMATION.md` note called an OPEN
+  CODE/CONTRACT DEFECT. `INCOMPLETE` is recoverable
+  (`docs/STATE-MACHINES.md`: `NEEDS_USER | INCOMPLETE -> READY`), so that mapping published
+  a terminal outcome the Task state does not support, released the
+  `max_concurrent_occurrences` slot while the Task could still run, and made a later
+  `COMPLETED` settlement impossible. The domain function now returns `Ok(None)` for every
+  non-terminal status and reserves settlement for `COMPLETED`, `FAILED` and `CANCELLED`;
+  an unrecognized token stays `InvalidDefinition`.
+- **The producer did not exist at all.** Nothing called that domain function: the only
+  terminal occurrence write was the misfire `SKIPPED` path, so a materialized occurrence
+  never left `STARTED` and a concurrency-limited Automation stopped producing Tasks forever.
+  Added `SqliteAutomationHostStore::settle_started_occurrences_from_task_outcomes`
+  (per-occurrence transaction: `status = 'STARTED' AND version` guarded update,
+  `automation.occurrence.settled.v1` event + aggregate-state blob, local notification
+  decision committed together) and wired it into the served local trigger-host settlement
+  pass *before* the concurrency count, so a finished run frees its slot in the same pass
+  that would otherwise defer the next due slot.
+- **Evidence.** domain-responsibility 99/99 (3 new tests); storage-sqlite **588/588**
+  (4 new: terminal settle + slot release + idempotent replay, `INCOMPLETE` never settles
+  then settles after recovery, `CANCELLED` → `SKIPPED` with `TASK_CANCELLED`, every
+  non-terminal status leaves the row untouched); litecoworkd **526/526** with the wiring.
+  A `blockers_json` type bug found while testing (canonical bytes were stored as BLOB where
+  every other writer stores TEXT) is fixed in the writer and tolerated in the reader.
+- **Still open, explicitly not claimed:** trigger-host cursor retirement on disable, real
+  OS notification settlement (`notification.delivery.changed.v1`, delivery attempts, the
+  local OS bridge), and owner USER evidence for the Automation journey — the
+  acceptance-matrix row stays BLOCKED.
+- **Doc gates were already red from the 2026-10-22 docs PR** and are repaired here: a
+  broken `COWORKERS-TARGET.md` link in the archived Home doc; `Experience must define the
+  Coworker-facing primary composer` (the literal composer block had been archived without a
+  replacement definition); story owners + audit-inventory rows for the four new architecture
+  documents; and a CRLF-generated `audit-inventory.csv` that tripped `git diff --check` on
+  every added row (generator now writes LF and skips empty headings). All gates green:
+  architecture (145 events), plan (67 stories / 7179 rows), coverage (107 docs), contracts,
+  design-depth, owner-consistency, markdown (0 broken links), `git diff --check`.
+- **Full-digest reread dispatched:** eight parallel read-only agents covered the whole
+  `docs/` corpus (37,813 lines) after the owner's "reread all docs" instruction; their
+  findings that remain open are recorded in the acceptance matrix and the ledger
+  contradictions listed in the 2026-10-22 doc-reconciliation record.
+
 ## 2026-10-21 — The missing agent axis: hosted providers (cloud agents)
 
 - **The gap the owner exposed.** `docs/AGENT-CONTROL.md`, `docs/CAPABILITY-FABRIC.md`,

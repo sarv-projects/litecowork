@@ -936,6 +936,17 @@ The normal composer is one rounded input box. Its lower control row is:
 
 **[ + ] [ Agent ] [ Model? ] [ Reasoning/Effort/other primary option? ] [ Native / @ ... ] [ Send ]**
 
+This is the Coworker-facing primary composer and the ordinary New Chat composer: one
+box, one Conversation model, no Chat/Cowork switch and no Task field.
+
+```text
+[Alex ▾] What should we work on?                         [ + ] [Send →]
+```
+
+Selecting a Coworker prefills the same box with that Coworker's latest conversation;
+not selecting one starts an ordinary Conversation. Neither case creates a Task or a
+Coworker, and the placeholder is only text: sending is what begins the turn.
+
 Rules:
 
 1. Agent is the root selector.

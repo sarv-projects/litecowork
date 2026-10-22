@@ -7,8 +7,8 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 103 source Markdown documents; 1693 heading-level sections are digest-pinned.
-- 105 implementation-plan documents and 1107 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 107 source Markdown documents; 1749 heading-level sections are digest-pinned.
+- 108 implementation-plan documents and 1124 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
 - 67 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
 - 144 flows and 90 benchmarks.
 - 225 OpenAPI operations and 396 component schemas; 0 components are unreachable from every Operator operation.
@@ -65,6 +65,7 @@ USER tests provide that evidence when executed.
 | [`docs/HOST-GUIDANCE.md`](../docs/HOST-GUIDANCE.md) | E08-S08 | Architecture contract |
 | [`docs/IMPLEMENTATION.md`](../docs/IMPLEMENTATION.md) | E01-S01 | Architecture contract |
 | [`docs/LEARNING.md`](../docs/LEARNING.md) | E08-S03 | Architecture contract |
+| [`docs/LITESPM-LITECOWORK-INTEROP-LLD.md`](../docs/LITESPM-LITECOWORK-INTEROP-LLD.md) | E10-S01 | Architecture contract |
 | [`docs/LOCAL-OPERATOR-IPC.md`](../docs/LOCAL-OPERATOR-IPC.md) | E01-S04 | Architecture contract |
 | [`docs/MOTION.md`](../docs/MOTION.md) | E08-S05 | Architecture contract |
 | [`docs/NATIVE-COMPOSER-LLD.md`](../docs/NATIVE-COMPOSER-LLD.md) | E03-S02 | Architecture contract |
@@ -95,11 +96,14 @@ USER tests provide that evidence when executed.
 | [`docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md`](../docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md) | E09-S02 | Architecture contract |
 | [`docs/V1-FUNCTION-CONTRACT-LEDGER.md`](../docs/V1-FUNCTION-CONTRACT-LEDGER.md) | E01-S01 | Architecture contract |
 | [`docs/V1-FUNCTION-FILE-CATALOG.md`](../docs/V1-FUNCTION-FILE-CATALOG.md) | E01-S01 | Architecture contract |
+| [`docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md`](../docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md) | E03-S06 | Architecture contract |
 | [`docs/V1-INTEGRATED-TERMINAL-LLD.md`](../docs/V1-INTEGRATED-TERMINAL-LLD.md) | E07-S01 | Architecture contract |
+| [`docs/V1-PRODUCT-RELEASE-CONTRACT.md`](../docs/V1-PRODUCT-RELEASE-CONTRACT.md) | E13-S03 | Architecture contract |
 | [`docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md`](../docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md) | E13-S03 | Architecture contract |
 | [`docs/V1-SETTINGS-CONTRACT-LEDGER.md`](../docs/V1-SETTINGS-CONTRACT-LEDGER.md) | E02-S01 | Architecture contract |
 | [`docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md`](../docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md) | E13-S03 | Architecture contract |
 | [`docs/V1-UI-ACTION-STATE-LEDGER.md`](../docs/V1-UI-ACTION-STATE-LEDGER.md) | E08-S01 | Architecture contract |
+| [`docs/V1-UI-SCREEN-CONTRACT.md`](../docs/V1-UI-SCREEN-CONTRACT.md) | E02-S01 | Architecture contract |
 | [`docs/V1-WORKFLOW-EVENT-LLD.md`](../docs/V1-WORKFLOW-EVENT-LLD.md) | E09-S02 | Architecture contract |
 | [`docs/WORLD-RESOURCES.md`](../docs/WORLD-RESOURCES.md) | E02-S03 | Architecture contract |
 | [`docs/adr/0001-durable-task-core.md`](../docs/adr/0001-durable-task-core.md) | E03-S04 | Architecture decision record |

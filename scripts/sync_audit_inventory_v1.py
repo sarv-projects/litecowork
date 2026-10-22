@@ -16,6 +16,7 @@ for doc in sorted((R/"docs").glob("*.md")):
  if rel in existing:continue
  data=doc.read_bytes();txt=data.decode("utf-8-sig")
  heads=[re.sub(r"^#{1,6}\s*","",line).strip() for line in txt.splitlines() if re.match(r"^#{1,6} ",line)]
+ heads=[h for h in heads if h]
  entry={"path":rel,"baseline_lines":str(len(txt.splitlines())),
         "baseline_sha256":hashlib.sha256(data).hexdigest(),
         "audit_method":"new current-tree design source; full bytes/lines read, owner and contract mapping must be reviewed",
@@ -23,7 +24,7 @@ for doc in sorted((R/"docs").glob("*.md")):
  rows.append(entry);existing.add(rel);added.append(rel)
 if added:
  with file.open("w",encoding="utf-8",newline="") as f:
-  writer=csv.DictWriter(f,fieldnames=fields)
+  writer=csv.DictWriter(f,fieldnames=fields,lineterminator="\n")
   writer.writeheader()
   writer.writerows(sorted(rows,key=lambda r:r["path"]))
 print("AUDIT_INVENTORY_NEW",len(added),"TOTAL",len(rows))
