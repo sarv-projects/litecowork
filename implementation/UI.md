@@ -777,3 +777,175 @@ The final implementation contract is expanded by ../docs/DESKTOP-SHELL-LLD.md (f
 ## Usage and health, rich agent cards, memory and PTY terminal — V1 UI targets
 
 The screenshot-informed target surfaces are specified in docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md (1D/7D/30D/90D/YTD/All/Custom + source/cost coverage), docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md (logo/version/detected/configured/auth/ready cards and manual-path fallback), docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md (search/add scoped Memory + provenance and agent tool timing) and docs/V1-INTEGRATED-TERMINAL-LLD.md (Workbench multi-PTY profile UI including PowerShell, Bash, WSL etc). TLM-001–048 in implementation/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md define negative and OS/user qualification. These targets are not asserted to be implemented.
+
+## Current desktop UI implementation audit — 2026-10-22
+
+**Method.** Full read of `apps/litecowork-ui/src` (150 files) and
+`apps/litecowork-ui/src-tauri/src` (30 files) against [EXPERIENCE](../docs/EXPERIENCE.md),
+[DESIGN-SYSTEM](../docs/DESIGN-SYSTEM.md), [MOTION](../docs/MOTION.md),
+[PRESENTATION-RUNTIME](../docs/PRESENTATION-RUNTIME.md), [RICH-RESPONSE](../docs/RICH-RESPONSE.md)
+and [V1-UI-SCREEN-CONTRACT](../docs/V1-UI-SCREEN-CONTRACT.md), plus every `invoke` name the
+bridge actually registers. Baseline evidence: `node --experimental-transform-types --test
+--test-concurrency=1 "tests/*.test.ts" "tests/*.test.mjs"` → **497/497 pass**. This section
+records the implementation delta only. Every normative sentence in this file and in the
+contract docs stays binding; nothing below relaxes it, and nothing below claims a row is
+implemented that is not.
+
+**Tally.** 48 audited contract claims: **18 implemented/clean, 15 partial, 15 absent**; plus
+3 screens implemented that no contract asks for (Goals, Ideas, Routines). Severities below
+use P0 product-blocking, P1 contract violation, P2 polish.
+
+### Implemented and honest today (do not regress)
+
+- Shell: string-state navigation over 12 pages with `aria-current`, labelled drawer with
+  focus trap and Escape (`src/App.tsx:124`, `:473–515`, `:2036`).
+- Conversation catalog: real list/load/empty/error/offline/reconnect states and a durable
+  create journal with failure recovery (`src/conversations/ConversationsPage.tsx:483`,
+  `:514–521`, `:539–568`).
+- Presentation client: transient-turn reducer with sequence-gap → `RECONNECTING`, retry
+  fence, settle-to-`INCOMPLETE`, snapshot-wins-on-projection
+  (`src/presentation/presentation-stream.ts:194–314`), 17-kind render registry with
+  explicit fallback and rejected-item disclosure (`src/presentation/PresentationRuntime.tsx:46–103`),
+  digest-validated rich fetch with semantic fallback (`ConversationsPage.tsx:64–112`).
+- Status honesty: no false "connected" claims — pills gate on real `operatorReady`/stream
+  `LIVE` with explicit caveats (`src/App.tsx:2977`, `:3020`; `Agents/AgentCatalogSettings.tsx:791–798`);
+  failed reads never render as empty (`src/App.tsx:2898`, `:3845`; `ConversationsPage.tsx:552`).
+- Notifications: real delivery history + preferences over the live bridge with transport
+  -acknowledgement-only wording (`src/notifications/NotificationsPage.tsx:267–408`).
+- Needs You approvals and UserRequest answer/sign-in/decline flows
+  (`src/needs-you/ApprovalDetail.tsx:164`, `src/needs-you/UserRequestDetail.tsx:312–343`).
+- Coworker roster/create/edit/pause/archive/primary with conflict handling
+  (`src/coworkers/CoworkerSettings.tsx:492–667`).
+- Library/Artifact workbench: search, roots, preview, revision editor, diff, publish,
+  alertdialog with focus loop (`src/resources/library-navigation.tsx:158–183`,
+  `src/artifacts/ArtifactWorkbench.tsx:516–561`).
+
+### P0 — must still be implemented (product-blocking)
+
+1. **Real native turn execution, end to end.** `Send` is unconditionally `disabled` with no
+   handler (`src/conversations/ConversationsPage.tsx:583`) and the composer surface is
+   constructed with `descriptor: null` and an empty binding so it always derives
+   `NEEDS_REFRESH` (`ConversationsPage.tsx:162–174`). No turn/message `invoke` exists in
+   `src-tauri/src`, and no Stop or Retry control exists anywhere. Required: daemon
+   conversation-scope AgentSession admission + turn orchestration against the existing
+   `CodexAppServer`/`OpenCodeServer` transports, the OpenAPI-promised `202` receipt, a Tauri
+   `submit_conversation_turn`/`stop_conversation_turn` pair, then a Send/Stop/Retry composer
+   driven by real state with a visible reason whenever it is disabled. Owners: E03-S01/S02.
+   Until then the current honest copy (`ConversationsPage.tsx:571`,
+   `first-use-guidance.ts:42–48`) must stay.
+2. **Composer agent/model/effort controls wired to a real descriptor.** `AgentControlDescriptorPanel`
+   and `agent-control-api.ts` exist but are referenced only by themselves — no mounted
+   surface renders the agent selector, its model, its effort/mode, `+`, or slash/@ discovery
+   the contract requires (`../docs/V1-UI-SCREEN-CONTRACT.md:26`). Owner: E03-S01/S06.
+
+### P1 — contract violations still to implement
+
+3. **Discover is not a surface.** `src/discover/DiscoverPage.tsx` is fully written but never
+   mounted: absent from the `Page` union (`src/App.tsx:124`) and the nav array
+   (`App.tsx:334–347`), and its row action button has no `onClick`
+   (`src/discover/DiscoverPage.tsx:113`). Required by `V1-UI-SCREEN-CONTRACT.md:18` and
+   `EXPERIENCE.md:14`. Owner: E04-S02/S06, E10-S01.
+4. **Needs You pending count.** Nav item carries no badge (`App.tsx:338`); the projection is
+   fetched but only rendered in-page (`src/needs-you/TaskAttentionPage.tsx:274`). Contract:
+   sidebar count with the exact pending item, and never an invented zero
+   (`DESIGN-SYSTEM.md:267–268`, action-state ledger rule). Owner: E02-S04.
+5. **Task detail tabs and controls.** Task detail is one stack (`App.tsx:2824–2899`), no
+   Overview/Plan/Activity/Files/Workers/Inspector tabs, and no pause/resume/steer/cancel/
+   recover/handoff controls at all (`V1-UI-SCREEN-CONTRACT.md:34–36`). Those controls are
+   also unserved daemon routes, so the UI must either serve them or keep them absent with an
+   explanatory note — it must never render an inert button. Owner: E03-S03/S04.
+6. **Right Workbench shell (Browser/Computer/Terminal/Files/Artifact).** No shell, no right
+   panel, no takeover/return, no PTY surface; only the inline `ArtifactWorkbench` inside
+   Library (`EXPERIENCE.md:253–271`, `V1-UI-SCREEN-CONTRACT.md:56`). Owner: E07-S02/S05, E08-S04/S07.
+7. **Runtime stop/preview and startup policy.** Policy is read-only text (`App.tsx:3031`);
+   no setter, no `stop_runtime` bridge command, no stop-preview dialog
+   (`EXPERIENCE.md:485–489`). Owner: E01/E07.
+8. **Settings breadth.** No Capabilities/Connections, permissions, storage/backup,
+   appearance/accessibility, notification preference, usage, support or diagnostics
+   sections, and no locality label ("applies locally / to the Workspace")
+   (`V1-UI-SCREEN-CONTRACT.md:20`). Owner: E02-S01/S03.
+9. **Design-token conformance.** `styles.css` defines only a subset of the contracted
+   primitives and none of the semantic surface tokens (`--color-surface-raised/-info/
+   -success/-warning/-danger(+soft)`, `--radius-panel/pill`, `--shadow-overlay`,
+   `--ring-*`, `--text-*`, `--space-*`, `--font-ui/code`); feature stylesheets therefore
+   hard-code divergent hex values (`notifications-page.css:6–7,19,30–34` including an
+   off-palette `#5a3676`; `skill-proposals-page.css:17,42,60,88`; `routines-page.css:8`;
+   `automations-page.css:70`; `rich-response.css:19`; `task-presentation.css:45`).
+   Required: define the contracted tokens and migrate every hard-coded value. Owner: E02-S03.
+10. **Light/dark/system theme.** No `.theme-dark`, no `prefers-color-scheme`, no switcher;
+    `color-scheme: light` is hard-set (`styles.css:3`). Contract:
+    `DESIGN-SYSTEM.md:23`, `:79–101`. Owner: E02-S03.
+11. **Focus management.** No focus-trap implementation exists; Escape handlers and
+    ad-hoc focus moves exist only in three places (`App.tsx:482`,
+    `resources/library-navigation.tsx:159`, `coworkers/CoworkerSettings.tsx:137`).
+    Contract: trap, Escape, and focus return for every blocking dialog
+    (`DESIGN-SYSTEM.md:184`). Owner: E02-S01.
+12. **Rich renderers.** Parser/renderer accept only 5 of the 13 registered model-safe kinds
+    (`presentation/rich-presentation.ts:18–22`, `RichResponseView.tsx:7–25`): MediaFrame/
+    Gallery, CodePanel, ChartFrame, DiagramFrame, Timeline, Checklist, DeliverableGroup and
+    ArtifactCollection have no renderer. Unknown-kind fallback is already correct and must
+    be preserved (`DESIGN-SYSTEM.md:342–346`). Owner: E08-S04.
+13. **Motion conformance.** Two looping progress animations violate
+    `MOTION.md:24–26` (`suggestions-page.css:33` 0.8s infinite;
+    `automations-page.css:70` 900ms infinite) and the nav drawer uses an uncontracted
+    `160ms ease` (`styles.css:420`) instead of the normative table. Required: static
+    label/icon with `aria-busy`, and the normative duration/easing values.
+    Owner: E02-S03.
+14. **"Context used" disclosure and inline Task cards.** Neither exists in any mounted
+    surface (`EXPERIENCE.md:121–138`). Owner: E08-S03/E03-S04.
+15. **Global search / command palette.** The topbar actions area is an empty div
+    (`App.tsx:2078–2079`); no palette, no shortcut. Required by
+    `V1-UI-SCREEN-CONTRACT.md:7`. Owner: E02-S01.
+
+### P2 — polish still owed
+
+16. Composer growth: fixed `rows` with vertical resize instead of grow-to-6-lines-then-scroll
+    and a sticky Send (`src/App.tsx:2441`, `ConversationsPage.tsx:581`, `styles.css:88`;
+    `DESIGN-SYSTEM.md:179`).
+17. Disabled-state styling relies on opacity alone in six stylesheets, contrary to
+    `DESIGN-SYSTEM.md:212–213` (`styles.css:82` and the feature sheets listed above).
+18. `aria-busy` is missing on the primary Save/Create/Archive controls
+    (`DESIGN-SYSTEM.md:214`); it exists only in Suggestions/Goals/ApprovalDetail.
+19. Status badge is 11px/26px with no icon vs the contracted 12px/20–24px with icon
+    (`styles.css:191`; `DESIGN-SYSTEM.md:183`).
+20. Metadata sizes below the contracted 12px floor (10px at `styles.css:98`, 11px at
+    `:47,52,74`) and off-scale heading sizes; 44px touch targets exist only for two shell
+    controls (`DESIGN-SYSTEM.md:156–157`, `:223–224`).
+21. Work filter is a single raw status `<select>` instead of Active/Waiting/Scheduled/Done/All
+    (`App.tsx:2499–2504`; `EXPERIENCE.md:791`).
+22. Attachment block renders the literal word "Attachment" with no name or revision
+    (`ConversationsPage.tsx:18`; `DESIGN-SYSTEM.md:180`).
+23. Idea card actions do not match the contract (no Prepare/Accept split, no three-option
+    "Remind me", no "Don't suggest this type" overflow;
+    `suggestions/SuggestionsPage.tsx:514–525`; `EXPERIENCE.md:844–852`).
+24. Suggestion spinners are the looping-animation case from MOTION item 13 above.
+
+### State-coverage gaps to close per surface
+
+- **PresentationRuntime** has no error state (`PresentationRuntime.tsx:123–124` only).
+- **SkillProposalsPage** has loading/ready/empty but no error and is not mounted
+  (`skills/SkillProposalsPage.tsx:13,98`).
+- **No surface implements a permission-denied state**; the closest is the offline read-only
+  gate (`App.tsx:2104`, `ConversationsPage.tsx:547`).
+- Every other mounted screen (Conversations, Work, Library, Coworkers, Needs You,
+  Automations, Routines, Notifications, Goals, Suggestions, First-run, Settings) already
+  distinguishes loading/empty/error/offline and must keep doing so.
+
+### Implemented but unclaimed by any contract
+
+Goals (`src/goals/GoalsPage.tsx`), Ideas/Suggestions (`src/suggestions/SuggestionsPage.tsx`)
+and Routines (`src/routines/RoutinesPage.tsx`) are mounted screens with no row in
+`V1-UI-SCREEN-CONTRACT.md`. They are not violations, but they must not be used as evidence
+of contract coverage, and their "not active in this build" copy
+(`src/App.tsx:2152`, `AutomationsPage.tsx:238`) must stay truthful.
+
+### Explicit non-claims
+
+- No native Conversation turn is executed by this build; the streaming client is wired but
+  its Operator producer does not exist, so no transient frame reaches a running app.
+- No Browser/Computer/Terminal surface exists; the presentation Browser card is informational
+  only (`PresentationRuntime.tsx:59`).
+- Worker profiles cannot be enabled for execution (`AgentCatalogSettings.tsx:652`) and the
+  agent catalog is display-only for authentication/inference/model selection
+  (`App.tsx:818`).
+- The Discover and SkillProposal components exist in source but are unreachable surfaces.

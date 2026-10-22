@@ -325,8 +325,11 @@ an Approval.
 `EnvironmentControlBadge`/`ControlOwnerBadge` shows only the active input controller and
 does not share the Task lease visual treatment.
 
-The global visual hierarchy remains outcome → workstreams → machinery. Home emphasizes
-Needs You, work being handled, upcoming work, one Idea, and recent Artifacts. Agent
+The global visual hierarchy remains outcome → workstreams → machinery. The landing is
+the New Chat composer, not a dashboard: it emphasizes the conversation input and, when
+present, exactly one Idea; Needs You is a sidebar count with the exact pending item, and
+recent work and recent Artifacts are secondary rows below the composer (the Task-first
+Home dashboard is archived and non-normative). Agent
 configuration and Inspector use the same component tokens at a denser layout; no new
 palette, font family, or decorative animation is introduced for the delegation feature.
 

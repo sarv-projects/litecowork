@@ -151,3 +151,30 @@ iframe runtime and CSP (`unsafe-inline`, `unsafe-eval`, and selected CDN origins
 excluded from LiteCowork's RichPresentation implementation. LiteCowork keeps the closed
 block schema, deterministic renderer, Core-assigned provenance, and semantic fallback in
 [Rich Response](RICH-RESPONSE.md). No source code or dependency was adopted.
+
+## Product and integration contract reconciliation — 2026-10-22
+
+The 2026-10-22 contract update reframed the product as local-first and chat-first. The
+owner reviewed and adopted the following changes to this repository's authority set:
+
+- **Adopted as product authority.** `V1-PRODUCT-RELEASE-CONTRACT.md` fixes the ten V1
+  areas and the free-core-without-subscription boundary; `V1-UI-SCREEN-CONTRACT.md` fixes
+  the desktop screens and their acceptance. Ordinary Conversation Send must work through a
+  qualified native AgentSession without requiring a Task or a Coworker, and a durable Task
+  stays central only to managed execution.
+- **Adopted as design targets, not served behavior.**
+  `V1-HORIZONCODE-NATIVE-AGENT-LLD.md` names HorizonCode as the first-party native
+  AgentModule candidate; `LITESPM-LITECOWORK-INTEROP-LLD.md` captures the real local
+  LiteSPM daemon contract that this repository previously had to assume. Both remain
+  TARGET until their integration stories land.
+- **Changed.** The Task-first Home dashboard was archived to
+  `implementation/archive/HOME-LEGACY-UX-20261022.md` and the New Chat landing became the
+  default first screen. The `task.created` event now treats the Coworker origin pair as
+  optional both-or-neither so chat-first Tasks can be created with no Coworker at all.
+- **Deferred / post-V1.** Cloud continuation (E11) and the remote Runtime (E12) stay
+  post-V1; hosted/cloud agent providers are tracked as a first-class V1 axis with no
+  passing qualification row yet.
+- **Unchanged and still canonical.** ARCHITECTURE.md, DATA-MODEL.md, STORAGE.md,
+  EVENTS.md, TRUST.md, ENVIRONMENTS.md and the domain LLDs remain the authority for
+  everything these new documents do not explicitly redefine; no upstream source, package
+  or dependency was adopted from this update.

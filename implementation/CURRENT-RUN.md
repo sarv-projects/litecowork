@@ -1,3 +1,44 @@
+## 2026-10-22 — Whole-UI implementation audit and cross-document reconciliation
+
+Docs-only pass requested by the owner: audit every UI surface against its contract, record
+what still must be implemented, and make every LLD/HLD/wiring document agree with the
+codebase before stopping. No product code changed.
+
+- **New detailed ledger.** `implementation/UI.md` gained "Current desktop UI implementation
+  audit — 2026-10-22": 48 contract claims checked against all 150 UI source files and 30
+  bridge files (**18 implemented/clean, 15 partial, 15 absent**), with file:line for both
+  sides, P0/P1/P2 work lists (2 P0, 13 P1, 9 P2), per-surface state-coverage gaps, and
+  explicit non-claims. Baseline evidence recorded: UI suite **497/497 pass**. The P0 remains
+  native turn execution — Send is unconditionally `disabled` with no turn `invoke` in the
+  bridge — and the composer agent/model/effort controls are unwired to any descriptor.
+- **Nine cross-document contradictions repaired** (each verified against source, schema and
+  the validator before editing):
+  - `task.created` no longer requires the Coworker origin pair in the canonical event
+    schema and `EVENTS.md` — it is nullable both-or-neither, matching DATA-MODEL, the
+    SQLite both-or-neither guard and chat-first Tasks with no Coworker.
+  - `attempt.created` no longer requires `lease_id` and its payload type is now nullable:
+    an Attempt is admitted without a lease and the separate lease-acquired event records
+    it, matching the nullable `execution_lease_id` (no producer exists yet, so this fixes
+    the contract before an implementation could encode the wrong rule).
+  - `PRESENTATION-RUNTIME.md` stopped under-claiming: the client reducer and the desktop
+    subscriptions for `turn.delta`/`turn.settled`/`rich.draft` exist; the local Operator
+    producer does not, so no transient frame reaches a running app.
+  - `DESIGN-SYSTEM.md` no longer describes the archived Task-first Home dashboard as the
+    landing; the New Chat composer is, with at most one Idea.
+  - `AGENT-FABRIC.md` roster count 15 → 25 (2026-10-21 revision).
+  - `V1-DESIGN-INDEX.md` status date → 2026-10-22.
+  - `COVERAGE-MATRIX.md` and `SOURCE-RECONCILIATION.md` now carry the 2026-10-22 contract
+    set (release contract, UI screen contract, HorizonCode, LiteSPM interop) with owning
+    stories and adopted/changed/deferred/unchanged rulings.
+  - Acceptance-matrix truth labels are reconciled with the release-contract vocabulary
+    (same five axes, shorter spellings, BLOCKED explained as a release verdict).
+  - `V1-FUNCTION-FILE-CATALOG.md` marks the LiteSPM rows as qualified-client facades, not a
+    second package manager.
+- **Verification.** architecture (145 events), plan (67 stories / 7193 rows), coverage
+  (107 docs), contracts, design-depth, owner-consistency, markdown (0 broken links) and
+  `git diff --check` all pass after the edits; the event-schema edits are surgical
+  (4-line and 9-line diffs, no reformatting).
+
 ## 2026-10-22 — Occurrence settlement from an authoritative Task outcome
 
 - **Defect repaired.** `settle_from_task_outcome` mapped Task `INCOMPLETE` to a terminal

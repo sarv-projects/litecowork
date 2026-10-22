@@ -440,7 +440,7 @@ Native subagents remain agent-owned. LiteCowork may record reported lifecycle if
 Native per-harness session startup, version fencing, authentication, and native input
 adaptation are target design in [NATIVE-COMPOSER-LLD.md](NATIVE-COMPOSER-LLD.md) and
 [`V1-FUNCTION-FILE-CATALOG.md`](V1-FUNCTION-FILE-CATALOG.md). Current source provides
-bounded installation observations for the 15 curated candidates, Codex/OpenCode profile
+bounded installation observations for the 25 curated candidates (see the 2026-10-21 roster), Codex/OpenCode profile
 observations, and Workspace AgentBinding setup; it does not yet serve native Conversation
 session startup or native composer adaptation. Switching selected AgentBinding must not
 migrate private provider session state or silently modify a running Attempt. UI option

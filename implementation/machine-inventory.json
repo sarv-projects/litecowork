@@ -298,7 +298,7 @@
     },
     {
       "name": "attempt_created",
-      "sha256": "776da30d2529c143ae40665a4b611a1d362ee1396deeac53733bb757e380692b"
+      "sha256": "af7891d8a9e4dce4efe0e71f48d1b00022e2f6e0ddf33f6ed11b3790efaa5de8"
     },
     {
       "name": "attempt_failure_recorded",
@@ -722,7 +722,7 @@
     },
     {
       "name": "task_created",
-      "sha256": "18a925892a0aa9b6ba30622fa4ecb82dbad199ef7ca07838299a36089a42d9a9"
+      "sha256": "9f57b75e5ac6a5dd454121ee444733d223a80a0c4716fcdc6c4cabf90945545d"
     },
     {
       "name": "task_lead_agent_changed",
@@ -852,7 +852,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "f7f41828b762df8919a75d764b26d3e3539507f983237396a1707a194d9c418d"
+      "sha256": "a376cc704217831a3428b2c02660a55e131a50b645f18bba341e59df0665e21e"
     },
     {
       "name": "pinned_resource_ref",

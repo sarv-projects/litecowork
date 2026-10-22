@@ -139,6 +139,26 @@ coverage inventory must be regenerated and each promoted SQL/OpenAPI/event/schem
 assigned to its concrete story. Until then, existing numbered flows/benchmarks and current
 machine coverage remain unchanged.
 
+## Product and integration contract set — 2026-10-22
+
+The product-level authority set was extended and reframed around the local-first,
+chat-first product. Each concern maps to exactly one authority here; none of these rows
+claims served behavior.
+
+| Concern | Authority | Owning story |
+|---|---|---|
+| Ten-area V1 product scope, chat-first release intent, free-core-without-subscription boundary | [V1-PRODUCT-RELEASE-CONTRACT](V1-PRODUCT-RELEASE-CONTRACT.md) | E13-S03 |
+| Desktop screen/interaction contract (shell, universal composer, Workbench, per-screen acceptance) | [V1-UI-SCREEN-CONTRACT](V1-UI-SCREEN-CONTRACT.md) | E02-S01 |
+| HorizonCode as the first-party native AgentModule candidate (manifest, chief/worker paths, tool boundary) | [V1-HORIZONCODE-NATIVE-AGENT-LLD](V1-HORIZONCODE-NATIVE-AGENT-LLD.md) | E03-S06 |
+| LiteSPM local package discovery/adoption/plan-apply interoperability contract | [LITESPM-LITECOWORK-INTEROP-LLD](LITESPM-LITECOWORK-INTEROP-LLD.md) | E10-S01 |
+| Archived Task-first Home (historical only; explains removed rows above) | [../implementation/archive/HOME-LEGACY-UX-20261022.md](../implementation/archive/HOME-LEGACY-UX-20261022.md) | non-normative |
+
+Task creation no longer requires a Coworker: `task.created` carries the
+`origin_coworker_id`/`origin_coworker_revision` pair as optional both-or-neither, which
+matches [DATA-MODEL](DATA-MODEL.md), the SQLite both-or-neither guard and the event
+schema. Domain and storage rows above stay canonical for everything these four documents
+do not redefine.
+
 ## V1 detailed design integration — 2026-10-12
 
 The implementation-oriented owner crosswalk now also includes V1-DESIGN-INDEX.md, NATIVE-COMPOSER-LLD.md, CHROME-BROWSER-LLD.md, DESKTOP-SHELL-LLD.md, RENDERING-CONFORMANCE-LLD.md, V1-WORKFLOW-EVENT-LLD.md and V1-FUNCTION-FILE-CATALOG.md. Their types and function labels are not alternative domain/wire authority. Existing domain owning rows above remain canonical. See ../implementation/V1-DESIGN-COVERAGE.md for evidence IDs.

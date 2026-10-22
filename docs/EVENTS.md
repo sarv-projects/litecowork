@@ -399,7 +399,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `step.created` | `step_id`, `task_id`, `plan_revision`, `logical_key?`, `dependencies[]` |
 | `step.status.changed` | `step_id`, `task_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `step.recovery.accepted` | `task_id`, `step_id`, `prior_attempt_id`, `new_attempt_id`, `retry_ordinal`, `recovery_reason`, `aggregate_version` |
-| `attempt.created` | `attempt_id`, `task_id`, `step_id`, `parent_attempt_id` (nullable), `agent_binding_id`, `delegation_profile_id` (nullable), `delegation_profile_revision` (nullable), `runtime_id`, `runtime_incarnation_id`, `environment_id`, `lease_id`; delegated attempts require the parent and pinned profile pair together |
+| `attempt.created` | `attempt_id`, `task_id`, `step_id`, `parent_attempt_id` (nullable), `agent_binding_id`, `delegation_profile_id` (nullable), `delegation_profile_revision` (nullable), `runtime_id`, `runtime_incarnation_id`, `environment_id`, `lease_id?`; the Attempt is admitted without a lease and the separate lease-acquired event records it, matching the nullable execution-lease identity; delegated attempts require the parent and pinned profile pair together |
 | `attempt.status.changed` | `attempt_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `attempt.checkpointed` | `attempt_id`, `resume_packet_ref`, `digest`, `source_spec_revision` |
 | `attempt.failure.recorded` | `attempt_id`, `failure_code`, `failure_signature`, `retryable` |
@@ -471,7 +471,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `resource.created.v2` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `aggregate_version`, `context_document?` |
 | `resource.revision.created` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
 
-| `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by`, `origin_coworker_id`, `origin_coworker_revision`, `routine_id?`, `routine_revision?`, `automation_id?`, `automation_occurrence_id?`, `automation_test_run_id?` |
+| `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by`, `origin_coworker_id?`, `origin_coworker_revision?`, `routine_id?`, `routine_revision?`, `automation_id?`, `automation_occurrence_id?`, `automation_test_run_id?` |
 | `workspace.primary_coworker.changed` | `workspace_id`, `from_coworker_id`, `to_coworker_id`, `changed_by`, `aggregate_version` |
 | `suggestion.preference.changed` | `workspace_id`, `kind`, `from_muted`, `to_muted`, `changed_by`, `aggregate_version` |
 | `task.coworker.origin.pinned` | `task_id`, `coworker_id`, `coworker_revision`, `aggregate_version` |

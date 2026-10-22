@@ -1628,9 +1628,7 @@
         "required": [
           "task_id",
           "initial_spec_revision",
-          "created_by",
-          "origin_coworker_id",
-          "origin_coworker_revision"
+          "created_by"
         ],
         "properties": {
           "task_id": {
@@ -2263,8 +2261,7 @@
           "delegation_profile_revision",
           "runtime_id",
           "runtime_incarnation_id",
-          "environment_id",
-          "lease_id"
+          "environment_id"
         ],
         "properties": {
           "attempt_id": {
@@ -2313,7 +2310,7 @@
             "minLength": 1
           },
           "lease_id": {
-            "type": "string",
+            "type": ["string", "null"],
             "minLength": 1
           },
           "runtime_incarnation_id": {

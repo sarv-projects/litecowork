@@ -47,6 +47,10 @@ deriveReasoningControl(agentDescriptor): OptionUi[]
 listDelegationProfiles(workspace, cursor): DelegationProfile[]
 validateWorkerProfile(profile, workerCapabilities, budget): Validation
 saveWorkerProfileRevision(profile, expectedVersion): RevisionReceipt
+# LiteSPM rows are LiteCowork-side UI/API facades over the qualified LiteSPM
+# client only. LiteSPM owns discovery and lifecycle; LiteCowork owns the
+# authorization, preview-before-mutation and effect boundary. Never reimplement
+# package discovery, install or state locally (LITESPM-LITECOWORK-INTEROP-LLD).
 listLiteSpmPackages(category, cursor, capabilityFilters): PackageRow[]
 previewPackageInstallation(packageId, manifestDigest): InstallPreview
 installQualifiedPackage(approval, manifestDigest, scope): Receipt

@@ -153,9 +153,12 @@ Each update carries its source identity, projection revision, and cursor. The cl
 replaces an older item when the same `item_key` advances to a newer source revision; it
 never orders items by network arrival time. The current local adapter supports one
 Conversation presentation subscription or one Task presentation subscription. It emits a
-fresh authorized snapshot after committed Workspace events. Runtime inventory, per-item
-deltas, and transient turn/rich-draft delivery remain unimplemented; unsupported filters
-are rejected explicitly.
+fresh authorized snapshot after committed Workspace events. Runtime inventory and
+per-item presentation deltas remain unimplemented. Transient `turn.delta`/`turn.settled`/
+`rich.draft` handling is implemented on the client — the stream reducer consumes and
+settles those frames and the desktop bridge subscribes to all three streams — but the
+local Operator does not emit them yet, so no transient frame reaches a running app in
+this build. Unsupported filters are rejected explicitly.
 
 A Task stream snapshot uses the existing `TaskPresentationSnapshot` fields and adds the
 decimal `origin_sequence` captured in the same SQLite read transaction as the Task,

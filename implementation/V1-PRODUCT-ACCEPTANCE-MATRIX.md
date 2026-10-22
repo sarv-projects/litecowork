@@ -12,6 +12,8 @@
 - **QUALIFIED:** CODE, SYSTEM and owner USER evidence on exact OS/build/version, including negative recovery.
 - **BLOCKED:** required V1 flow has no qualifying end-to-end evidence. A future pass must link evidence rather than overwrite this label without explanation.
 
+These labels are the same axes as the [release contract](../docs/V1-PRODUCT-RELEASE-CONTRACT.md) vocabulary, spelled one step shorter: **TARGET** = `TARGET_ONLY`, **CODE** = `CODE_IMPLEMENTED`, **SERVED** is identical, **INTEGRATED** = `INTEGRATION_PROVEN`, **QUALIFIED** is identical, and **BLOCKED** is this matrix's release verdict for a journey whose evidence chain is incomplete — it is not a sixth implementation axis. Never relabel a row without the evidence the target vocabulary names.
+
 ## Required journeys and current release verdict (2026-10-22 review)
 
 | Area | User-visible release journey | Domain/source owner | Evidence / release state |
