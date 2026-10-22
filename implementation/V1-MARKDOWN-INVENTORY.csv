@@ -48,7 +48,7 @@ docs/OBSERVABILITY.md,241,10804,3e0faa25f03249d8f515a2656687d248e786b3bc5515dc2c
 docs/PRESENTATION-RUNTIME.md,529,30678,2b7303fd05cbc6398bb083601f615b0a001715731383566d6ff3947688bf3545,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/PRODUCT.md,246,14811,4b1a3f24a3e038118d24820369e43d7a7961e723b5f92f0b662ea5b78d400610,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/PROTOCOLS.md,182,8557,c21f8ea7b8fd471efccf2870bc20a2b82b0d7abdf62ffa938c6641375cce9ca7,agent/composer;browser/computer;rendering;workflow/recovery;trust/security,True
-docs/REFERENCE-IMPLEMENTATIONS.md,450,45432,807ccb93f58a7f5770e78464edd6b3e6a910822139b3ca4e5437a81a8e954307,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+docs/REFERENCE-IMPLEMENTATIONS.md,631,63409,db959c2e52690f823a2dfc5b13f477fbfb78a30a875d8cb5e61b5e61ae52b7a8,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/RENDERING-CONFORMANCE-LLD.md,119,11426,113baa60f8c255d93a84e77463d2d4eaf2dab292dd5f8e69c1857b3d7f2a3dfd,browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/RESPONSIBILITIES.md,486,26147,eac7fa14beab80549a3227f268df774d1ba3d689b8d64f152df9d10ee7601cf3,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/RICH-RESPONSE.md,308,15822,cad643da99a2f44cb54e862f720694297bc8a0b73f3c9fe6d6ff588e53f1cc19,shell/settings/motion;rendering;workflow/recovery;trust/security,True
@@ -109,11 +109,11 @@ docs/adr/README.md,39,3349,54afa5933f64b39dbeed80004bc0410fc19759281af145ac7defe
 implementation/AGENT-MODULE-AUDIT.md,532,17596,1c5170ee9a650bd2f6f7dac28237645d741c87a34cf6d068af51ba4c47f988af,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/AGENT-PORTFOLIO-2026-10-16.md,161,26484,ab0120c7cfb638b092795b076f24c8f86c87b5df797fc06e17d7346c3b8a1a53,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/AGENT-PORTFOLIO-2026-10-21.md,136,25847,391ceaaf7fe81aaaf93dbe4ac43425e7fda9478ceade16dc5444c4f1b5dcb733,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
-implementation/ARCHITECTURE-COVERAGE.md,181,16444,1f2cd2afd481d839f10c4697889644854f3c4b622c11eb698193679303a7681d,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/ARCHITECTURE-COVERAGE.md,181,16444,270b6e3438792d5bd7e8807cfe21e6829a56b6fa206c29438f4759c70a3d4a97,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/AUDIT.md,155,13284,a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/CODEBASE-AUDIT-2026-10-21.md,284,20329,4aaf4a2cf5b236ec9bf76f8387180f8aaa963f0faa795fad8d570391e4d32f67,browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/COVERAGE.md,33,2007,de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945,rendering,True
-implementation/CURRENT-RUN.md,9888,725626,baf4aae0eb739638619d5578b70cae6d0de20c494f93a9f6d22d0c5bb8672ad4,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/CURRENT-RUN.md,9956,730980,e62a04dfec31549695fdfb6020aa3bd601dc0d95dedc50da6f44d353bca971ca,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/DOC-AUDIT-2026-10-10.md,173,18626,ff27abd7e23a2a34fde65ae200540a04bdc376cd3a9527f07304e2790345bc1c,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-13.md,316,19422,938e000f5933e0edaa3d08009202b5b9fc8a13f10128b939e6f732ffb488eaa0,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-20.md,149,13443,7636e87ae6a416da3dedbbf50f9d88b2e6d51f460ab3bbb6687e102a14a8cb6a,browser/computer;rendering;workflow/recovery;trust/security,True

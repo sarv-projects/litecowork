@@ -1,3 +1,58 @@
+## 2026-10-22 — Competitive product landscape, verified against vendor docs
+
+The owner asked for deep competitor research against LiteCowork's **final** intended
+capability set. Four parallel researchers plus direct verification loaded vendor
+documentation, GitHub repositories and design writeups on 2026-10-22. The result is a new
+dated section in [`docs/REFERENCE-IMPLEMENTATIONS.md`](../docs/REFERENCE-IMPLEMENTATIONS.md)
+— the canonical reference authority — not a change to any contract.
+
+**Name resolutions established (each previously ambiguous):**
+- **Grok Bot** is real and shipped: xAI + Cursor, launched 2026-08-11, persistent Bots on a
+  Cursor-owned cloud computer. Its design post states outright that "the main objects in
+  Grok Bot are **Bots, not conversations**" — the exact inverse of LiteCowork's
+  chat-first object model. Routines support **event triggers** (Slack, GitHub issues/PRs/
+  checks, webhooks) in addition to schedules. Limits: ~50 Bots/account, 6 per group chat.
+- **Claude Cowork** is real (Anthropic, Jan 2026) and is now **cloud-first**: per-session
+  ephemeral sandboxes, a mandatory egress proxy, connector tokens that never enter the
+  sandbox; local desktop execution is grandfathered for pre-2026-10-06 tasks only.
+- **OpenAI dots** is real (announced 2026-09-29): GPT-6 Astra, own cloud computer and
+  browser, 4,000+ app plugins, Slack/Teams/texting, read-only "proactive research",
+  Custom Rules and auto-review, specialist dots with Microsoft Agent 365 integration.
+- **"Muse Assistant" is not a product name** — it is Meta's **Muse** (2026-09-08), which
+  runs in a Muse Secure VM with a separate system-level **Sentinel** agent that gates all
+  egress, uses a Secure Credentials Store so Muse never sees passwords, and checks out via
+  Stripe Link. Microsoft's "Muse" is unrelated WHAM research. Meta also ships a separate
+  closed-source **Muse Code** beta with an MIT SDK.
+- **"OpenCowork" resolves to at least six unrelated repositories** with no company behind
+  any (largest `OpenCoworkAI/open-cowork`, ~2,224★, MIT). **"OpenWork" resolves to three**;
+  the substantial one is Different AI's `different-ai/openwork` (~24.2k★, MIT core plus a
+  source-available Den control plane, YC Spring 2026).
+
+**What the comparison records.** A 16-row shipped-capability matrix against LiteCowork's
+final targets; eight capabilities where LiteCowork's contracted final design is stronger
+than anything documented elsewhere (local-first execution locus, bring-your-own *harness*,
+durable Task truth with reported/observed/verified evidence, effect reconciliation before
+retry, observe-before-write cross-agent packaging, locally owned automation authority,
+Coworker-as-scoped-responsibility-layer, and honest absence); and ten honest gaps where
+competitors ship today and LiteCowork holds target or V2.
+
+**Findings that sharpen our own contracts:**
+- OpenWork states in its own docs that "The OpenWork desktop is never an Automation
+  scheduler or execution host" — its durable scheduler is a cloud MySQL control plane. That
+  makes LiteCowork the only design in the set with locally owned occurrence identity,
+  DST/misfire policy, cursor advancement and Task-outcome settlement.
+- OpenWork documents that its recovery "prevents duplicate recovery admissions, not
+  exactly-once execution of external tools" — exactly the gap LiteCowork's Effect
+  reconciliation rule exists to close.
+- Every serious open agent now exposes a programmatic protocol (Codex SDK/app-server,
+  Grok Build ACP, OpenCode/OpenHands ACP, Muse Code `muse serve`). LiteCowork has an
+  Operator API but no embeddable SDK story; recorded as a decision to make.
+- Event-triggered automations ship in Grok Bot and OpenWork while V1 automations are
+  schedule + manual; recorded as a gap, not silently absorbed.
+
+All doc gates pass afterwards (architecture, plan, coverage, contracts, design-depth,
+owner-consistency, markdown 0 broken links, `git diff --check`).
+
 ## 2026-10-22 — Second exhaustive doc reconciliation (every line re-verified)
 
 The owner required a non-summarised pass: verify every line of every LLD/HLD against the

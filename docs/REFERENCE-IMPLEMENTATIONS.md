@@ -445,6 +445,187 @@ repositories must record:
 Architecture inspiration without copied source still cites this file in the implementation
 review so future maintainers can distinguish deliberate borrowing from accidental similarity.
 
+## Competitive product landscape — verified 2026-10-22
+
+**Purpose.** This section records what the directly competing "AI coworker" products
+actually shipped, from their own documentation, so LiteCowork's final capability targets
+are compared against reality rather than memory. It is research, not authority: it does not
+change [ARCHITECTURE](../ARCHITECTURE.md), the
+[product release contract](V1-PRODUCT-RELEASE-CONTRACT.md), or any V1/V2 boundary, and no
+product below becomes a dependency or a copied implementation.
+
+**Standard.** Every row below was loaded from the vendor's own page on 2026-10-22 unless it
+is marked 3P (third-party) or could-not-verify. Comparison is against LiteCowork's **final**
+intended capability set (the ten V1 areas plus the cross-cutting invariants), **not**
+against current code — see the [acceptance matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
+for what is actually built today.
+
+### Named-product profiles
+
+| Product | Vendor / status | Execution locus | Own-model or bring-your-own | Primary object | Best source |
+|---|---|---|---|---|---|
+| **Claude Cowork** | Anthropic; launched 2026-01-12 research preview, now GA-ish on paid plans, chat+Cowork unification rolling out | **Cloud** per-session ephemeral sandbox with mandatory egress proxy; local desktop execution is grandfathered for pre-2026-10-06 tasks | Anthropic only | Conversation/task | [claude.com/product/cowork](https://claude.com/product/cowork), [architecture overview](https://support.claude.com/en/articles/14479288-claude-cowork-architecture-overview) |
+| **OpenAI dots** | OpenAI; announced 2026-09-29, rolling out to Pro/Business Premium, Enterprise beta off-by-default | Own **cloud** computer + browser; optional permissioned access to the user's laptop | GPT-6 Astra only | Persistent "dot" | [openai.com/index/introducing-dots](https://openai.com/index/introducing-dots/) |
+| **Meta Muse** | Meta; launched 2026-09-08, US, iOS/Android/muse.ai/WhatsApp | **Muse Secure VM** (cloud) plus a separate system-level **Sentinel** agent that gates all egress | Muse Spark only | Personal agent | [about.fb.com news](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/) |
+| **Meta Muse Code** | Meta; beta, closed-source binary + MIT SDK | Local terminal harness (Seatbelt / bubblewrap / Windows sandbox) | Muse Spark required | Session | [dev.meta.ai/docs/muse-code](https://dev.meta.com/docs/muse-code), [muse-code-sdk](https://github.com/meta-models/muse-code-sdk) |
+| **Grok Bot** | xAI + Cursor; launched 2026-08-11 beta, GA on Cursor/SuperGrok plans | **Cursor's cloud** computer shared by all of a user's Bots | xAI/Cursor models | **Bot** (explicitly "not conversations") | [docs.x.ai/grok-bot](https://docs.x.ai/grok-bot/overview), [design writeup](https://x.ai/news/designing-grok-bot) |
+| **Grok Build** | xAI; GA-ish, Apache-2.0 Rust CLI, ~27.5k★, no external contributions accepted | Local, sandbox **off by default** (Landlock/Seatbelt) | xAI API or subscription | Session | [docs.x.ai/build](https://docs.x.ai/build/overview), [github.com/xai-org/grok-build](https://github.com/xai-org/grok-build) |
+| **OpenWork** | Different AI (YC Spring 2026, founder Ben Shafii, team of 4); MIT desktop + source-available `ee/` Den control plane, ~24.2k★, released v0.18.60 on 2026-10-22 | Local desktop; optional cloud workers | Any of 50+ providers incl. local Ollama/LM Studio | Session/workspace | [openworklabs.com](https://openworklabs.com/), repo `different-ai/openwork` |
+| **OpenCoWork** | opencowork-ai; Apache-2.0, **development preview**, built on Claude Agent SDK, waitlist | Local, sandboxed | Claude required | Workspace/Task | [openco.work](https://openco.work/) |
+| **OpenCowork (6+ unrelated repos)** | No company behind any. Largest: `OpenCoworkAI/open-cowork` (MIT, ~2,224★, Electron + Claude Agent SDK, WSL2/Lima VM sandbox, document Skills, GUI computer-use, Feishu/Slack remote control, unsigned builds); `AIDotNet/OpenCowork` (Apache-2.0, ~640★, Electron + .NET 10 Native AOT sidecar over MessagePack IPC, SSH remote, 5 modes); `LeonGaoHaining/opencowork` (Apache-2.0, ~417★, Electron + LangGraph, has `docs/ARCHITECTURE.md` and SPEC files); `Safphere/opencowork` (~333★, stale since Feb 2026); three smaller | Local desktop | BYO model | Session/workflow | GitHub search `opencowork in:name` |
+
+**Name resolutions that matter.** "Muse Assistant" is not an official product name: it is
+Meta's consumer **Muse** (Microsoft's "Muse" is the unrelated WHAM game-world-model research
+project). "OpenCowork" resolves to at least six unrelated repositories with no company
+behind any of them; "OpenWork" resolves to three real projects — the substantial one is
+Different AI's `different-ai/openwork`, plus `langchain-ai/openwork` (~1.5k★, a deepagentsjs
+desktop) and `modelstudioai/openwork`. There is no first-party "Grok CLI" or "Grok Code"
+product — the coding agent is **Grok Build** (`grok-code-fast-1` survives only as a model
+alias, `grok-build-0.1`).
+
+### Shipped-capability comparison against LiteCowork's final targets
+
+Legend: **S** = shipped today, **P** = partial/limited, **–** = not offered, **V2** = offered
+only in a paid enterprise/self-host tier, **?** = could not verify from vendor docs.
+
+| Final LiteCowork capability | Claude Cowork | OpenAI dots | Meta Muse | Grok Bot | OpenWork | Meta Muse Code |
+|---|---|---|---|---|---|---|
+| Local-first, data never leaves the device | – (cloud-first; local grandfathered) | – | – | – | **S** | **S** |
+| No mandatory vendor subscription / free core | – | – | P (free tier + $20/$100) | – | **S** | – |
+| Bring-your-own native agent harnesses & subscriptions | – (Anthropic only) | – (uses Codex as a tool) | – | – | **S** (any provider) | – |
+| Chat-first without Task/Coworker setup | **S** (unified box) | **S** | **S** | P (Bot-first) | **S** | P (TUI-first) |
+| Persistent named agent with scoped memory | **S** | **S** | **S** | **S** | P (sessions/skills) | P (local memory, experimental) |
+| Durable Task truth: spec/plan revisions, attempts, evidence, verification | – (task runs, no published ledger) | – | – | – | P (durable run table + audit events) | – |
+| Effect/verification semantics with reported/observed/verified separation | – | – | – | – | – | – |
+| Multi-agent delegation with fencing and lead handoff | P (subagents, parallel workstreams) | P (future teams of dots) | – | **S** (Bots message each other, pass ownership) | P (subagent lanes) | **S** (subagents + worktree isolation, "never silently falls back") |
+| Cross-agent package manager (observe/adopt/unmanage) | – (plugins, single vendor) | – (4,000 app plugins) | – (connectors) | – (200 plugin skills) | P (MCP gateway + Den marketplaces) | P (skills import from Claude Code/Codex) |
+| Automations with timezone/DST/misfire/occurrence identity | P (recurring schedules) | P (scheduled/reminder tasks) | P (reminders + scheduled) | **S** (schedules **and** event triggers: Slack/GitHub/webhooks) | P (DST + occurrence identity + missed-run recording exist, but **Den, not the desktop, is the scheduler**) | – |
+| Scoped memory with provenance, revoke, purge, no cross-scope leak | P (memory shared with chat) | P (inherits ChatGPT memory) | **S** (per-app access + "forget") | **S** (per-Bot memory, account-level tools) | – | P (experimental, off by default) |
+| Browser/computer takeover with epoch fencing and return revalidation | P (built-in browser; computer use preview, macOS only) | P (own browser; optional laptop access) | **S** (Sentinel-gated browser/form filling) | **S** (3-level: status → preview → takeover) | P (`browser_handoff` for sign-in/CAPTCHA) | – |
+| Real PTY terminal in a Workbench | P (shell in sandbox) | P (cloud computer terminal) | P (cloud VM) | **S** (cloud computer terminal) | P | **S** (local PTY harness) |
+| Artifact library with immutable versions, provenance, format claims | P (Docs/Slides/Design, Excel/PowerPoint) | P (presentations/docs in task results) | **S** (artifacts → Library) | **S** (Artifacts primitive) | P (scratch files, **overwrite** versioning) | – |
+| Secrets never exposed to the model | **S** (connector tokens never enter sandbox) | **S** (saved passwords without exposing) | **S** (Secure Credentials Store) | P (secure secret request) | ? | P (`*KEY*/*SECRET*/*TOKEN*` env stripping) |
+| Human approval for consequential actions | **S** (Manual/Auto/Skip; deletion always asks) | **S** (auto-review; password change always user) | **S** (approval vocabulary + audit trail) | **S** ("Ask first" rules, Auto Review) | **S** (per-tool approvals) | **S** (on by default, fail-closed) |
+| Background work while the machine is off | **S** (cloud) | **S** (24/7) | **S** | **S** | V2 (cloud workers) | – |
+| Cross-device continuation / mobile | **S** (web/desktop/mobile) | **S** (ChatGPT/Slack/Teams/texting) | **S** (app/WhatsApp/glasses soon) | **S** (desktop + iOS/Android) | P (Web alpha) | – |
+| Team/Enterprise governance (RBAC, audit, SSO) | **S** (SIEM/OpenTelemetry, MDM, Bedrock/Foundry) | **S** (Agent 365, workspace admin) | – | **S** (Enterprise admin, audit logs, DLP) | **S** (Den: RBAC/SCIM/audit, self-host) | – |
+
+### Where LiteCowork wins on final design
+
+These are capabilities where LiteCowork's **contracted** final design is stronger than
+anything the competitors document. None of them is implemented yet; they are the reasons the
+architecture exists.
+
+1. **Execution locus and data ownership.** Every named competitor runs the agent in a
+   vendor cloud (Claude Cowork, dots, Muse, Grok Bot) or requires the user to accept a
+   cloud tier for team features (OpenWork). LiteCowork is contracted local-first: local
+   data, local Runtime, no mandatory LiteCowork account or subscription
+   (`V1-PRODUCT-RELEASE-CONTRACT.md` §1). Only OpenWork and Muse Code share this property,
+   and neither pairs it with durable Task authority.
+2. **Bring-your-own agent, not bring-your-own model.** dots/Muse/Grok Bot/Cowork all bind
+   the user to one vendor's model. OpenWork lets you pick a *model*; LiteCowork is
+   contracted to run the user's **existing native harnesses and subscriptions** (25-agent
+   roster, no universal model-router substitution) — no competitor documents multi-harness
+   orchestration with per-harness conformance qualification.
+3. **Durable Task truth with evidence semantics.** No competitor publishes a Task ledger
+   with immutable spec/plan revisions, Attempt identity, Effect records, lease fencing,
+   crash recovery, and **reported / observed / verified** evidence separation. OpenWork's
+   durable `AutomationRunTable` with audit events is the closest, and it has no Evidence or
+   Verification concept. This is LiteCowork's single largest architectural lead.
+4. **Effect reconciliation before retry.** The contracted rule — an unknown external result
+   is reconciled authoritatively before any retry, so a consequential action is never
+   duplicated — is documented nowhere else. Competitors retry turns; none publishes
+   duplicate-effect fencing.
+5. **A cross-agent package manager with observe-before-write.** Everyone has plugins,
+   connectors, skills or an MCP gateway. Nobody documents a package authority that can
+   *observe* an existing installation, *adopt* it without modifying it, and *unmanage* it
+   without uninstalling native resources, with the "user edits win by default" rule.
+   OpenWork's Den marketplace is the nearest, and it is an org control plane, not a
+   cross-harness lifecycle authority.
+6. **Locally owned automation authority.** Grok Bot's routines run on Cursor's cloud
+   computers, Claude Cowork's schedules run on Anthropic's servers, and OpenWork states
+   explicitly that "The OpenWork desktop is never an Automation scheduler or execution
+   host" — its durable scheduler is Den, a MySQL control plane, and the desktop only claims
+   occurrences as a runner. LiteCowork is the only design in this set where occurrence
+   identity, DST/misfire policy, cursor advancement and Task-outcome settlement are owned
+   by a durable store on the user's own machine. Grok Bot and OpenWork do ship event
+   triggers LiteCowork V1 does not, which is recorded as a gap below.
+7. **Coworker as a scoped responsibility layer, not a chat persona.** Grok Bot's Bots and
+   Meta's Muse are *personas* with account-level tool access. LiteCowork's contracted
+   Coworker is an identity/context/responsibility layer whose memory change can never
+   silently grant a permission, add a Connection, install a package or enable a schedule
+   (§6 invariant 4) — a boundary no competitor states.
+8. **Honest absence.** LiteCowork contracts that unsupported integrations stay visibly
+   unavailable and never masquerade as passes; that a native tool report is never a
+   LiteCowork-mediated receipt; and that install ≠ permission. Given Reuters' finding that
+   Meta's internal Muse tests showed stalling and unauthorized sensitive-data exposure, and
+   that Grok Build ships with its sandbox **off by default** and memory experimental,
+   explicit assurance labelling is a genuine differentiator rather than paperwork.
+
+### Where LiteCowork does not have it — honest gaps
+
+Everything below ships today at one or more competitors while LiteCowork holds it as
+target-only or V2. These are the real competitive risks.
+
+1. **Nothing is shipped.** All 11 product journeys are BLOCKED and no V1 story is closed
+   (see the acceptance matrix). Every competitor in the table above ships a usable product
+   today.
+2. **Cloud-continuation convenience.** "Close your laptop, it keeps going" is standard
+   (Cowork, dots, Muse, Grok Bot). LiteCowork deliberately holds this as **V2** (cloud
+   Runtime, cross-device continuation). Local-only background work that stops when the
+   machine sleeps is a real usability deficit versus all four consumer products.
+3. **Mobile and multi-channel surfaces.** ChatGPT/Slack/Teams/texting (dots), WhatsApp and
+   AI glasses (Muse), iOS/Android (Grok Bot), web+mobile (Cowork). LiteCowork V1 is
+   desktop-only; multi-device clients are V2.
+4. **Team/Enterprise governance.** RBAC, SSO/SCIM, audit logs, SIEM/OpenTelemetry export,
+   spend limits, admin DLP ship today in Cowork, dots, Grok Bot and OpenWork Den.
+   LiteCowork's multi-user organizations, sharing and RBAC are V2, and its notification/
+   observability contract has no SIEM export.
+5. **Event-triggered automations.** Grok Bot triggers routines from Slack, GitHub issues/
+   PRs/checks and webhooks; OpenWork accepts webhooks. LiteCowork V1 automations are
+   schedule + manual only.
+6. **Connector breadth and instant integrations.** dots: 4,000+ apps. Muse: Meta + third-
+   party connectors plus custom connector ingestion. Cowork: Google Workspace, Slack,
+   DocuSign and plugins. LiteCowork's Connections area depends on LiteSPM qualification and
+   currently has no qualified provider.
+7. **Payments and real-world actions.** Muse checks out via Stripe Link with purchase
+   protection; Grok Bot pays with X Money/Stripe Link and claims its own email address.
+   LiteCowork has no payment or egress-action surface, and none is contracted in V1.
+8. **Demonstration-learned skills.** Grok Bot teaches a workflow by watching (10-minute
+   cap, 3P) and Meta's Muse Code imports skills from Claude Code and Codex. LiteCowork's
+   learning path is policy-gated quiet learning with review, which is slower to onboard.
+9. **Embeddability.** Codex ships a TypeScript/Python SDK and an app-server JSON-RPC
+   protocol; Grok Build is ACP-embeddable; OpenCode/OpenHands interoperate over ACP.
+   LiteCowork publishes an Operator API but has no embeddable SDK story.
+10. **Model-run cost transparency.** Muse publishes token-per-week allowances and Muse Code
+    publishes per-million prices; LiteCowork's usage surface is target-only.
+
+### Decision implications
+
+- **Do not chase cloud parity in V1.** Competitors win the "always-on cloud computer"
+  convenience by design; LiteCowork wins by being the local, evidence-bearing system of
+  record. Copying the cloud computer would abandon the differentiation instead of gaining it.
+- **Adopt the approval vocabulary, not the products.** "Allow once / for this task / for this
+  site / always / deny" (Muse), "Ask first" rules (Grok Bot) and Custom Rules (dots) are all
+  the same idea expressed well; LiteCowork's grant/scoping model should present comparable
+  plain-language choices without importing any vendor's authority model.
+- **Strengthen the two documented weaknesses.** (a) Publish the event-trigger automation
+  contract or explicitly descope it, because Grok Bot and OpenWork already ship it; (b)
+  decide whether LiteCowork ships an embeddable SDK, because every serious open agent
+  (Codex, Grok Build, OpenCode, OpenHands, Muse Code) now exposes a programmatic protocol.
+- **Keep the reference-first rule.** OpenWork (`different-ai/openwork`) is the single most
+  relevant open-source reference — MIT core, durable automation runs with audit events,
+  runner capability tokens, and a `browser_handoff` takeover tool. Study its runner-token
+  and handoff patterns per the implementation rule above; do **not** adopt its artifact
+  model (it overwrites files rather than versioning them), its cloud-side scheduler
+  (`packages/automations` is a pure domain and Den is the durable host), or its own
+  documented admission caveat: its recovery "prevents duplicate recovery admissions, not
+  exactly-once execution of external tools" — precisely the gap LiteCowork's Effect
+  reconciliation rule exists to close.
+- **Treat the "coworker" naming convergence as a positioning fact.** Anthropic, xAI, Meta
+  and OpenAI all shipped a "coworker/teammate/extension of you" framing in 2026. LiteCowork's
+  claim must rest on the evidence and ownership model, not on the vocabulary.
+
 ## V1 detailed design integration — 2026-10-12
 
 The official upstream references and implementation constraints for native OpenCode commands/server/permissions and Chrome DevTools/Playwright/Chrome security are listed in V1-DESIGN-INDEX.md. Pin vendor source commit/version before relying on exact behavior. Source listing is evidence of capability to research, not that LiteCowork adapter has passed conformance.
