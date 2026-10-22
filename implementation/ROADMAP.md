@@ -1,5 +1,12 @@
 # Delivery roadmap
 
+**2026-10-22 release crosswalk:** [V1 Product Acceptance Matrix](V1-PRODUCT-ACCEPTANCE-MATRIX.md)
+and [ten-area product contract](../docs/V1-PRODUCT-RELEASE-CONTRACT.md)
+add real user-journey gates but are not a competing backlog or a replacement
+Task engine. Critical path: actual native Send → one verified durable Task
+→ qualified LiteSPM native inventory/adoption/invocation → Coworkers/Workbench
+and supported artifacts → delegation/learning → local automation and OS QA.
+
 The dependency graph in [backlog](backlog.json) is authoritative for ready work.
 No invented calendar schedule; one-week planning/review windows follow [process](PROCESS.md).
 

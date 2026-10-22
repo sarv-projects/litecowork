@@ -1,5 +1,12 @@
 # Native Chat, Composer, and Agent-Parity LLD (V1)
 
+> **Canonical V1 entry:** ordinary Conversation Send must run through a
+> qualified native AgentSession **without** mandatory Task/Coworker creation.
+> Agent selection determines valid native model/effort/commands, not a
+> duplicated LiteCowork-wide model router. Current source deliberately
+> disables Send until real agent-session admission; this is TARGET, not live.
+> See [final screen contract](V1-UI-SCREEN-CONTRACT.md).
+
 Status: NORMATIVE TARGET, not evidence of implemented Operator endpoints. Owners: E03-S01/S02/S06–S11, E08-S01/S04/S06 and E04-S06. Authority: AGENT-CONTROL, AGENT-FABRIC, TASK-RUNTIME, API, SCHEMAS, STATE-MACHINES, TRUST, EXPERIENCE. This document defines UI/local orchestration algorithms; machine endpoints/events must be promoted atomically to API/OpenAPI/Events/schema/storage and tested before serving.
 
 ## Outcome and non-negotiable invariants

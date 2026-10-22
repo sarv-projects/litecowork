@@ -1,5 +1,18 @@
 # Automation LLD
 
+> **Critical V1 settlement boundary (2026-10-22):**
+> Occurrence completion is derived from authoritative Task outcome, not schedule
+> firing, UI status or an agent report. The current source
+> `crates/domain-responsibility/src/occurrences.rs` maps `INCOMPLETE` to
+> FAILED; however Task `INCOMPLETE` may permit an explicit recover/revise
+> transition in [State Machines](STATE-MACHINES.md).
+> This is an **OPEN CODE/CONTRACT DEFECT**, not an accepted terminal rule.
+> Repair must distinguish terminal failure from recoverable INCOMPLETE, with
+> idempotent occurrence status/event settlement, concurrent-run slot release
+> and crash/late-result tests. Trigger-host cursor retirement on disable and
+> real OS notification settlement are also release blockers.
+> See [release matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+
 An Automation defines when or why a pinned Routine should create ordinary Tasks. It is
 not a workflow engine, agent, or worker process. Trigger hosting and Task execution are
 independent placements.

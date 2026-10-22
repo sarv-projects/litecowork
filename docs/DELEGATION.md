@@ -1,5 +1,12 @@
 # Delegation and Worker Selection
 
+> **V1 HorizonCode relationship:** the separately developed coding harness is
+> a native AgentModule candidate, eligible as selected chief or worker under
+> the *same* bounded DelegationProfile/Step/Attempt/Trust/Evidence contracts.
+> Native HorizonCode subagents are **not** automatically LiteCowork child
+> Attempts. See [HorizonCode LLD](V1-HORIZONCODE-NATIVE-AGENT-LLD.md).
+> Handoff transfers portable accepted Task state, not private native sessions.
+
 This document owns the LiteCowork-hosted delegation contract. Agent-native subagents
 remain owned by their native harness; deterministic operations remain Capability
 Invocations. LiteCowork creates a child Attempt only for host delegation.

@@ -1,5 +1,13 @@
 # LiteCowork desktop/local V1 release qualification matrix
 
+> **Product acceptance:** [V1 Product Acceptance Matrix](V1-PRODUCT-ACCEPTANCE-MATRIX.md)
+> lists all ten V1 areas and the concrete end-to-end BLOCKED journeys.
+> A platform row with a CODE fixture or route does **not** count as actual
+> provider/OS/System/owner USER qualification. HorizonCode needs its own
+> explicit exact-version/OS/module row before it can appear as supported.
+> LiteSPM existing-native adoption is separately qualified per package kind,
+> host/version, user/project scope and operation.
+
 This file is generated. Do not edit it by hand: run the command below to regenerate it.
 
 ```

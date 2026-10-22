@@ -1,5 +1,12 @@
 # Desktop Shell, Settings, Sidebars, Interaction, Animation LLD (V1)
 
+> **Canonical V1 screen contract:** [V1 UI Screen Contract](V1-UI-SCREEN-CONTRACT.md).
+> Default launch = New Chat or last eligible Conversation, not Task-first Home.
+> Left navigation, central native-agent composer and optional right Workbench
+> are one unified product surface. No mandatory Coworker or Task, no fake
+> terminal/browser execution, no extra global model router. A layout
+> preference never restores expired grants or an old control lease.
+
 Status NORMATIVE TARGET. Owners E02/E03/E08/E09/E10/E13. Authority: EXPERIENCE, DESIGN-SYSTEM, MOTION, PRESENTATION-RUNTIME, UI delivery. No speculative control is active until backed by Operator/UI ownership, entitlement and USER qualification.
 
 ## Window and navigation anatomy
