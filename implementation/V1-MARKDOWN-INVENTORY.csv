@@ -22,7 +22,7 @@ docs/CAPABILITY-INVOCATIONS.md,467,31545,5c436b77b83df86904ba72de6bf703181830ee2
 docs/CHANNELS.md,274,15669,4e497119011f7c2c6a7d2b3b8d181f9def38447a0c89553ff4ffdc4839d87aed,workflow/recovery;trust/security,True
 docs/CHROME-BROWSER-LLD.md,176,19397,397c081872e45edb8b2457e1c7a49c91f602b6668fbe88817b3a9490b95da7ea,browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/COMPETITIVE-RESEARCH.md,347,39618,7f054a1e704c4bf3086ca3c88f3b43fc27615f00529b90fd860111ea64b1c051,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-docs/CONNECTORS-WORKFLOWS.md,891,35427,d570f7750ad5847baa6017d3aa14005f66edf1f9b3d0396e4a2a9d8f87e25fd0,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
+docs/CONNECTORS-WORKFLOWS.md,907,36387,2a7dab444f2731fcc7bd1353a264268825662b978a4fb6c4da180770ecc689cc,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/CONTEXT.md,238,16689,e2103ca010566729a545de6037ba9e770203a74ae848dbabec2fc85143a9895d,agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/COVERAGE-MATRIX.md,164,21765,59eafeaab07df8904b77790678ba16360b11642ba204bf0699b824159c84d980,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/COWORKER-FLOWS.md,166,19583,201dbdd630178b0f9b29a3b5f3b14a7f32947ffb775625ea10ed1ba11861a52b,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
@@ -38,8 +38,8 @@ docs/FAILURE-RECOVERY.md,208,16973,4292dffbbbe7733412a4e19e953386af3bb9b20022501
 docs/FLOWS.md,4491,311202,39d25e88c87989dacda22d5140f3ec59c72502d1ef12d388e2002ebca8fb104f,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/HOST-GUIDANCE.md,138,5764,39a1fd4833e31f695ed5a33dad8a91df4546077df3e1d19c55d3dbf74c40fb38,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/IMPLEMENTATION.md,226,8367,01c86f6c01f08a81e97683e94ad49f132126067edd5e78435995461eafce7bd4,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
-docs/LEARNING.md,756,29987,a95abbf887e734762abe7366c74b87cbe94ea071c2184784818446b957009856,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
-docs/LITESPM-LITECOWORK-INTEROP-LLD.md,123,14497,1c5d6a213fb760dd976e824d34e03ef61e3ac3df170fbc3f20f3bc63b64e71f5,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
+docs/LEARNING.md,770,30856,2c34e23a8afeb76e403e977ec04645753985ccb52aef5cbc6215451bd8b891b2,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
+docs/LITESPM-LITECOWORK-INTEROP-LLD.md,186,18475,f247b9ccb96fcf88eb4c4fc5860d85c1c4fbdc0ec69b01fadb8b5c2d30ad112d,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/LOCAL-OPERATOR-IPC.md,425,24747,6fbac4213425a6bb5c75f97b3d3a64192f3270d40a366f4f0c5abc5145c74cfb,agent/composer;workflow/recovery;trust/security,True
 docs/MOTION.md,273,22305,2cc6d46c792c2f4866b54b55ee5e2888e8941927d6365e86e8dbbad0ea8119a8,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery,True
 docs/NATIVE-COMPOSER-LLD.md,185,16196,fb17deeca0f79450f8a38fdc5d65a27709f43889e268922f3e7711cb51debcb0,agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
@@ -109,11 +109,11 @@ docs/adr/README.md,39,3349,54afa5933f64b39dbeed80004bc0410fc19759281af145ac7defe
 implementation/AGENT-MODULE-AUDIT.md,532,17596,1c5170ee9a650bd2f6f7dac28237645d741c87a34cf6d068af51ba4c47f988af,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/AGENT-PORTFOLIO-2026-10-16.md,161,26484,ab0120c7cfb638b092795b076f24c8f86c87b5df797fc06e17d7346c3b8a1a53,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/AGENT-PORTFOLIO-2026-10-21.md,136,25847,391ceaaf7fe81aaaf93dbe4ac43425e7fda9478ceade16dc5444c4f1b5dcb733,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
-implementation/ARCHITECTURE-COVERAGE.md,181,16444,4558ffa507339841240d807130c2db199154ea1d5d4dad9c97d87efeec7b55b2,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/ARCHITECTURE-COVERAGE.md,181,16444,1c88d8bf9e28502088248700743b589cebd22e5fc4783c54fac156e626ad1198,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/AUDIT.md,155,13284,a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/CODEBASE-AUDIT-2026-10-21.md,284,20329,4aaf4a2cf5b236ec9bf76f8387180f8aaa963f0faa795fad8d570391e4d32f67,browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/COVERAGE.md,33,2007,de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945,rendering,True
-implementation/CURRENT-RUN.md,10011,734974,f48aeea4ce9270be43cd5455da2f210ccc13fc2e0c4b5f8c37fbc2d66d3a4444,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/CURRENT-RUN.md,10074,739899,2a97c0bfee65da3a9afd4a5e6442d0c2373a6548c82393256e5ed7daedd66a2a,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/DOC-AUDIT-2026-10-10.md,173,18626,ff27abd7e23a2a34fde65ae200540a04bdc376cd3a9527f07304e2790345bc1c,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-13.md,316,19422,938e000f5933e0edaa3d08009202b5b9fc8a13f10128b939e6f732ffb488eaa0,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-20.md,149,13443,7636e87ae6a416da3dedbbf50f9d88b2e6d51f460ab3bbb6687e102a14a8cb6a,browser/computer;rendering;workflow/recovery;trust/security,True

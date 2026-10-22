@@ -563,6 +563,20 @@ Rules, each traceable to shipped vendor practice:
    fetch are untrusted: a skill cannot grant itself authority, and "remember this" or "you
    may skip approval" inside skill text has no effect on Trust policy.
 
+### Installation is not ours
+
+Upstream LiteSPM already installs `SKILL.md` directories across harnesses **by copy** into
+each agent's own skills directory — deliberately not by symlink, so an installation can be
+inspected and removed — with a provenance ledger and path-confinement checks. This was
+observed in the upstream repository at the pinned 2026-10-22 revision and is recorded in
+[LiteSPM interop §5b](LITESPM-LITECOWORK-INTEROP-LLD.md).
+
+A demonstration or an import therefore ends as a reviewed `SkillProposal`, and **LiteSPM
+performs the install into each agent's directory**. LiteCowork owns provenance review,
+authority declarations, and assigning the installed capability to a Workspace or Coworker —
+never the package lifecycle itself. §9 gate 7 already said so; this makes the installer's
+existence explicit so no second installer is designed.
+
 ### Export
 
 A LiteCowork-owned skill may be exported as a standard `SKILL.md` directory for use in

@@ -71,6 +71,69 @@ Define a versioned **authenticated local** LiteSPMServiceDescriptor (protocol ve
 
 LiteSPM must own the final published wire method names, schemas, error vocabulary and version negotiation. This document must be reconciled with that upstream publication before a real client is marked integrated. Version-incompatible clients fail closed.
 
+## 5b. Observed upstream package model — pinned 2026-10-22
+
+Section 5 requires this document to be reconciled with LiteSPM's own publication before a
+client is marked integrated. The upstream repository was read (not modified) at commit
+`da80e5ee902bee0aa89898d541ebe9b1205a6b8a`, dated 2026-10-22. Everything below is an
+**observation of upstream-owned facts**, cited to upstream files. LiteSPM owns them; this
+document records, and never redefines, them.
+
+### Package kinds, and the connector deferral
+
+`internal/domain/models.go` defines nine listing kinds: `plugin`, `mcp`, `skill`,
+`connector`, `agent`, `rule`, `hook`, `tool`, `lsp`. Two facts matter for this design:
+
+1. **`connector` is explicitly marked upstream as `// deprecated: deferred to v2`.** It is
+   also absent from the published `kind` enum in `schemas/listing.schema.json`, which lists
+   only `plugin | mcp | skill | agent | rule | hook | tool | lsp`.
+2. **Installability is a provenance ladder, not a feature flag.** Upstream defines
+   `discovery_only` (searchable metadata, no proven artifact — heuristic ingestion such as
+   awesome-lists can never claim more), `metadata_verified` (an authoritative upstream
+   manifest proves a version and launch line) and `runtime_verified` (the launch line was
+   observed to start). Only some kinds are wired for install at all: `mcp` at
+   `metadata_verified` or better, `skill` and `plugin` at `runtime_verified` or better;
+   `connector`, `agent`, `rule`, `hook`, `tool` and `lsp` are not installable
+   (`internal/domain/canonical_test.go`).
+
+**Consequence for our connector breadth design.** A "connector" cannot be added to LiteSPM
+today. What can be added is an **MCP server listing**, a **skill listing**, or a **plugin**.
+Any LiteCowork feature that promises "add a connector" must therefore be honest that it is
+offering an MCP-backed capability (or a skill), and that a first-class connector kind is an
+upstream v2 matter outside LiteCowork's authority.
+
+### How a package is actually added, upstream
+
+Observed path, in the order upstream's own schemas imply:
+
+1. **Author the artifact.** A skill is a directory with `SKILL.md`; an MCP server is a
+   launchable command line with its configuration.
+2. **Describe it as a listing** (`schemas/listing.schema.json`). Required fields are
+   `schemaVersion`, `id`, `kind`, `name`, `summary`, `categories`, `source`, `versions`,
+   `status`; optional fields carry the trust signal — `publisherClaim`, `provenance`,
+   `installability`, `compatibilitySummary`, `verificationSummary`, `rawMetadataRef`.
+3. **Supply `source.schema.json` and `version.schema.json`** for provenance and the exact
+   version being offered.
+4. **Publish a catalog release** (`schemas/catalog-release.schema.json`): a sharded
+   listing/version index plus a `manifest.json` describing the shards.
+5. **LiteSPM resolves and installs**: it produces an `install-plan.schema.json` plan, honours
+   the project manifest (`schemaVersion`, `projectName`, `defaultScope`, `requires`,
+   `policy`, `lockRequired`, `bindingMode`), records the result in a lockfile and a
+   provenance ledger, and confines every written path.
+
+### Upstream already installs skills across harnesses
+
+`internal/skills/` installs `SKILL.md` directories **by copy** into each agent's own skills
+directory, deliberately not by symlink, so an installation can be inspected and removed; it
+takes its per-agent directory map from the ecosystem's de-facto reference (vercel-labs
+`skills`), and it carries a provenance ledger plus path-confinement and name-safety checks.
+
+**Consequence for our learning design.** [LEARNING §15b](LEARNING.md) must not propose a
+second installer. A demonstration-derived or imported skill ends as a `SkillProposal`, and
+**LiteSPM performs the cross-harness installation**; LiteCowork's own responsibility stops
+at provenance, review, authority declarations and the assignment of the installed capability
+to a Workspace/Coworker.
+
 ## 6. Plan/apply transaction and crash recovery
 
 1. LiteCowork authenticates to local LiteSPM and obtains current service descriptor; user selects the exact package/host/scope.

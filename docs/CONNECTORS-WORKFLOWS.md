@@ -567,6 +567,22 @@ sees it." Locally the token is on the user's disk, which inverts the design:
   LiteCowork can offer protocol conformance plus receipts, never per-vendor semantic
   guarantees.
 
+### The upstream reality: there is no installable "connector" kind
+
+Verified against LiteSPM at the pinned 2026-10-22 revision
+(`internal/domain/models.go`, `schemas/listing.schema.json`): upstream marks `connector`
+**deprecated, deferred to v2**, and it is absent from the published kind enum. Only `mcp`,
+`skill` and `plugin` are wired for install, gated on a provenance ladder of
+`discovery_only → metadata_verified → runtime_verified`.
+
+So "adding a connector" in LiteCowork means **adding an MCP-backed capability listing** (or
+a skill), carrying whatever installability level its evidence supports. A listing ingested
+from a directory with no proven manifest can only ever be `discovery_only`, which is
+searchable but never installable. See
+[LiteSPM interop §5b](LITESPM-LITECOWORK-INTEROP-LLD.md) for the observed package model and
+the exact authoring path. A first-class connector kind is an upstream v2 decision that
+LiteCowork does not assume.
+
 ### Scope discipline
 
 Breadth does not change the frozen decisions: no mandatory Composio/Nango/Arcade/n8n/
