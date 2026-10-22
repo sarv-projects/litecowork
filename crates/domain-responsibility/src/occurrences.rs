@@ -265,19 +265,39 @@ pub fn decide_occurrence_transition(
 ///
 /// Delivery of a notification, a completed schedule, and a successful Task are
 /// separate facts; only the Task outcome settles the occurrence.
+///
+/// A Task settles its occurrence **only at a terminal Task status**. `COMPLETED`
+/// maps to `COMPLETED`, terminal `FAILED` maps to `FAILED`, and terminal
+/// `CANCELLED` maps to `SKIPPED`. Every other Task status — including
+/// recoverable `INCOMPLETE`, plus `PAUSED`, `WAITING_USER`, `BLOCKED`,
+/// `NEEDS_USER`, `VERIFYING`, `READY`, `RUNNING`, `PAUSE_REQUESTED` and
+/// `CANCEL_REQUESTED` — returns `Ok(None)`: the occurrence stays unsettled at
+/// `STARTED`, keeps its `max_concurrent_occurrences` slot, and is retried by the
+/// next settlement pass.
+///
+/// This distinction is load-bearing. A recoverable `INCOMPLETE` Task may still
+/// move back to `READY` and run again, so settling it as terminal `FAILED` would
+/// (a) publish a terminal outcome that its authoritative Task state does not
+/// support, (b) release a concurrency slot while the Task can still run, and
+/// (c) make a later successful `COMPLETED` settlement impossible, because a
+/// terminal occurrence never transitions again.
+///
+/// An unrecognized token is a contract violation, not a pending state, so it is
+/// rejected as [`DomainError::InvalidDefinition`].
 pub fn settle_from_task_outcome(
     outcome: &str,
     facts: &OccurrenceFacts,
-) -> Result<OccurrenceTransition, DomainError> {
+) -> Result<Option<OccurrenceTransition>, DomainError> {
     let status = match outcome {
         "COMPLETED" => OccurrenceStatus::Completed,
         "FAILED" => OccurrenceStatus::Failed,
         "CANCELLED" => OccurrenceStatus::Skipped,
-        "INCOMPLETE" => OccurrenceStatus::Failed,
-        // Paused, needs-user, verifying, and recoverable states stay unsettled.
+        // Terminal Task statuses settle; every other status stays unsettled.
+        "READY" | "RUNNING" | "VERIFYING" | "BLOCKED" | "NEEDS_USER" | "INCOMPLETE"
+        | "PAUSED" | "PAUSE_REQUESTED" | "WAITING_USER" | "CANCEL_REQUESTED" => return Ok(None),
         _ => {
             return Err(DomainError::InvalidDefinition);
         }
     };
-    decide_occurrence_transition(OccurrenceStatus::Started, status, facts)
+    decide_occurrence_transition(OccurrenceStatus::Started, status, facts).map(Some)
 }

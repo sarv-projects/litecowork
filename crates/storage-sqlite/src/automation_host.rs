@@ -19,9 +19,9 @@ use super::routines::RoutineTaskOutcome;
 use super::*;
 use domain_responsibility::{
     AutomationCursor, AutomationExecutionPolicy, AutomationStatus, CoworkerRevisionRef,
-    CursorFacts, MisfirePolicy, OccurrenceIdentity, OccurrenceStatus, ScheduleTrigger,
-    SettlementWindow, TriggerDefinition, TriggerSpec, decide_cursor, format_instant,
-    parse_instant,
+    CursorFacts, MisfirePolicy, NotificationOutcome, OccurrenceFacts, OccurrenceIdentity,
+    OccurrenceStatus, ScheduleTrigger, SettlementWindow, TriggerDefinition, TriggerSpec,
+    decide_cursor, format_instant, parse_instant, settle_from_task_outcome,
 };
 use std::sync::mpsc;
 
@@ -621,6 +621,269 @@ impl SqliteAutomationHostStore {
             }
             tx.commit().map_err(map_database_error)?;
             Ok(true)
+        })
+    }
+
+    /// Settles every `STARTED` occurrence whose linked Task is now terminal.
+    ///
+    /// Occurrence completion is derived from the authoritative Task outcome,
+    /// never from schedule firing, a UI status, or an agent report. A Task that
+    /// is not terminal — including recoverable `INCOMPLETE`, plus `PAUSED`,
+    /// `WAITING_USER`, `BLOCKED`, `NEEDS_USER`, `VERIFYING`, `READY`,
+    /// `RUNNING`, `PAUSE_REQUESTED` and `CANCEL_REQUESTED` — leaves its
+    /// occurrence at `STARTED`, so the occurrence keeps holding its
+    /// `max_concurrent_occurrences` slot and a later terminal outcome can still
+    /// settle it.
+    ///
+    /// Each settlement commits the occurrence update, its
+    /// `automation.occurrence.settled.v1` event, and one optional local
+    /// notification decision in a single transaction. A second pass over an
+    /// already settled occurrence finds no `STARTED` row, so a replay settles
+    /// nothing and produces no second event or delivery.
+    ///
+    /// This is the producer `docs/STORAGE.md` records as unavailable: without
+    /// it, a materialized occurrence never leaves `STARTED` and a
+    /// concurrency-limited Automation stops producing Tasks forever.
+    pub fn settle_started_occurrences_from_task_outcomes(
+        &self,
+        workspace_id: &str,
+        now_epoch_ms: i64,
+    ) -> Result<Vec<TaskOutcomeSettlement>, StoreError> {
+        let recorded_at = self.context.recorded_at.clone();
+        let origin_runtime_id = self.context.origin_runtime_id.clone();
+        let workspace_id = workspace_id.to_owned();
+        let blobs = Arc::clone(&self.store.inner.blobs);
+        self.run(move |connection| {
+            let mut results = Vec::new();
+            let occurrences: Vec<(String, String, u64)> = {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT occurrence_id, task_id, version
+                           FROM automation_occurrences
+                          WHERE workspace_id = ?1 AND status = 'STARTED' AND task_id IS NOT NULL
+                          ORDER BY created_at, occurrence_id",
+                    )
+                    .map_err(map_database_error)?;
+                let rows = statement
+                    .query_map(params![workspace_id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, from_row_u64(row, 2)?))
+                    })
+                    .map_err(map_database_error)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_database_error)?
+            };
+            for (occurrence_id, task_id, _observed_version) in occurrences {
+                // Each occurrence settles in its own transaction, so a failure
+                // or a concurrent writer of one occurrence never rolls back the
+                // settlements that already committed.
+                let tx = connection
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(map_database_error)?;
+                let row: Option<StartedReader> = tx
+                    .query_row(
+                        "SELECT occurrence_id, automation_id, automation_revision, routine_id,
+                                routine_revision, trigger_id, trigger_host_runtime_id,
+                                occurrence_key, claim_epoch, claim_expires_at, version, task_id,
+                                trigger_input_ref_json, trigger_payload_digest, blockers_json,
+                                covered_misfire_range_json, scheduled_for, created_at
+                           FROM automation_occurrences
+                          WHERE workspace_id = ?1 AND occurrence_id = ?2",
+                        params![workspace_id, occurrence_id],
+                        StartedReader::from_row,
+                    )
+                    .optional()
+                    .map_err(map_database_error)?;
+                // Another writer settled or replaced it between the scan and
+                // this transaction; that pass owns the transition, not this one.
+                let Some(occurrence) = row else {
+                    results.push(TaskOutcomeSettlement::Blocked {
+                        occurrence_id,
+                        reason: "OCCURRENCE_NOT_FOUND".to_owned(),
+                    });
+                    tx.commit().map_err(map_database_error)?;
+                    continue;
+                };
+                let task_status: Option<String> = tx
+                    .query_row(
+                        "SELECT status FROM tasks WHERE workspace_id = ?1 AND task_id = ?2",
+                        params![workspace_id, occurrence.task_id],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .map_err(map_database_error)?;
+                let Some(task_status) = task_status else {
+                    results.push(TaskOutcomeSettlement::Blocked {
+                        occurrence_id: occurrence.occurrence_id.clone(),
+                        reason: "TASK_OUTCOME_UNAVAILABLE".to_owned(),
+                    });
+                    tx.commit().map_err(map_database_error)?;
+                    continue;
+                };
+                let facts = OccurrenceFacts {
+                    version: occurrence.version,
+                    claim_epoch: occurrence.claim_epoch,
+                    claim_expires_at: occurrence
+                        .claim_expires_at
+                        .as_deref()
+                        .and_then(parse_instant),
+                    now: now_epoch_ms,
+                    has_task: occurrence.task_id.is_some(),
+                };
+                let transition = match settle_from_task_outcome(
+                    &task_status,
+                    &facts,
+                ) {
+                    Ok(None) => {
+                        // Not terminal: the occurrence stays STARTED and keeps
+                        // its concurrency slot. Nothing is written, so no event
+                        // or notification is produced for a deferred pass.
+                        results.push(TaskOutcomeSettlement::Deferred {
+                            occurrence_id: occurrence.occurrence_id.clone(),
+                            task_id: occurrence.task_id.clone().unwrap_or_default(),
+                            task_status,
+                        });
+                        tx.commit().map_err(map_database_error)?;
+                        continue;
+                    }
+                    Ok(Some(transition)) => transition,
+                    Err(_) => {
+                        results.push(TaskOutcomeSettlement::Blocked {
+                            occurrence_id: occurrence.occurrence_id.clone(),
+                            reason: "TASK_STATUS_UNRECOGNIZED".to_owned(),
+                        });
+                        tx.commit().map_err(map_database_error)?;
+                        continue;
+                    }
+                };
+                let to_token = occurrence_status_token(transition.status);
+                // `blockers_json` is a TEXT column everywhere else, so the
+                // settlement writes canonical UTF-8 text rather than the byte
+                // vector form, which SQLite would otherwise store as a BLOB and
+                // which would fail a later TEXT read.
+                let blockers_value = match transition.status {
+                    OccurrenceStatus::Skipped => json!([{"code": "TASK_CANCELLED"}]),
+                    OccurrenceStatus::Completed | OccurrenceStatus::Failed => json!([]),
+                    _ => Value::String(occurrence.blockers_json.clone()),
+                };
+                let blockers = String::from_utf8(canonical_json(&blockers_value)?)
+                    .map_err(|error| StoreError::Invalid(error.to_string()))?;
+                let changed = tx
+                    .execute(
+                        "UPDATE automation_occurrences
+                            SET status = ?1, blockers_json = ?2, updated_at = ?3, version = ?4
+                          WHERE workspace_id = ?5 AND occurrence_id = ?6
+                            AND status = 'STARTED' AND version = ?7",
+                        params![
+                            to_token,
+                            blockers,
+                            recorded_at,
+                            to_sql_i64(transition.version, "Occurrence version")?,
+                            workspace_id,
+                            occurrence.occurrence_id,
+                            to_sql_i64(occurrence.version, "Occurrence version")?,
+                        ],
+                    )
+                    .map_err(map_database_error)?;
+                if changed != 1 {
+                    // The version guard lost a race with a concurrent writer;
+                    // that writer owns the transition and this pass reports it.
+                    results.push(TaskOutcomeSettlement::Blocked {
+                        occurrence_id: occurrence.occurrence_id.clone(),
+                        reason: "OCCURRENCE_VERSION_CONFLICT".to_owned(),
+                    });
+                    tx.commit().map_err(map_database_error)?;
+                    continue;
+                }
+                let state = json!({
+                    "workspace_id": workspace_id,
+                    "occurrence_id": occurrence.occurrence_id,
+                    "automation_id": occurrence.automation_id,
+                    "automation_revision": occurrence.automation_revision,
+                    "routine_id": occurrence.routine_id,
+                    "routine_revision": occurrence.routine_revision,
+                    "trigger_id": occurrence.trigger_id,
+                    "trigger_host_runtime_id": occurrence.trigger_host_runtime_id,
+                    "occurrence_key": occurrence.occurrence_key,
+                    "status": to_token,
+                    "version": transition.version,
+                    "claim_epoch": occurrence.claim_epoch,
+                    "claim_expires_at": occurrence.claim_expires_at_value,
+                    "task_id": occurrence.task_id_value,
+                    "scheduled_for": occurrence.scheduled_for,
+                    "covered_misfire_range": occurrence.covered_misfire_range,
+                    "trigger_input_ref": occurrence.trigger_input_ref,
+                    "trigger_payload_digest": occurrence.trigger_payload_digest,
+                    "blockers": occurrence.blockers_value,
+                    "created_at": occurrence.created_at,
+                    "updated_at": recorded_at,
+                });
+                let state_blob = blobs.put(
+                    &workspace_id,
+                    BlobPurpose::AggregateState,
+                    &canonical_json(&state)?,
+                    "application/vnd.litecow.automation-occurrence+json",
+                )?;
+                write_occurrence_event(
+                    &tx,
+                    &workspace_id,
+                    &origin_runtime_id,
+                    &occurrence.occurrence_id,
+                    transition.version,
+                    &state_blob,
+                    "automation.occurrence.settled.v1",
+                    &json!({
+                        "occurrence_id": occurrence.occurrence_id,
+                        "automation_id": occurrence.automation_id,
+                        "automation_revision": occurrence.automation_revision,
+                        "routine_id": occurrence.routine_id,
+                        "routine_revision": occurrence.routine_revision,
+                        "trigger_id": occurrence.trigger_id,
+                        "trigger_host_runtime_id": occurrence.trigger_host_runtime_id,
+                        "occurrence_key": occurrence.occurrence_key,
+                        "version": transition.version,
+                        "claim_epoch": occurrence.claim_epoch,
+                        "claim_expires_at": occurrence.claim_expires_at_value,
+                        "trigger_input_ref": occurrence.trigger_input_ref,
+                        "trigger_payload_digest": occurrence.trigger_payload_digest,
+                        "task_id": occurrence.task_id_value,
+                        "from": "STARTED",
+                        "to": to_token,
+                    }),
+                    &recorded_at,
+                )?;
+                // A terminal Task outcome is a persisted Automation outcome, so
+                // it may produce one local notification under the same
+                // dedupe/suppression rules as a skipped slot. A suppressed
+                // outcome never becomes a delivery row.
+                let notification_outcome = match transition.status {
+                    OccurrenceStatus::Completed => NotificationOutcome::Succeeded,
+                    OccurrenceStatus::Failed => NotificationOutcome::Failed,
+                    _ => NotificationOutcome::OccurrenceSkipped,
+                };
+                crate::notification::record_automation_outcome_delivery_in_transaction(
+                    &tx,
+                    &workspace_id,
+                    &occurrence.automation_id,
+                    &format!(
+                        "{origin_runtime_id}:occ:{}:{}",
+                        occurrence.occurrence_id, transition.version
+                    ),
+                    &format!("occurrence:{}:{to_token}", occurrence.occurrence_id),
+                    notification_outcome,
+                    now_epoch_ms,
+                    &recorded_at,
+                    None,
+                    None,
+                )?;
+                tx.commit().map_err(map_database_error)?;
+                results.push(TaskOutcomeSettlement::Settled {
+                    occurrence_id: occurrence.occurrence_id,
+                    task_id: occurrence.task_id.unwrap_or_default(),
+                    task_status,
+                    to: transition.status,
+                    version: transition.version,
+                });
+            }
+            Ok(results)
         })
     }
 
@@ -1422,6 +1685,123 @@ pub fn schedule_occurrence_key(
     }
     .key()
     .map_err(|error| StoreError::Invalid(error.to_string()))
+}
+
+/// What one Task-outcome settlement pass did for one occurrence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskOutcomeSettlement {
+    /// The occurrence reached a terminal status from its authoritative Task
+    /// outcome, with the event and notification decision committed with it.
+    Settled {
+        occurrence_id: String,
+        task_id: String,
+        task_status: String,
+        to: OccurrenceStatus,
+        version: u64,
+    },
+    /// The Task is not terminal, so the occurrence stays `STARTED` and keeps
+    /// holding its concurrency slot.
+    Deferred {
+        occurrence_id: String,
+        task_id: String,
+        task_status: String,
+    },
+    /// The settlement could not be decided; the occurrence stays `STARTED` and
+    /// the reason is reported instead of being silently retried.
+    Blocked {
+        occurrence_id: String,
+        reason: String,
+    },
+}
+
+/// One `STARTED` occurrence read for Task-outcome settlement.
+struct StartedReader {
+    occurrence_id: String,
+    automation_id: String,
+    automation_revision: i64,
+    routine_id: String,
+    routine_revision: i64,
+    trigger_id: String,
+    trigger_host_runtime_id: String,
+    occurrence_key: String,
+    claim_epoch: u64,
+    claim_expires_at: Option<String>,
+    claim_expires_at_value: Value,
+    version: u64,
+    task_id: Option<String>,
+    task_id_value: Value,
+    trigger_input_ref: Value,
+    trigger_payload_digest: Value,
+    blockers_json: String,
+    blockers_value: Value,
+    scheduled_for: Option<String>,
+    covered_misfire_range: Value,
+    created_at: String,
+}
+
+impl StartedReader {
+    /// Reads the settlement columns in the order they are selected.
+    ///
+    /// `trigger_payload_digest` and `trigger_input_ref_json` stay exactly as
+    /// stored: the first is a digest string, the second is already JSON. A
+    /// malformed JSON column is not repaired silently — the raw text stays in
+    /// `blockers_json` and the projected value is `null`, so a snapshot never
+    /// invents structure it did not read.
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            occurrence_id: row.get(0)?,
+            automation_id: row.get(1)?,
+            automation_revision: row.get(2)?,
+            routine_id: row.get(3)?,
+            routine_revision: row.get(4)?,
+            trigger_id: row.get(5)?,
+            trigger_host_runtime_id: row.get(6)?,
+            occurrence_key: row.get(7)?,
+            claim_epoch: from_row_u64(row, 8)?,
+            claim_expires_at: row.get(9)?,
+            claim_expires_at_value: json_column(row.get::<_, Option<String>>(9)?),
+            version: from_row_u64(row, 10)?,
+            task_id: row.get(11)?,
+            task_id_value: json_column(row.get::<_, Option<String>>(11)?),
+            trigger_input_ref: json_column(row.get::<_, Option<String>>(12)?),
+            trigger_payload_digest: match row.get::<_, Option<String>>(13)? {
+                Some(digest) => Value::String(digest),
+                None => Value::Null,
+            },
+            blockers_json: json_text(row.get(14)?),
+            blockers_value: json_column_from_value(row.get(14)?),
+            covered_misfire_range: json_column(row.get::<_, Option<String>>(15)?),
+            scheduled_for: row.get(16)?,
+            created_at: row.get(17)?,
+        })
+    }
+}
+
+/// Reads a stored JSON column written as TEXT or, historically, as a BLOB.
+fn json_text(raw: rusqlite::types::Value) -> String {
+    match raw {
+        rusqlite::types::Value::Text(text) => text,
+        rusqlite::types::Value::Blob(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        rusqlite::types::Value::Null => String::new(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Projects a stored JSON column into a value, or `null` when unreadable.
+fn json_column_from_value(raw: rusqlite::types::Value) -> Value {
+    let text = json_text(raw);
+    if text.is_empty() {
+        return Value::Null;
+    }
+    serde_json::from_str(&text).unwrap_or(Value::Null)
+}
+
+/// Parses a stored JSON column, or `null` when it is absent or unreadable.
+fn json_column(raw: Option<String>) -> Value {
+    match raw {
+        Some(text) => serde_json::from_str(&text).unwrap_or(Value::Null),
+        None => Value::Null,
+    }
 }
 
 /// The settlement window a host uses for one poll.

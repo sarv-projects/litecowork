@@ -1,5 +1,5 @@
 use super::*;
-use crate::automation_host::{schedule_occurrence_key, settlement_window};
+use crate::automation_host::{TaskOutcomeSettlement, schedule_occurrence_key, settlement_window};
 use domain_responsibility::*;
 use domain_responsibility::parse_instant;
 use rusqlite::Connection;
@@ -1425,4 +1425,254 @@ fn the_health_facts_count_the_recorded_skipped_misfires() {
         .expect("the Automation exists");
     assert_eq!(facts.counts.skipped, 1);
     assert_eq!(facts.nonterminal_occurrences, 0);
+}
+
+/// Materializes the first daily slot into `task-automation-1`.
+fn materialize_first_slot(fixture: &Fixture) {
+    let key = slot_identity("trigger-daily", first_slot());
+    let commit = scheduled_task_commit(
+        "task-automation-1",
+        "occurrence-automation-1",
+        &key,
+        "trigger-daily",
+        first_slot(),
+        1,
+        2,
+    );
+    fixture
+        .store
+        .create_task(commit)
+        .expect("the due slot materializes into an ordinary Task");
+}
+
+/// Forces the linked Task to a chosen status without going through TaskService.
+fn force_task_status(fixture: &Fixture, status: &str) {
+    let connection = Connection::open(state_database(&fixture.directory)).unwrap();
+    let changed = connection
+        .execute(
+            "UPDATE tasks SET status = ?1 WHERE task_id = 'task-automation-1'",
+            params![status],
+        )
+        .unwrap();
+    assert_eq!(changed, 1, "the fixture Task exists");
+}
+
+/// Reads the persisted occurrence status and version of the fixture slot.
+fn persisted_occurrence(fixture: &Fixture) -> (String, i64, String) {
+    let connection = Connection::open(state_database(&fixture.directory)).unwrap();
+    connection
+        .query_row(
+            "SELECT status, version, blockers_json FROM automation_occurrences WHERE occurrence_id = 'occurrence-automation-1'",
+            [],
+            |row| {
+                let blockers = match row.get::<_, rusqlite::types::Value>(2)? {
+                    rusqlite::types::Value::Null => String::new(),
+                    rusqlite::types::Value::Text(text) => text,
+                    rusqlite::types::Value::Blob(bytes) => {
+                        String::from_utf8_lossy(&bytes).into_owned()
+                    }
+                    other => format!("{other:?}"),
+                };
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, blockers))
+            },
+        )
+        .unwrap()
+}
+
+/// Counts the committed `automation.occurrence.settled.v1` events.
+fn settled_event_count(fixture: &Fixture) -> i64 {
+    let connection = Connection::open(state_database(&fixture.directory)).unwrap();
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE type = 'automation.occurrence.settled.v1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn notification_delivery_count(fixture: &Fixture) -> i64 {
+    let connection = Connection::open(state_database(&fixture.directory)).unwrap();
+    connection
+        .query_row("SELECT COUNT(*) FROM notification_deliveries", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+}
+
+#[test]
+fn a_terminal_task_outcome_settles_the_occurrence_and_releases_its_slot() {
+    let fixture = enabled_schedule_fixture();
+    materialize_first_slot(&fixture);
+    let host = host_adapter(&fixture.store);
+    let now = parse_instant(NOW).expect("the fixture instant");
+
+    force_task_status(&fixture, "COMPLETED");
+    let settled = host
+        .settle_started_occurrences_from_task_outcomes(WORKSPACE, now)
+        .expect("the settlement pass runs");
+    assert_eq!(
+        settled,
+        vec![TaskOutcomeSettlement::Settled {
+            occurrence_id: "occurrence-automation-1".to_owned(),
+            task_id: "task-automation-1".to_owned(),
+            task_status: "COMPLETED".to_owned(),
+            to: OccurrenceStatus::Completed,
+            version: 4,
+        }]
+    );
+
+    let (status, version, blockers) = persisted_occurrence(&fixture);
+    assert_eq!(status, "COMPLETED");
+    assert_eq!(version, 4, "every persisted transition increments version once");
+    assert_eq!(blockers, "[]", "a settled occurrence carries no open blocker");
+    assert_eq!(
+        settled_event_count(&fixture),
+        1,
+        "the settlement commits exactly one durable event"
+    );
+    assert_eq!(
+        host.nonterminal_occurrence_count(WORKSPACE, "automation-1")
+            .expect("the count reads back"),
+        0,
+        "the concurrency slot is released only by a terminal Task outcome"
+    );
+
+    // A second pass over an already settled occurrence settles nothing and
+    // produces neither a second event nor a second notification decision.
+    let deliveries = notification_delivery_count(&fixture);
+    let replay = host
+        .settle_started_occurrences_from_task_outcomes(WORKSPACE, now)
+        .expect("the replayed settlement pass runs");
+    assert_eq!(replay, Vec::new(), "an occurrence settles exactly once");
+    assert_eq!(settled_event_count(&fixture), 1);
+    assert_eq!(notification_delivery_count(&fixture), deliveries);
+}
+
+#[test]
+fn a_recoverable_incomplete_task_never_settles_its_occurrence() {
+    let fixture = enabled_schedule_fixture();
+    materialize_first_slot(&fixture);
+    let host = host_adapter(&fixture.store);
+    let now = parse_instant(NOW).expect("the fixture instant");
+
+    // INCOMPLETE is recoverable (docs/STATE-MACHINES.md allows
+    // NEEDS_USER | INCOMPLETE -> READY), so it must neither settle the
+    // occurrence nor release the concurrency slot.
+    force_task_status(&fixture, "INCOMPLETE");
+    let deferred = host
+        .settle_started_occurrences_from_task_outcomes(WORKSPACE, now)
+        .expect("the settlement pass runs");
+    assert_eq!(
+        deferred,
+        vec![TaskOutcomeSettlement::Deferred {
+            occurrence_id: "occurrence-automation-1".to_owned(),
+            task_id: "task-automation-1".to_owned(),
+            task_status: "INCOMPLETE".to_owned(),
+        }]
+    );
+
+    let (status, version, _) = persisted_occurrence(&fixture);
+    assert_eq!(status, "STARTED", "the occurrence stays unsettled");
+    assert_eq!(version, 3, "a deferred pass commits no version bump");
+    assert_eq!(settled_event_count(&fixture), 0);
+    assert_eq!(
+        host.nonterminal_occurrence_count(WORKSPACE, "automation-1")
+            .expect("the count reads back"),
+        1,
+        "the slot stays held while the Task can still recover and run again"
+    );
+
+    // The Task later recovers to COMPLETED: the same occurrence now settles,
+    // which is the transition the INCOMPLETE -> FAILED mapping used to block.
+    force_task_status(&fixture, "COMPLETED");
+    let settled = host
+        .settle_started_occurrences_from_task_outcomes(WORKSPACE, now)
+        .expect("the settlement pass runs");
+    assert_eq!(
+        settled,
+        vec![TaskOutcomeSettlement::Settled {
+            occurrence_id: "occurrence-automation-1".to_owned(),
+            task_id: "task-automation-1".to_owned(),
+            task_status: "COMPLETED".to_owned(),
+            to: OccurrenceStatus::Completed,
+            version: 4,
+        }]
+    );
+    assert_eq!(
+        host.nonterminal_occurrence_count(WORKSPACE, "automation-1")
+            .expect("the count reads back"),
+        0
+    );
+}
+
+#[test]
+fn a_cancelled_task_skips_its_occurrence_with_a_reason() {
+    let fixture = enabled_schedule_fixture();
+    materialize_first_slot(&fixture);
+    let host = host_adapter(&fixture.store);
+    let now = parse_instant(NOW).expect("the fixture instant");
+
+    force_task_status(&fixture, "CANCELLED");
+    let settled = host
+        .settle_started_occurrences_from_task_outcomes(WORKSPACE, now)
+        .expect("the settlement pass runs");
+    assert_eq!(
+        settled,
+        vec![TaskOutcomeSettlement::Settled {
+            occurrence_id: "occurrence-automation-1".to_owned(),
+            task_id: "task-automation-1".to_owned(),
+            task_status: "CANCELLED".to_owned(),
+            to: OccurrenceStatus::Skipped,
+            version: 4,
+        }]
+    );
+    let (status, version, blockers) = persisted_occurrence(&fixture);
+    assert_eq!(status, "SKIPPED");
+    assert_eq!(version, 4);
+    assert!(
+        blockers.contains("TASK_CANCELLED"),
+        "a skipped occurrence records why, got {blockers}"
+    );
+}
+
+#[test]
+fn every_nonterminal_task_status_leaves_its_occurrence_running() {
+    let fixture = enabled_schedule_fixture();
+    materialize_first_slot(&fixture);
+    let host = host_adapter(&fixture.store);
+    let now = parse_instant(NOW).expect("the fixture instant");
+    for status in [
+        "READY",
+        "RUNNING",
+        "VERIFYING",
+        "BLOCKED",
+        "NEEDS_USER",
+        "INCOMPLETE",
+        "PAUSED",
+        "PAUSE_REQUESTED",
+        "WAITING_USER",
+        "CANCEL_REQUESTED",
+    ] {
+        force_task_status(&fixture, status);
+        let result = host
+            .settle_started_occurrences_from_task_outcomes(WORKSPACE, now)
+            .expect("the settlement pass runs");
+        assert_eq!(
+            result,
+            vec![TaskOutcomeSettlement::Deferred {
+                occurrence_id: "occurrence-automation-1".to_owned(),
+                task_id: "task-automation-1".to_owned(),
+                task_status: status.to_owned(),
+            }],
+            "{status} must not settle an occurrence"
+        );
+        let (persisted_status, _, _) = persisted_occurrence(&fixture);
+        assert_eq!(persisted_status, "STARTED", "{status} left the row untouched");
+        assert_eq!(
+            settled_event_count(&fixture),
+            0,
+            "{status} produced no settlement event"
+        );
+    }
 }

@@ -2046,6 +2046,18 @@ fn settle_hosted_triggers(
     )
     .map_err(|_| "TRIGGER_HOST_STORE_UNAVAILABLE".to_owned())?;
     let mut settlements = Vec::new();
+    // First settle the occurrences whose Task already reached a terminal status.
+    // This runs before the concurrency count, so a run that finished frees its
+    // slot in the same pass that would otherwise defer the next due slot. A Task
+    // that is not terminal leaves its occurrence at STARTED and keeps holding the
+    // slot, which is what prevents a second concurrent run of the same Automation.
+    for workspace in workspaces {
+        host.settle_started_occurrences_from_task_outcomes(
+            &workspace.workspace_id,
+            now_epoch_ms,
+        )
+        .map_err(|_| "OCCURRENCE_SETTLEMENT_UNAVAILABLE".to_owned())?;
+    }
     let due = host
         .list_due_schedules(&context.runtime_id, now_epoch_ms)
         .map_err(|_| "TRIGGER_HOST_LOOKUP_FAILED".to_owned())?;

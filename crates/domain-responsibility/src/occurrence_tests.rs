@@ -140,26 +140,94 @@ fn only_a_terminal_task_outcome_settles_a_started_occurrence() {
     assert_eq!(
         settle_from_task_outcome("COMPLETED", &started)
             .unwrap()
+            .expect("a completed Task settles its occurrence")
             .status,
         OccurrenceStatus::Completed
     );
     assert_eq!(
-        settle_from_task_outcome("FAILED", &started).unwrap().status,
+        settle_from_task_outcome("FAILED", &started)
+            .unwrap()
+            .expect("a terminal FAILED Task settles its occurrence")
+            .status,
         OccurrenceStatus::Failed
     );
     assert_eq!(
         settle_from_task_outcome("CANCELLED", &started)
             .unwrap()
+            .expect("a cancelled Task skips its occurrence")
             .status,
         OccurrenceStatus::Skipped
     );
-    for unsettled in ["PAUSED", "NEEDS_USER", "VERIFYING", "RUNNING", "BLOCKED"] {
+}
+
+#[test]
+fn a_recoverable_task_outcome_never_settles_its_occurrence() {
+    let started = OccurrenceFacts {
+        version: 3,
+        claim_epoch: 1,
+        claim_expires_at: None,
+        now: 2_000,
+        has_task: true,
+    };
+    // INCOMPLETE is a recoverable Task status (docs/STATE-MACHINES.md allows
+    // NEEDS_USER | INCOMPLETE -> READY), so it must not settle the occurrence:
+    // terminal settlement would release the concurrency slot while the Task can
+    // still run, and would block a later COMPLETED settlement for good.
+    for unsettled in [
+        "INCOMPLETE",
+        "PAUSED",
+        "PAUSE_REQUESTED",
+        "NEEDS_USER",
+        "WAITING_USER",
+        "VERIFYING",
+        "RUNNING",
+        "READY",
+        "BLOCKED",
+        "CANCEL_REQUESTED",
+    ] {
         assert_eq!(
             settle_from_task_outcome(unsettled, &started),
-            Err(DomainError::InvalidDefinition),
-            "{unsettled} must not settle an occurrence"
+            Ok(None),
+            "{unsettled} is not a terminal Task outcome and must leave the occurrence at STARTED"
         );
     }
+}
+
+#[test]
+fn an_unrecognized_task_outcome_is_a_contract_violation_not_a_pending_state() {
+    let started = OccurrenceFacts {
+        version: 3,
+        claim_epoch: 1,
+        claim_expires_at: None,
+        now: 2_000,
+        has_task: true,
+    };
+    for unknown in ["", "  ", "PAUSED ", "SUCCEEDED", "incomplete"] {
+        assert_eq!(
+            settle_from_task_outcome(unknown, &started),
+            Err(DomainError::InvalidDefinition),
+            "{unknown:?} is not a Task status token and must be rejected"
+        );
+    }
+}
+
+#[test]
+fn a_settlement_decision_never_mutates_the_occurrence_it_defers() {
+    let deferred = settle_from_task_outcome(
+        "INCOMPLETE",
+        &OccurrenceFacts {
+            version: 3,
+            claim_epoch: 2,
+            claim_expires_at: None,
+            now: 2_000,
+            has_task: true,
+        },
+    )
+    .unwrap();
+    // No transition means the caller commits nothing: the persisted version,
+    // claim epoch and STARTED status are untouched, so no event or snapshot is
+    // produced for a deferred settlement pass.
+    assert_eq!(deferred, None);
 }
 
 fn cursor() -> AutomationCursor {
