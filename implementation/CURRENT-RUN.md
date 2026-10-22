@@ -1,3 +1,71 @@
+## 2026-10-22 — Second exhaustive doc reconciliation (every line re-verified)
+
+The owner required a non-summarised pass: verify every line of every LLD/HLD against the
+codebase and make the remaining work explicit. Four parallel read-only verifiers re-read
+`EXPERIENCE.md` (1054 lines), `DESIGN-SYSTEM.md`+`MOTION.md`, `PRESENTATION-RUNTIME.md`+
+`RICH-RESPONSE.md`, and `API.md`+`V1-UI-SCREEN-CONTRACT.md` line by line against source,
+the OpenAPI document and the served-route inventory. Result: **92 findings, all applied**.
+
+- **EXPERIENCE.md (36 fixes).** Removed or labelled every stale-positive claim and aligned
+  every quoted string with the shipped one: sidebar search/Recent list, the three
+  disagreeing Work-filter vocabularies (reconciled to the shipped single Status select),
+  provider sign-in handoff, backup/restore, “Context used”, inline Task cards, turn
+  labels (“Waiting for your response”/“Waiting for a service”), four Task-state
+  vocabularies (canonical table named as the only rendered one), execution-location
+  strings, the Live Desk and Inspector surfaces, two false “not yet built” sentences on
+  the Library filters and index rebuild (both are built), Automation page structure,
+  “Run once”, read-only startup policy, `Getting ready`, WorkspaceRoot watching, the
+  archived Home “Needs you” inbox, Coworker chat navigation, autonomy/trust labels,
+  suggestion-card controls, Ideas filters, mobile navigation, the composer control row and
+  run-continuation actions.
+- **DESIGN-SYSTEM.md / MOTION.md (13 status blocks).** Every token, theme, typography,
+  motion and component spec that the code does not realize now carries an implementation
+  status with exact file:line and the literal values actually shipped: the 11 real tokens
+  vs the 9 undefined semantic tokens and the full hard-coded hex inventory (including the
+  off-palette `#5a3676`), the absent dark theme, the 133 sub-12px declarations and
+  off-scale headings, the absent space/type/radius/shadow/ring tokens, the 16px panel
+  radius, missing loading styles (`cursor: wait` only), the composer's missing 6-line
+  growth, the absent shared dialog, opacity-only disabled in nine stylesheets, missing
+  `aria-busy` on primary controls, the absent rich measure variables, and the two looping
+  spinners plus the uncontracted `160ms ease` drawer.
+- **PRESENTATION-RUNTIME.md / RICH-RESPONSE.md (22 fixes).** Corrected the under-claim:
+  `runtime_inventory` and per-item upserts are live, and what is missing is only the
+  transient-frame producer. Fixed the frame union (4 → the schema's 6), added the
+  `workspace_id` field the schema requires of `turn.delta`, replaced the invented
+  `COMMITTED` turn state with the real three (`STREAMING`/`RECONNECTING`/`INCOMPLETE` plus
+  delete-on-commit), quoted the real reconnect strings, replaced “bounded” with the exact
+  client limits (32/8/512 KiB/1000/200), stated that drafts are validated but never
+  displayed, and marked `litecowork.presentation.propose`,
+  `ToolResultPresentationRegistry`, `PortableResponseRenderer`, `ArtifactBundleBuilder`,
+  the checklist store, the citation resolver and the deliverable/media/chart/diagram/
+  timeline renderers as unimplemented or unreachable.
+- **API.md + OpenAPI (19 fixes + 6 schema alignments).** Marked the three turn routes,
+  every task-control and inspection route, the message routes, the external handoff and
+  the agent auth/config/session-option/install family as target-only with their real
+  current behavior (503 refusal vs never mounted); documented the `content[]` bounds, the
+  settle route's deliberate `Idempotency-Key` exemption on both sides, and that the only
+  served stream binding is local `POST /v1/stream`. The OpenAPI document now declares
+  responses the code already returns: `409 STALE_TASK_VERSION` on planning-readiness,
+  `413` on task presentation, `409`/`422` on spec revision, `Cache-Control: no-store` on
+  task progress, and a `workspaceContext` description matching the real unscoped set.
+- **V1-UI-SCREEN-CONTRACT.md** gained one explicit status block naming every wholly unmet
+  row with its exact reason and the rows that are met, instead of fifteen scattered
+  caveats.
+- **SCHEMAS.md** no longer contradicts itself on agent installation/auth/session enums: the
+  narrow three-variant block is labelled as the current source enums and the fuller
+  `AgentInstallState`/`AgentAuthState` sets as target with no producer.
+- **UI.md** gained the explicit presentation conformance tables (13 renderer kinds with
+  parser/rendered/today's-behavior, and 7 frame types with producer/bridge/reducer/render),
+  plus the three narrowing layers (14 target kinds → 11 wire kinds → 5 desktop kinds; the
+  publisher accepts only TEXT_SLICE and LAYOUT at `rich_presentations.rs:278,306`).
+- **V1-PRODUCT-ACCEPTANCE-MATRIX.md** gained the explicit per-journey remaining-work
+  section: for each of the 11 areas, what exists with source evidence, exactly what must
+  still be built (named files/routes), and the CODE/SYSTEM/USER evidence that flips the
+  verdict.
+- **Verification.** architecture (145 events), plan (67 stories / 7218 rows), coverage
+  (107 docs), contracts, design-depth, owner-consistency, markdown (0 broken links) and
+  `git diff --check` all pass; the OpenAPI document still parses.
+
 ## 2026-10-22 — Whole-UI implementation audit and cross-document reconciliation
 
 Docs-only pass requested by the owner: audit every UI surface against its contract, record

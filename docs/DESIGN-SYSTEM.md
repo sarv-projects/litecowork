@@ -101,6 +101,41 @@ assigned in semantic tokens; components consume only semantic/component tokens.
 }
 ```
 
+**Implementation status (2026-10-22).** Only the eleven base tokens exist in the app
+today: `--color-background/-surface/-text/-text-muted/-text-subtle/-border/-border-strong/
+-primary/-primary-hover/-primary-soft/-focus` (`apps/litecowork-ui/src/styles.css:15-25`).
+`--color-surface-raised`, `--color-info(+soft)`, `--color-success(+soft)`,
+`--color-warning(+soft)` and `--color-danger(+soft)` are **target tokens with no
+definition**; no CSS file defines `.theme-dark` and no file reads
+`prefers-color-scheme` (grep over all stylesheets: 0 hits), so the app is light-only with
+`color-scheme: light` hard-set (`styles.css:3`). Until the tokens land, components use
+divergent hard-coded substitutes that must all be migrated: success `#eaf5ee`/`#21613d`
+(`styles.css:363`), `#f2faf5`/`#226b49` (`notifications-page.css:6`), `#25633d`/`#e8f4ec`
+(`agents/agent-catalog-settings.css:90,99`); warning `#fff7e8`/`#67440c`
+(`styles.css:202,216`), `#fbf4e8`/`#704715` (`styles.css:395`), `#fff4dd`/`#805817`
+(`notifications-page.css:30`), `#fff9eb`/`#dfb76f` (`routines-page.css:8`), `#a66a00`
+(`presentation/rich-response.css:19`), `#c28a27`/`#76510e`
+(`presentation/presentation-runtime.css:3,25`), `#a87512`
+(`needs-you/task-attention-page.css:14`), `#a16b15`/`#fff9e8`
+(`text-version-diff.css:16`, `structured-text-preview.css:46`,
+`artifacts/artifact-workbench.css:59`); danger `#a43232` (`styles.css:208`),
+`#7b3029`/`#fff6f4`/`#edc9c2` (`notifications-page.css:7,19,32`), `#923c35`/`#d9a5a0`
+(`automations-page.css:40`, `routines-page.css:43`), `#a22d28`
+(`presentation/task-presentation.css:45`, `needs-you/approval-detail.css:9`,
+`needs-you/task-attention-page.css:15`), `#a3342a`
+(`resources/task-resource-text-preview.css:33`), `#b42318`
+(`skills/skill-proposals-page.css:42`). Undefined variables are also consumed today and
+render their fallback (or nothing at all where no fallback is written):
+`--color-surface-subtle`, `--color-surface-muted`, `--color-border-subtle`,
+`--color-accent`, `--color-warning(+border/subtle/text)`, `--color-success(+subtle)`,
+`--color-danger(+border/subtle/soft)` across `task-presentation.css`,
+`needs-you/*.css`, `agents/agent-catalog-settings.css`, `resources/resource-revision-editor.css`,
+`artifacts/text-version-diff.css` and `styles.css:182`; alien namespaces
+(`--text-primary/-secondary/-tertiary`, `--surface-muted`, `--border-subtle`,
+`--lc-text-muted/--lc-border/--lc-danger/--lc-warning`, `--font-mono`) are used in
+`routines/routines-page.css`, `agents/*.css`, `skills/skill-proposals-page.css`,
+`notifications/notifications-page.css` and `workspaces/workspace-root-observations.css`.
+
 Text contrast for the selected foreground/background pairs is at least 6.1:1 in the
 light palette and 7.3:1 in the dark status palette; body text must meet WCAG 2.2 AA
 (4.5:1), large text and meaningful UI boundaries must meet 3:1. A theme change must
@@ -153,6 +188,23 @@ the success/check treatment. An agent's completion claim cannot render as verifi
 }
 ```
 
+**Implementation status (2026-10-22).** None of `--font-ui`, `--font-code`, `--text-*`,
+`--space-*`, `--radius-panel`, `--radius-pill`, `--shadow-overlay`, `--ring-width` or
+`--ring-offset` is defined or consumed anywhere; `--radius-control` and `--radius-card`
+exist only as the numeric equivalents `8px`/`12px` (`styles.css:26-27`). Every size today
+is a raw literal: 133 declarations below the 12px metadata floor (9px at
+`styles.css:230`; 10px at `:98,238,385,390,404`; 11px at `:47,52,58,223,310`), 116
+declarations of the off-scale 13px, and headings of 15/16/17/18px
+(`styles.css:113,169,126,131,189,231,265,320`, `routines-page.css:23`) where the scale
+allows only 20–24px. Radii bypass the tokens with 9/10/11/12/14px literals
+(`styles.css:77,135,182,217,228,264,287,303,369`, `needs-you/task-attention-page.css:4`)
+and `999px`/`99px` pills (`styles.css:191`, `agents/agent-catalog-settings.css:11,89`,
+`presentation/task-presentation.css:7`, `needs-you/task-attention-page.css:37`,
+`agents/delegation-profile-performance.css:25`). Spacing is raw px throughout (no
+`var(--space-*)` use exists). Tabular numerals are applied in exactly one place
+(`artifacts/artifact-workbench.css:33`) and are missing on timestamps, sizes, usage and
+version identifiers.
+
 Body text is 16px/1.5; secondary labels may use 14px/1.4; metadata may use 12px/1.4
 only when nonessential information remains legible. Use 20–24px for section headings and
 32px for the Home prompt/title. Use sentence case, short labels, and tabular numerals for
@@ -161,7 +213,9 @@ the code font and can wrap or copy; they must not force horizontal page scrollin
 
 Spacing uses a 4px base. Component internals use 4/8/12/16px; cards and sections use
 20/24/32px. Use 8px control radius, 12px cards, 16px major panels, and pill radius only
-for compact status badges. Shadows separate overlays from the page; ordinary cards use
+for compact status badges. (Implementation status 2026-10-22: the 16px major-panel radius
+has no definition and no consumer; panels currently use 9/10/11/14px literals and pills
+use `999px`/`99px` — see the type/space implementation status above.) Shadows separate overlays from the page; ordinary cards use
 border + subtle shadow, not elevation alone.
 
 ## Component contract
@@ -171,17 +225,17 @@ semantic tokens but may not introduce hard-coded hex values in component styles.
 
 | Component | V1 anatomy/size | Required states and behavior |
 |---|---|---|
-| Primary button | 40px high desktop, 44px touch; 16px horizontal padding | Default, hover, pressed, visible focus, disabled, loading; loading keeps label and announces busy |
-| Secondary/outline button | Same hit target, neutral surface/border | Same states; never visually outranks the primary action |
+| Primary button | 40px high desktop, 44px touch; 16px horizontal padding | Default, hover, pressed, visible focus, disabled, loading; loading keeps label and announces busy (status 2026-10-22: actual `min-height:40px`, padding `0 15px`, no loading style — loading is `cursor: wait` at `styles.css:207,225,315`; no 44px touch variant) |
+| Secondary/outline button | Same hit target, neutral surface/border | Same states; never visually outranks the primary action (status 2026-10-22: actual `min-height:36px` at `styles.css:111` and `notifications-page.css:20`) |
 | Destructive button | Danger semantic colors | Confirmation names the consequence; no destructive action on hover alone |
-| Icon button | 40px desktop, 44px touch; 18px icon | Accessible name/tooltip; visible focus; disabled/loading behavior as applicable |
+| Icon button | 40px desktop, 44px touch; 18px icon | Accessible name/tooltip; visible focus; disabled/loading behavior as applicable (status 2026-10-22: `.more-button` is 32px and `.help-button` 28px — `styles.css:64,71`) |
 | Text field | 40px desktop, 44px touch; label + control + hint/error | Default, hover, focus, invalid, disabled, loading; error is text and `aria-describedby` |
-| Composer | Multiline, grows to 6 lines then scrolls; send button stays visible | Draft remains through admission errors; no eligible AgentBinding shows setup action without clearing text |
+| Composer | Multiline, grows to 6 lines then scrolls; send button stays visible | Draft remains through admission errors; no eligible AgentBinding shows setup action without clearing text (status 2026-10-22: fixed `rows` with `resize: vertical`, no 6-line cap and no auto-grow — `styles.css:88`, `App.tsx:2441`, `ConversationsPage.tsx:581`) |
 | Task/Artifact/Resource card | 16px padding; title, status, one-line context, actions | Focusable only when interactive; freshness/location and status remain textual |
 | Blocker/UserRequest card | Status icon, safe message, resolution hint, explicit action/expiry | UserRequest answer is never styled as Approval; stale/expired request disables submission |
 | Approval card | Exact operation, target, scope, assurance, expiry, approve/deny | Dangerous action is never preselected; replay/stale approval asks for a fresh decision |
-| Status badge | 12px label + icon; 20–24px high | Text always names status; no color-only badge |
-| Dialog/sheet | Title, short consequence, scrollable body, explicit footer | Focus trap, Escape behavior appropriate to action, initial focus, return focus, destructive confirm |
+| Status badge | 12px label + icon; 20–24px high | Text always names status; no color-only badge (status 2026-10-22: `.status-pill` is 11px/26px with no icon — `styles.css:191`; other badges 10–11px — `needs-you/task-attention-page.css:37`, `agents/agent-catalog-settings.css:89`) |
+| Dialog/sheet | Title, short consequence, scrollable body, explicit footer | Focus trap, Escape behavior appropriate to action, initial focus, return focus, destructive confirm (status 2026-10-22: no shared dialog component exists; the only dialog styling is the ad-hoc discard dialog in `resources/resource-revision-editor.css:9-20` and the sidebar backdrop `styles.css:427`) |
 | Timeline row | Timestamp, actor/source, event text, optional linked resource | History order follows projection cursor; old events do not replay animations |
 | Coworker card | Identity/name, derived presence, active work count, one next useful action | Presence comes from real state; paused/offline are explicit; no avatar activity theater |
 | Worker profile card | Profile name, parent AgentBinding, short routing description, readiness, cost/quality freshness | Enabled means eligible for future selection only; current Attempt status is separate |
@@ -212,6 +266,18 @@ pressed change surface shade/border only; do not move important content. Focus u
 2px semantic focus ring with 2px surface offset. Disabled controls remain readable and
 explain a blocking prerequisite nearby; do not rely on opacity alone. Every async control
 announces `aria-busy`; invalid inputs use `aria-invalid` and a linked error message.
+
+Implementation status (2026-10-22): disabled styling is opacity-only in nine places
+(`styles.css:82,262`, `conversations/conversations-page.css:11,35`,
+`automations/automations-page.css:42,116`, `notifications/notifications-page.css:22`,
+`suggestions/suggestions-page.css:10,45`, `artifacts/artifact-workbench.css:25`,
+`agents/agent-catalog-settings.css:95`, `goals/goals-page.css:20`); `aria-busy` exists
+only on Suggestions, Goals and Approval controls and is absent from the primary
+Save/Create/Archive buttons (`App.tsx:2456,3044,3070`); the focus ring numerically
+conforms at `styles.css:35` but nine other focus rules use a 3px offset or the
+`--color-primary`/`--color-accent` variable instead of the ring tokens
+(`styles.css:49,144,165,173,195,257,280,289,294,329,381`,
+`agents/agent-catalog-settings.css:121`).
 
 ## Layout and responsive behavior
 
@@ -339,7 +405,10 @@ Rich responses use the existing semantic and component tokens. The response root
 document flow, not one giant card: prose remains on the conversation surface and individual
 cards/tables/charts use existing card and panel components. Initial content measures are
 `--rich-readable-max: 48rem` and `--rich-wide-max: 72rem`; section gap uses `--space-6`,
-block gap `--space-4`, inline gap `--space-2`. A block declares READABLE, WIDE, or
+block gap `--space-4`, inline gap `--space-2`. (Implementation status 2026-10-22: neither
+measure variable nor any `--space-*` variable is defined; the readable measure exists only
+as a literal `max-width: 48rem` in `presentation/rich-response.css:6,17` and no 72rem
+measure exists.) A block declares READABLE, WIDE, or
 FULL_AVAILABLE; ordinary paragraphs remain readable width even next to a wide chart.
 
 The registered model-safe component set is RichText, Layout (Stack/Row/Grid), RichCard,
@@ -410,6 +479,10 @@ When Agent changes:
 3. show a tiny loading skeleton only if descriptor refresh is required;
 4. do not animate controls out and back individually;
 5. preserve focus in the composer.
+
+(Implementation status 2026-10-22: no transition exists on any agent-control component;
+the agent/model/effort controls are not mounted at all, so this behavior cannot yet be
+observed.)
 
 An incompatible draft gets an inline non-destructive banner above the control row.
 

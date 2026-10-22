@@ -15,7 +15,10 @@ Operator API methods.
   carries it as an allowlisted logical header, unchanged across retries. The IPC frame's
   `request_id` is a separate per-exchange correlation ID and must never replace the command
   idempotency key. The Operator maps `Idempotency-Key` to the normalized domain RequestId
-  used by deduplication and manual Automation occurrence identity.
+  used by deduplication and manual Automation occurrence identity. The single exception is
+`POST /v1/automations/host/settle`: it is an idempotent reconciliation pass whose identity
+is derived from (trigger, resolved slot instant), so it takes no `Idempotency-Key` and the
+occurrence version guard is the fence against a second settlement.
 - mutable resources expose `version`; HTTP and local IPC carry the expected version in
   `If-Match`.
 - conflict returns `409/CONFLICT` semantics.
@@ -278,7 +281,12 @@ GET  /v1/conversations/{id}/messages?cursor=
 GET  /v1/conversations/{id}/presentation?cursor=&limit=
 GET  /v1/rich-presentations/{presentation_id}
 GET  /v1/conversations/{id}/tasks?cursor=
-```
+
+Implementation status (2026-10-22). `POST /v1/conversations/{id}/messages` and
+`GET /v1/conversations/{id}/messages` are **target-only**: they are declared in OpenAPI but
+no handler is mounted and the storage layer has no message reader. The mounted
+conversation routes are create/list/get/presentation/rich-presentations/tasks plus the
+three turn routes below.```
 
 Conversation creation requires the selected Workspace, a bounded optional title, and an
 `Idempotency-Key`. It commits the Conversation row, `conversation.created.v1` event,
@@ -294,7 +302,8 @@ a fresh create in an archived Workspace remains rejected. A rejected create resp
 lets a client clear only the rejected request identity while keeping transport and server
 errors retryable as ambiguous outcomes.
 
-`POST /v1/conversations/{id}/turns` accepts optional
+`POST /v1/conversations/{id}/turns` requires a `content[]` body (bounded to 256 blocks,
+1 MiB and 256 resource refs) and accepts optional
 `presentation_preference: AUTO | SIMPLE | RICH`, default `AUTO`. The preference is pinned
 to the ConversationTurn, returned in its receipt, and reused by retry. New turn creation
 uses `conversation.turn.created.v2`; earlier v1 turns migrate/read as `AUTO`. Preference
@@ -437,6 +446,18 @@ A `task.lead_agent.changed.v1` event records `cause=OWNER_REQUEST` or
 the trigger observation when applicable. Lead failover never transfers a Grant, Approval,
 SecretLease, native session handle, or active Attempt.
 
+**Implementation status (2026-10-22) — read before using the three turn routes.** The
+prose in this subsection describes the accepted target contract, not current served
+behavior. Today `submitConversationTurn` commits the user message and the OPEN turn and
+then always returns `503 DEPENDENCY_UNAVAILABLE`, because the storage layer refuses every
+Conversation-scoped session admission; it never returns a receipt and never reaches an
+agent. `retryConversationTurn` and `cancelConversationTurn` are mounted but both always
+return `503 DEPENDENCY_UNAVAILABLE`. The whole turn state machine below —
+`OPEN → RUNNING → WAITING_USER/WAITING_DEPENDENCY → COMPLETED/FAILED/CANCELLED` — is
+unreachable in this build, and the desktop composer therefore renders Send disabled with a
+truthful draft-only note. E03-S01/S02 own the repair; OpenAPI already advertises the `202`
+response that the implementation must honor.
+
 `POST /v1/conversations/{id}/turns` first resolves and checks the Conversation override or
 Workspace default AgentBinding/endpoint. If none is eligible, it returns
 `AGENT_UNAVAILABLE` and persists no message or turn. Otherwise it atomically appends the
@@ -460,6 +481,14 @@ for its current request key; the turn returns to `WAITING_USER`. If acceptance i
 ambiguous, it stays `WAITING_DEPENDENCY` until reconciliation. The turn returns to
 `RUNNING` only after provider readiness and session readiness are confirmed. The status
 projection distinguishes “Waiting for you” from “Waiting for service”.
+
+Implementation status (2026-10-22): every task-control route in this section —
+`/steer`, `/pause`, `/resume`, `/cancel`, `/steps/{step_id}/recover`,
+`/attempts/{attempt_id}/take-control`, `/attempts/{attempt_id}/return-control` — and every
+inspection route named below (`step-execution-dependencies`, `attempts`, `timeline`,
+`effects`, `usage`) is **target-only**: declared in OpenAPI, no handler in the daemon, no
+caller in the desktop. The task-controls row of the screen contract is consequently unmet,
+and a UI must not present these controls until their routes exist.
 
 Pause is separate from cancel. `/pause` stops new Attempt admission and asynchronously
 coordinates safe-boundary interruption, ResumePacket creation, provider Invocation and
@@ -880,6 +909,14 @@ package-private fields. Concurrent host changes may affect later pages, so clien
 from the first page after a Runtime inventory notification.
 
 ## Agents
+
+Implementation status (2026-10-22): `beginAgentAuthentication`,
+`openAgentNativeConfiguration`, `PUT /v1/agent-bindings/{id}/configuration`,
+`getAgentSessionOptions`, `getAgentHarnessCapabilities`, `installRegistryAgent` and
+`updateRegistryAgent` are all **target-only** — declared, never mounted, never called.
+Served today: inventory/registry list and refresh, profile probe, control-descriptor
+refresh, credential submission, binding CRUD with enable/disable/default, and the quota
+observation.
 
 The canonical lifecycle/configuration contract is
 [`AGENT-CONTROL.md`](AGENT-CONTROL.md). The API intentionally separates registry,
@@ -1912,6 +1949,10 @@ returns `RESOURCE_CONFLICT`.
 
 ## User requests and notifications
 
+Implementation status (2026-10-22): `POST /v1/user-requests/{id}/external-handoff` is
+**target-only** — no handler exists and the desktop UserRequest detail reports the handoff
+as unavailable, offering only Decline/Cancel while keeping the provider origin private.
+
 ```text
 GET  /v1/user-requests?status=PENDING&cursor=
 GET  /v1/user-requests/{id}
@@ -2010,7 +2051,10 @@ digests.
 ## Live event stream
 
 ```text
-WS /v1/stream
+`WS /v1/stream` is the logical stream contract. The only binding this build serves is the
+authenticated local `POST /v1/stream` duplex IPC session described in
+[LOCAL-OPERATOR-IPC](LOCAL-OPERATOR-IPC.md), which is recorded as served outside OpenAPI in
+the served-route inventory; no WebSocket transport is implemented.
 ```
 
 Client subscribes:

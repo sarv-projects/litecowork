@@ -897,6 +897,52 @@ use P0 product-blocking, P1 contract violation, P2 polish.
     (`App.tsx:2078–2079`); no palette, no shortcut. Required by
     `V1-UI-SCREEN-CONTRACT.md:7`. Owner: E02-S01.
 
+### Presentation conformance — explicit per-kind and per-frame state
+
+Renderer state for the 13 registered model-safe kinds (parser: `presentation/rich-presentation.ts`,
+renderer: `presentation/RichResponseView.tsx`):
+
+| Kind | Accepted by parser | Rendered | What the user sees today when it arrives |
+|---|---|---|---|
+| RichText / TEXT_SLICE | yes (`rich-presentation.ts:234-238`, slice digest checked `:219-228`) | yes (`RichResponseView.tsx:8-9`) | prose plus a “Read the original response” disclosure (`:50-53`) |
+| Layout / LAYOUT | yes (`:240-254`, 1–20 children, STACK/ROW/GRID) | yes (`:10-11`) | grid with 900px/600px breakpoints (`rich-response.css:27,30`) |
+| RichCard / CARD | yes (`:240-255`; title must equal a semantic line) | yes (`:12-13`) | section card; a title absent from the message rejects the whole document (`:356-357`) |
+| Callout / CALLOUT | yes (`:257-263`, tones NEUTRAL/INFO/WARNING) | yes (`:14-15`) | labelled note block |
+| DataTable / TABLE | conditional (`:265-282`; ≤20 headers, ≤500 rows, every row must byte-match a Markdown table in the message) | yes (`:16-24`) | scrollable table, else whole-document fallback |
+| MediaFrame / MEDIA | **no** (`:284-286`) | no | whole document falls back to the semantic message with “Formatted view unavailable…” + Retry (`ConversationsPage.tsx:111`) |
+| Gallery / GALLERY | **no** (`:284-286`); also absent from the wire enum | no | same fallback |
+| CodePanel / CODE | **no** (`:284-286`); also absent from the wire enum | no | same fallback — no code panel is ever drawn |
+| ChartFrame / CHART | **no** (`:284-286`) | no | same fallback |
+| DiagramFrame / DIAGRAM | **no** (`:284-286`) | no | same fallback |
+| Timeline / TIMELINE | **no** (`:284-286`); also absent from the wire enum | no | same fallback |
+| Checklist / CHECKLIST | **no** (`:284-286`) | no | same fallback; the reducer accepts checklist drafts but nothing renders them |
+| DeliverableGroup / DELIVERABLE_GROUP | **no** (`:284-286`) | no | same fallback; any non-empty `actions`/`citations` also rejects the document (`:345-351`) |
+| ArtifactCollection / ARTIFACT_COLLECTION | **no** (`:284-286`) | no | same fallback |
+
+Three narrowing layers must stay distinct: the 14-kind target set in DESIGN-SYSTEM.md, the
+11-kind wire enum in `operator-stream.schema.json` (no GALLERY/CODE/TIMELINE), and the
+5-kind desktop client. The publisher is narrower still: SQLite accepts only
+TEXT_SLICE/LAYOUT (`crates/storage-sqlite/src/rich_presentations.rs:278,306,327`), so
+CARD, CALLOUT and TABLE renderers are unreachable from the local daemon today. The client
+fallback is whole-document, not per-block.
+
+Frame flow state (daemon producer → Tauri bridge → reducer → render):
+
+| Frame | Daemon producer | Bridge subscription | Client reducer | Rendered today |
+|---|---|---|---|---|
+| `stream.ready` | yes (`presentation_operator.rs:391,880,2044,2343`) | pass-through (`conversation_stream_bridge.rs:438-467`; streams at `:329`, `:347`, `:365`) | yes (`presentation-stream.ts:141-145`) | status text only (`ConversationsPage.tsx:483`, `TaskPresentationPanel.tsx:478`) |
+| `projection` (snapshot + per-item upsert) | yes (`presentation_operator.rs:405,537,683,911,1537,1672,1813,2205,2275`, upserts `:1639-1651,1788-1800`) | pass-through | yes (`presentation-stream.ts:154-238`) | merged snapshot (`ConversationsPage.tsx:346`); conversation `linked_items` are never rendered |
+| `resync_required` | yes (`presentation_operator.rs:399,531,679,888,1490,2052,2263`) | pass-through | yes (`presentation-stream.ts:147-151`) | “Refreshing saved conversation updates…” (`ConversationsPage.tsx:482,550`) |
+| `turn.delta` | **none** — no producer anywhere in `apps/**/*.rs` | pass-through | yes (`presentation-stream.ts:240-294`) | would render “Assistant · response in progress” (`ConversationsPage.tsx:564-566`) — unreachable |
+| `turn.settled` | **none** as a frame (only the domain event `conversation.turn.settled.v1`) | pass-through | yes (`presentation-stream.ts:296-315`) | would delete the transient turn or mark INCOMPLETE — unreachable |
+| `rich.draft` | **none** — no producer anywhere | pass-through | yes (`presentation-stream.ts:316-421`) | **nothing** — no component reads `state.drafts` |
+
+Additional client limits that the docs did not state: resume cursor 2048 bytes (bridge
+`conversation_stream_bridge.rs:19,276`; client `presentation-stream.ts:89`), frame cap
+1 MiB (`presentation-stream.ts:69`), draft document 512 KiB (`rich-presentation.ts:9,409`)
+— stricter than the schema's 1 MiB document allowance, which is a deliberate client-side
+tightening worth recording in the contract when it is next revised.
+
 ### P2 — polish still owed
 
 16. Composer growth: fixed `rows` with vertical resize instead of grow-to-6-lines-then-scroll

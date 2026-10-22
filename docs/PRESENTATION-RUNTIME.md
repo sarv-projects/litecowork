@@ -90,8 +90,10 @@ PresentationItemKind =
 Each kind has a closed, validated payload shape owned by its projection/provider
 contract. Arbitrary HTML, script, shell commands, filesystem paths, credentials, provider
 session handles, and unbounded binary data are not PresentationItem payloads. Large content
-is read through its owning authorized Resource/Artifact/Workbench route. Plain-text and
-download fallbacks are required when a renderer is absent or disabled.
+is read through its owning authorized Resource/Artifact/Workbench route. When a renderer is
+absent the current build shows an explanatory plain-text fallback plus the committed
+semantic message and a Retry action; no download fallback exists yet, and there is no
+user-facing renderer disable setting yet.
 
 Status is a concise rendering hint mapped from the owning record; it is never written back
 to that record. A generic `COMPLETE` item cannot mark a Task complete, and only a committed
@@ -147,18 +149,23 @@ StreamReadyFrame {
 }
 ```
 
-The planned `projection_types` include `conversation_presentation` and `task_presentation`.
+The served `projection_types` are `conversation_presentation`, `task_presentation` and
+`runtime_inventory`; all three are emitted by the local Operator and consumed by the
+desktop (`presentation_operator.rs`, the runtime-inventory stream subscription, and the
+client stream reducers).
 Snapshot reads establish the current projection revision before stream deltas are applied.
 Each update carries its source identity, projection revision, and cursor. The client
 replaces an older item when the same `item_key` advances to a newer source revision; it
-never orders items by network arrival time. The current local adapter supports one
-Conversation presentation subscription or one Task presentation subscription. It emits a
-fresh authorized snapshot after committed Workspace events. Runtime inventory and
-per-item presentation deltas remain unimplemented. Transient `turn.delta`/`turn.settled`/
-`rich.draft` handling is implemented on the client — the stream reducer consumes and
-settles those frames and the desktop bridge subscribes to all three streams — but the
-local Operator does not emit them yet, so no transient frame reaches a running app in
-this build. Unsupported filters are rejected explicitly.
+never orders items by network arrival time. The current desktop client opens one
+Conversation presentation subscription or one Task presentation subscription per session
+(a client-side limit; the wire schema allows up to 20 conversation IDs and 20 task IDs per
+`Subscribe`). It emits a
+fresh authorized snapshot after committed Workspace events, and per-item upserts are
+emitted and merged by the client. What does **not** exist is the transient frame
+*producer*: `turn.delta`, the `turn.settled` frame and `rich.draft` are reduced by the
+client and subscribed by the desktop bridge, but no local Operator code emits them (a
+grep over `apps/**/*.rs` finds no producer), so no transient frame reaches a running app
+in this build. Unsupported filters are rejected explicitly.
 
 A Task stream snapshot uses the existing `TaskPresentationSnapshot` fields and adds the
 decimal `origin_sequence` captured in the same SQLite read transaction as the Task,
@@ -180,6 +187,7 @@ Live assistant text may be sent as bounded, transient frames:
 ```text
 TurnDeltaFrame {
   type: "turn.delta"
+  workspace_id: WorkspaceId      # required by the stream schema; the client rejects its absence
   conversation_id: ConversationId
   turn_id: ConversationTurnId
   retry_ordinal: u32             # pins the active ConversationTurn try
@@ -200,12 +208,15 @@ These frames:
 The Operator/API contract advertises a finite maximum frame size and applies backpressure;
 agents are not streamed one model token per frame. The UI keeps a bounded partial buffer.
 If a sequence gap cannot be replayed by the active adapter, it discards the partial buffer,
-shows “Reconnecting response”, and waits for the committed message or a supported replay;
-it never concatenates text across an unknown gap.
+shows the in-progress line as “Assistant · reconnecting response” followed by “This
+response did not finish and is not part of saved history.”, and waits for the committed
+message or a supported replay; it never concatenates text across an unknown gap.
 
-Turn presentation follows the owning ConversationTurn projection: `STREAMING` while the
-turn is active; `COMMITTED` only when its ConversationMessage exists; and `INCOMPLETE` when
-the turn ends without a committed response after partial output was shown. These are
+Turn presentation uses exactly three client states — `STREAMING` while the turn is active,
+`RECONNECTING` after an unreplayable gap, and `INCOMPLETE` when the turn ends without a
+committed response after partial output was shown. On a committed settlement the transient
+entry is deleted rather than transitioned to a committed state; the durable message comes
+from the projection. These are
 rendering states, not new ConversationTurn or ConversationMessage statuses. Retry follows
 the existing ConversationTurn retry lifecycle. A new retry ordinal starts a separate
 sequence scope and a visibly separate incomplete segment; its text is never appended to
@@ -309,20 +320,29 @@ the currently active retry/session. Retry, settlement, cancellation, disconnect,
 resync fence old drafts. A draft can be discarded at any time without affecting the
 message or turn.
 
-The planned Operator stream frame union is:
+The Operator stream schema defines six frame types, all of which the client reduces:
 
 ```text
 OperatorStreamFrame =
-    PROJECTION
+    STREAM_READY
+  | PROJECTION
   | TURN_DELTA
+  | TURN_SETTLED
   | RICH_DRAFT
   | RESYNC_REQUIRED
 ```
 
+`STREAM_READY`, `PROJECTION` and `RESYNC_REQUIRED` are produced by the local Operator
+today. `TURN_DELTA`, `TURN_SETTLED` and `RICH_DRAFT` have no producer in this build.
+
 `rich.draft` events are `DRAFT_STARTED`, `BLOCK_OPENED`, `TEXT_APPENDED`,
 `BLOCK_REPLACED`, `BLOCK_CLOSED`, `DRAFT_FINALIZING`, `DRAFT_PUBLISHED`, or
-`DRAFT_FAILED`. Open-block count, nesting depth, total bytes, frame count, queue bytes,
-and block count are bounded. Text fragments are coalesced. A closed block's parent/order
+`DRAFT_FAILED`. The client bounds them exactly: 32 open blocks, nesting depth 8, 512 KiB of
+draft bytes, 1000 frames and 200 blocks per draft, and a 1 MiB frame cap matching the
+schema's `max_frame_bytes`; the queue-byte bound is owned by the Operator, not the client,
+and is not implemented there. The client validates and bounds drafts but does **not
+display** them in this build — no component reads the draft state and no producer emits
+the frames. Text fragments are coalesced. A closed block's parent/order
 cannot change; corrections append a replacement block. A sequence gap is replayed only
 from a bounded draft snapshot when supported. Otherwise the client drops the ephemeral
 rich draft and continues with ordinary text/message handling. Slow rendering never blocks
@@ -378,15 +398,16 @@ Built-in renderer families:
 | USER_REQUEST / APPROVAL | Dedicated typed card and exact action | Resolve through owning service only |
 | ARTIFACT | Type-aware card with version and verification state | Open supported preview/editor; show bounded recent history and, for supported plain text only, prepare an explicitly confirmed restore draft that publishes as a new version |
 | CODE / DIFF | Syntax-aware code and reviewable change | Open read-only or provider-owned editor |
-| TABLE / CHART / IMAGE | Bounded data/image renderer with text alternative | Open qualified renderer |
-| BROWSER / TERMINAL | Explicitly labeled live environment surface | Acquire applicable control/read lease before interaction |
-| MCP_APP | Sandboxed, capability-negotiated app surface | Use the separate MCP App security contract |
+| TABLE / CHART / IMAGE | TABLE renders bounded data with a text alternative; CHART and IMAGE are explanatory text placeholders today | Open qualified renderer (target) |
+| BROWSER / TERMINAL | Explicitly labeled placeholder text today (“Browser controls are available from the owning Task.”) | Acquire applicable control/read lease before interaction (target) |
+| MCP_APP | Placeholder text today (“Interactive app content is unavailable in this renderer.”) | Use the separate MCP App security contract |
 | ERROR | Safe message, source, recovery action | Open the owning domain's recovery flow |
 
 Renderer selection uses declared item kind/version and Operator capabilities, not
 untrusted MIME labels alone. An unsupported renderer produces an explicit fallback; it
-does not drop the item or convert it to executable content. A user-disabled renderer
-remains disabled after refresh.
+does not drop the item or convert it to executable content. The registry is a static map
+in this build: there is no user-facing renderer enable/disable setting, so “disabled after
+refresh” is target behavior, not current behavior.
 
 Rich-text, code, table, and image renderers treat payloads as untrusted. They do not execute
 inline HTML/script, load remote assets implicitly, or navigate `javascript:`, `file:`, or

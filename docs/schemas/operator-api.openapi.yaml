@@ -574,6 +574,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TaskPlanningReadiness'}
+        '409':
+          description: STALE_TASK_VERSION — the supplied If-Match is not the current Task version
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/presentation:
     get:
@@ -588,6 +593,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TaskPresentationSnapshot'}
+        '413':
+          description: INVALID_ARGUMENT — the snapshot source set exceeds the 100-Step/200-Artifact caps; no partial snapshot is returned
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/progress:
     get:
@@ -597,6 +607,8 @@ paths:
       responses:
         '200':
           description: Rebuildable factual progress projection; no synthetic percentage or ETA
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TaskProgressProjection'}
@@ -746,6 +758,16 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/TaskSpecRevision'}
+        '409':
+          description: CONFLICT or STALE_TASK_VERSION — the Task left the READY edit window or the expected version is stale
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '422':
+          description: INVALID_ARGUMENT — the requested objective or fields are not acceptable for this revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/plan-revisions:
     get:
@@ -1507,7 +1529,12 @@ paths:
         as one ordinary READY Task, records every elapsed slot as a bounded
         SKIPPED occurrence with a typed reason, and advances the persisted
         cursor. It creates no Plan, Step, AgentSession, Attempt, lease,
-        Environment, Effect, or capability grant. The route and the supervised
+        Environment, Effect, or capability grant. Idempotency note: unlike
+        every other mutating command this reconciliation pass takes no
+        Idempotency-Key, because its identity is derived from (trigger,
+        resolved slot instant) and a repeated pass settles each slot exactly
+        once; the occurrence version guard, not a caller-supplied key, is the
+        fence. The route and the supervised
         trigger-host worker never produce a second occurrence or a second Task
         for one logical slot, because the occurrence identity is derived from
         the trigger and the resolved slot instant.
@@ -4328,7 +4355,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
-    workspaceContext: {type: apiKey, in: header, name: X-Workspace-ID, description: 'Required Workspace scope for all operations except listing/creating Workspaces; for path/body Workspace IDs, values must match.'}
+    workspaceContext: {type: apiKey, in: header, name: X-Workspace-ID, description: 'Required Workspace scope for all operations except Workspace list/create, the local agent-installation inventory, Task planning-readiness, and the recovery bootstrap; for path/body Workspace IDs, values must match.'}
     operatorAuth: {type: http, scheme: bearer, bearerFormat: opaque}
   parameters:
     WorkspaceId:

@@ -7,6 +7,14 @@ Motion communicates domain change; it never invents work.
 These v1 timing/easing values are normative. Changing them requires a design-system update;
 semantic triggers and reduced-motion behavior remain invariant.
 
+**Implementation status (2026-10-22).** None of these values exists as a CSS custom
+property; they appear only as literals. Two declarations conform
+(`styles.css:53,260` use `120ms cubic-bezier(.2,0,0,1)`), three violate:
+`transition: transform 160ms ease` on the nav drawer (`styles.css:420`), and the looping
+spinners counted under the rule below. Every semantic transition row in this document is
+ABSENT from the stylesheets — the only `@keyframes` in the app are the two spinners and
+the Needs-You border emphasis (`needs-you/task-attention-page.css:29-33`, which conforms).
+
 ```text
 duration.instant = 80ms
 duration.fast    = 120ms
@@ -24,6 +32,15 @@ Interactive color/border/focus transitions use `duration.fast`; content/status t
 use only the table below. Avoid spring physics, overshoot, parallax, continuous shimmer,
 and looping progress animation. Indeterminate work is shown with a static label/icon and
 an accessible busy state, not a decorative animation.
+
+Implementation status (2026-10-22): two live violations remain —
+`animation: suggestions-spin .8s linear infinite`
+(`suggestions/suggestions-page.css:33`, keyframes at `:46`) and
+`animation: automation-spin 900ms linear infinite`
+(`automations/automations-page.css:70`, keyframes at `:97`). Both must become static
+labels with an accessible busy state; their reduced-motion kill switches
+(`suggestions-page.css:47`, `automations-page.css:116`) do not make the animated state
+conform.
 
 ## Semantic transitions
 

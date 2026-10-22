@@ -64,6 +64,15 @@ projections. See ADR-0021 for the device identity signing and encoding decision.
 ```text
 WorkspaceStatus = ACTIVE | ARCHIVED
 AgentProtocol = ACP | A2A | SDK | API | CLI | TERMINAL
+# Current source enums. Local discovery only proves that an executable exists
+# and reports its version; it never claims authentication or session readiness
+# (apps/litecoworkd/src/agents/mod.rs: InstallationState has 3 variants,
+# AuthenticationReadiness only Unknown, SessionReadiness only NotProbed).
+# These are deliberately narrower than the target observation sets below
+# (AgentInstallState / AgentAuthState, this file's "Agent registry/control
+# schemas" section) and from DATA-MODEL.md's AgentInstallation state. No code,
+# route or UI may report a state from the fuller sets until its observation
+# path exists and is qualified.
 AgentInstallationState = MISSING | INSTALLED | VERSION_UNAVAILABLE
 AgentAuthenticationReadiness = UNKNOWN
 AgentSessionReadiness = NOT_PROBED
@@ -1424,6 +1433,10 @@ The normative wire shapes are in
 validation semantics are in [`AGENT-CONTROL.md`](AGENT-CONTROL.md).
 
 ```text
+# Target observation/wire sets. Current local discovery emits only the bounded
+# enums in the "Status enums" section above; INSTALLING, UPDATE_AVAILABLE,
+# UPDATING, BROKEN and the NEEDS_AUTH..ERROR auth states have no producer in
+# this build.
 AgentInstallState =
   MISSING | INSTALLING | INSTALLED | UPDATE_AVAILABLE |
   UPDATING | VERSION_UNAVAILABLE | BROKEN

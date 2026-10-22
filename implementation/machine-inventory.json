@@ -1425,7 +1425,7 @@
       "method": "POST",
       "operationId": "settleAutomationTriggers",
       "path": "/automations/host/settle",
-      "sha256": "4346eb3741c39c3542d8040f149c54ea373349011f49d6a3b24397afb9f4f5d7"
+      "sha256": "1ed8dd26120b85b3495b4eeea0a901b41a26c9473653bf5bdcb4f8760f58c562"
     },
     {
       "method": "GET",
@@ -2259,19 +2259,19 @@
       "method": "GET",
       "operationId": "getTaskPlanningReadiness",
       "path": "/tasks/{taskId}/planning-readiness",
-      "sha256": "ae2e42376c1fe72c7d8942039ff1e3426949db7680645ab0ffcfa6984ea72257"
+      "sha256": "d5122485fa10401dba77ea6a6f7bb0fd8c149012a9e3906cecadff7e8bdef463"
     },
     {
       "method": "GET",
       "operationId": "getTaskPresentation",
       "path": "/tasks/{taskId}/presentation",
-      "sha256": "1232f0805bc7a88deb4977e57a2f809d060bafb9a187d2cdb41c20277d74eeb3"
+      "sha256": "ab555c11403f6969755388484327a201c633a55bc21dbe9bd086d207d5ee157d"
     },
     {
       "method": "GET",
       "operationId": "getTaskProgress",
       "path": "/tasks/{taskId}/progress",
-      "sha256": "7a5abde9d442d0d4301f1920b77e6cf72801e9f2954e2e17ce49544c72c577a6"
+      "sha256": "e8c464c2ac1ad9c79db9c48fe7b158bd25934e4d44640be87a607734dfdcf81e"
     },
     {
       "method": "POST",
@@ -2289,7 +2289,7 @@
       "method": "POST",
       "operationId": "reviseTaskSpec",
       "path": "/tasks/{taskId}/spec-revisions",
-      "sha256": "bacf27e5ce3a3d0cb3ed313619af09d24a5ba174bc455c2599e1d1e34ba1e7c4"
+      "sha256": "95de78eaa7492d2fefca6cfe121c274049847e13cd7c895aa71559e849f0b951"
     },
     {
       "method": "POST",

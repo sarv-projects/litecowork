@@ -49,6 +49,10 @@ Conversation turn, is bounded and ephemeral, creates no CapabilityInvocation, Ef
 Artifact, Grant, or DomainEvent, and is not available to Task planning or worker Attempts
 by default.
 
+Implementation status (2026-10-22): `litecowork.presentation.propose` has no
+implementation anywhere in this repository (no route, adapter or client call). Presentation
+documents reach the store only through the ordinary committed-message path.
+
 ```text
 RichPresentationIntent {
   schema_version: 1
@@ -148,6 +152,13 @@ ModelSafeBlock =
   TEXT_SLICE | LAYOUT | CARD | CALLOUT |
   MEDIA | GALLERY | CODE | TABLE | CHART | DIAGRAM | TIMELINE |
   CHECKLIST | DELIVERABLE_GROUP | ARTIFACT_COLLECTION
+# Three narrowing layers exist today and must stay distinct:
+#   1. this 14-kind target set (normative);
+#   2. the wire enum in schemas/operator-stream.schema.json (11 kinds — no GALLERY,
+#      CODE or TIMELINE), which is what a publisher may emit;
+#   3. the desktop client, which accepts and renders only TEXT_SLICE, LAYOUT, CARD,
+#      CALLOUT and TABLE. Every other kind makes the whole document fall back to the
+#      committed semantic message.
 
 HostBoundBlock =
   HOST_PROJECTION | MCP_APP
@@ -190,7 +201,9 @@ CitationRef {
 `CODE_RANGE`. Page and line values are 1-based. Text offsets are zero-based UTF-8 byte
 offsets within the exact extracted segment/version. Page-region x/y/width/height are
 normalized to `[0,1]`. Every citation is resolved against an authorized pinned Resource
-revision; a changed head never silently changes the cited revision. A citation is a source
+revision; a changed head never silently changes the cited revision. (Implementation status
+2026-10-22: the desktop client has no citation resolver — a document carrying any non-empty
+citation ref is rejected in full and falls back to the semantic message.) A citation is a source
 reference, not proof that the associated claim is true.
 
 ### Tables and charts
@@ -224,14 +237,16 @@ must be validated at 200% zoom and narrow desktop window sizes.
 
 `DELIVERABLE_GROUP` and `ARTIFACT_COLLECTION` bind exact `ArtifactVersionRef`s. The host
 renders titles, media-type icons, provenance, verification state, and permitted OPEN,
-PREVIEW, DOWNLOAD, or OPEN_IN_WORKBENCH actions from real Artifact metadata. Collection
+PREVIEW, DOWNLOAD, or OPEN_IN_WORKBENCH actions from real Artifact metadata. (Implementation
+status 2026-10-22: both kinds are rejected by the desktop parser, so none of these cards or
+actions is reachable in this build.) Collection
 lists are virtualized and paginated; a large Resource or CSV is never copied into the
 presentation document.
 
 Creating files is Task work. A Conversation AgentSession cannot publish Artifacts. A
 request to create files or a ZIP materializes a Task and uses the ordinary Attempt,
 Artifact, Effect, and Verification contracts. A deterministic `ArtifactBundleBuilder`
-may create a ZIP from explicitly selected exact ArtifactVersions after authorization. It
+(target; no implementation exists in this repository) may create a ZIP from explicitly selected exact ArtifactVersions after authorization. It
 publishes an ordinary immutable `BUNDLE_ARCHIVE` Artifact with exact input refs and a
 canonical member manifest in provenance; it is not a new aggregate or transactional
 multi-effect operation. Each consequential/member operation retains its ordinary
@@ -243,7 +258,9 @@ does not change an already-built ZIP.
 
 Checklist selections are `LOCAL_TRANSIENT` or `LOCAL_DURABLE` Operator UI state, never
 Task Steps or Verification. V1 local durable state stays in the desktop's local UI store
-and is not Workspace-replicated. Task progress is shown only through a host-bound trusted
+and is not Workspace-replicated. (Implementation status 2026-10-22: CHECKLIST is rejected
+by the desktop parser and no checklist store or component exists, so neither selection
+kind is implemented.) Task progress is shown only through a host-bound trusted
 Task projection. Safe navigation actions may open exact authorized Artifact/Resource,
 Task, or Conversation identities; external navigation is HTTPS-only and passes the
 Operator confirmation/egress rules. Mutating operations route only through their owning
@@ -251,9 +268,9 @@ service. There is no generic execute action.
 
 ## Deterministic presentation and cost
 
-`ToolResultPresentationRegistry` maps `(CapabilityRef, operation, result_schema_digest)`
-to a versioned, closed renderer descriptor and bounded fallback (`JSON`, `TABLE`, or
-`TEXT`). A known tabular result becomes a table without another model call; committed
+`ToolResultPresentationRegistry` (target; no implementation exists in this repository)
+maps `(CapabilityRef, operation, result_schema_digest)` to a versioned, closed renderer
+descriptor and bounded fallback (`JSON`, `TABLE`, or `TEXT`). A known tabular result becomes a table without another model call; committed
 Artifacts become host-bound Artifact cards; approved tool results may use their registered
 renderer. Registry renderers cannot alter source truth.
 
@@ -270,7 +287,8 @@ metadata, never rendered HTML, React trees, MCP iframe DOM, local checklist stat
 ephemeral rich frames. Export starts from semantic content. Optional Markdown/PDF/print
 views are derived outputs and cannot become message truth.
 
-`PortableResponseRenderer` flattens rich blocks to bounded text for channels: prose stays
+`PortableResponseRenderer` (target; no implementation exists in this repository)
+flattens rich blocks to bounded text for channels: prose stays
 prose; tables become bounded text/Markdown; cards become title/summary; charts/diagrams
 include textual summaries; checklists use textual boxes; deliverables list authenticated
 links or supported attachments; MCP Apps receive a fallback description and LiteCowork

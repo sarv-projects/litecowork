@@ -2,6 +2,23 @@
 
 **Status:** normative UX TARGET, not evidence of installed build; subordinate to [Product](V1-PRODUCT-RELEASE-CONTRACT.md), [Experience](EXPERIENCE.md), [Desktop Shell](DESKTOP-SHELL-LLD.md), [Native Composer](NATIVE-COMPOSER-LLD.md), [Design System](DESIGN-SYSTEM.md), [Accessibility cases](../implementation/UI.md).
 
+**Implementation status (2026-10-22).** Every row below is binding target; the per-surface
+file-cited delta lives in the UI implementation audit in
+[`implementation/UI.md`](../implementation/UI.md). Rows that are wholly unmet today, with
+the exact reason: **New Chat send** — the turn route always returns 503 and the composer
+renders a disabled Send; **Recent Chats rename/pin/archive/delete** — no conversation
+mutate route exists; **Coworker scoped memories** — the memory routes are explicitly not
+implemented; **Work controls/evidence** — the control and effects routes are target-only
+and the UI shows no controls (and therefore no inert buttons either); **Task detail tabs**
+— the detail is one read-only stack; **Discover** — the page component exists but is not
+mounted and install/adopt/Connections routes are target-only; **Workbench Browser/
+Computer/Terminal** — no shell and no provider routes; **PDF and Office artifact rows** —
+no generation or preview capability is served; **composer Run as Task / Schedule / Save as
+Routine** — no such actions exist; **streamed semantic fragments** — the Operator emits no
+transient frames; **global search and keyboard palette** — no route and no UI.
+Met today: Automations wizard and run history, Needs You (list, not count badge), Library,
+Notifications, and the global state matrix on the surfaces that exist.
+
 ## Shell and navigation
 
 **App shell:** persistent left sidebar (collapsible and resize-aware), central Conversation, optional context-sensitive right Workbench. Do not add a separate generic global model selector or mandatory Coworker/Task wizard. Per Workspace remember layout only, not expired authority, native sessions or grants. Keyboard palette and global search operate on authorized persisted data.

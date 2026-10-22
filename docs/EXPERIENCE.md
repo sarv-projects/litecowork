@@ -14,7 +14,10 @@ Library
 Discover
 ```
 
-The desktop sidebar also contains search and a persistent Recent Conversations list. Work
+The desktop sidebar also contains search and a persistent Recent Conversations list.
+(Implementation status 2026-10-22: the current sidebar contains only the Workspace
+selector, the nav list, a Runtime note and the user row; search and the Recent
+Conversations list live inside the Conversations page, not the sidebar.) Work
 is the user-facing label for durable Tasks and contains Active, Waiting, Scheduled, Done,
 and All filters. Coworkers is an identity/context surface, not an execution container.
 Needs You is a first-class destination with a pending count for approvals, expired logins,
@@ -99,11 +102,11 @@ switches the AgentBinding or its model.
 - **Load a server Skill:** show the host-assigned server identity, exact Skill URI, manifest digest, and requested authority. Approval applies to that exact content set; a changed manifest pauses its use and requests approval again. A dynamic Skill is labeled unsupported in v1, and a nested Skill requires its own approval.
 - **Approve an action:** present exact action, target, scope, risk, and required assurance; stale/expired approvals require a fresh request rather than replaying approval.
 - **Answer a provider question:** render bounded non-sensitive form requests as ordinary UserRequests; clearly state that passwords, API keys, recovery codes, and tokens must not be entered. Suspicious credential fields are rejected with a provider-connection action.
-- **Continue provider sign-in:** show the capability publisher and parsed HTTPS destination origin, explain that the external site receives anything entered there, open the provider page in the system browser only after a user click, then offer Done/Decline/Cancel. Never embed the page or store its state-bearing URL in LiteCowork history; the system browser may retain its normal browsing history. The response sent back is action-only.
+- **Continue provider sign-in:** show the capability publisher and parsed HTTPS destination origin, explain that the external site receives anything entered there, open the provider page in the system browser only after a user click, then offer Done/Decline/Cancel. *(Implementation status 2026-10-22: this handoff is not available from the current UserRequest screen — the provider origin stays private and only Decline/Cancel are offered.)* Never embed the page or store its state-bearing URL in LiteCowork history; the system browser may retain its normal browsing history. The response sent back is action-only.
 - **Change lead agent:** choose an eligible Workspace binding, submit a versioned request, show existing Attempts draining under their pinned identity, and show the new lead only after the assignment event.
 - **Create or edit an Automation:** choose an active Routine revision, preview every trigger/timezone, TriggerHost, overlap/retry behavior, execution placement, dependencies, and notifications; save edits as a new immutable revision. Each occurrence detail displays the Routine and Automation revisions it pinned.
 - **Pair a Runtime:** explain its role and advertised local resources, issue a short-lived one-use pairing action, and show it as available only after identity verification.
-- **Backup and restore:** Settings lists only verified restore points, their event cursor/schema and key reference, and missing-object blockers. Creating a backup shows a busy state until the verified manifest is returned; it shows stage/percentage only when the snapshot provider reports real progress. Restore is exposed only during authenticated setup on an empty installation and clearly notes that connections may need reauthentication.
+- **Backup and restore:** *(target; no backup/restore surface is mounted in the current desktop build — the operation exists only in the generated API types.)* Settings lists only verified restore points, their event cursor/schema and key reference, and missing-object blockers. Creating a backup shows a busy state until the verified manifest is returned; it shows stage/percentage only when the snapshot provider reports real progress. Restore is exposed only during authenticated setup on an empty installation and clearly notes that connections may need reauthentication.
 
 ## Legacy Home implementation — archived, not V1 default
 
@@ -121,6 +124,8 @@ answer/outcome first, concise real activity second, expandable work and source d
 Inspector last. There is no separate nontechnical/technical product mode. “Context used”
 is an optional read-only disclosure listing the exact attachments and retrieved/instruction
 sources resolved for that turn; it never claims that an Agent read every available file.
+(Implementation status 2026-10-22: no “Context used” disclosure exists in any mounted
+surface.)
 Transient streamed text is marked in progress until the ConversationMessage commits.
 Reconnect replaces stale local state from the authorized projection and does not replay
 old typing or activity animations. See [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).
@@ -135,14 +140,20 @@ Side conversations/branches are not part of v1. If introduced later, they must p
 own context snapshot and cannot alter a parent Conversation or Task unless the user
 explicitly applies a reviewed result.
 
-Conversation is the human continuity surface. Task cards appear inline when durable work materializes.
+Conversation is the human continuity surface. Task cards appear inline when durable work
+materializes. (Implementation status 2026-10-22: the chat surface renders no inline Task
+card; the Task card exists only in the Task presentation panel.)
 
-ConversationTurn `WAITING_USER` is labeled “Waiting for you”. After a user response is
-committed, `WAITING_DEPENDENCY` is labeled “Waiting for service” with a concise provider or
-agent-startup detail; it is not shown as another unanswered request. “Continue” appears
+ConversationTurn `WAITING_USER` is labeled “Waiting for your response”. After a user
+response is committed, `WAITING_DEPENDENCY` is labeled “Waiting for a service” with a
+concise provider or agent-startup detail; it is not shown as another unanswered request. “Continue” appears
 only after the exact provider input is accepted and the replacement session is ready.
 
-Task card states:
+Task card states. *(This list is a design target. The single canonical status-label
+mapping is the table in “Task state labels” below, which is what the app renders; states
+from this list that are absent there — Planning, Running, Verifying, Needs your decision,
+Not finished, Stopping — must not be introduced without updating that canonical table and
+the app together.)*
 - Planning (Task is durable; lead planning session is active; no Step lane exists yet)
 - Ready
 - Running
@@ -165,10 +176,15 @@ If the provider task cannot resume on its owning Runtime/Attempt, keep the answe
 while reconciliation or a newly authorized continuation is required.
 
 Card shows plain-language execution location: `This computer`, `Cloud`, `2 workers active — Cloud + This computer`, or specific blocker such as `Waiting for your laptop — needs local Chrome`.
+(Implementation status 2026-10-22: task rows render only the objective, the canonical
+status label and an updated timestamp; no execution-location or worker-count string
+exists.)
 
 ## Tasks
 
-Task list filters:
+Task list filters. *(Design target; it must be reconciled with the sidebar filter list
+above before implementation — the two lists disagree today. The shipped control is a
+single “Status” select offering All plus the 13 canonical Task statuses.)*
 - Active
 - Needs you
 - Scheduled/automation-created
@@ -180,7 +196,7 @@ Task detail sections:
 - for a `READY`, unplanned Task, an objective editor that appends a TaskSpecRevision; it is not an inline mutation and is unavailable once planning or an accepted Plan exists
 - for an unplanned Task, an explicit read-only **Check readiness** action may show the current Task-version's sanitized local planning blockers; it is not a Start action, never starts an AgentSession, and always states that dispatch is unavailable in this desktop slice
 - offer a lazy, read-only Task specification history disclosure with exact objective, author, timestamp, and parent revision; do not expose restore/edit controls from history
-- compare the history head with the loaded TaskSpec revision; label a newer head “Latest saved,” disclose an older/incomplete response, and offer explicit Task reload rather than mislabeling a revision “Current”
+- compare the history head with the loaded TaskSpec revision; label a newer head “History contains revision X, newer than the Task detail's loaded revision…” (the shipped wording) with an explicit “Reload Task” action, disclose an older/incomplete response, and never mislabel a revision “Current”
 - disable that Task reload while an objective draft or unresolved save request is open, preserving user-authored edits
 - keep the objective, current plain-language status, and whether a current plan is saved visible without expansion
 - when a Task has Coworker origin, show the name from the exact immutable CoworkerRevision it pins; if that revision cannot be loaded, show the pinned revision identity and a clear unavailable state rather than the Coworker's current name
@@ -226,7 +242,9 @@ does not imply a live stream.
 
 ## Live Desk
 
-Live Desk projects real work into outcome-oriented lanes.
+Live Desk projects real work into outcome-oriented lanes. (Implementation status
+2026-10-22: no Live Desk surface, lane UI or “View activity” action exists; the nearest
+shipped surface is the read-only Task presentation panel.)
 
 Default hides agent names and protocol internals. A Task opens with its outcome, current
 plain-language state, next required action, and newest committed output or blocker. A
@@ -406,7 +424,8 @@ filters. They are applied by the authenticated Resource search route before pagi
 changing either filter clears the previous page/cursor and starts a new query. They refine
 the selected search mode but do not change its content-reading limits or attach results to
 a Task. With metadata mode selected, a user can leave the query empty to browse by filters;
-content-search modes still require search terms. This UI source is not yet built or verified.
+content-search modes still require search terms. (Both filters are built and wired to the
+authenticated Resource search route.)
 
 For a selected Resource row, Library offers **Rebuild local text index** as an explicit
 owner action. It submits the exact revision ID and content digest currently displayed by
@@ -416,12 +435,14 @@ index was rebuilt or a plain-language reason the file cannot be indexed. If the 
 is ambiguous, retry uses the same request ID; a changed Resource head instead asks the
 owner to reload. The action returns no file text or search terms. ZIP and unsupported
 formats remain intact and are reported as not indexable; this control does not imply ZIP
-extraction, semantic RAG, or background indexing. The UI source has not been built or
-verified.
+extraction, semantic RAG, or background indexing. (This action is built and wired; the
+loading, success and failure states are rendered inline.)
 
 ## Automations
 
-The page has three views: `Routines | Automations | Runs`.
+Routines and Automations are separate top-level destinations. (Implementation status
+2026-10-22: there is no `Runs` view — run/occurrence history is listed inside one
+Automation's detail.)
 
 Routine cards show immutable current revision, typed inputs, outputs/acceptance criteria,
 capability requirements, placement eligibility, and actions to run, revise, duplicate,
@@ -449,7 +470,7 @@ publishes a Skill automatically. Updating a Skill or Routine requires the existi
 and revision flow.
 
 Each Automation run creates an ordinary Task from the pinned RoutineRevision. Users must
-confirm schedule creation and material updates. `Run now` is shown when an Automation has
+confirm schedule creation and material updates. `Run once` (the shipped label) is shown when an Automation has
 a ManualTrigger and the local TriggerHost path is available. It works while the Automation
 is PAUSED, creates one request-idempotent occurrence plus a saved READY Task, and never
 enables recurring triggers. `Create test Task` is shown for the pinned revision even with
@@ -482,7 +503,7 @@ Default card shows user value and compatibility. Expanded detail shows provider/
 
 ## Runtime and local availability
 
-Settings exposes Runtime startup policy (`Manual`, `Start at login`, `Always-on server`),
+Settings exposes Runtime startup policy (`Manual`, `Start at login`, `Always-on server`). *(Implementation status 2026-10-22: the policy is displayed read-only as the raw enum value; there is no selector and no `Stop local Runtime` command yet.)*
 current incarnation/recovery status, and an explicit `Stop local Runtime` action. Closing
 the UI does not stop a background Runtime. The read-only stop preview shows local Tasks,
 Automations, and roots that depend on the device and offers `Cancel`, `Move eligible work
@@ -566,6 +587,7 @@ Every surface must define:
 | Task list | Durable outcome, status, next required action, latest update | Filter, open, pause/resume, cancel, recover an eligible Step | Empty filter-specific state; cached/offline status is visibly stale |
 | Task detail | Current spec revision, progress, artifacts, blockers, history | Steer, approve, cancel, request recovery, open artifact | Missing/archived resources are identified; no fabricated progress |
 | Live Desk | Steps, active Attempts, inputs, capability activity, artifacts, verification | Inspect lane, respond, stop, open result | No lanes before Steps/Attempts exist; preserve last known state as stale when disconnected |
+*(The Live Desk and Inspector rows below are design targets; neither surface is mounted in the current desktop build.)*
 | Workbench | Selected versioned Artifact or actual provider UI | View/edit through owning provider, publish a new version | Unsupported preview offers download; provider loss does not imply artifact loss; stale publication keeps the draft and requires explicit rebase |
 | Library | Saved/generated/uploaded/imported/linked resources | Search, open, promote, archive a linked reference, view archived resources | Empty state explains how to save/import; stale linked revisions are marked; archive removes the item from the default Library view without deleting its external source |
 | Automations | Routines, triggers, next run, policy, recent occurrences and Task outcomes | Save/revise/run Routine; create/edit/run manual trigger/pause/resume/disable Automation | Missed/failed occurrence is explicit; duplicate trigger is shown once logically |
@@ -606,6 +628,8 @@ Chrome`) but does not define new domain state. `Planning` is a presentation of R
 a TASK_PLANNING session is active and no PlanRevision has been promoted; it is not a new
 TaskStatus. Unsent composer content remains an Operator draft and is not a persisted Task.
 Show `Getting ready` while the Task is READY and the planning session is not yet active.
+(Implementation status 2026-10-22: this state is not implemented — a READY Task always
+renders the canonical “Ready” label.)
 Attempt and Step state appears in the Inspector or lane details.
 
 `FAILED` is shown only after recoverable Step/Attempt options are exhausted. Recoverable
@@ -622,7 +646,7 @@ settled and reports any blockers.
 - Policy updates do not imply remote deletion. The UI states that already-replicated copies remain until separately managed.
 - Archive does not delete or hide history. Archived Workspaces are read-only; inbound channel messages are rejected with a clear channel-side response.
 - Workspace instructions are edited in Settings as plain UTF-8 text (64 KiB maximum) and committed as immutable revisions backed by a pinned Resource; the UI shows revision history. Updating them does not silently alter active Tasks, and TaskSpec pinning is required before this guidance reaches Task sessions.
-- Adding a folder as an attachment is one-time. “Add to Workspace” creates a persistent WorkspaceRoot with a separate watch policy; root observation does not imply write access or cloud replication.
+- Adding a folder as an attachment is one-time. “Add to Workspace” creates a persistent WorkspaceRoot with a separate watch policy; root observation does not imply write access or cloud replication. (Implementation status 2026-10-22: folder watching and indexing are not active in this build; the UI states that limitation next to the root.)
 - Persistent-folder rows show WorkspaceRoot lifecycle status separately from the last committed ResourceLocation availability. Availability is an observed value, not a live Runtime probe; `PAUSED` must not hide an `OFFLINE`/`UNAVAILABLE` location, and the view never exposes a local path or raw file identity.
 - Resource search results show freshness and available locations. A conflicted Resource exposes its revision branches; an unpinned reference is not resolved until a branch is explicitly pinned or a verified merge is created. Search matches do not silently enter agent context; the user/agent must attach selected ResourceRefs.
 
@@ -639,7 +663,7 @@ cannot imply that an approval wakes a machine. Cached counts are explicitly stal
 UserRequests contain originating
 Conversation/Task/Attempt/session/invocation provenance, typed response schema or choices,
 status, and expiry. A Task-originated request may have no Conversation and still appears
-in the persistent Home “Needs you” inbox and its Task detail. A UserRequest response never
+in the Needs You destination and its Task detail (there is no Home inbox). A UserRequest response never
 resolves an Approval; approval goes through TrustService's explicit assurance and decision
 path. Notifications are preference-driven,
 deduplicated deliveries with bounded retries and channel fallback. A sent notification is
@@ -714,7 +738,7 @@ While the lead planning session is active, show “Planning” with session stat
 
 ### Coworker page
 
-Clicking a Coworker opens its most-recent eligible CONVERSATION. If none exists,
+Clicking a Coworker opens its most-recent eligible CONVERSATION. *(Implementation status 2026-10-22: the Coworkers destination mounts only the settings editor; this chat-first navigation is a target.)* If none exists,
 show its name/purpose and a centered empty composer; do not show a dashboard as the
 first experience. Settings is a secondary destination. Contextual destinations are
 Conversations, Responsibilities, Work, Memory & Knowledge, Connections & Tools,
@@ -781,9 +805,9 @@ Prompt guidance is labeled `Instructions`; actual enforced restrictions are labe
 silently replaced. Advanced controls collapse by default. A profile's revision history
 is inspectable, and changes affect future admissions only.
 
-Coworker autonomy summaries use the narrow interaction defaults `Research`, `Create
+Coworker autonomy summaries use the narrow interaction defaults `Read-only work`, `Create
 drafts`, `External changes`, `Destructive actions`, and `Financial commitments`. They
-explain `Standard Trust checks`, `Ask first`, or `Hand off`; they never present a numeric
+explain `Use normal Trust checks`, `Ask me before this action`, or `Stop and hand control to me`; they never present a numeric
 autonomy level or imply that a preference is a Grant or approval.
 
 ### Work / Live Desk
@@ -796,9 +820,15 @@ steps/outcomes and outputs. `Details` exposes the delegation tree and Inspector 
 Lead, delegated worker, native-reported worker, capability, and verifier rows use distinct
 labels so the product does not imply Core ownership of native subagents.
 
+*(Implementation status 2026-10-22: task rows currently render only the objective, the
+canonical status label and an updated timestamp — no current blocker, newest Artifact or
+workstream count.)*
+
 Task detail states include Planning, Preparing worker, Working, Checking the result,
 Waiting for you/service/device, Needs your decision, Completed, Not finished, Failed,
-Stopping, and Cancelled. Do not render numeric completion percentages or predicted ETAs
+Stopping, and Cancelled. *(This list must be reconciled with the canonical “Task state
+labels” table below and the two Task-card lists above before it is implemented — four
+different vocabularies exist today and only the canonical table is rendered.)* Do not render numeric completion percentages or predicted ETAs
 unless a measured and qualified projection contract is added. “No new activity for …”
 is based on observed-activity timestamps. `Last verified evidence` is shown separately and
 only when an Evidence record supports the label; an Invocation heartbeat is not described
@@ -840,18 +870,26 @@ unknown verified/stale/conflicted counts as unavailable, never zero. A Task mark
 to passing VerificationRuns. Artifact evidence is shown only when the exact pinned version's
 Evidence IDs resolve to committed records in the selected Workspace.
 
-At most one prominent Idea appears on Home and at most three in the Ideas drawer. Similar
+At most one prominent Idea appears on Home and at most three in the Ideas drawer.
+(Implementation status 2026-10-22: the Home surface renders no Idea; suggestions live on
+their own page.) Similar
 open suggestions deduplicate. Each card offers Prepare/Accept, Remind me, Dismiss, and Why
 this? as applicable. Remind me offers Later today, Tomorrow, and Next week, bounded by
 `expires_at`; choosing one persists `snoozed_until`. The overflow menu offers “Don't
 suggest this type,” which mutes the Workspace preference for its `SuggestionKind` and
 clears currently proposed records of that kind as dismissed. The preference can be
 reversed in Settings. Individual dismissal suppresses only the same `dedupe_key` for 30
-days. `Why this?` lists source references and explains what will be created and what
+days. *(Implementation status 2026-10-22 for the whole paragraph: the shipped card offers
+“Create Task”, “Snooze for a day” (a fixed `min(now+24h, expires_at)`, with no three-choice
+Remind me), “Hide until expiry”, “Show now”, “Dismiss” and a “Why this idea” summary; there
+is no overflow menu and no Prepare/Accept split. Muting is a details section on the Ideas
+page with Mute/Allow buttons, reversal lives on that page rather than Settings, and no
+30-day suppression window is implemented anywhere.)* `Why this?` lists source references and explains what will be created and what
 authority may be requested. Acceptance always opens ordinary Task/Routine/Automation
 flows. A suggestion is never a notification disguised as authorization.
 
-The Ideas drawer has `For you` and `Snoozed` filters. A snoozed card can be restored with
+The Ideas drawer has `For you` and `Snoozed` filters. (Implementation status 2026-10-22:
+it is a full page, not a drawer, and it offers a third `All current` filter.) A snoozed card can be restored with
 “Show now”; it remains out of Home until its saved time or expiry. If it expires first,
 it leaves the actionable list with its terminal history retained.
 
@@ -894,7 +932,9 @@ Unknown cost, quota, provider state, or page freshness remains textually Unknown
 
 ## Responsive and accessible responsibility UI
 
-On mobile, bottom navigation is Home, Work, Needs You, Library, More. More contains
+On mobile, bottom navigation is Home, Work, Needs You, Library, More. *(Target /
+post-V1: no bottom navigation exists at any width today; narrow widths get a single
+drawer toggle.)* More contains
 Coworkers, Automations, Discover, and Settings. Mobile prioritizes steering, approving,
 answering, pausing/cancelling, and opening Artifacts. The delegation tree becomes an
 accessible nested list; the full Inspector is a separate diagnostics route. Browser
@@ -936,6 +976,10 @@ The normal composer is one rounded input box. Its lower control row is:
 
 **[ + ] [ Agent ] [ Model? ] [ Reasoning/Effort/other primary option? ] [ Native / @ ... ] [ Send ]**
 
+*(This control row is the Native Composer target. The shipped composer is a textarea with
+a permanently disabled Send and a “Draft only” note; none of `+`, Agent, Model, effort or
+mention controls is mounted.)*
+
 This is the Coworker-facing primary composer and the ordinary New Chat composer: one
 box, one Conversation model, no Chat/Cowork switch and no Task field.
 
@@ -944,7 +988,9 @@ box, one Conversation model, no Chat/Cowork switch and no Task field.
 ```
 
 Selecting a Coworker prefills the same box with that Coworker's latest conversation;
-not selecting one starts an ordinary Conversation. Neither case creates a Task or a
+not selecting one starts an ordinary Conversation. *(Implementation status 2026-10-22: the
+chat composer has no Coworker selector; the only Coworker select in the app sets a Task
+recipient on the legacy Home surface.)* Neither case creates a Task or a
 Coworker, and the placeholder is only text: sending is what begins the turn.
 
 Rules:
@@ -1031,6 +1077,8 @@ the exact blocked Task and revalidates it.
 
 Run detail foregrounds the actual Task result: trigger, Coworker, pinned revisions,
 outputs, blockers and evidence. Actions may include **Continue**, **Run again**, and
+*(target: no run-detail surface exists; the shipped Automation detail offers “Run once”
+and “Create test Task” plus per-occurrence rows)*
 **View activity**. Continue creates/opens the Task's one canonical follow-up Conversation.
 The chat begins with a trusted run-context card, not synthesized old assistant messages.
 Diagnostics may state native session resumed or durable context rebuilt.
