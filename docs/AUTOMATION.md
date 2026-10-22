@@ -482,6 +482,120 @@ observation/occurrence is durably recorded. A condition change creates one occur
 the pinned before/after observation refs. End conditions stop future checks by pausing or
 disabling the Automation through an explicit transition.
 
+## Event-trigger delivery, security, and local reachability — 2026-10-22
+
+The trigger schema above already admits `WebhookTrigger`, `ConnectorEventTrigger`,
+`ChannelEventTrigger` and the other event kinds, and [Connectors & Workflows](CONNECTORS-WORKFLOWS.md)
+already owns the relay envelope and its hosting modes. This section specifies the delivery,
+dedupe, security and failure contract that binds them, informed by how the field actually
+ships event triggers. It changes no V1 scope line: **V1 ships schedule, one-shot, manual,
+webhook and connector-event providers**; the rest stay schema-compatible extension points.
+
+### Delivery semantics: at-least-once in, exactly-once occurrence
+
+Every vendor in this space is at-least-once on the wire, and none of them promises
+exactly-once externally. Inngest documents three separate dedupe layers; Trigger.dev states
+plainly that its idempotency key dedupes *the trigger call only* and that the caller must
+still pass provider-side keys for effects. LiteCowork keeps the same three layers:
+
+1. **Delivery layer.** A delivery is identified by `(trigger_id, provider_delivery_id)`,
+   falling back to a digest of the raw body when the provider sends no delivery id — GitHub's
+   `X-GitHub-Delivery` is the model for the former. A replayed delivery inside the trigger's
+   `replay_window_ms` resolves to the receipt already recorded and creates nothing new.
+2. **Occurrence layer.** Occurrence identity stays exactly as contracted above — derived from
+   `(trigger, resolved slot instant)` for schedules and from
+   `(trigger, provider_event_id)` for events, with the same `UNIQUE (automation_id,
+   trigger_id, occurrence_key)` fence. A duplicate delivery therefore never becomes a second
+   occurrence, and a repeated settlement is a no-op.
+3. **Effect layer.** Nothing here weakens the Core rule: an unknown external result is
+   reconciled before any retry, so a re-delivered webhook can never duplicate a
+   consequential external action.
+
+A debounced or coalesced trigger (`debounce_ms` on resource/runtime events, and any future
+coalescing policy) collapses N provider events into **one** occurrence for one logical
+condition, and the occurrence records how many events it absorbed. Coalescing is a policy
+on the Automation, never a silent drop.
+
+### Inbound webhook security
+
+The contract for a `WebhookTrigger` with `authentication_mode: SIGNATURE` is the
+GitHub/Slack pattern, which is the industry floor:
+
+- **Verify over the raw request bytes, before parsing.** The signature is an HMAC (SHA-256
+  unless the provider specifies otherwise) keyed by the trigger's `auth_profile_ref` secret,
+  compared in **constant time**. Parsing first and signing the parsed object is a known
+  bypass and is forbidden.
+- **Enforce a timestamp window.** Slack rejects when `|now - timestamp| > 5 minutes`; that
+  replay window is the baseline, and a delivery older than the trigger's `replay_window_ms`
+  is refused as a replay rather than executed.
+- **Bound everything.** `max_payload_bytes` is enforced before the body is buffered; an
+  over-capacity delivery is refused with a reason, never truncated and executed. Payloads
+  remain untrusted input: a webhook body can never carry authority, and a provider's own
+  "please skip approval" text inside a payload has no effect on Trust policy.
+- **Secret custody.** The signing secret lives in the local SecretStore and is never written
+  to events, aggregate-state blobs, logs, metrics or backups. A `BEARER_SECRET` or
+  `MUTUAL_TLS` profile follows the same custody rule.
+- **Endpoint ownership.** Where the provider supports a challenge handshake, the endpoint
+  answers it at creation time; a handshake is not a security boundary.
+
+`Authentication` is per-trigger and explicit. A webhook without a verifiable profile is
+refused at enable time, not at first delivery.
+
+### Local reachability: why polling is the default, not the fallback
+
+GitHub and Slack require a **publicly reachable HTTPS endpoint with a verified certificate**;
+a laptop behind NAT cannot be one. Slack's own documented answer for this situation is
+Socket Mode (WebSocket outbound), and Activepieces marks app-side webhooks "Not Supported"
+and prescribes polling. The design consequence for LiteCowork is that the hosting mode is
+chosen at enable time and shown to the user:
+
+```text
+LOCAL_POLL             default for a local-only Workspace. The trigger host polls the
+                       provider on `poll_interval_ms` with a persisted cursor and
+                       LAST_ITEM or TIMEBASED dedupe, and records a bounded skipped
+                       result when a poll returns nothing new.
+LOCAL_PUSH_WHEN_REACHABLE  opt-in for a provider that can reach this machine (loopback,
+                       LAN, or an owner-supplied tunnel with a real certificate). The
+                       trigger host publishes its reachability; when unreachable the
+                       trigger degrades to polling rather than failing silently.
+LITECOWORK_RELAY       opt-in. The relay carries only the signed minimal
+                       EventRelayEnvelope wake hint — never provider OAuth refresh tokens
+                       and never provider content — and the local host fetches the real
+                       object with its own credentials.
+USER_SELF_HOSTED_RELAY for an owner-operated relay.
+```
+
+Three rules follow, and they are the honest difference from a cloud product:
+1. **Never claim 24/7.** When the machine is asleep or the Runtime is down, occurrences are
+   **recorded as missed** with a reason, exactly as the schedule misfire policy already
+   requires. OpenWork's model is the reference: warn *before* an occurrence is due when no
+   runner is present, record the miss when it happens, and never imply the run occurred.
+2. **Runner presence and liveness.** A trigger host publishes a lease with a heartbeat. A
+   due occurrence with no live lease is not executed; it is either recorded as missed or
+   held according to the Automation's overlap policy, and a recovery pass re-evaluates the
+   cursor after restart.
+3. **Fast-ack, then queue.** Slack requires a 2xx within 3 seconds and GitHub within 30
+   seconds. The intake path therefore verifies the signature, persists a bounded receipt
+   and answers 2xx, then performs provider fetch and occurrence creation asynchronously —
+   never inside the request handler.
+
+### Failure, retry, and run history
+
+- **Bounded retries with explicit classes.** Retries use exponential backoff with jitter and
+   a bounded count; a failure is classified `retryable` or terminal before it is retried.
+   A provider 5xx or timeout is retryable; an authorization failure, an invalid signature,
+   an over-capacity payload and an unknown event type are terminal and are surfaced, never
+   retried as if the provider were down.
+- **Observable dead letter.** A delivery that exhausts retries is retained as a bounded,
+   owner-visible failure record with its reason code and delivery id. Nothing is dropped
+   silently, and the run history links occurrence → delivery → outcome.
+- **Run lifecycle.** Every event-triggered run uses the same recorded lifecycle as scheduled
+   runs — `queued → claimed → running → succeeded | failed | cancelled | skipped` — with
+   `attempt_count`, a `needs_attention_reason`, and a `retryable` flag, so an event run and
+   a scheduled run are indistinguishable in history.
+- **No silent provider mutation.** As with scheduled runs, a test run of an event-triggered
+   Automation performs real work against real systems; the UI must say so.
+
 ## Standing responsibilities and unattended trigger UX target
 
 StandingResponsibility is a user-facing grouping and admission fence, not an alternative scheduler. One standing request may contain a daily watch and a separate weekly report using multiple existing Automation revisions. A confirmed enable action must atomically persist the reviewed configuration and durable trigger registration/outbox, or report blocked; never call a proposed definition enabled without host readiness. Source events require provider identity/replay verification. Deterministic filtering suppresses unchanged observations without model calls or noisy notifications. Offline reconciliation obeys the exact timezone, DST fold/gap, misfire and overlap policies; duplicate events/host epochs produce only one canonical occurrence. Run now creates a distinct manual occurrence under existing owner authority and never re-enables paused recurrence. Pausing new work fences new occurrences; Pause all additionally invokes safe Task pause. Future cloud TriggerHost placement is separate from the local Runtime that owns desktop resources. See [Coworker target](COWORKERS-TARGET.md).

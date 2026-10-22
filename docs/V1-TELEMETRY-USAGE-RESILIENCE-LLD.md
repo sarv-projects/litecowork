@@ -147,6 +147,124 @@ Functions with required outcomes:
 
 Usage dashboard adapted from reference screenshots but not cloned: global filter bar [1D 7D 30D 90D YTD All Custom]; 4 headline cards (measured total tokens, input, output, provider-billed versus estimated cost); session/Task/agent/model/provider breakdown; requests and latency/failure chart; cache hit/read/write and true quota observation; sparklines with data provenance; drill-down inspector. Dashboard tabs Overview / Sessions / Agents / Models / Cost / Reliability / Cache / Logs, keyboard/screenreader accessible. Empty state cannot falsely advertise "$0.00" for unobservable agent use. Health and logs have read-only default, redaction, scoped export and repair actions.
 
+## Cross-agent usage interface and the detailed table — 2026-10-22
+
+The owner's requirement: usage must be measurable **per session, per Coworker, per Task and
+per agent**, must **add up across every harness the user runs**, and must open into a
+**detailed table** rather than a single headline number. This section specifies that
+interface. It extends, and never weakens, the observation model, dedupe precedence and
+honesty rules above.
+
+### Why one ledger is not enough
+
+Competitors converge on the same problem: a subscription agent has no per-token ground
+truth. The accepted resolution (Cursor's own event API is the cleanest precedent) is to
+**meter everything and charge only some rows** — Cursor emits both `requestsCosts` (quota
+units) and `chargedCents` (money) with a `kind` of "Included in Business" vs "Usage-based".
+LiteCowork therefore keeps **two joinable ledgers**:
+
+~~~ts
+// Ledger 1 — extends InferenceUsageObservation above; one immutable row per model response.
+type UsageCostBasis =
+  | "PROVIDER_API"            // real billed cents from a provider receipt
+  | "LIST_PRICE_ESTIMATE"     // computed from an immutable price snapshot; an estimate
+  | "SUBSCRIPTION_INCLUDED"   // included in a flat plan the user already pays for
+  | "UNKNOWN";                // the harness exposed no cost-bearing signal at all
+
+// Ledger 2 — NEW. A flat plan's remaining entitlement, never money.
+type QuotaSnapshot = {
+  snapshotId:string; workspaceId:string; agentBindingId:string; agentHarness:string;
+  planLabel?:string;
+  windowKind?:"HOURLY"|"FIVE_HOUR"|"WEEKLY"|"MONTHLY"|"UNKNOWN";
+  usedAmount?:number; limitAmount?:number; unit?:"REQUESTS"|"TOKENS"|"CREDITS"|"UNKNOWN";
+  remainingPercent?:number; resetAt?:string;
+  source:"HARNESS_REPORTED"|"PROVIDER_API"|"USER_REPORTED"|"UNKNOWN";
+  confidence:UsageConfidence; observedAt:string; version:number;
+};
+~~~
+
+A subscription's already-paid access is **never** a $0 metered cost, and a quota snapshot is
+**never** converted into money. They are displayed on separate axes and never summed.
+
+### What a local app can actually read, per harness
+
+`HARNESS_REPORTED` rows are obtained by a **usage-only reader** over the user's own local
+session files. This is a new `UsageSource` value and it is deliberately narrow:
+
+| Harness | Local source | What it yields | Traps the reader must handle |
+|---|---|---|---|
+| Claude Code | `~/.claude/projects/**/*.jsonl` | per-response `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, model | one API response spans several lines sharing `message.id`/`requestId`; per-line `output_tokens` is a placeholder, so take the max per id; subagent rows live under `subagents/`; `costUSD` is usually absent; **plan-limit utilization is not in local files at all** |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | `total_token_usage`, `last_token_usage`, `rate_limits`, model, cwd | `total_token_usage` is **cumulative — take the last value, never sum**; `cached_input_tokens` is **inside** `input_tokens` (unlike Claude); duplicate `token_usage_record` rows carry `response_id` for dedupe; older interactive TUIs did not persist `token_count` |
+| OpenCode | `opencode stats` plus its server SQLite store | per-session cost and `tokens_input/output/reasoning/cache_read/write` | subscription models are already labelled "Pricing unavailable" upstream — preserve that label, do not infer a price |
+| Cursor, Copilot, and any subscription-only path | **nothing local is authoritative** | server dashboard or Admin API only, when the user supplies it | never reconstruct token counts from screenshots or estimates presented as fact |
+
+**Hard rule for these readers.** A session log contains prompt and response text. The reader
+extracts **only** numeric usage counters, model id, response id and timestamps. It never
+ingests message content into LiteCowork storage, events, metrics or logs, and it fails
+closed (row absent, coverage `PARTIAL`) rather than storing content to "understand" a
+format it cannot parse.
+
+### Aggregation arithmetic
+
+Roll-ups are **leaf-additive only**, computed from immutable leaf rows, never from another
+roll-up:
+
+~~~text
+day → model → agent harness → AgentBinding → Coworker → Task/Attempt → Conversation/session
+~~~
+
+Each roll-up row reports: `requests`, tokens by type (uncached input, cached input, cache
+write, output, reasoning), `equivalent_list_price` (estimate lane, labelled), `billed`
+(money lane, only where `cost_basis = PROVIDER_API`), `coverage` (percent of requests with
+a known basis), and — for subscription agents — the joined `QuotaSnapshot`. Two rules make
+"add up all" safe:
+
+1. **No double counting across tag dimensions.** LiteLLM shipped a multi-tag explode view
+   that overstated spend by 67%; when a row carries several values for one dimension the
+   cost is **split proportionally across the group**, never copied into each group.
+2. **No rollup-of-rollup, no cross-currency sum.** Leaf inference IDs are the only additive
+   unit; a lead plus its two subagents is three leaves, and the lead's own row is never also
+   added as a parent total. Amounts in different currencies stay in separate totals with an
+   explicit rate/source before any conversion.
+
+### The detailed table the user opens
+
+The dashboard headline cards stay summaries; the table below is the contract for what a
+user sees when they open any number.
+
+~~~text
+Usage table (virtualized, sortable, keyboard/screen-reader navigable)
+  Grouping selector: By session | By Coworker | By Task | By agent | By model | By day
+  Columns:
+    Label            the grouping key's real name (session title, Coworker name, Task
+                      objective, harness name, model id, or date)
+    Requests         accepted leaf inference count (retries are counted separately and
+                      never inflate this)
+    In / Out / Cached tokens, split by type, each cell showing its coverage tag
+    Equivalent cost  estimate lane, always suffixed (est.)
+    Billed           money lane, only when cost_basis = PROVIDER_API; blank otherwise
+    Quota            for subscription agents: used/limit + reset time from QuotaSnapshot,
+                     or "Not reported by this agent"
+    Coverage         COMPLETE | PARTIAL | UNKNOWN for that row, with the missing source named
+    Source           HARNESS_REPORTED | PROVIDER_API | GATEWAY | ESTIMATE | MIXED
+  Drill-down: any row opens its leaf events; any leaf opens its provenance (adapter, response id,
+              price snapshot, confidence) — never prompt or response content.
+  Export: owner-initiated, scoped to the filtered window, redacted, size/privacy bounded.
+~~~
+
+The table **opens on the grouping the user last chose, per Workspace**, and a "Total" row
+appears only when the visible rows' currencies and coverage make a total meaningful; the
+footer always shows the coverage percentage and the count of rows whose basis is UNKNOWN,
+so a total can never silently imply completeness.
+
+### Interface promotion status
+
+These are **target projections**, not served routes. Promotion requires the canonical chain:
+OpenAPI operation, authenticated Operator handler, SQLite owner for both ledgers, TS types,
+Tauri command, served-route inventory regeneration and contract tests. Until then the UI
+must not render a usage table that claims measured totals; the honest empty state from the
+dashboard contract above still applies.
+
 ## Acceptance and adversarial tests
 
 - One lead calling two subagents and a gateway: 3 distinct inference IDs, deduped even if gateway+native observation both arrive; rollup never counts parent twice.

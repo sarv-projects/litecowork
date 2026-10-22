@@ -1,3 +1,66 @@
+## 2026-10-22 — Four competitive-gap designs: events, connectors, skills, usage
+
+The owner turned the competitive study's gap list into four design mandates. Each was
+researched against the products that already ship it, then written into the owning contract
+as a dated, explicit section. **All four are design, not implementation**; the acceptance
+matrix records them as unimplemented P1 items.
+
+- **Event-triggered automations → `docs/AUTOMATION.md` § "Event-trigger delivery, security,
+  and local reachability".** Three-layer dedupe (delivery id → occurrence identity →
+  external Effect key), with the wire contract the field converges on: at-least-once
+  delivery, HMAC verification over **raw bytes before parsing** in constant time, a
+  Slack-style timestamp replay window, bounded payload before buffering, secrets in the
+  local SecretStore only, and fast-ack-then-queue because Slack allows 3 s and GitHub 30 s.
+  The local-first consequence is explicit: polling is the **default** hosting mode (Activepieces
+  marks app webhooks unsupported and prescribes polling; Slack's inbound-free answer is
+  Socket Mode), push-when-reachable and the signed-hint relay are opt-in, and a sleeping
+  machine **records missed occurrences** instead of implying a run. Failure classes are
+  retryable vs terminal, exhausted deliveries become an observable dead letter, and event
+  runs share the scheduled run lifecycle so history is uniform.
+- **Connector breadth → `docs/CONNECTORS-WORKFLOWS.md` § "9b. Breadth strategy".** The
+  honest answer to "4,000+ apps": breadth comes from MCP, not connector engineering —
+  Smithery alone listed **13,684 servers** when checked. Ranked strategy: MCP-first with a
+  **local custody broker** (OS keychain instead of a vendor vault, Core-mediated effects on
+  every tool call), the search-then-execute meta-tool pair every vendor independently
+  invented, and the observe→adopt→unmanage lifecycle as the differentiator. The section
+  states plainly what local-first **cannot** copy: per-tenant isolation, shared-OAuth-app
+  agility, server-side catalog mutation, remote sandbox fidelity, and enforcement against a
+  device owner.
+- **Demonstration-learned and imported skills → `docs/LEARNING.md` § "15b".** A recording is
+  a success path of one instance, so a demonstration must add literal generalization,
+  decision rules, failure handling, approval boundaries and a test-on-safe-input before it
+  may be proposed — grounded in the demonstration-learning result that naive cloning
+  compounds error (quadratic vs linear regret under interactive correction). Cross-harness
+  import uses the converged `SKILL.md` standard and the neutral `.agents/skills/` root, and
+  hardens where vendors do: a published **field-translation table including no-op fields**
+  (Grok Build honors `allowed-tools` in the schema but grants nothing — importing a skill
+  that *looks* permission-scoped is an escalation footgun), neutralized body features
+  (shell inclusion, `@file`, `${VAR}`, bundled hooks, bundled MCP), digest verification,
+  archive path-traversal limits, never-auto-grant, and installed-disabled until reviewed.
+- **Cross-agent usage/cost interface → `docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md` §
+  "Cross-agent usage interface and the detailed table".** Two joinable ledgers: the existing
+  inference-observation ledger plus a new `QuotaSnapshot` for flat plans, because a
+  subscription has no per-token ground truth. The accepted industry answer is Cursor's:
+  **meter everything, charge only some rows** (`cost_basis` of PROVIDER_API /
+  LIST_PRICE_ESTIMATE / SUBSCRIPTION_INCLUDED / UNKNOWN). Per-harness local read profiles
+  are specified with their traps — Claude Code's multi-line-per-response and placeholder
+  output counts, Codex's **cumulative** counter that must never be summed and its cached
+  tokens living inside input, OpenCode's already-honest "pricing unavailable". Safety rule:
+  the reader extracts **numbers only** and never stores prompt or response text. Roll-ups
+  are leaf-additive with proportional splitting on multi-tag rows (LiteLLM shipped a view
+  that overstated spend 67% by summing tags). The **detailed table** the owner asked for is
+  specified column by column, with grouping by session/Coworker/Task/agent/model/day,
+  per-row coverage, a quota column for subscription agents, drill-down to provenance but
+  never to content, and a footer that always shows coverage so a total cannot imply
+  completeness.
+- **Functions** were added to `docs/V1-FUNCTION-FILE-CATALOG.md` for all four (F07 breadth,
+  F08 demonstration/import, F09 event delivery, F11 rollup/table), each with its hard rule
+  in the signature comment. `docs/REFERENCE-IMPLEMENTATIONS.md`'s decision implications
+  were updated: the event-trigger contract is now published, the embeddable-SDK question
+  remains open.
+
+All doc gates pass afterwards.
+
 ## 2026-10-22 — Competitive product landscape, verified against vendor docs
 
 The owner asked for deep competitor research against LiteCowork's **final** intended

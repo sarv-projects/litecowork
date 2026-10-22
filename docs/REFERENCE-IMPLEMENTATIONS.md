@@ -609,8 +609,10 @@ target-only or V2. These are the real competitive risks.
   site / always / deny" (Muse), "Ask first" rules (Grok Bot) and Custom Rules (dots) are all
   the same idea expressed well; LiteCowork's grant/scoping model should present comparable
   plain-language choices without importing any vendor's authority model.
-- **Strengthen the two documented weaknesses.** (a) Publish the event-trigger automation
-  contract or explicitly descope it, because Grok Bot and OpenWork already ship it; (b)
+- **Strengthen the two documented weaknesses.** (a) **Done 2026-10-22:** the event-trigger
+  automation contract is published in AUTOMATION.md (delivery dedupe, signature
+  verification, local reachability modes) and the connector breadth strategy in
+  CONNECTORS-WORKFLOWS.md §9b; both are designed and remain unimplemented. (b) **Open:**
   decide whether LiteCowork ships an embeddable SDK, because every serious open agent
   (Codex, Grok Build, OpenCode, OpenHands, Muse Code) now exposes a programmatic protocol.
 - **Keep the reference-first rule.** OpenWork (`different-ai/openwork`) is the single most

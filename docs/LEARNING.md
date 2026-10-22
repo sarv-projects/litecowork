@@ -467,6 +467,110 @@ elif new inferred supports current:
 Deleting a memory creates a tombstone/revocation and fences future retrieval. It does not
 rewrite old Task inputs, historical prompts already sent upstream, or audit history.
 
+## 15b. Demonstration-learned and cross-harness-imported skills — 2026-10-22
+
+Competitors do both: Grok Bot teaches a workflow by watching ("Teach a task"), and Meta's
+Muse Code imports skills from Claude Code and Codex with `muse skills import --from
+claude|codex`. This section defines how LiteCowork does them **without** weakening §9: both
+paths enter as candidates and can only exit as a reviewed `SkillProposal`. A demonstration
+or an import is never a skill.
+
+### Provenance
+
+```text
+SkillProvenance {
+  kind: LITECOWORK_NATIVE | DEMONSTRATION_DERIVED | IMPORTED_FOREIGN | PACKAGE_INSTALL
+  source_harness?: "CLAUDE_CODE" | "CODEX" | "OPENCODE" | "GROK_BUILD" | "MUSE_CODE" | "OTHER"
+  source_path?: string          # never a secret, credential or private repo path
+  content_digest: Sha256Digest  # of every file, at capture/import time
+  imported_at?: Timestamp
+  observed_session_ref?: Ref    # for demonstration only; not the recording itself
+}
+```
+
+Every skill keeps this record for its lifetime. An imported skill is re-validated whenever
+its digest changes, and a changed digest reopens review rather than silently updating.
+
+### Demonstration capture: what a recording must still become
+
+A recorded interaction contains only the **success path of one instance**. Demonstration
+learning research is explicit about the consequence: naive behaviour cloning compounds
+error under covariate shift — quadratic regret against linear for interactive correction —
+and demonstrations must be **filtered and generalized, not copied**. Translated into skill
+terms, a captured demonstration must add all of the following before it may be proposed:
+
+1. **Generalization of literals.** Observed identifiers, filenames, dates, URLs and row
+   values become declared arguments with validation, never baked-in values. An
+   unparameterized literal is the skill equivalent of a brittle selector.
+2. **Decision rules** wherever the demonstration branched, and a stated default when it did
+   not branch but could have.
+3. **Failure handling.** By construction a recording contains no failure; the proposal must
+   name the failure states and the recovery, and must prefer "report the missing source"
+   over improvising around it.
+4. **Approval boundaries**, kept separate from the procedure: which actions require human
+   sign-off, and which the skill may never perform at all.
+5. **A test step on safe input**, with the expected output and a validation rule, before the
+   skill may be scheduled or automated.
+6. **Access preconditions**: which capabilities, connections and resources the skill needs,
+   declared so they can be granted and revoked explicitly.
+
+The captured trace is retained only as bounded, owner-inspectable evidence of origin; it is
+not replayed, not shipped in the package, and never contains secret bytes. The candidate
+then follows §9 gates 1–7 unchanged: redaction, bounded procedure, declared authority,
+isolated test, provenance manifest, user review, LiteSPM lifecycle.
+
+### Cross-harness import
+
+The industry has converged on a neutral skill shape, and on `.agents/skills/` as the shared
+discovery root that Codex canonically owns and that Muse and OpenCode also read. LiteCowork
+therefore imports **`SKILL.md` directories** and treats every other harness convention as a
+mapping, not as authority.
+
+```text
+importForeignSkill(source_harness, source_path | archive_ref, expected_digest?)
+  -> ImportedSkillCandidate {
+       parsed SKILL.md, validated against the Agent Skills schema,
+       field_translation_report, stripped_body_features[],
+       capability_diff,           # what it asks for vs what the user has granted
+       warnings[]                 # unparsed fields, executable content, network hints
+     }
+```
+
+Rules, each traceable to shipped vendor practice:
+
+1. **Schema-validate first.** Parse against the Agent Skills `SKILL.md` schema (`name`,
+   `description`, `license`, `compatibility`, `metadata`, `allowed-tools`). Unparsed
+   fields are reported, never dropped silently.
+2. **Publish the field-translation table, including no-op fields.** This is the single most
+   dangerous part of import: `allowed-tools` is honoured by Claude Code, **grants nothing**
+   in Grok Build, and is modelled as `permission.skill` patterns in OpenCode. A user
+   importing a skill that *looks* permission-scoped must be told, in plain language, when
+   the target harness will not enforce it.
+3. **Neutralize harness-specific body features.** Dynamic shell inclusion, `@file`
+   inclusion, `${VAR}` substitution, bundled `hooks/` and bundled MCP configuration are
+   disabled on import unless separately approved — exactly as vendors do for synced skills.
+   A bundled MCP server is treated with particular suspicion, because MCP tools are
+   conventionally **not** sandboxed by the harness that loads them.
+4. **Never auto-grant.** `allowed-tools` is a request, not a grant; every capability routes
+   through the ordinary LiteCowork permission flow and an explicit owner decision.
+5. **Start disabled.** An imported skill is installed disabled and with model-invoked
+   execution off, until reviewed.
+6. **Verify integrity.** Fetches are digest-checked before use; archives reject absolute
+   paths, `..`, symlinks or hardlinks escaping the skill directory, and decompression
+   bombs. Where a publisher publishes a discovery index with per-entry digests, the digest
+   is mandatory and a mismatch is a refusal, not a warning.
+7. **Treat content as untrusted input.** Skill bodies, their descriptions and any URL they
+   fetch are untrusted: a skill cannot grant itself authority, and "remember this" or "you
+   may skip approval" inside skill text has no effect on Trust policy.
+
+### Export
+
+A LiteCowork-owned skill may be exported as a standard `SKILL.md` directory for use in
+another harness. Export re-applies the same redaction and authority-declaration rules as
+§9, states plainly which LiteCowork-only semantics (grant checks, effect recording,
+verification) the exported form **loses**, and records the export in provenance. Export
+never includes Connections, secrets, or another Coworker's memory.
+
 ## 16. Prompt injection and untrusted-source defense
 
 Automatic learning extraction may use only source classes explicitly enabled by policy.

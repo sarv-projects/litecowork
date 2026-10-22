@@ -46,6 +46,10 @@ These are product-level release verdicts, not a claim that their underlying isol
 | P1 | Scope-respecting memories and real Knowledge retrieval | E06/E08 |
 | P1 | Recurrence occurrence settlement from a terminal Task outcome: producer and served route are CODE-implemented; owner USER evidence still pending | `automation_host.rs` (`settle_started_occurrences_from_task_outcomes`), `occurrences.rs` |
 | P1 | Trigger-host cursor retirement on disable, plus real OS notification delivery (attempts, `notification.delivery.changed.v1`, OS bridge) | `workspace_archive.rs`-adjacent disable path, `notification.rs` |
+| P1 | Event-triggered automations: delivery/dedupe/signature/local-reachability contract is now designed (AUTOMATION § event-trigger delivery, 2026-10-22) and remains **not implemented**; competitors (Grok Bot, OpenWork) ship event triggers today | `AUTOMATION.md`, `CONNECTORS-WORKFLOWS.md` §9, F09 functions |
+| P1 | Connector breadth: MCP-first with local custody broker + observe/adopt/unmanage is now designed (CONNECTORS-WORKFLOWS §9b, 2026-10-22) and remains **not implemented**; one unqualified provider path today | `CONNECTORS-WORKFLOWS.md`, LiteSPM interop, F07 functions |
+| P1 | Demonstration-learned and cross-harness-imported skills: designed with provenance, literal-generalization, failure/approval requirements and import hardening (LEARNING §15b, 2026-10-22); **not implemented** | `LEARNING.md`, F08 functions |
+| P1 | Cross-agent usage/cost interface with per-session/Coworker/Task/agent rollup and a detailed table: designed (TELEMETRY/USAGE LLD § cross-agent usage interface, 2026-10-22); **not implemented**; `GET /v1/tasks/{id}/usage` is still target-only | `V1-TELEMETRY-USAGE-RESILIENCE-LLD.md`, F11 functions |
 | P1 | Old nonexistent implementation-file references removed or target-labelled | `CONNECTORS-WORKFLOWS.md`, `LEARNING.md`, review packets |
 | P1 | Fix docs claiming LIVE for unserved operation/events | `API.md`, `EVENTS.md`, `STORAGE.md`, generated route inventory |
 | P2 | Consistent packaging/free local core and true format capability labels | PRODUCT, SCOPE, ARTIFACTS, E13 |

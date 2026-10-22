@@ -490,6 +490,90 @@ fetches the actual provider object using its local SecretStore/provider adapter.
 Connection is revoked or unavailable, the occurrence waits or is skipped according to the
 Automation policy; the relay hint never revives credentials.
 
+## 9b. Breadth strategy: one qualified provider to thousands — 2026-10-22
+
+OpenAI's dots claims "over 4,000 apps"; Composio claims 1,600+ toolkits; Nango 1,000+ APIs.
+LiteCowork has one unqualified provider path. This section records how breadth is actually
+achieved in the market, what LiteCowork will do, and what it will deliberately not do. It
+changes no frozen decision above.
+
+### Where the breadth actually comes from
+
+The market did not converge on thousands of first-party connectors. It converged on **one
+wire protocol plus an ecosystem**: MCP. As of 2026-10-22 the public Smithery registry lists
+**13,684 servers** (live counter on smithery.ai/servers); the official MCP Registry is
+preview-grade and publishes no total; PulseMCP's listing is paused. A server written once
+runs in Claude, Cursor, Codex and OpenAI's app surface, because both supply and demand
+standardized on the same transports, the same OAuth flow and the same discovery card. That
+network effect — not connector engineering — is the source of the "4,000+" numbers.
+
+### Ranked strategies for a local-first product
+
+1. **MCP-first, with a local custody broker (the spine).** Support stdio subprocesses and
+   Streamable HTTP clients, and act as the OAuth client for remote servers using loopback
+   redirect URIs, which the spec permits. Breadth arrives from the ecosystem. What LiteCowork
+   adds that cloud vendors structurally cannot: refresh tokens in the OS keychain rather
+   than a vendor vault, Core-mediated Effect recording on every tool call, and a consent
+   dialog that shows the exact command before a local MCP server is spawned. The cost of
+   this choice is that the spec's threat model becomes a **requirement**, not guidance:
+   SSRF/private-IP blocking during OAuth discovery, `Origin` validation, sessions never
+   carrying auth, and audience-bound tokens via RFC 8707 resource indicators — including
+   the spec's ban on token passthrough.
+2. **A search-then-execute meta-tool pair over the catalog.** Every serious vendor
+   independently reinvented this: Composio sessions expose search/manage/execute meta-tools,
+   OpenWork Connect exports exactly `search_capabilities` + `execute_capability`, Nango
+   exposes agent sessions, Smithery offers tool search. The reason is context cost: a flat
+   dump of thousands of tool schemas makes every turn expensive and degrades instruction
+   following. LiteCowork already owns this shape — CapabilityBroker progressive discovery
+   (load/search/describe/execute only what is relevant) — so the catalog size never enters
+   the model context by default.
+3. **Observe → adopt → unmanage compatibility (the differentiator).** No connector vendor
+   documents this lifecycle; the closest precedents are Homebrew adopting already-installed
+   formulae into a bundle, `pnpm import` adopting an existing lockfile, and Claude's
+   `disable`-without-uninstall. LiteCowork's LiteSPM contract already requires it, which
+   makes it novel product surface rather than parity: read an existing MCP configuration or
+   installed package **read-only**, gain management only on explicit opt-in, and unmanage
+   while leaving the native installation intact. The honest risk is that these config
+   formats are unofficial and churn.
+4. **A thin client of the official registry, not a marketplace.** Registries and Server
+   Cards are the trust-label layer; building a competing directory is the last place to
+   invest, because a local-first product cannot match cloud review throughput.
+
+### What local-first inverts — and cannot copy
+
+Cloud aggregators' security story is "our infrastructure holds the token, your app never
+sees it." Locally the token is on the user's disk, which inverts the design:
+
+- **Custody.** Composio's documented default is that Composio holds credentials encrypted
+  and injects them server-side; Nango's proxy injects them at the edge. LiteCowork replaces
+  that vault-and-inject model with the OS keychain plus Core mediation. It cannot lean on
+  per-tenant isolation, operator access controls, zero-data-retention switches or KMS
+  deployments, and it must state that boundary plainly.
+- **OAuth app registration.** Every provider's consent screen shows a first-party domain,
+  so "managed apps" are not offerable. Nango documents the exact downside of shared apps:
+  fixed scopes, provider revocation affecting all tenants, and no token export. Local
+  custody solves portability but requires registering an OAuth app per provider, or running
+  per-user dynamic registration.
+- **Catalog mutation.** Nango updates catalog actions centrally and its own docs warn that
+  they "mutate under you"; a local catalog must be pinned, versioned and reviewable, which
+  moves supply-chain surface onto the user's machine.
+- **Sandbox fidelity.** Composio's session sandbox and OpenAI's cloud computer are remote;
+  local containers/Seatbelt have OS-dependent fidelity with no cross-platform equivalence.
+- **Enforcement ceiling.** Revocation, rate governance, spend limits and audit can only be
+  as strong as the local runtime, and tamper-resistance against the device owner is
+  impossible. The honest boundary remains the Core invariant: only operations mediated by
+  LiteCowork carry authorization, Effect and Evidence guarantees.
+- **Verification throughput.** "Verified" badges rely on cloud connector test harnesses.
+  LiteCowork can offer protocol conformance plus receipts, never per-vendor semantic
+  guarantees.
+
+### Scope discipline
+
+Breadth does not change the frozen decisions: no mandatory Composio/Nango/Arcade/n8n/
+Activepieces/Zapier dependency; tokens stay in the local SecretStore and the model never
+sees them; assignment is not authority. A connector that cannot be qualified stays visibly
+unavailable rather than appearing in a count.
+
 ## 10. WorkflowBackendAdapter
 
 A workflow backend is useful for deterministic or already-built processes. It is not an

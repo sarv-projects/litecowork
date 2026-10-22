@@ -186,6 +186,16 @@ dispatchEffectOnce(effectId, currentLease): ProviderReceipt
 reconcileEffect(effectId, providerObservation): FinalOrUnknown
 revokeCapabilityGrant(grantId, version): RevocationReceipt
 normalizeMcpTaskLifecycle(nativeTask, coreInvocation): StateMapping
+
+# Breadth layer (2026-10-22; see CONNECTORS-WORKFLOWS §9b)
+discoverMcpServers(registryClient, query, cursor, page): McpServerPage   # thin client, never a fork of a registry
+observeExistingMcpConfig(sourceHost, configFormat, scope): Observation    # strictly read-only
+adoptObservedInstallation(observation, ownerAuthorization): AdoptionReceipt
+unmanageAdoptedInstallation(adoption, expectedVersion): UnmanageReceipt   # never uninstalls native resources
+searchCapabilities(query, scope, cursor): CapabilityPage                 # meta-tool; catalog stays out of model context
+executeCapability(capabilityRef, input, approval, requestId): InvocationReceipt
+openLocalOAuthBroker(provider, scopes, redirectContext): BrokerReceipt    # loopback redirect + PKCE; token to OS keychain
+capabilityCustodyReport(connection): CustodyObservation                   # states who holds the token, in plain language
 ~~~
 
 Direct agent-native tool call is not Core-mediated unless qualified adapter/Gateway enforces authorization/Effect policy. LiteSPM handles package lifecycle, LiteCowork owns Task-scoped invocation.
@@ -206,6 +216,16 @@ revokeMemorySource(sourceId, expectedVersion): Revocation
 projectContextActuallyUsed(turnId, receiptSources): Disclosure
 assignQualifiedConnection(coworker, connection, scope): AssignmentReceipt
 proposeStandingResponsibility(coworker, objective, conditions): InertProposal
+
+# Demonstration and cross-harness import (2026-10-22; see LEARNING §15b)
+captureDemonstration(sessionRef, boundedTrace, ownerConsent): DemonstrationCandidate  # no secret bytes, not replayable
+generalizeDemonstrationLiterals(trace, argumentSchema): ProcedureDraft                # literals become validated arguments
+addFailureHandlingAndApprovals(draft, observedBranches, policy): SkillProposalDraft   # a trace has no failure path
+importForeignSkill(sourceHarness, pathOrArchive, expectedDigest): ImportedSkillCandidate
+reportFieldTranslation(sourceFields, targetHarness): TranslationReport                # must list no-op fields
+neutralizeHarnessBodyFeatures(parsedSkill, approvalPolicy): NeutralizedSkill          # shell/@file/${VAR}/hooks/MCP stripped
+revalidateImportedSkill(skillRef, newDigest): ReviewDecision                          # digest change reopens review
+exportSkillAsStandardPackage(skillRef, redactionPolicy): PackageReceipt                # states the semantics it loses
 ~~~
 
 Memory auto-learning is never inferred from user input alone. Privacy and source revocation must reach retrieval boundary; source sent to external provider is not retroactively erasable by local deletion.
@@ -227,6 +247,14 @@ continueAutomationTaskConversation(taskRef, sourceRevision, requestId): TurnRece
 deriveNotificationEligibility(event, preferences, quietHours): Eligibility
 enqueueNotification(eventRef, dedupeKey, channels): DeliveryReceipt
 acknowledgeNotification(deliveryRef, providerReceipt): Receipt
+
+# Event-triggered automations (2026-10-22; see AUTOMATION § event-trigger delivery)
+verifyTriggerDeliverySignature(delivery, secretRef, algorithm): VerifiedDelivery   # HMAC over raw bytes; constant-time compare
+dedupeTriggerDelivery(deliveryId, providerDeliveryId, window): DeliveryDecision   # at-least-once in, exactly-once occurrence
+resolveTriggerHostingMode(trigger, relayCapability, hostReachability): HostingMode # LOCAL_POLL | PUSH_WHEN_REACHABLE | RELAY
+coalesceTriggerEvents(triggerId, events, debouncePolicy): Occurrence              # one occurrence per logical condition
+recordTriggerDeliveryFailure(delivery, retryPolicy): FailureReceipt               # bounded retries, then observable dead letter
+retainPendingTriggerHint(hint, retentionPolicy): HintReceipt                      # bounded; never revives credentials
 ~~~
 
 No background claims if local host is asleep; scheduled actions are best effort and history must show actual missed slots.
@@ -394,6 +422,14 @@ telemetryDeriveRecoveryAction(failure, providerOwner, effectState): RecoveryDeci
 telemetryInvalidateCache(scope, policyEpoch, reason): CacheInvalidationReceipt
 telemetryExportSanitizedBundle(ownerScope, previewDigest, retentionPolicy): ExportReceipt
 telemetryApplyLogRetention(ownerScope, cleanupPreview, version): RetentionReceipt
+
+# Cross-agent rollup and the detailed table (2026-10-22; see TELEMETRY/USAGE LLD)
+readHarnessUsageCounters(harnessLogRef, schemaProfile): UsageCountersOrPartial  # NUMBERS ONLY: never prompt/response text
+upsertQuotaSnapshot(agentBinding, observedQuota, source): QuotaSnapshotReceipt  # plan entitlement; never converted to money
+computeCostBasis(usageRow, priceSnapshot, providerReceipt): CostBasis          # PROVIDER_API | LIST_PRICE_ESTIMATE | SUBSCRIPTION_INCLUDED | UNKNOWN
+aggregateUsageRollup(scope, groupBy, window, timezone): RollupPage             # leaf-additive only; proportional split on multi-tag rows
+openUsageTable(groupingKey, sort, cursor, filters): UsageTableRowPage          # per-session/Coworker/Task/agent/model/day
+reconcileUsageBuckets(restatedBuckets, priorRevision): RevisionDecision        # provider buckets are restated, never double-counted
 ~~~
 
 Agent and gateway observations only merge under verified inference identity. Unknown usage is not zero, billable versus estimates are distinct, and parent+child rollups never double count. Persistent accounting requires a single owner that manages price snapshot, evidence and dedup identity, while debug ring logs and high-cardinality trace identifiers stay separate from immutable DomainEvents.
