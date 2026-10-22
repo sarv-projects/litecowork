@@ -1,5 +1,12 @@
 # Coworker Learning, Memory, Instruction, and Skill Revision
 
+**Status:** accepted target architecture, not a claim that suggested
+`learning-candidates` endpoints or new target crates already exist.
+Use the actual `domain-responsibility`, `domain-rag`,
+`storage-core`/`storage-sqlite`, `apps/litecoworkd` and UI
+owners, and require separately reviewed boundaries for any new crates.
+Current release state: [acceptance matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+
 **Status:** accepted target architecture. This document defines how a Coworker can improve
 from corrections and successful work without allowing the model to silently widen authority
 or rewrite arbitrary persistent configuration.
@@ -606,34 +613,24 @@ candidate. A changed proposal creates a new candidate.
 14. UI can undo/revoke memory without rewriting historical Task state;
 15. LearningService outage does not fail ordinary conversation/task completion.
 
-## 23. Suggested implementation modules
+## 23. Implementation boundaries (logical, not a fictitious crate tree)
 
-```text
-crates/domain-learning/
-  candidate.rs
-  policy.rs
-  memory.rs
-  feedback.rs
-  events.rs
-  state_machine.rs
+Do **not** create a second `crates/application/`, `crates/ports/` or
+`crates/domain-learning/` tree merely because earlier target notes named one.
+Those paths do not exist in the current workspace. The domain policy, transition
+algorithms and classifier interfaces belong to the existing responsible owners:
 
-crates/application/
-  learning_service.rs
-  memory_conflict_service.rs
-  instruction_patch_service.rs
+| Role | Current existing landing zones / integration decision |
+|---|---|
+| Coworker learning policy, candidates and eligibility | `crates/domain-responsibility/` and existing `storage-core`/`storage-sqlite` |
+| Revisions, memory and retrieval scope | existing `domain-rag`, Resource/Context and scoped storage owners |
+| Authenticated commands, candidate generation and revocation | `apps/litecoworkd/` existing operator/service contracts; add typed ports only where required |
+| User-facing learning/memory and feedback | `apps/litecowork-ui/src/` Coworker/Resources/conversation modules |
+| Isolated skill tests and publication | E10 SkillProposal / LiteSPM boundary; do not invent `crates/ports/skill_test_runner.rs` as implemented |
 
-crates/ports/
-  learning_classifier.rs
-  sensitive_content_detector.rs
-  skill_test_runner.rs
-
-apps/litecowork-ui/
-  coworker/learning/
-  coworker/memory/
-  task/feedback/
-```
-
-The classifier and model are replaceable ports. The domain transition rules are deterministic.
+Classifier implementations may be replaceable; deterministic domain rules retain
+one canonical owner. New crate extraction requires a migration/ownership ADR,
+source implementation, tests and removal of duplicate writers.
 
 ## V1 detailed design integration — 2026-10-12
 
@@ -642,3 +639,14 @@ V1-FUNCTION-FILE-CATALOG.md assigns Coworker memory candidate/extraction/conflic
 ## Native-agent-owned low-latency memory interface — V1
 
 [Agent Memory Fast Path](V1-AGENT-MEMORY-FAST-PATH-LLD.md) specifies a qualified agent-invoked, scoped search/fetch tool and bounded retrieval/caching. It does not replace this document's candidate eligibility, native memory ownership or purge policy. Automatic injection is opt-in and pinned to accepted Task/Workspace context; an agent need not search, and we cannot promise sub-millisecond uncached provider retrieval. User-facing Memory page may adopt a search/add/empty state while preserving exact Workspace/Coworker/provenance/revocation distinctions. TLM-024–034 are targets, not proof.
+
+## Reconciled implementation landing zones (2026-10-22)
+
+The originally proposed `crates/domain-learning/`, `crates/application/`,
+`crates/ports/` and `crates/adapters/` names in historical sketches **do not
+exist in this repository**. Those names are conceptual, not evidence of source.
+Prefer existing `domain-responsibility`, `storage-core`, `storage-sqlite`,
+`domain-rag`, `litecoworkd` and `litecowork-ui` owners unless a deliberate
+migration establishes a new crate and prevents duplicate writers. Target §18 API
+routes and §19 events require actual producers, router mounts, stored state and
+revocation/system tests before a served or qualified claim.

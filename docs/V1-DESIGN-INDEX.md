@@ -2,6 +2,18 @@
 
 Status as of 2026-10-12: normative TARGET design and implementation-oriented contracts. **Not** evidence that an endpoint, provider, UI control, platform, installer, or behavior is implemented or qualified. Current built code and backlog truth stay distinct.
 
+## Final 2026-10-22 product and integration LLDs
+
+- [Ten-area V1 product/release contract](V1-PRODUCT-RELEASE-CONTRACT.md)
+- [Chat-first shell and every V1 screen](V1-UI-SCREEN-CONTRACT.md)
+- [LiteSPM inventory/adoption/plan/apply integration](LITESPM-LITECOWORK-INTEROP-LLD.md)
+- [HorizonCode native chief/worker integration](V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
+- [Real product acceptance crosswalk](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
+
+These are **TARGET** contracts. They do not supersede durable Task,
+Trust, AgentSession, Effect, Evidence or Environment domain authority,
+and they must not be interpreted as a working native provider.
+
 ## Source of truth and precedence
 
 1. ARCHITECTURE.md and PRODUCT.md define product scope, invariants and owners. A new feature may never bypass Core Trust/Effect/Evidence/Task authority.

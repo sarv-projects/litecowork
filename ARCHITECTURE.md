@@ -8,14 +8,27 @@ for historical reference only.
 
 ## 1. Product definition
 
-LiteCowork is a **durable execution workspace around external agents**. Its central object is
-the user's durable Task, not a model, agent, browser, computer, MCP server, or device.
+LiteCowork is a **local-first, chat-first AI workspace** around qualified native
+agent harnesses. People open LiteCowork to converse, use files and applications,
+work with persistent Coworkers and complete real work. The user's durable Task
+is **the central object of managed execution**, not a prerequisite for conversation.
 
 ```text
-User intent → Conversation → durable Task
-             → Agent(s) + Capability(s) + Runtime(s) + Environment(s)
-             → Attempts → Effects and Artifacts → Evidence and Verification → Outcome
+User → Conversation → native AgentSession → streamed and committed answer
+                  └→ optional admitted Task linked to origin Conversation
+                       → native chief + eligible workers and capabilities
+                       → accepted Plan and Steps → Attempts / Runtime / Environment
+                       → Effects and Artifacts → Evidence / Verification → Outcome
+Coworker? → scoped identity, context, chats, explicitly approved responsibilities
+LiteSPM   → cross-agent discover / native inventory / install / adopt / manage
 ```
+
+The complete ten-part local V1 product definition, free-core constraint and V2
+boundary are in [V1 Product Release Contract](docs/V1-PRODUCT-RELEASE-CONTRACT.md);
+the [Final UI contract](docs/V1-UI-SCREEN-CONTRACT.md) governs New Chat and the
+optional Workbench. [LiteSPM integration LLD](docs/LITESPM-LITECOWORK-INTEROP-LLD.md)
+owns shared lifecycle semantics. [HorizonCode](docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
+is a native chief/worker candidate, not privileged Core software.
 
 A compatible agent can be a worker; capabilities can be discovered and activated as
 needed; any LiteCowork Runtime can host an Attempt; compatible environments can be

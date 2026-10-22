@@ -1,17 +1,36 @@
 # LiteCowork
 
-**Give your AI real work. Use the agents you already have. Stay in control.**
+**Your agents. Your workspace. Conversations, real work, and capabilities you control.**
 
-LiteCowork is a desktop-first general AI cowork workspace for conversation, local files,
-web/app work, documents, research, automation, and software projects. Use a supported
-native agent such as Codex, Claude Code, or OpenCode as the chief when appropriate; keep
-its native harness and configuration, optionally delegate bounded work to other eligible
-agents, and review the resulting actions, evidence, and files in one place. A durable Task
-keeps its history when an agent, process, or computer needs to be replaced.
+LiteCowork is a **local-first, chat-first AI workspace** for everyday conversation,
+files, websites, office documents, research, automation and coding. Select a qualified
+native agent such as Codex, Claude Code, OpenCode or (after qualification)
+HorizonCode. Keep the agent's account, subscription, models and native behavior.
+Start with a normal conversation—no mandatory Coworker or Task. Durable Tasks
+preserve managed execution, activity, evidence and results when required.
 
 > **Release status:** LiteCowork is in pre-release development. This README describes the
 > intended product; a capability is available only after its release gate and provider
 > qualification are complete.
+
+## Complete V1 product and family
+
+**LiteCowork** is the product people open: Chat, Workbench, Coworkers, Tasks,
+Memory, Library and local Automations. **LiteSPM** is the independent manager
+for eligible *existing and new* cross-agent skills, MCP, plugins and capability
+packages, with truthful observed/adopted/managed ownership. **HorizonCode**
+is your separately developed, version-qualified long-horizon native coding
+agent, selectable as chief or worker, never a hidden Core planner.
+
+**V1 covers all ten local desktop areas** in [Product Release Contract](docs/V1-PRODUCT-RELEASE-CONTRACT.md)
+and [Final Screen Contract](docs/V1-UI-SCREEN-CONTRACT.md).
+[LiteSPM integration](docs/LITESPM-LITECOWORK-INTEROP-LLD.md)
+is specified but **not yet production qualified**; an installation is not an
+invocation grant. The requirement is **free core local LiteCowork functionality
+without a mandatory LiteCowork subscription or hosted account**; external
+agent/API/provider costs remain separate. Cloud LiteCowork Runtime, multi-device
+continuation and teamwork are V2. Current release blockers:
+[acceptance matrix](implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
 
 ## What LiteCowork is for
 

@@ -2,7 +2,17 @@
 
 ## Promise
 
-LiteCowork lets a user describe work once and have the Task survive agent replacement, process failure, device changes and capability changes while remaining understandable and controllable.
+LiteCowork lets people **start with native-agent conversation** and, when useful,
+complete managed durable work with controlled permissions, visible progress,
+scoped knowledge and real deliverables. A durable Task survives eligible
+worker or process replacement; ordinary chat does **not** require a Task or
+Coworker. The ten-part V1 scope and free-core constraint are frozen in
+[V1 Product Release Contract](V1-PRODUCT-RELEASE-CONTRACT.md), with
+[Final Screen Contract](V1-UI-SCREEN-CONTRACT.md),
+[LiteSPM interoperability](LITESPM-LITECOWORK-INTEROP-LLD.md) and
+[HorizonCode native agent](V1-HORIZONCODE-NATIVE-AGENT-LLD.md).
+Provider-owned costs remain separate; LiteCowork Runtime cloud continuation,
+cross-device support and teamwork remain V2.
 
 ## Core user expectations
 

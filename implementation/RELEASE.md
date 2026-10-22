@@ -1,5 +1,14 @@
 # Production operations and release gates
 
+> **V1 GA product gates:** [ten-area contract](../docs/V1-PRODUCT-RELEASE-CONTRACT.md),
+> [final screen acceptance](../docs/V1-UI-SCREEN-CONTRACT.md),
+> [LiteSPM interop LLD](../docs/LITESPM-LITECOWORK-INTEROP-LLD.md),
+> and [actual acceptance status](V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+> No G3 approval is possible while native Send, Attempt admission, real
+> capability management, Workbench and automation journeys remain BLOCKED.
+> Hosted agent providers accessed from the local desktop require their own
+> qualification; cloud LiteCowork Runtime/teamwork are post-V1.
+
 Production level means tested installed behavior, recoverability and accurate capability
 claims. It does not mean team/RBAC/enterprise deployment. The owner remains the sole
 reviewer; automated gates supplement that review.

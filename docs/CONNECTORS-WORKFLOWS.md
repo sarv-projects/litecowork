@@ -1,5 +1,12 @@
 # Connectors, Authentication, Workflow Backends, and Event Relay
 
+**Status:** accepted target architecture, **not working connector-package support**.
+LiteSPM ARCH/26 excludes first-class V1 connector packages and ARCH/29 is
+a design-only runtime pending an explicit upstream decision. LiteCowork V1
+may qualify concrete app connectors through other compliant providers;
+installation/configuration lifecycle remains LiteSPM's where supported.
+[Interop LLD](LITESPM-LITECOWORK-INTEROP-LLD.md) defines what must be negotiated.
+
 **Status:** accepted target architecture. This document makes concrete the connector,
 local-first OAuth, external workflow, and relay boundaries. It extends
 [Capability Fabric](CAPABILITY-FABRIC.md), [Automation](AUTOMATION.md),
@@ -765,43 +772,18 @@ Suggested implementation boundaries; exact language placement may be adjusted wi
 changing ownership:
 
 ```text
-crates/domain-connection/
-  connection.rs
-  auth_attempt.rs
-  auth_recipe.rs
-  events.rs
-  errors.rs
-
-crates/application/
-  connection_service.rs
-  connector_catalog_service.rs
-  workflow_backend_service.rs
-
-crates/ports/
-  connector_runtime.rs
-  auth_backend.rs
-  workflow_backend.rs
-  event_relay.rs
-  secret_store.rs
-
-crates/adapters/
-  oauth_loopback/
-  google_workspace/
-  microsoft_365/
-  activepieces_piece/
-  n8n/
-  arcade/
-  nango/
-  composio/
-
-crates/domain-automation/
-  relay_receipt.rs
-  connector_trigger.rs
-
-apps/litecowork-ui/
-  connections/
-  automation/
-  workflow-backends/
+# Logical TARGET layers, not current repository directories:
+# Connection / AuthAttempt / AuthRecipe / SecretRef / ProviderAdapter
+#   -> reconcile with existing crates/storage-core, storage-sqlite,
+#      existing domain/application services and apps/litecoworkd.
+# EventRelay / connector triggers / external workflow receipts
+#   -> reconcile with existing domain-responsibility Automation owners.
+# UI Connections / Discover / Automation
+#   -> reconcile with apps/litecowork-ui/src/ existing routes.
+# DO NOT create a parallel crates/application/ or crates/ports/ tree
+# based solely on this historical illustrative layout.
+# LiteSPM package management is independent; negotiate its local
+# protocol instead of directly accessing its storage.
 ```
 
 Core dependencies point inward to ports/domain contracts. Provider SDKs and third-party
