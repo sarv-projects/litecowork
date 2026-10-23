@@ -126,6 +126,17 @@ pub trait ConversationTurnStore: Send + Sync {
         commit: AdmitConversationTurnCommit,
     ) -> Result<AdmittedConversationTurn, StoreError>;
 
+    /// Resolves the binding this Conversation selected plus the endpoint and Runtime
+    /// incarnation currently eligible to host its session.
+    ///
+    /// Returns `Ok(None)` when no eligible host exists, which the caller must report as
+    /// `AGENT_UNAVAILABLE` rather than as an empty selection.
+    fn resolve_conversation_session_host(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+    ) -> Result<Option<ResolvedConversationHost>, StoreError>;
+
     /// Only lifecycle changes with a canonical event in EVENTS.md are accepted here.
     /// The OPEN -> RUNNING start command is accepted only through
     /// [`ConversationTurnStore::admit_conversation_turn`].
@@ -166,6 +177,22 @@ pub struct AdmitConversationTurnCommit {
     pub expected_turn_version: u64,
     pub session_event: EventDraft,
     pub turn_event: EventDraft,
+}
+
+/// The live host a Conversation-scoped session must use, resolved authoritatively.
+///
+/// Resolution and admission are separate on purpose: the Operator asks the store which
+/// endpoint and Runtime incarnation are currently eligible for this Conversation's
+/// binding, and the admission transaction then re-checks that same eligibility. A host
+/// that expires between the two calls is refused honestly rather than silently
+/// substituted.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedConversationHost {
+    pub agent_binding_id: String,
+    pub endpoint_id: String,
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

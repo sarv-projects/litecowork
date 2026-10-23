@@ -437,6 +437,101 @@ impl ConversationTurnStore for SqliteConversationStore {
         })
     }
 
+    fn resolve_conversation_session_host(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+    ) -> Result<Option<ResolvedConversationHost>, StoreError> {
+        let workspace = workspace_id.to_owned();
+        let conversation = conversation_id.to_owned();
+        self.run(move |connection| {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_database_error)?;
+            // Both selections come from nullable columns. A Conversation with no
+            // override stores SQL NULL, which `.optional()` does not cover: it only
+            // handles the absent-row case. The value is read as Option<String> and the
+            // absent-row wrapper is flattened, so NULL is a legitimate None.
+            let conversation_binding: Option<Option<String>> = tx
+                .query_row(
+                    "SELECT active_agent_binding_id FROM conversations WHERE workspace_id=?1 AND conversation_id=?2",
+                    params![workspace, conversation],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let conversation_binding = conversation_binding.flatten();
+            let workspace_default: Option<Option<String>> = tx
+                .query_row(
+                    "SELECT default_agent_binding_id FROM workspaces WHERE workspace_id=?1 AND status='ACTIVE'",
+                    params![workspace],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let workspace_default = workspace_default.flatten();
+            let Some(binding) = conversation_binding.or(workspace_default) else {
+                return Ok(None);
+            };
+            // Same eligibility join the admission transaction re-checks, so a host
+            // reported here is one the admission will accept at this instant. The clock
+            // is formatted at second precision, matching how the stored instants are
+            // written, so the expiry comparison stays a correct string comparison.
+            let now_format = time::format_description::parse(
+                "[year]-[month]-[day]T[hour]:[minute]:[second]Z",
+            )
+            .map_err(|_| StoreError::Invalid("timestamp format unavailable".to_owned()))?;
+            let now = time::OffsetDateTime::now_utc()
+                .format(&now_format)
+                .map_err(|_| StoreError::Invalid("clock unavailable".to_owned()))?;
+            let resolved: Option<(String, String, String)> = tx
+                .query_row(
+                    "SELECT b.agent_binding_id, e.endpoint_id, eb.runtime_id
+                       FROM agent_bindings b
+                       JOIN agent_endpoints e ON e.agent_profile_id = b.agent_profile_id
+                       JOIN agent_endpoint_bindings eb ON eb.endpoint_id = e.endpoint_id
+                       JOIN runtimes r ON r.runtime_id = eb.runtime_id
+                       JOIN runtime_workspace_bindings rwb
+                         ON rwb.runtime_id = r.runtime_id AND rwb.workspace_id = ?1
+                        AND rwb.status = 'ACTIVE' AND rwb.revoked_at IS NULL
+                       JOIN runtime_incarnations ri
+                         ON ri.runtime_id = r.runtime_id
+                        AND ri.runtime_incarnation_id = eb.runtime_incarnation_id
+                       WHERE b.workspace_id = ?1 AND b.agent_binding_id = ?2
+                         AND b.enabled = 1 AND b.lead_eligible = 1
+                         AND (json_extract(b.endpoint_selection_policy_json, '$.mode') <> 'PINNED_ENDPOINT'
+                              OR json_extract(b.endpoint_selection_policy_json, '$.endpoint_id') = e.endpoint_id)
+                         AND (eb.expires_at IS NULL OR eb.expires_at > ?3)
+                         AND EXISTS(SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value = 'EXECUTOR')
+                         AND r.availability = 'ONLINE'
+                         AND r.current_incarnation_id = eb.runtime_incarnation_id
+                         AND ri.recovery_state = 'READY'
+                       ORDER BY eb.observed_at DESC
+                       LIMIT 1",
+                    params![workspace, binding, now],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let Some((agent_binding_id, endpoint_id, runtime_id)) = resolved else {
+                return Ok(None);
+            };
+            let runtime_incarnation_id: String = tx
+                .query_row(
+                    "SELECT current_incarnation_id FROM runtimes WHERE runtime_id=?1",
+                    params![runtime_id],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            Ok(Some(ResolvedConversationHost {
+                agent_binding_id,
+                endpoint_id,
+                runtime_id,
+                runtime_incarnation_id,
+            }))
+        })
+    }
+
     fn admit_conversation_turn(
         &self,
         commit: AdmitConversationTurnCommit,
@@ -495,7 +590,8 @@ impl ConversationTurnStore for SqliteConversationStore {
             // as turn creation does: the Conversation override first, then the Workspace
             // default. The admission never substitutes a different binding than the one
             // the Conversation resolved.
-            let conversation_binding: Option<String> = tx
+            // Nullable selections absorb SQL NULL rather than failing the transaction.
+            let conversation_binding: Option<Option<String>> = tx
                 .query_row(
                     "SELECT active_agent_binding_id FROM conversations WHERE workspace_id=?1 AND conversation_id=?2",
                     params![workspace, conversation],
@@ -503,13 +599,16 @@ impl ConversationTurnStore for SqliteConversationStore {
                 )
                 .optional()
                 .map_err(map_database_error)?;
-            let workspace_default: Option<String> = tx
+            let conversation_binding = conversation_binding.flatten();
+            let workspace_default: Option<Option<String>> = tx
                 .query_row(
                     "SELECT default_agent_binding_id FROM workspaces WHERE workspace_id=?1",
                     params![workspace],
                     |row| row.get(0),
                 )
+                .optional()
                 .map_err(map_database_error)?;
+            let workspace_default = workspace_default.flatten();
             let Some(selected_binding) = conversation_binding.or(workspace_default) else {
                 return Err(StoreError::Invalid("AGENT_UNAVAILABLE".to_owned()));
             };

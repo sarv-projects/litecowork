@@ -93,9 +93,10 @@ pub use resource_edge::{
 };
 pub mod conversation;
 pub use conversation::{
-    CommittedConversation, CommittedConversationTurn, ConversationMessageRecord, ConversationPage,
-    ConversationRecord, ConversationStore, ConversationTurnStore, CreateConversationCommit,
-    CreateConversationTurnCommit,
+    AdmitConversationTurnCommit, AdmittedConversationTurn, CommittedConversation,
+    CommittedConversationTurn, ConversationMessageRecord, ConversationPage, ConversationRecord,
+    ConversationStore, ConversationTurnStore, CreateConversationCommit,
+    CreateConversationTurnCommit, ResolvedConversationHost,
 };
 
 mod effect_evidence;
