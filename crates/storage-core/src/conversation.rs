@@ -35,6 +35,19 @@ pub struct CreateConversationCommit {
     pub event: EventDraft,
 }
 
+/// Version-fenced Conversation AgentBinding override mutation. A null binding clears
+/// the override and restores Workspace-default resolution for future turns.
+#[derive(Clone, Debug)]
+pub struct SetConversationAgentBinding {
+    pub request: WorkspaceCreateRequest,
+    pub principal_id: String,
+    pub workspace_id: String,
+    pub conversation_id: String,
+    pub expected_version: u64,
+    pub agent_binding_id: Option<String>,
+    pub event: EventDraft,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommittedConversation {
@@ -52,6 +65,11 @@ pub trait ConversationStore: Send + Sync {
     fn create_conversation(
         &self,
         commit: CreateConversationCommit,
+    ) -> Result<CommittedConversation, StoreError>;
+
+    fn set_conversation_agent_binding_idempotent(
+        &self,
+        commit: SetConversationAgentBinding,
     ) -> Result<CommittedConversation, StoreError>;
 
     fn get_conversation(
@@ -214,8 +232,9 @@ pub fn validate_conversation_record(record: &ConversationRecord) -> Result<(), S
                 || title.chars().count() > 160
                 || title.chars().any(char::is_control)
         })
-        || record.active_agent_binding_id.is_some()
-        || record.version != 1
+        || record.active_agent_binding_id.as_ref().is_some_and(|binding_id| !valid(binding_id))
+        || record.version == 0
+        || record.version > i64::MAX as u64
     {
         return Err(StoreError::Invalid(
             "Conversation record is invalid".to_owned(),

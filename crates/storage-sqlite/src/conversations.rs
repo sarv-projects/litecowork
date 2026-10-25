@@ -130,6 +130,189 @@ impl ConversationStore for SqliteConversationStore {
         })
     }
 
+    fn set_conversation_agent_binding_idempotent(
+        &self,
+        commit: SetConversationAgentBinding,
+    ) -> Result<CommittedConversation, StoreError> {
+        let next_version = commit
+            .expected_version
+            .checked_add(1)
+            .filter(|version| *version <= i64::MAX as u64)
+            .ok_or_else(|| StoreError::Invalid("Conversation version exhausted".to_owned()))?;
+        let request_payload = &commit.request.request_payload;
+        let binding_matches = match commit.agent_binding_id.as_deref() {
+            Some(binding_id) => request_payload
+                .get("agent_binding_id")
+                .and_then(Value::as_str)
+                == Some(binding_id),
+            None => request_payload
+                .get("agent_binding_id")
+                .is_some_and(Value::is_null),
+        };
+        if commit.principal_id.trim().is_empty()
+            || commit.request.principal_id != commit.principal_id
+            || !super::valid_shared_idempotency_key(&commit.request.request_id)
+            || commit.workspace_id.trim().is_empty()
+            || commit.conversation_id.trim().is_empty()
+            || commit.expected_version == 0
+            || commit
+                .agent_binding_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control))
+            || request_payload.get("operation").and_then(Value::as_str)
+                != Some("conversation.agent_binding.set.v1")
+            || request_payload.get("workspace_id").and_then(Value::as_str)
+                != Some(commit.workspace_id.as_str())
+            || request_payload.get("conversation_id").and_then(Value::as_str)
+                != Some(commit.conversation_id.as_str())
+            || request_payload.get("expected_version").and_then(Value::as_u64)
+                != Some(commit.expected_version)
+            || !binding_matches
+            || commit.event.workspace_id != commit.workspace_id
+            || commit.event.entity_type != "Conversation"
+            || commit.event.entity_id != commit.conversation_id
+            || commit.event.entity_revision != next_version
+            || commit.event.schema_version != 1
+            || commit.event.event_type != "conversation.agent_binding.changed.v1"
+        {
+            return Err(StoreError::Invalid(
+                "Conversation AgentBinding mutation is inconsistent".to_owned(),
+            ));
+        }
+        let request_digest = digest(&canonical_json(request_payload)?);
+        let blobs = Arc::clone(&self.store.inner.blobs);
+        self.run(move |connection| {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_database_error)?;
+            if let Some(replay) = verify_request_receipt::<CommittedConversation>(
+                &tx,
+                &commit.principal_id,
+                &commit.request.request_id,
+                &request_digest,
+            )? {
+                tx.commit().map_err(map_database_error)?;
+                return Ok(replay);
+            }
+            let workspace_status: Option<String> = tx
+                .query_row(
+                    "SELECT status FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2",
+                    params![commit.workspace_id, commit.principal_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let Some(workspace_status) = workspace_status else {
+                return Err(StoreError::NotFound);
+            };
+            if workspace_status != "ACTIVE" {
+                return Err(StoreError::Invalid("WORKSPACE_ARCHIVED".to_owned()));
+            }
+            let current: Option<(Option<String>, i64, String, Option<String>)> = tx
+                .query_row(
+                    "SELECT title,version,created_at,active_agent_binding_id FROM conversations WHERE workspace_id=?1 AND conversation_id=?2",
+                    params![commit.workspace_id, commit.conversation_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let Some((title, actual_version, created_at, previous_binding_id)) = current else {
+                return Err(StoreError::NotFound);
+            };
+            let actual_version = u64::try_from(actual_version)
+                .map_err(|_| StoreError::Integrity("Conversation version is invalid".to_owned()))?;
+            if actual_version != commit.expected_version {
+                return Err(StoreError::Conflict {
+                    expected: Some(commit.expected_version),
+                    actual: Some(actual_version),
+                });
+            }
+            if let Some(binding_id) = commit.agent_binding_id.as_deref() {
+                let eligible: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM agent_bindings WHERE workspace_id=?1 AND agent_binding_id=?2 AND enabled=1 AND lead_eligible=1)",
+                        params![commit.workspace_id, binding_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(map_database_error)?;
+                if !eligible {
+                    return Err(StoreError::Invalid("AGENT_NOT_LEAD_ELIGIBLE".to_owned()));
+                }
+            }
+            let conversation = ConversationRecord {
+                conversation_id: commit.conversation_id.clone(),
+                workspace_id: commit.workspace_id.clone(),
+                title,
+                active_agent_binding_id: commit.agent_binding_id.clone(),
+                version: next_version,
+                created_at,
+            };
+            validate_conversation_record(&conversation)?;
+            let changed = tx
+                .execute(
+                    "UPDATE conversations SET active_agent_binding_id=?1,version=?2 WHERE workspace_id=?3 AND conversation_id=?4 AND version=?5",
+                    params![conversation.active_agent_binding_id, next_version as i64, commit.workspace_id, commit.conversation_id, commit.expected_version as i64],
+                )
+                .map_err(map_database_error)?;
+            if changed != 1 {
+                return Err(StoreError::Conflict {
+                    expected: Some(commit.expected_version),
+                    actual: None,
+                });
+            }
+            let state_bytes = canonical_json(&conversation)?;
+            let state_blob = blobs.put(
+                &commit.workspace_id,
+                BlobPurpose::AggregateState,
+                &state_bytes,
+                super::STATE_MEDIA_TYPE,
+            )?;
+            if state_blob.size_bytes != state_bytes.len() as u64
+                || blobs.get(
+                    &commit.workspace_id,
+                    BlobPurpose::AggregateState,
+                    &state_blob,
+                )? != state_bytes
+            {
+                return Err(StoreError::Integrity(
+                    "Conversation aggregate state failed BlobStore verification".to_owned(),
+                ));
+            }
+            let state_ref = AggregateStateRef {
+                blob: state_blob,
+                entity_revision: next_version,
+                record_schema_version: 1,
+            };
+            let mut event_draft = commit.event;
+            event_draft.payload = serde_json::json!({
+                "workspace_id": commit.workspace_id,
+                "conversation_id": commit.conversation_id,
+                "from_agent_binding_id": previous_binding_id,
+                "to_agent_binding_id": commit.agent_binding_id,
+                "changed_by": {"kind":"USER","principal_id":commit.principal_id},
+                "aggregate_version": next_version,
+            });
+            let event = insert_domain_event(&tx, &event_draft, &state_ref)?;
+            let accepted = CommittedConversation { conversation, event };
+            let response_json = String::from_utf8(canonical_json(&accepted)?)
+                .map_err(|error| StoreError::Invalid(error.to_string()))?;
+            tx.execute(
+                "INSERT INTO request_dedup(principal_id,request_id,request_digest,response_json,response_digest,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,NULL)",
+                params![
+                    commit.principal_id,
+                    commit.request.request_id,
+                    request_digest,
+                    response_json,
+                    digest(response_json.as_bytes()),
+                    accepted.event.recorded_at,
+                ],
+            )
+            .map_err(map_database_error)?;
+            tx.commit().map_err(map_database_error)?;
+            Ok(accepted)
+        })
+    }
+
     fn get_conversation(
         &self,
         principal_id: &str,

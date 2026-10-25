@@ -5428,6 +5428,8 @@ pub fn run() {
             conversation_bridge::list_pending_conversation_creates,
             conversation_bridge::create_conversation,
             conversation_bridge::acknowledge_conversation_create,
+            conversation_bridge::get_conversation,
+            conversation_bridge::set_conversation_agent_binding,
             conversation_bridge::get_conversation_presentation,
             conversation_bridge::get_rich_presentation,
             conversation_stream_bridge::subscribe_conversation_stream,

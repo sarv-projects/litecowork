@@ -1,4 +1,4 @@
-# Competitive Product Research (latest snapshot: 2026-10-24; earlier checks retained)
+# Competitive Product Research (latest snapshot: 2026-10-25; earlier checks retained)
 
 This is dated product research, not a normative competitor dependency. Product behavior
 changes quickly; cited vendor pages are the evidence, while LiteCowork contracts are owned
@@ -136,7 +136,7 @@ Sources: [Anthropic containment architecture](https://www.anthropic.com/engineer
 
 ### OpenAI dots — persistent named assistant with optional local-computer bridge
 
-**Low level / desktop surface:** Dot setup is available on desktop; local-computer access is optional and starts off. When connected, a dot can access files, create local Work/Codex tasks, use local skills and use the local browser when needed. Plugin/app permissions are shared with the wider ChatGPT app surface.
+**Low level / desktop surface:** A dot has its own persistent cloud computer and browser. Optional local-computer access is a separate bridge, starts off, and requires the ChatGPT desktop app to remain open while the host is online. Local Work/Codex tasks run separately from cloud tasks. Connecting a computer to Codex or enabling Work Sync alone does not grant a dot local access; local skills also require a connected computer. Connected apps and the cloud browser have their own account/session boundaries.
 
 **Mid/high level:** A dot is a named persistent agent with memory, proactive connected-app review, scheduled tasks, background suggestions, customizable rules and pause/reset. Desktop profile exposes activity grouped as In progress, Scheduled and Completed and can open the dot's computer. Custom rules offer action modes roughly equivalent to act without asking, pre-approved, ask first, or hand off.
 
@@ -148,7 +148,7 @@ Sources: [Getting started with your dot](https://help.openai.com/en/articles/200
 
 ### Meta Muse — conversation + goals + proactive suggestions
 
-**Low level / desktop surface:** Muse has a Mac app and is documented as working with desktop files, apps and browser tabs. It also has a persistent isolated computer/browser experience and connected-app support. Credentials are kept in a secure store rather than exposed directly to the agent.
+**Low level / desktop surface:** Meta documents two surfaces: a Muse for Mac app that can work with local desktop files, apps and browser tabs with permission, and a persistent dedicated Muse Secure VM with its own browser for cloud work. Its product pages also list iOS, Android and web. The VM uses a separate Sentinel agent to gate egress; credentials are held in secure storage rather than exposed to Muse. Treat the local Mac bridge and hosted VM as separate execution loci and consent scopes.
 
 **Mid/high level:** Users give Muse goals/tasks; it builds plans, tracks progress, suggests ideas proactively, monitors things in the background, connects to email/calendar/Instagram and other services, and can create tools when a needed tool does not exist. Critical actions such as sends/purchases are reviewable and the product advertises an audit trail of completed/planned actions.
 
@@ -156,11 +156,11 @@ Sources: [Getting started with your dot](https://help.openai.com/en/articles/200
 
 **Take for LiteCowork:** Keep Goals and Suggestions/Ideas as visible but non-authoritative supporting surfaces, add concise audit/action history, and make Take control obvious for Browser/Computer. Generated tools remain proposals that pass LiteSPM/Skill review rather than self-installing.
 
-Source: [Muse product page](https://ai.meta.com/muse/).
+Sources: [Muse product page](https://ai.meta.com/muse/), [Muse download and platform page](https://ai.meta.com/muse/download/), [Meta introduction and security architecture](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/).
 
 ### Grok Bot — strongest current persistent-bot/routine desktop UX benchmark
 
-**Low level / desktop surface:** Grok Bot has desktop apps and a persistent computer. The desktop client includes Bot chats, computer/live view, Marketplace/plugins, settings, app sign-in flows and local-computer execution controls where enabled. Model selection is managed by the product rather than exposed as a picker.
+**Low level / desktop surface:** Grok Bot has a persistent cloud computer shared by the user's Bots (files, browser sessions and app logins), plus a separate optional local-computer execution path through its desktop app. Local command/file access has its own per-computer policy and asks for approval by default; cloud-computer approvals do not grant local access. Bot model selection is product-managed, not exposed as a customer-facing picker.
 
 **Mid level:** Bots keep role-specific memory, can share files/context through explicit chats/groups, own reusable Skills and Routines, use connectors/logins, and expose a Library tab with shared pages/files/links. A task asking for an unconnected app can present connection UI and resumes automatically after sign-in. Teach-a-task can record a demonstrated browser workflow and generate a draft skill for review/testing.
 
@@ -170,7 +170,7 @@ Source: [Muse product page](https://ai.meta.com/muse/).
 
 **Take for LiteCowork:** Add `Test responsibility/routine`, recent run history, Library/activity tab within Coworker, task-time Connect-and-resume, optional Teach workflow later, clear primary/featured Coworker without making it mandatory, and strong per-Coworker notification/routine controls. Unlike Grok Bot's shared cloud computer, LiteCowork must retain exact local Environment scopes and cannot let Coworkers implicitly share files/logins.
 
-Sources: [Grok Bot overview](https://docs.x.ai/grok-bot/overview), [Skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations), [Bots](https://docs.x.ai/grok-bot/bots), [Changelog](https://x.ai/changelog/bot), [approvals/security](https://docs.x.ai/grok-bot/approvals-security-and-privacy).
+Sources: [Grok Bot overview](https://docs.x.ai/grok-bot/overview), [computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), [Skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations), [Bots](https://docs.x.ai/grok-bot/bots), [approvals/security](https://docs.x.ai/grok-bot/approvals-security-and-privacy), [security FAQ](https://docs.x.ai/grok-bot/security-faq).
 
 ### Consolidated adoption decisions
 
@@ -504,9 +504,16 @@ This dated addendum records facts that affect the V1 bar and corrects any readin
 - **OpenWork, Eigent, and OpenCowork solve different slices.** OpenWork combines an OpenCode desktop experience with local project work and a separate control-plane/service story; its repository/docs are useful for local-first entry, provider breadth and lazy capability discovery. Eigent demonstrates a CAMEL-based multi-agent desktop/runtime approach with MCP, skills, browser and terminal toolkits. OpenCoworkAI is a smaller single-turn wrapper today. Compare exact releases and runtime boundaries rather than treating any of the three as a complete local Cowork reference. Sources: [OpenWork](https://github.com/different-ai/openwork), [Eigent](https://github.com/eigent-ai/eigent), [OpenCoworkAI](https://github.com/OpenCoworkAI/open-cowork).
 - **Computer use is an OS-control capability, not a browser panel.** The [open-computer-use MCP project](https://github.com/ifuryst/open-computer-use) exposes OS-level controls across desktop platforms, while the [OpenAI CUA sample](https://github.com/openai/openai-cua-sample-app) shows browser/desktop observe-and-act loops. Both are implementation references only: LiteCowork still needs a qualified provider, explicit OS consent, scoped execution, takeover/return state, and truthful activity evidence.
 
+### 2026-10-25 local/cloud execution-path corrections
+
+- **OpenAI dots:** each dot has its own persistent cloud computer. The optional local bridge is separately granted and depends on the host desktop app being open and the computer online; local tasks appear separately. Work Sync or a Codex connection alone does not grant local access. Sources: [Dots help](https://help.openai.com/en/articles/20001530-getting-started-with-your-dot), [Dots privacy and security](https://help.openai.com/en/articles/20001529-dots-privacy-security-and-safety-faqs).
+- **Meta Muse:** the Mac product can access permitted local files/apps/browser tabs while Muse Secure VM is a distinct persistent hosted computer with its own browser. The public product pages advertise Mac, iOS, Android and web; the launch article describes a Sentinel egress gate, separate secure credential storage, approval for sensitive actions and an audit trail. Sources: [Muse](https://ai.meta.com/muse/), [Muse download](https://ai.meta.com/muse/download/), [Meta launch/security architecture](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/).
+- **Grok Bot:** its persistent cloud computer is shared among a user's Bots, including files, browser sessions and app logins. Optional local desktop execution is a distinct path with its own per-computer permission policy (Ask every time by default); cloud approvals do not grant local execution. Sources: [Grok Bot overview](https://docs.x.ai/grok-bot/overview), [computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), [approvals/security](https://docs.x.ai/grok-bot/approvals-security-and-privacy).
+- **LiteCowork contract impact:** expose the actual execution location and authority for every route, treat each local host bridge and cloud Environment as separate consent/capability scopes, and never infer capability from app presence, account connection, or a connected agent profile. Competitor availability is not proof that a LiteCowork provider is implemented or qualified.
+
 ### Product consequences
 
 1. The required V1 differentiator is the *finished desktop work experience*: selected native lead agent, that agent's actual models/options, native subagents when supported, and separately configured host-managed workers for durable Tasks. Selection must pin the route and never imply that switching a model is switching harnesses.
-2. The chat-bar choice is currently missing in source: Conversation-specific AgentBinding overrides have no served set/clear path, and no native session adapter is qualified for a user-visible Send. Keep the UI honest until both gaps close end to end.
+2. Conversation-specific AgentBinding set/clear now has a served, version-fenced and idempotent route plus a draft-preserving selector. This only chooses the binding for future turns; no native session adapter is qualified for a user-visible Send, so Send remains disabled.
 3. Preserve distinct states for native child agents and LiteCowork-hosted child Attempts. Parent-model inheritance is available only when the native harness supports/enforces it; cross-harness delegation needs its own pinned worker route and Task admission.
 4. No reviewed competitor source makes a full OpenCode/Codex/Claude/Cursor/Devin feature set automatically available through LiteCowork. Route qualification, permissions, account terms, filesystem scope, result recovery, and UI parity remain per-harness work.

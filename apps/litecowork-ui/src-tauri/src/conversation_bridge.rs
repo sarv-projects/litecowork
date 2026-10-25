@@ -280,6 +280,95 @@ pub(crate) async fn create_conversation(
 }
 
 #[tauri::command]
+pub(crate) async fn get_conversation(
+    app: AppHandle,
+    workspace_id: String,
+    conversation_id: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !valid_id(&workspace_id) || !valid_id(&conversation_id) {
+            return Err("Conversation selection is invalid".to_owned());
+        }
+        let (client, _) = operator_client(&app)?;
+        let value = read_json(
+            client
+                .get(format!("/v1/conversations/{conversation_id}"))
+                .header("X-Workspace-ID", &workspace_id)
+                .send()
+                .map_err(|_| "Local Conversation service is unavailable".to_owned())?,
+        )?;
+        if value.get("workspace_id").and_then(serde_json::Value::as_str)
+            != Some(workspace_id.as_str())
+            || value.get("conversation_id").and_then(serde_json::Value::as_str)
+                != Some(conversation_id.as_str())
+        {
+            return Err("Local Runtime returned a Conversation outside the selected Workspace".to_owned());
+        }
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "Conversation read request did not complete".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn set_conversation_agent_binding(
+    app: AppHandle,
+    workspace_id: String,
+    conversation_id: String,
+    agent_binding_id: Option<String>,
+    expected_version: u64,
+    request_id: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !valid_id(&workspace_id)
+            || !valid_id(&conversation_id)
+            || agent_binding_id.as_ref().is_some_and(|id| !valid_id(id))
+            || expected_version == 0
+            || expected_version > i64::MAX as u64
+            || !super::conversation_create_journal::valid_request_id(&request_id)
+        {
+            return Err("Conversation AgentBinding request is invalid".to_owned());
+        }
+        let expected_next_version = expected_version
+            .checked_add(1)
+            .ok_or_else(|| "Conversation version is exhausted".to_owned())?;
+        let (client, _) = operator_client(&app)?;
+        let value = read_json(
+            client
+                .patch(format!("/v1/conversations/{conversation_id}/agent-binding"))
+                .header("X-Workspace-ID", &workspace_id)
+                .header("If-Match", expected_version.to_string())
+                .header("Idempotency-Key", &request_id)
+                .json(&serde_json::json!({"agent_binding_id":agent_binding_id}))
+                .send()
+                .map_err(|_| "Local Conversation service is unavailable".to_owned())?,
+        )?;
+        let selected_binding_matches = match agent_binding_id.as_deref() {
+            Some(binding_id) => value
+                .get("active_agent_binding_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(binding_id),
+            None => value
+                .get("active_agent_binding_id")
+                .is_some_and(serde_json::Value::is_null),
+        };
+        if value.get("workspace_id").and_then(serde_json::Value::as_str)
+            != Some(workspace_id.as_str())
+            || value.get("conversation_id").and_then(serde_json::Value::as_str)
+                != Some(conversation_id.as_str())
+            || value.get("version").and_then(serde_json::Value::as_u64)
+                != Some(expected_next_version)
+            || !selected_binding_matches
+        {
+            return Err("Local Runtime returned an unexpected Conversation selection".to_owned());
+        }
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "Conversation AgentBinding request did not complete".to_owned())?
+}
+
+#[tauri::command]
 pub(crate) async fn get_conversation_presentation(
     app: AppHandle,
     workspace_id: String,

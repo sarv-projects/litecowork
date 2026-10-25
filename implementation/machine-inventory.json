@@ -417,6 +417,10 @@
       "sha256": "d4b6dbf4b3f95530d18d08d1086d27303ab2dc4e42201c2312852c5293c48f23"
     },
     {
+      "name": "conversation_agent_binding_changed",
+      "sha256": "de86cc6828cd861b73aba091ceb66a9df7182d7a142e78e300ecd6866e3859b7"
+    },
+    {
       "name": "conversation_created",
       "sha256": "ec1910959c666b9aacc1224c5020e9d2d798b9f0d9b2b3f5625eeda870301323"
     },
@@ -860,7 +864,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "b1e260754fda1f00c5a5f200b40f9692f59c53975cc7cd9ad4cfd10d6d556048"
+      "sha256": "06cb281cc56a4dd98665acaac56fd186bf21e5faf0e879a0c3b940677310a1bc"
     },
     {
       "name": "pinned_resource_ref",
@@ -978,6 +982,7 @@
     "channel_outbound_settled",
     "channel_receipt_changed",
     "connection_state_changed",
+    "conversation_agent_binding_changed",
     "conversation_created",
     "conversation_message_added",
     "conversation_turn_created",
@@ -1127,6 +1132,7 @@
     "channel.outbound.settled.v1",
     "channel.receipt.changed.v1",
     "connection.state.changed.v1",
+    "conversation.agent_binding.changed.v1",
     "conversation.created.v1",
     "conversation.message.added.v1",
     "conversation.turn.created.v1",
@@ -1515,7 +1521,7 @@
       "method": "POST",
       "operationId": "connectOrInstallCapability",
       "path": "/capabilities/{capabilityId}/connect-or-install",
-      "sha256": "7614242eb9afa1029c34ee69d804fc7f3bc57d59e4a72e29de488fbb0a6dec55"
+      "sha256": "0d603045ff814474865fb36ff71f0c291bfaaca02192ac6b3c68f4e3a0e117d7"
     },
     {
       "method": "POST",
@@ -1606,6 +1612,12 @@
       "operationId": "getConversation",
       "path": "/conversations/{conversationId}",
       "sha256": "020b2f53d4f3baf5f3c38f844a67133671a4f137daca01329a675c93c603e4ac"
+    },
+    {
+      "method": "PATCH",
+      "operationId": "setConversationAgentBinding",
+      "path": "/conversations/{conversationId}/agent-binding",
+      "sha256": "35648071fdef4a135a03759ebaa194652e451e2785eaa8e2a7066c7fb427acb7"
     },
     {
       "method": "GET",
@@ -2908,6 +2920,11 @@
       "method": "GET",
       "operationId": "getConversation",
       "path": "/conversations/{conversationId}"
+    },
+    {
+      "method": "PATCH",
+      "operationId": "setConversationAgentBinding",
+      "path": "/conversations/{conversationId}/agent-binding"
     },
     {
       "method": "GET",
@@ -5004,6 +5021,10 @@
       "sha256": "17aad22ce03ab0f6552f7fff7198fd8a48c82022efe089eb4241cb6ccc4d3bd1"
     },
     {
+      "name": "SetConversationAgentBindingRequest",
+      "sha256": "8a9ace687bbdcb64a4d9fc4ba7bbc4fd1f8ddaf942e7460cc9d68429f7f6c0e8"
+    },
+    {
       "name": "SetPrimaryCoworkerRequest",
       "sha256": "e92d06d668a959dc50b32e5e70a7d951e79fbc8008c920665911b97d3d4ff5eb"
     },
@@ -5655,6 +5676,7 @@
     "SecretRef",
     "ServiceRef",
     "SetContextDocumentStatusRequest",
+    "SetConversationAgentBindingRequest",
     "SetPrimaryCoworkerRequest",
     "SetSuggestionPreferenceRequest",
     "SetWorkspaceDefaultAgentBindingRequest",

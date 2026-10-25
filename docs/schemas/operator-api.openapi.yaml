@@ -403,6 +403,29 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Conversation'}
         default: {$ref: '#/components/responses/Error'}
+  /conversations/{conversationId}/agent-binding:
+    patch:
+      tags: [conversations, agents]
+      operationId: setConversationAgentBinding
+      parameters:
+      - {$ref: '#/components/parameters/ConversationId'}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetConversationAgentBindingRequest'}
+      responses:
+        '200':
+          description: Conversation override saved; null clears the override and restores Workspace-default resolution for future turns. Exact owner-scoped receipt replay precedes active-Workspace checks.
+          headers:
+            X-Correlation-ID: {schema: {type: string, minLength: 1}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Conversation'}
+        default: {$ref: '#/components/responses/Error'}
   /conversations/{conversationId}/presentation:
     get:
       tags: [conversations, presentation]
@@ -6748,6 +6771,16 @@ components:
       properties:
         workspace_id: {type: string, minLength: 1}
         title: {type: [string, 'null'], maxLength: 160}
+    SetConversationAgentBindingRequest:
+      type: object
+      additionalProperties: false
+      required: [agent_binding_id]
+      properties:
+        agent_binding_id:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 256
+          description: A same-Workspace enabled lead-eligible AgentBinding ID; null clears the Conversation override and resumes Workspace-default resolution.
     Conversation:
       type: object
       required: [conversation_id, workspace_id, version, created_at]

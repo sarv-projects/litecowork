@@ -324,6 +324,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/conversations/{conversationId}/agent-binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["setConversationAgentBinding"];
+        trace?: never;
+    };
     "/conversations/{conversationId}/presentation": {
         parameters: {
             query?: never;
@@ -4981,6 +4997,10 @@ export type components = {
             workspace_id: string;
             title?: string | null;
         };
+        SetConversationAgentBindingRequest: {
+            /** @description A same-Workspace enabled lead-eligible AgentBinding ID; null clears the Conversation override and resumes Workspace-default resolution. */
+            agent_binding_id: string | null;
+        };
         Conversation: {
             conversation_id: string;
             workspace_id: string;
@@ -8066,6 +8086,40 @@ export interface operations {
             /** @description Conversation projection */
             200: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setConversationAgentBinding: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Selected Workspace scope for this authenticated operation. */
+                "X-Workspace-ID": components["parameters"]["WorkspaceContextHeader"];
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetConversationAgentBindingRequest"];
+            };
+        };
+        responses: {
+            /** @description Conversation override saved; null clears the override and restores Workspace-default resolution for future turns. Exact owner-scoped receipt replay precedes active-Workspace checks. */
+            200: {
+                headers: {
+                    "X-Correlation-ID"?: string;
                     [name: string]: unknown;
                 };
                 content: {

@@ -96,7 +96,7 @@ pub use conversation::{
     AdmitConversationTurnCommit, AdmittedConversationTurn, CommittedConversation,
     CommittedConversationTurn, ConversationMessageRecord, ConversationPage, ConversationRecord,
     ConversationStore, ConversationTurnStore, CreateConversationCommit,
-    CreateConversationTurnCommit, ResolvedConversationHost,
+    CreateConversationTurnCommit, ResolvedConversationHost, SetConversationAgentBinding,
 };
 
 mod effect_evidence;

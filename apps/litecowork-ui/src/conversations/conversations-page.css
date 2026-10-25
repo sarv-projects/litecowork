@@ -61,6 +61,15 @@
 .conversation-offline-notice, .conversation-refresh-notice { margin: 12px 18px 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: #f8f9fb; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
 .conversation-list-error { gap: 12px; }
 .conversation-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; padding: 14px 18px; border-top: 1px solid var(--color-border); }
+.conversation-agent-control { display: grid; grid-column: 1 / -1; gap: 6px; }
+.conversation-agent-control label { color: var(--color-text); font-size: 12px; font-weight: 650; }
+.conversation-agent-control select { width: min(100%, 420px); min-height: 38px; padding: 7px 34px 7px 10px; border: 1px solid var(--color-border-strong); border-radius: 8px; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 13px; }
+.conversation-agent-control select:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent); outline-offset: 2px; border-color: var(--color-primary); }
+.conversation-agent-control select:disabled { cursor: not-allowed; opacity: 0.72; }
+.conversation-agent-control > small, .conversation-agent-control > p { margin: 0; color: var(--color-text-subtle); font-size: 11px; line-height: 1.45; }
+.conversation-agent-control .conversation-agent-error { color: #8a2929; }
+.conversation-agent-control .conversation-agent-notice.saved { color: #286343; }
+.conversation-agent-control .conversation-agent-notice.failed { color: #8a2929; }
 .conversation-composer textarea { min-height: 66px; padding: 10px; resize: vertical; border: 1px solid var(--color-border); border-radius: 9px; background: #fbfcfe; color: var(--color-text-subtle); font-size: 13px; }
 .conversation-composer button { align-self: end; }
 .conversation-composer small { grid-column: 1 / -1; color: var(--color-text-subtle); font-size: 11px; }

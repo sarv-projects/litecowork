@@ -298,6 +298,7 @@ Create defaults to `LOCAL_ONLY`; `SELECTED_FOLDERS` is unavailable in the create
 POST /v1/conversations
 GET  /v1/conversations?cursor=&limit=
 GET  /v1/conversations/{id}
+PATCH /v1/conversations/{id}/agent-binding
 POST /v1/conversations/{id}/messages
 POST /v1/conversations/{id}/turns
 POST /v1/conversations/{id}/turns/{turn_id}/retry
@@ -307,29 +308,42 @@ GET  /v1/conversations/{id}/presentation?cursor=&limit=
 GET  /v1/rich-presentations/{presentation_id}
 GET  /v1/conversations/{id}/tasks?cursor=
 
-Implementation status (2026-10-22). `POST /v1/conversations/{id}/messages` and
+Implementation status (2026-10-25). `POST /v1/conversations/{id}/messages` and
 `GET /v1/conversations/{id}/messages` are **target-only**: they are declared in OpenAPI but
-no handler is mounted and the storage layer has no message reader. The mounted
-conversation routes are create/list/get/presentation/rich-presentations/tasks plus the
-three turn routes below.```
+no handler is mounted and the storage layer has no message reader. The mounted Conversation
+routes include create/list/get, AgentBinding mutation, presentation/rich-presentation/tasks,
+and the three turn routes below.
+```
 
 Conversation creation requires the selected Workspace, a bounded optional title, and an
 `Idempotency-Key`. It commits the Conversation row, `conversation.created.v1` event,
 aggregate-state reference, and request receipt atomically. The authenticated local catalog
 is newest-first and uses a Workspace-bound opaque cursor. Conversation reads are owner
 scoped and remain separate from provider/session state. The desktop Conversation page can
-create, list, and read persisted semantic messages; it does not expose message submission
-as available until E03-S01 native session admission and E03-S02 turn execution are
-connected. The explicit per-Conversation AgentBinding override is target-only in current
-source: create always stores null, no supported set/clear route exists, and storage
-validation rejects non-null. Therefore a Composer Agent picker is not available until that
-mutation is promoted with its scoped version/idempotency/event transaction and UI
-readback. An exact owner-scoped receipt replay is resolved before the active-Workspace
-check, so a lost-response retry still returns the committed Conversation after archival;
-a fresh create in an archived Workspace remains rejected. A rejected create response in the
-4xx range has no committed Conversation, creation event, or receipt for that request; this
-lets a client clear only the rejected request identity while keeping transport and server
-errors retryable as ambiguous outcomes.
+create, list, read persisted semantic messages, and choose a Conversation AgentBinding.
+`PATCH /v1/conversations/{id}/agent-binding` requires the selected Workspace,
+`If-Match` with the observed Conversation version, and `Idempotency-Key`; its body is
+`{ "agent_binding_id": "..." }` or `{ "agent_binding_id": null }`. The atomic
+transaction validates owner, Workspace, expected version, and (for a non-null choice) that
+the binding belongs to that Workspace and is enabled and lead-eligible. It writes the
+Conversation row, versioned aggregate-state reference, `conversation.agent_binding.changed.v1`
+event, and request receipt together. Exact receipt replay returns the original commit before
+checking current Workspace activity; reusing the key with a different request conflicts.
+Clearing the override restores Workspace-default resolution for future turns. A chosen
+binding is authoritative: if it later becomes unavailable, turn admission fails visibly and
+does not silently fall back. A running turn/session remains pinned to its admitted binding;
+changing the selector affects future turns only.
+
+The selector chooses a configured AgentBinding and preserves the draft; per-harness
+model/session-option selection and child-agent routing remain separate unfinished work. It
+only persists this route choice and does not submit a message or claim that a harness/model
+is running. Send remains disabled until E03-S01 native session admission and E03-S02 turn
+execution are connected. An exact owner-scoped create
+receipt replay is resolved before the active-Workspace check, so a lost-response retry still
+returns the committed Conversation after archival; a fresh create in an archived Workspace
+remains rejected. A rejected create response in the 4xx range has no committed Conversation,
+creation event, or receipt for that request; this lets a client clear only the rejected
+request identity while keeping transport and server errors retryable as ambiguous outcomes.
 
 `POST /v1/conversations/{id}/turns` requires a `content[]` body (bounded to 256 blocks,
 1 MiB and 256 resource refs) and accepts optional

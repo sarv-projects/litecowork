@@ -15,7 +15,8 @@ use storage_core::{
     StoreError, WorkspaceCreateRequest, conversation::request_payload_value,
 };
 use storage_sqlite::{
-    FileBlobStore, SqliteConfig, SqliteWorkspaceStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider,
+    FileBlobStore, SqliteConfig, SqliteConversationStore, SqliteWorkspaceStore, WorkspaceBlobKey,
+    WorkspaceBlobKeyProvider,
 };
 use zeroize::Zeroizing;
 
@@ -244,8 +245,7 @@ async fn submit_turn_with(
 }
 
 /// Seeds an enabled, lead-eligible AgentBinding and pins it as the Conversation's
-/// already-admitted selection. The Operator has no route for that pin yet (E03-S01), so
-/// the test writes the same authorized rows the storage fixture uses.
+/// already-admitted selection for turn-resolution tests.
 fn bind_conversation_agent(
     database: &std::path::Path,
     workspace_id: &str,
@@ -335,6 +335,41 @@ fn set_conversation_agent(
         )
         .expect("pin Conversation AgentBinding");
     assert_eq!(updated, 1, "the fixture Conversation must exist");
+}
+
+async fn set_conversation_agent_binding_request(
+    router: &Router,
+    workspace_id: &str,
+    conversation_id: &str,
+    expected_version: u64,
+    request_id: &str,
+    agent_binding_id: serde_json::Value,
+) -> Response {
+    let mut request = Request::patch(format!(
+        "/v1/conversations/{conversation_id}/agent-binding"
+    ))
+    .header("x-workspace-id", workspace_id)
+    .header("if-match", format!("\"{expected_version}\""))
+    .header("idempotency-key", request_id)
+    .header("content-type", "application/json")
+    .body(Body::from(
+        serde_json::json!({ "agent_binding_id": agent_binding_id }).to_string(),
+    ))
+    .expect("Conversation AgentBinding mutation request is valid");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("authenticated Conversation AgentBinding route responds")
+}
+
+async fn read_updated_conversation(response: Response) -> ConversationRecord {
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 8192)
+        .await
+        .expect("Conversation AgentBinding response is bounded");
+    serde_json::from_slice(&bytes).expect("Conversation AgentBinding response matches contract")
 }
 
 async fn read_operator_error(response: Response) -> (StatusCode, serde_json::Value) {
@@ -1169,4 +1204,148 @@ async fn conversation_turn_route_rejects_cross_workspace_resource_pins_before_pr
     )
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn conversation_agent_binding_route_commits_replays_clears_and_rejects_stale_or_ineligible_choices() {
+    let directory = tempfile::tempdir().expect("temporary Conversation AgentBinding directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation AgentBinding directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        &database,
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "agent-binding-a");
+    create_workspace(&store, WORKSPACE_B, "agent-binding-b");
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        "conversation-agent-binding-route",
+        "Agent choice",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    seed_agent_binding(&database, WORKSPACE_A, "eligible-binding", true, true);
+    seed_agent_binding(&database, WORKSPACE_A, "disabled-binding", false, true);
+    seed_agent_binding(&database, WORKSPACE_A, "non-lead-binding", true, false);
+    seed_agent_binding(&database, WORKSPACE_B, "foreign-binding", true, true);
+    let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
+
+    let request_id = "conversation-agent-binding-set-request";
+    let first = read_updated_conversation(
+        set_conversation_agent_binding_request(
+            &router,
+            WORKSPACE_A,
+            "conversation-agent-binding-route",
+            1,
+            request_id,
+            serde_json::json!("eligible-binding"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(first.active_agent_binding_id.as_deref(), Some("eligible-binding"));
+    assert_eq!(first.version, 2);
+
+    let replay = read_updated_conversation(
+        set_conversation_agent_binding_request(
+            &router,
+            WORKSPACE_A,
+            "conversation-agent-binding-route",
+            1,
+            request_id,
+            serde_json::json!("eligible-binding"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(replay, first, "an exact retry returns the original commit");
+
+    let reused_key = set_conversation_agent_binding_request(
+        &router,
+        WORKSPACE_A,
+        "conversation-agent-binding-route",
+        1,
+        request_id,
+        serde_json::Value::Null,
+    )
+    .await;
+    assert_eq!(
+        reused_key.status(),
+        StatusCode::CONFLICT,
+        "one idempotency key cannot describe two choices"
+    );
+
+    let cleared = read_updated_conversation(
+        set_conversation_agent_binding_request(
+            &router,
+            WORKSPACE_A,
+            "conversation-agent-binding-route",
+            2,
+            "conversation-agent-binding-clear-request",
+            serde_json::Value::Null,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(cleared.active_agent_binding_id, None);
+    assert_eq!(cleared.version, 3);
+
+    let stale = set_conversation_agent_binding_request(
+        &router,
+        WORKSPACE_A,
+        "conversation-agent-binding-route",
+        2,
+        "conversation-agent-binding-stale-request",
+        serde_json::json!("eligible-binding"),
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+
+    for (binding, key) in [
+        ("disabled-binding", "conversation-agent-binding-disabled-request"),
+        ("non-lead-binding", "conversation-agent-binding-non-lead-request"),
+        ("foreign-binding", "conversation-agent-binding-foreign-request"),
+    ] {
+        let rejected = set_conversation_agent_binding_request(
+            &router,
+            WORKSPACE_A,
+            "conversation-agent-binding-route",
+            3,
+            key,
+            serde_json::json!(binding),
+        )
+        .await;
+        assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    let final_record = SqliteConversationStore::new(store.clone())
+        .get_conversation(OWNER, WORKSPACE_A, "conversation-agent-binding-route")
+        .expect("read Conversation")
+        .expect("Conversation remains present");
+    assert_eq!(final_record, cleared);
+    let connection = rusqlite::Connection::open(&database).expect("open committed SQLite");
+    let (event_count, final_event_type, payload): (i64, String, String) = connection
+        .query_row(
+            "SELECT COUNT(*), MAX(type), MAX(payload_json) FROM domain_events WHERE entity_type='Conversation' AND entity_id=?1 AND type='conversation.agent_binding.changed.v1'",
+            ["conversation-agent-binding-route"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read binding-change events");
+    assert_eq!(event_count, 2, "replay and rejected writes emit no event");
+    assert_eq!(final_event_type, "conversation.agent_binding.changed.v1");
+    let payload: serde_json::Value =
+        serde_json::from_str(&payload).expect("event payload is JSON");
+    assert_eq!(payload["from_agent_binding_id"], "eligible-binding");
+    assert_eq!(payload["to_agent_binding_id"], serde_json::Value::Null);
+    assert_eq!(payload["aggregate_version"], 3);
 }

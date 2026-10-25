@@ -7,6 +7,7 @@ import type { PresentationStreamState, TransientTurn } from "../presentation/pre
 import { appendConversationListPage, appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
 import { deriveConversationAgentSurface } from "./conversation-agent-surface";
+import { buildConversationAgentChoices, type ConversationAgentBindingOption, type ConversationAgentProfileOption } from "./conversation-agent-selection";
 import { firstUseConversationGuidance } from "./first-use-guidance";
 import "./conversations-page.css";
 
@@ -118,19 +119,45 @@ function timeLabel(value: string): string {
   return Number.isNaN(date.getTime()) ? "Saved conversation" : date.toLocaleString();
 }
 
-export function ConversationsPage({ workspaceId, workspaceName, operatorReady, draft, onDraftChange, onOpenAgentSettings }: {
+type ConversationAgentBindingPage = {
+  items: ConversationAgentBindingOption[];
+  nextCursor: string | null;
+};
+
+type ConversationAgentProfilePage = {
+  items: ConversationAgentProfileOption[];
+  nextCursor: string | null;
+};
+
+type ConversationAgentCatalogStatus = "LOADING" | "READY" | "FAILED" | "OFFLINE";
+type ConversationAgentMutationNotice = {
+  conversationId: string;
+  status: "SAVING" | "SAVED" | "FAILED";
+  message: string;
+};
+
+export function ConversationsPage({ workspaceId, workspaceName, operatorReady, draft, onDraftChange, onOpenAgentSettings, workspaceDefaultAgentBindingId = null }: {
   workspaceId: string;
   workspaceName: string;
   operatorReady: boolean;
   draft: string;
   onDraftChange: (value: string) => void;
   onOpenAgentSettings: () => void;
+  workspaceDefaultAgentBindingId?: string | null;
 }) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [listCursor, setListCursor] = useState<string | null>(null);
   const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedConversationId = useRef<string | null>(selectedId);
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
+  const [agentBindings, setAgentBindings] = useState<ConversationAgentBindingOption[]>([]);
+  const [agentProfiles, setAgentProfiles] = useState<ConversationAgentProfileOption[]>([]);
+  const [agentCatalogStatus, setAgentCatalogStatus] = useState<ConversationAgentCatalogStatus>("LOADING");
+  const [agentCatalogError, setAgentCatalogError] = useState<string | null>(null);
+  const [agentCatalogAttempt, setAgentCatalogAttempt] = useState(0);
+  const [agentMutationNotice, setAgentMutationNotice] = useState<ConversationAgentMutationNotice | null>(null);
+  const agentMutationLock = useRef(false);
   const [snapshot, setSnapshot] = useState<ConversationSnapshotView | null>(null);
   const [richPresentationEpochs, setRichPresentationEpochs] = useState<Map<string, number>>(() => new Map());
   const [title, setTitle] = useState("");
@@ -159,6 +186,35 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   latestDraft.current = draft;
   const pendingCreateDrafts = useRef(new Map<string, string>());
   activeWorkspace.current = workspaceId;
+  selectedConversationId.current = selectedId;
+  useEffect(() => {
+    if (!workspaceId || !operatorReady) {
+      setAgentCatalogStatus("OFFLINE");
+      return;
+    }
+    let current = true;
+    const requestWorkspaceId = workspaceId;
+    setAgentCatalogStatus("LOADING");
+    setAgentCatalogError(null);
+    void Promise.all([
+      invoke<ConversationAgentBindingPage>("list_agent_bindings", { workspaceId: requestWorkspaceId }),
+      invoke<ConversationAgentProfilePage>("list_agent_profiles", { workspaceId: requestWorkspaceId }),
+    ]).then(([bindingPage, profilePage]) => {
+      if (!current || activeWorkspace.current !== requestWorkspaceId) return;
+      if (!bindingPage || !Array.isArray(bindingPage.items)
+        || !profilePage || !Array.isArray(profilePage.items)) {
+        throw new Error("The local Runtime returned an invalid agent catalog.");
+      }
+      setAgentBindings(bindingPage.items);
+      setAgentProfiles(profilePage.items);
+      setAgentCatalogStatus("READY");
+    }).catch(cause => {
+      if (!current || activeWorkspace.current !== requestWorkspaceId) return;
+      setAgentCatalogStatus("FAILED");
+      setAgentCatalogError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => { current = false; };
+  }, [agentCatalogAttempt, operatorReady, workspaceId]);
   const selectionKey = workspaceId && selectedId ? conversationDraftScope(workspaceId, selectedId) : null;
   const composerDraftKey = selectionKey;
   const composerDraft = composerDraftKey ? conversationDrafts[composerDraftKey] ?? "" : draft;
@@ -477,6 +533,114 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   const workspacePendingCreates = pendingCreateRequests.filter(request => request.workspaceId === workspaceId);
 
   const selected = items.find(item => item.conversation_id === selectedId) ?? null;
+  const agentChoices = buildConversationAgentChoices(
+    workspaceId,
+    agentBindings,
+    agentProfiles,
+    selected?.active_agent_binding_id ?? null,
+  );
+  const workspaceDefaultChoice = workspaceDefaultAgentBindingId
+    ? agentChoices.find(choice => choice.agentBindingId === workspaceDefaultAgentBindingId && choice.selectable)
+    : undefined;
+  const workspaceDefaultOptionLabel = workspaceDefaultAgentBindingId === null
+    ? "Workspace default (not configured)"
+    : workspaceDefaultChoice
+      ? `Workspace default · ${workspaceDefaultChoice.label}`
+      : "Workspace default (binding details unavailable)";
+  const visibleAgentMutationNotice = selected && agentMutationNotice?.conversationId === selected.conversation_id
+    ? agentMutationNotice
+    : null;
+  const saveConversationAgentBinding = async (agentBindingId: string | null) => {
+    const conversationId = selected?.conversation_id;
+    if (!conversationId || !operatorReady || agentMutationLock.current) return;
+    agentMutationLock.current = true;
+    const requestWorkspaceId = workspaceId;
+    const requestConversationId = conversationId;
+    setAgentMutationNotice({
+      conversationId,
+      status: "SAVING",
+      message: "Saving this Conversation’s agent selection…",
+    });
+    const parseRecord = (value: unknown): ConversationSummary => {
+      const record = parseConversationList({ items: [value], next_cursor: null }, requestWorkspaceId)[0];
+      if (!record || record.conversation_id !== requestConversationId) {
+        throw new Error("The local Runtime returned a different Conversation.");
+      }
+      return record;
+    };
+    const applyRecord = (record: ConversationSummary) => {
+      setItems(current => current.map(item => item.conversation_id === requestConversationId ? record : item));
+    };
+    const setNoticeIfSelected = (notice: ConversationAgentMutationNotice) => {
+      if (activeWorkspace.current === requestWorkspaceId
+        && selectedConversationId.current === requestConversationId) {
+        setAgentMutationNotice(notice);
+      }
+    };
+    try {
+      const currentRecord = parseRecord(await invoke<unknown>("get_conversation", {
+        workspaceId: requestWorkspaceId,
+        conversationId: requestConversationId,
+      }));
+      if (currentRecord.active_agent_binding_id === agentBindingId) {
+        applyRecord(currentRecord);
+        setNoticeIfSelected({
+          conversationId,
+          status: "SAVED",
+          message: "This Conversation already uses that agent selection.",
+        });
+        return;
+      }
+      const savedRecord = parseRecord(await invoke<unknown>("set_conversation_agent_binding", {
+        workspaceId: requestWorkspaceId,
+        conversationId: requestConversationId,
+        expectedVersion: currentRecord.version,
+        agentBindingId,
+        requestId: crypto.randomUUID(),
+      }));
+      if (savedRecord.active_agent_binding_id !== agentBindingId
+        || savedRecord.version !== currentRecord.version + 1) {
+        throw new Error("The agent selection response did not match the requested change.");
+      }
+      applyRecord(savedRecord);
+      setNoticeIfSelected({
+        conversationId,
+        status: "SAVED",
+        message: "Saved for future turns. Any running session keeps its existing agent.",
+      });
+    } catch (cause) {
+      let latest: ConversationSummary | null = null;
+      try {
+        latest = parseRecord(await invoke<unknown>("get_conversation", {
+          workspaceId: requestWorkspaceId,
+          conversationId: requestConversationId,
+        }));
+        applyRecord(latest);
+      } catch {
+        // Preserve the last committed UI state when readback is also unavailable.
+      }
+      if (latest?.active_agent_binding_id === agentBindingId) {
+        setNoticeIfSelected({
+          conversationId,
+          status: "SAVED",
+          message: "The selection was saved; the response was confirmed by reloading this Conversation.",
+        });
+      } else {
+        const detail = cause instanceof Error && cause.message.trim()
+          ? cause.message
+          : "The change could not be confirmed.";
+        setNoticeIfSelected({
+          conversationId,
+          status: "FAILED",
+          message: latest
+            ? "A newer Conversation version was loaded. Review the current selection and try again."
+            : `Agent selection was not confirmed. ${detail}`,
+        });
+      }
+    } finally {
+      agentMutationLock.current = false;
+    }
+  };
   const currentSnapshot = snapshotLoadedKey === selectionKey && snapshot?.workspace_id === workspaceId && snapshot?.conversation_id === selectedId ? snapshot : null;
   const currentPresentationStream = presentationStreamKey === selectionKey
     && presentationStream?.workspaceId === workspaceId
@@ -588,6 +752,24 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
             </div>
               : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Conversation records and messages are durable. Sending messages is not available yet because native agent turn execution is not connected.</p></div>}
         {selected && <div className="conversation-composer">
+          <div className="conversation-agent-control">
+            <label htmlFor={`conversation-agent-${selected.conversation_id}`}>Agent for this conversation</label>
+            <select
+              id={`conversation-agent-${selected.conversation_id}`}
+              value={selected.active_agent_binding_id ?? ""}
+              disabled={!operatorReady || agentCatalogStatus === "LOADING" || agentMutationNotice?.status === "SAVING"}
+              onChange={event => void saveConversationAgentBinding(event.target.value || null)}
+            >
+              <option value="">{workspaceDefaultOptionLabel}</option>
+              {agentChoices.map(choice => <option key={choice.agentBindingId} value={choice.agentBindingId} disabled={!choice.selectable}>{choice.label}</option>)}
+            </select>
+            <small>New turns use this selection. Changing it does not switch a running session.</small>
+            {agentCatalogStatus === "LOADING" && <p role="status">Loading available agents…</p>}
+            {agentCatalogStatus === "FAILED" && <p className="conversation-agent-error" role="alert">{agentCatalogError ?? "Available agents could not be loaded."} <button type="button" className="text-button" onClick={() => setAgentCatalogAttempt(value => value + 1)}>Retry</button></p>}
+            {agentCatalogStatus === "OFFLINE" && <p role="status">Reconnect the local Runtime to change this selection.</p>}
+            {visibleAgentMutationNotice && <p className={`conversation-agent-notice ${visibleAgentMutationNotice.status.toLowerCase()}`} role={visibleAgentMutationNotice.status === "FAILED" ? "alert" : "status"} aria-live="polite">{visibleAgentMutationNotice.message}</p>}
+            {agentCatalogStatus === "READY" && agentChoices.filter(choice => choice.selectable).length === 0 && <p>No enabled, lead-eligible agent is available. <button type="button" className="text-button" onClick={onOpenAgentSettings}>Manage agents</button></p>}
+          </div>
           <textarea
             aria-label="Message draft"
             placeholder="Write a message to keep as a draft…"

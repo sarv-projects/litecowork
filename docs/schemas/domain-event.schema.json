@@ -1442,6 +1442,47 @@
         },
         "additionalProperties": false
       },
+      "conversation_agent_binding_changed": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "conversation_id",
+          "from_agent_binding_id",
+          "to_agent_binding_id",
+          "changed_by",
+          "aggregate_version"
+        ],
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conversation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from_agent_binding_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_agent_binding_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed_by": {
+            "$ref": "#/$defs/principal_or_service_ref"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "conversation_message_added": {
         "type": "object",
         "required": [
@@ -9789,6 +9830,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/conversation_created"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "conversation.agent_binding.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/conversation_agent_binding_changed"
           }
         }
       }

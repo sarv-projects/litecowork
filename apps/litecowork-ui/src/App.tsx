@@ -2188,6 +2188,7 @@ function App() {
             key={selectedWorkspaceId}
             workspaceId={selectedWorkspaceId}
             workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"}
+            workspaceDefaultAgentBindingId={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.defaultAgentBindingId ?? null}
             operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)}
             draft={conversationDrafts[selectedWorkspaceId] ?? ""}
             onDraftChange={value => setConversationDrafts(current => ({ ...current, [selectedWorkspaceId]: value }))}

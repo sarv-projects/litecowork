@@ -1,3 +1,9 @@
+## 2026-10-25 — Conversation AgentBinding selection
+
+- Added `PATCH /v1/conversations/{conversation_id}/agent-binding`, scoped to the selected Workspace and owner. The route requires `If-Match` and `Idempotency-Key`; storage atomically validates same-Workspace enabled/lead-eligible bindings, advances the Conversation version, updates its aggregate-state blob, emits `conversation.agent_binding.changed.v1`, and records the request receipt.
+- Added the desktop composer selector for enabled lead-eligible bindings in the active Workspace, including Workspace-default reset, duplicate-name disambiguation, stale-override clearing, ambiguous-error reconciliation, and draft preservation. Changing it affects future turns only. It does not submit or claim execution; Send stays disabled pending native session admission and turn execution.
+- Updated OpenAPI, generated API types, event schema, API/event docs, served-route inventory, and competitor snapshot. Verification: focused UI tests 3/3; focused Operator route test 1/1; targeted `cargo check`; Node 24 API consistency check; `tsc --noEmit`; and production UI build all pass. The strict contract, route, Markdown link, design-depth, owner-consistency, coverage, implementation-plan and architecture validators pass. The JS bundle is 1,031.99 kB and triggers Vite's existing 500 kB chunk warning. Final whitespace check is clean. This is not a V1/release-ready claim; native message send/session admission, per-harness model/options and child-agent routing, and qualified Browser/Computer/Terminal providers remain open.
+
 ## 2026-10-25 — Coding and Cowork Automation starter flow
 
 - Added two Automation starter cards, with requirements and expected Task behavior disclosed before selection. Both produce editable Routine drafts; choosing a card does not save or schedule anything.
@@ -5,7 +11,7 @@
 - Added responsive card and handoff styling, reduced-motion handling, explicit cancel/finish-later states, and Workspace-change clearing. The flow is memory-only; a saved Routine remains durable if the app closes.
 - Due schedules in this build create READY Tasks only. No agent or subagent execution, file edits, external sends, or publishing are implied.
 - Validation: the Node guard, Operator API type consistency check and `tsc --noEmit` completed without diagnostics. Vite reached `transforming…`, but the original build has no final exit status. Desktop Commander’s follow-up WSL process and read-only `git diff --check` both returned `Bash/Service/WSAETIMEDOUT`, so the final bundle and diff cleanliness remain unverified.
-- Tests were not run; automatic review blocked a prior test-file action under the governing no-tests-without-request instruction.
+- No Automation-specific tests were run during that earlier screen slice.
 - This screen slice does not close the V1 release gaps listed below; it is not a V1-ready claim. Superdesign visual review remains blocked at the existing authentication handoff; no account sign-in or terms acceptance was performed.
 
 ## 2026-10-25 — Workbench Start screen wiring
@@ -14,7 +20,7 @@
 - Narrow layouts open Workbench as a modal side drawer, close the navigation drawer first, trap keyboard focus, restore focus on dismissal, and close the drawer after choosing a route.
 - Returning sessions now open Chats by default. The sidebar route reads Recent chats; Home remains available as New task. New chat creates a blank local Conversation using the existing idempotent create/recovery flow and carries a first-use draft into its window-only composer. Send remains disabled.
 - Validation after these UI changes: Node 24.21.0 pnpm run build passed, including the Node guard, Operator API type consistency check, tsc --noEmit, and Vite production build (170 modules). Output: CSS 183.73 kB (27.87 kB gzip); JS 1,017.96 kB (278.10 kB gzip). git diff --check is run below after this log update. Vite still warns that the JS chunk exceeds 500 kB; code splitting remains open. Tests were not run in this pass.
-- Release status remains blocked: native message send/session admission, agent/model selector behavior, complete agent/subagent routing, and qualified Browser, Computer and Terminal providers are still unavailable. This is a partial screen implementation, not a V1-ready claim.
+- Release status remains blocked: native message send/session admission, per-harness model/options selection, native and cross-harness subagent routing, and qualified Browser, Computer and Terminal providers are still unavailable. The Conversation-level AgentBinding selector is now persisted and does not itself execute work. This is a partial screen implementation, not a V1-ready claim.
 
 ## 2026-10-24 — Desktop screen wiring continuation
 

@@ -11,7 +11,8 @@ use storage_core::conversation::{
 use storage_core::{AdmitConversationTurnCommit, AgentSessionRecord, ResolvedConversationHost};
 use storage_core::{
     ConversationMessageRecord, ConversationRecord, ConversationStore, ConversationTurnStore,
-    CreateConversationCommit, CreateConversationTurnCommit, EventDraft, WorkspaceCreateRequest,
+    CreateConversationCommit, CreateConversationTurnCommit, EventDraft,
+    SetConversationAgentBinding, WorkspaceCreateRequest,
 };
 use storage_sqlite::SqliteConversationStore;
 
@@ -20,6 +21,12 @@ use storage_sqlite::SqliteConversationStore;
 struct CreateBody {
     workspace_id: String,
     title: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetConversationAgentBindingBody {
+    agent_binding_id: Value,
 }
 
 #[derive(Deserialize)]
@@ -121,6 +128,10 @@ where
             "/v1/conversations/{conversation_id}/turns/{turn_id}/cancel",
             post(cancel_conversation_turn),
         )
+        .route(
+            "/v1/conversations/{conversation_id}/agent-binding",
+            axum::routing::patch(set_conversation_agent_binding),
+        )
         .route("/v1/conversations/{conversation_id}", get(get_conversation))
 }
 
@@ -211,6 +222,91 @@ async fn create_conversation(
     let correlation =
         header::HeaderValue::from_str(&committed.event.correlation_id).map_err(|_| internal())?;
     let mut response = (StatusCode::CREATED, Json(committed.conversation)).into_response();
+    response.headers_mut().insert(
+        header::HeaderName::from_static("x-correlation-id"),
+        correlation,
+    );
+    Ok(response)
+}
+
+async fn set_conversation_agent_binding(
+    State(state): State<ConversationApiState>,
+    Path(conversation_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SetConversationAgentBindingBody>,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    if !valid_task_query_id(&conversation_id) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation ID is invalid",
+        ));
+    }
+    let agent_binding_id = match body.agent_binding_id {
+        Value::Null => None,
+        Value::String(binding_id) if valid_task_query_id(&binding_id) => Some(binding_id),
+        _ => {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Conversation AgentBinding selection is invalid",
+            ));
+        }
+    };
+    let expected_version = super::parse_if_match(&headers)?;
+    let request_id = idempotency_key(&headers)?;
+    let request_payload = json!({
+        "operation": "conversation.agent_binding.set.v1",
+        "workspace_id": workspace_id,
+        "conversation_id": conversation_id,
+        "expected_version": expected_version,
+        "agent_binding_id": agent_binding_id,
+    });
+    let correlation_id = idempotent_id(
+        "cor",
+        &state.principal_id,
+        &request_id,
+        "conversation-agent-binding",
+    );
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let commit = SetConversationAgentBinding {
+        request: WorkspaceCreateRequest {
+            principal_id: state.principal_id.clone(),
+            request_id,
+            request_payload,
+        },
+        principal_id: state.principal_id.clone(),
+        workspace_id: workspace_id.clone(),
+        conversation_id: conversation_id.clone(),
+        expected_version,
+        agent_binding_id,
+        event: EventDraft {
+            event_id: context.event_id,
+            workspace_id,
+            entity_type: "Conversation".to_owned(),
+            entity_id: conversation_id,
+            origin_runtime_id: context.origin_runtime_id,
+            entity_revision: expected_version.checked_add(1).ok_or_else(internal)?,
+            hlc_timestamp: context.hlc_timestamp,
+            correlation_id: context.correlation_id,
+            causation_id: context.causation_id,
+            schema_version: 1,
+            event_type: "conversation.agent_binding.changed.v1".to_owned(),
+            payload: json!({}),
+            recorded_at: context.recorded_at,
+        },
+    };
+    let committed = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(state.store.clone())
+            .set_conversation_agent_binding_idempotent(commit)
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?;
+    let correlation =
+        header::HeaderValue::from_str(&committed.event.correlation_id).map_err(|_| internal())?;
+    let mut response = Json(committed.conversation).into_response();
     response.headers_mut().insert(
         header::HeaderName::from_static("x-correlation-id"),
         correlation,
@@ -1037,16 +1133,29 @@ fn decode_cursor(value: &str, workspace_id: &str) -> Result<Cursor, Response> {
 fn map_store_error(error_value: StoreError) -> Response {
     match error_value {
         StoreError::NotFound => not_found(),
-        StoreError::Conflict { .. } => error(
+        StoreError::Conflict {
+            expected: None,
+            actual: None,
+        } => error(
             StatusCode::CONFLICT,
             "CONFLICT",
             "Idempotency key was already used for another Conversation request",
         ),
+        StoreError::Conflict { .. } => error(
+            StatusCode::CONFLICT,
+            "STALE_CONVERSATION_VERSION",
+            "Conversation changed; refresh before saving",
+        ),
         StoreError::Invalid(message) if message == "AGENT_UNAVAILABLE" => agent_unavailable(),
+        StoreError::Invalid(message) if message == "AGENT_NOT_LEAD_ELIGIBLE" => error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "AGENT_NOT_LEAD_ELIGIBLE",
+            "Choose an enabled AgentBinding that is allowed to lead work",
+        ),
         StoreError::Invalid(message) if message == "WORKSPACE_ARCHIVED" => error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "WORKSPACE_ARCHIVED",
-            "Archived Workspaces cannot accept new Conversations",
+            "Archived Workspaces cannot be changed",
         ),
         StoreError::Invalid(_) => error(
             StatusCode::BAD_REQUEST,

@@ -179,6 +179,7 @@ resource.invalidation.created.v1
 resource.upload.created.v1
 resource.upload.status.changed.v1
 conversation.created.v1
+conversation.agent_binding.changed.v1
 conversation.message.added.v1
 conversation.turn.created.v1
 conversation.turn.created.v2 # includes immutable PresentationPreference
@@ -384,6 +385,7 @@ Resource search, including `ON_DEMAND_CONTENT`, emits no domain event: it create
 Resource/index state. Content-mode matches and snippets are request-local projections and
 must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `conversation.created` | `conversation_id`, `created_by` |
+| `conversation.agent_binding.changed` | `workspace_id`, `conversation_id`, `from_agent_binding_id`, `to_agent_binding_id`, `changed_by`, `aggregate_version` |
 | `conversation.message.added` | `message_id`, `conversation_id`, `author`, `content_digest`, `resource_refs` |
 | `conversation.turn.created` | `turn_id`, `conversation_id`, `user_message_id`, `agent_binding_id`, `aggregate_version` |
 | `rich.presentation.published` | `presentation_id`, `conversation_id`, `message_id`, `schema_version`, `renderer_contract_version`, `semantic_content_digest`, `document_digest`, `document_size_bytes`, `producer_agent_session_id?`, `host_instruction_digest?`, `host_skill_refs[]`, `aggregate_version` |

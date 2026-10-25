@@ -531,6 +531,12 @@
     },
     {
       "method": "PATCH",
+      "path": "/v1/conversations/{conversation_id}/agent-binding",
+      "openapi_path": "/conversations/{conversationId}/agent-binding",
+      "operation_id": "setConversationAgentBinding"
+    },
+    {
+      "method": "PATCH",
       "path": "/v1/resources/{resource_id}/context-document/status",
       "openapi_path": "/resources/{resourceId}/context-document/status",
       "operation_id": "setContextDocumentStatus"
@@ -1129,6 +1135,11 @@
     },
     {
       "method": "GET",
+      "path": "/workspaces/{workspaceId}/delegation-settings",
+      "operation_id": "getWorkspaceDelegationSettings"
+    },
+    {
+      "method": "GET",
       "path": "/workspaces/{workspaceId}/environments",
       "operation_id": "listWorkspaceEnvironments"
     },
@@ -1306,6 +1317,11 @@
       "method": "PUT",
       "path": "/agent-bindings/{agentBindingId}/configuration",
       "operation_id": "configureAgentBinding"
+    },
+    {
+      "method": "PUT",
+      "path": "/workspaces/{workspaceId}/delegation-settings",
+      "operation_id": "setWorkspaceDelegationSettings"
     }
   ]
 }
