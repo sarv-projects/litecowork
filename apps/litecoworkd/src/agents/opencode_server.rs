@@ -1487,4 +1487,136 @@ mod tests {
             Err(OpenCodeError::InvalidResponse)
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn conversation_context_is_carried_in_the_opencode_http_prompt_request() {
+        use serde_json::{Value, json};
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+        use storage_core::conversation::{ConversationContextMessage, ConversationContextPackage};
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("set request timeout");
+
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let (header_end, content_length) = loop {
+                if let Some(header_end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|index| index + 4)
+                {
+                    let headers = String::from_utf8(request[..header_end].to_vec())
+                        .expect("HTTP headers are UTF-8");
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .expect("request content length");
+                    if request.len() >= header_end + content_length {
+                        break (header_end, content_length);
+                    }
+                }
+                let count = stream.read(&mut buffer).expect("read request");
+                assert_ne!(count, 0, "client closed before completing request");
+                request.extend_from_slice(&buffer[..count]);
+            };
+
+            let headers =
+                String::from_utf8(request[..header_end].to_vec()).expect("HTTP headers are UTF-8");
+            let body =
+                serde_json::from_slice::<Value>(&request[header_end..header_end + content_length])
+                    .expect("JSON prompt body");
+            let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":{}}";
+            stream.write_all(response).expect("write response");
+            (headers, body)
+        });
+
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(2),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: PathBuf::from("/tmp/workspace"),
+        };
+
+        let message =
+            |message_id: &str, role: &str, text: &str, source_agent_binding_id: Option<&str>| {
+                ConversationContextMessage {
+                    message_id: message_id.to_owned(),
+                    role: role.to_owned(),
+                    turn_id: Some(format!("turn-{message_id}")),
+                    source_agent_binding_id: source_agent_binding_id.map(str::to_owned),
+                    content: json!([{"kind":"TEXT","text":text}]),
+                    resource_refs: json!([]),
+                    created_at: "2026-10-25T12:00:00Z".to_owned(),
+                }
+            };
+        let context = ConversationContextPackage {
+            conversation_id: "conversation-one".to_owned(),
+            target_agent_binding_id: "binding-b".to_owned(),
+            through_message_id: "user-current".to_owned(),
+            messages: vec![
+                message("user-first", "USER", "What is the issue?", None),
+                message(
+                    "agent-first",
+                    "AGENT",
+                    "The first agent found a race.",
+                    Some("binding-a"),
+                ),
+                message("user-current", "USER", "Now fix that race.", None),
+            ],
+        };
+
+        server
+            .send_conversation_context_async("session-b", "msg_b", &context)
+            .expect("submit Conversation context");
+        let (headers, body) = captured.join().expect("capture thread");
+        assert!(headers.starts_with("POST /api/session/session-b/prompt HTTP/1.1"));
+        assert!(headers.contains(&format!(
+            "Authorization: Basic {}",
+            BASE64.encode(b"opencode:test-password")
+        )));
+        assert_eq!(body["id"], "msg_b");
+        let prompt = body["prompt"]["text"].as_str().expect("prompt text");
+        let transcript: Value =
+            serde_json::from_str(prompt.rsplit_once('\n').expect("transcript delimiter").1)
+                .expect("serialized conversation transcript");
+        assert_eq!(transcript["conversation_id"], "conversation-one");
+        assert_eq!(transcript["through_message_id"], "user-current");
+        let messages = transcript["messages"]
+            .as_array()
+            .expect("transcript messages");
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["message_id"], "user-first");
+        assert_eq!(messages[1]["message_id"], "agent-first");
+        assert_eq!(messages[1]["source_agent_binding_id"], "binding-a");
+        assert_eq!(messages[2]["message_id"], "user-current");
+        assert!(prompt.contains("untrusted conversation context"));
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
 }

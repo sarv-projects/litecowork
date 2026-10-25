@@ -50,12 +50,14 @@ Real user workflows from BENCHMARKS.md. The production App opens on Recent chats
 The context preparation foundation is now covered by storage-core and SQLite tests:
 cross-binding history and provenance are preserved for the same Conversation. The provider
 wire projection preserves message order and prior-agent attribution, refuses unmaterialized
-Resources and over-limit text without truncation, and the Codex JSONL transport test confirms
-the projected transcript is present in a `turn/start` request. The immutable turn binding
-selects the target adapter, the snapshot stops at the current turn's user message, private
-native session IDs are omitted, and oversized history is rejected. These tests do not prove
-that a native agent receives the package; add an HTTP-capture test for OpenCode's request
-wrapper, then qualify both providers through the Conversation route and end to end.
+Resources and over-limit text without truncation. The Codex JSONL transport test confirms
+the projection appears in `turn/start`; a local fake-server HTTP capture confirms OpenCode's
+`/api/session/{id}/prompt` request carries its message ID and encoded Conversation prefix,
+including cross-agent source binding and the generated Basic-auth header. The immutable
+turn binding selects the target adapter, the snapshot stops at the current turn's user
+message, private native session IDs are omitted, and oversized history is rejected. These
+request-capture tests do not prove that a real native agent receives or executes the package;
+both providers still need qualification through the Conversation route and end to end.
 
 End-to-end acceptance remains blocked until a qualified session supervisor, dispatch path,
 agent-response writer, stream producer, and Conversation usage ingestion/read route exist.
