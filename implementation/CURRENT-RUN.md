@@ -1,3 +1,12 @@
+## 2026-10-25 - Remove Conversation inventory-only admission API
+
+- Removed the unused ConversationTurnStore::admit_conversation_turn transaction. It could create a durable STARTING session and mark the turn RUNNING from Runtime inventory without an observed native session-ready handshake.
+- No production route called the method, but leaving it in the public storage trait allowed other callers to bypass the route's fail-closed guard. The generic transition continues to reject OPEN -> RUNNING with CONVERSATION_SESSION_ADMISSION_UNAVAILABLE.
+- Updated the normative composer and Agent Control algorithms: durable STARTING reservation, native startup outside SQLite, observed readiness, host/incarnation revalidation, and atomic session activation plus turn start are separate phases. The implementation still has no Conversation supervisor/reservation/activation flow; Send remains disabled and the route stays fail-closed.
+- Verification: `cargo test --locked --offline -p storage-sqlite conversation_turn_tests:: -- --test-threads=1` passed 8/8 (97.60s); the focused `litecoworkd` Conversation submit filter passed 3/3 (66.20s). Both targets compiled with pre-existing warnings in unrelated modules. A final diff check and git review follow before commit.
+- Refreshed `docs/COMPETITIVE-RESEARCH.md` from current first-party OpenAI, Anthropic, Microsoft, and xAI product docs; updated the screen continuity rule in `docs/V1-UI-SCREEN-CONTRACT.md`. Findings distinguish Dots, Work/Codex, Claude/Cowork, Copilot Cowork and Grok Bot, and preserve the local/cloud, auth and subagent boundaries.
+- This is a safety correction, not native Send completion.
+
 ## 2026-10-25 — Conversation session admission safety boundary
 
 - Re-audited the Conversation turn submit route with an online, READY Runtime, an active Workspace EXECUTOR binding, and a live endpoint binding. The storage resolver confirms that inventory is eligible, but the Operator has no native Conversation session supervisor or adapter readiness signal.

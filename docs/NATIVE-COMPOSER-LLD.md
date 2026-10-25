@@ -16,9 +16,11 @@ FAILED, and returns 503 DEPENDENCY_UNAVAILABLE while no qualified native session
 supervisor is connected. Runtime inventory (ONLINE, incarnation READY, and Workspace
 EXECUTOR) is not a native SESSION_READY handshake. No caller may create a STARTING
 session and mark the turn RUNNING or report 202 from those inventory facts alone. The
-low-level SQLite admission transaction remains a test/storage primitive and must be split
-into reservation and post-readiness activation or otherwise gated before a production
-caller is introduced.
+unsafe low-level SQLite admission operation has been removed; the storage interface has
+no Conversation STARTING-session reservation or readiness activation operation yet. A
+future supervisor must reserve durably, invoke the native adapter outside the transaction,
+then atomically activate the exact session and move the turn to RUNNING only after its
+readiness handshake is observed and the host/incarnation is revalidated.
 
 ## Outcome and non-negotiable invariants
 

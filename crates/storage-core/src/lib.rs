@@ -93,8 +93,8 @@ pub use resource_edge::{
 };
 pub mod conversation;
 pub use conversation::{
-    AdmitConversationTurnCommit, AdmittedConversationTurn, CommittedConversation,
-    CommittedConversationTurn, ConversationMessageRecord, ConversationPage, ConversationRecord,
+    CommittedConversation, CommittedConversationTurn, ConversationMessageRecord,
+    ConversationPage, ConversationRecord,
     ConversationStore, ConversationTurnStore, CreateConversationCommit,
     CreateConversationTurnCommit, ResolvedConversationHost, SetConversationAgentBinding,
 };

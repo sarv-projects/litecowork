@@ -840,7 +840,7 @@ visibly distinguishes the two namespaces.
 ### 9.7 Conversation admission
 
 ```text
-function admit_conversation_turn(draft, surface_selection):
+function submit_conversation_turn(draft, surface_selection):
     binding = resolve_selected_binding(surface_selection.agent)
     descriptor = require_fresh_control_descriptor(binding)
 
@@ -854,17 +854,22 @@ function admit_conversation_turn(draft, surface_selection):
       native command/reference invocation valid for descriptor
       Trust/Workspace read scope
 
-    persist semantic user message + durable ConversationTurn
-    start fresh AgentSession with:
-      binding id
-      endpoint id
+    persist semantic user message + durable ConversationTurn in OPEN
+    reserve fresh AgentSession as STARTING with:
+      binding id, endpoint id, Runtime/incarnation
       descriptor digest
       normalized configuration digest
       normalized session-option digest
       input/resource refs
-    on setup drift:
-      fail with AGENT_NATIVE_CONFIG_CHANGED
-      do not lose draft
+    invoke native adapter outside the SQLite transaction
+    after the supervisor observes exact SESSION_READY:
+      revalidate host, Runtime incarnation, binding, and turn version
+      atomically set session ACTIVE and turn RUNNING
+      attach the current session id and append readiness/status events
+    on setup drift or startup failure:
+      settle the turn with a typed failure
+      preserve the user's draft and committed message
+    do not dispatch the prompt before activation commits
 ```
 
 Disabling an AgentBinding blocks new Conversation sessions and new Task planning or
