@@ -385,7 +385,11 @@ uses the immutable committed transcript as the next binding's context source. Th
 turn pins its binding in the turn-created event; the context package is a bounded transcript
 prefix through that turn's user message. Native session IDs, auth, and private agent state
 remain local to their original binding. A new provider AgentSession is an internal adapter
-boundary and does not create another Conversation.
+boundary and does not create another Conversation. The provider-neutral package must be
+translated by an explicit adapter wire projection; it is not a license to import native
+history. Current text-only Codex/OpenCode transports require a bounded JSON-escaped transcript
+input, preserve prior-agent provenance, reject unmaterialized Resources and over-limit input,
+and never silently truncate. See [Native Composer LLD](NATIVE-COMPOSER-LLD.md#provider-wire-projection).
 
 - A Conversation turn gets a fresh Conversation-scoped AgentSession. On final response,
   structured `UserRequest`, cancellation, or failure settlement, close the session and

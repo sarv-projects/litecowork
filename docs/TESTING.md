@@ -43,15 +43,19 @@ it as OpenAPI 3.1, and resolve all local references; verify LiteCowork Gateway n
 the frozen `litecowork.*` namespace; execute SQLite DDL and inspect foreign keys/indexes.
 
 ### E2E
-Real user workflows from BENCHMARKS.md.
+Real user workflows from BENCHMARKS.md. The production App opens on Recent chats / Conversations by default, and the visible sidebar label for that route is Recent chats. Rendered checks that inspect Home, Work, or another route must navigate there explicitly after mounting and wait for its route marker before asserting screen-specific controls. Mounting a fixture configures data and does not imply a Home route.
 
 ### Same-chat agent continuity and usage accounting
 
 The context preparation foundation is now covered by storage-core and SQLite tests:
-cross-binding history and provenance are preserved for the same Conversation, the immutable
-turn binding selects the target adapter, the snapshot stops at the current turn's user
-message, private native session IDs are omitted, and oversized history is rejected. These
-tests do not prove that a native agent receives the package.
+cross-binding history and provenance are preserved for the same Conversation. The provider
+wire projection preserves message order and prior-agent attribution, refuses unmaterialized
+Resources and over-limit text without truncation, and the Codex JSONL transport test confirms
+the projected transcript is present in a `turn/start` request. The immutable turn binding
+selects the target adapter, the snapshot stops at the current turn's user message, private
+native session IDs are omitted, and oversized history is rejected. These tests do not prove
+that a native agent receives the package; the OpenCode request wrapper and Conversation
+route still need transport and end-to-end qualification.
 
 End-to-end acceptance remains blocked until a qualified session supervisor, dispatch path,
 agent-response writer, stream producer, and Conversation usage ingestion/read route exist.

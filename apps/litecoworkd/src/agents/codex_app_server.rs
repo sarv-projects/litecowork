@@ -25,6 +25,8 @@ use std::{
 use serde_json::{Value, json};
 
 use super::AgentChild;
+use super::conversation_prompt::{ConversationPromptError, encode_conversation_context_prompt};
+use storage_core::conversation::ConversationContextPackage;
 
 #[derive(Clone, Copy)]
 pub(crate) struct TransportLimits {
@@ -631,6 +633,25 @@ impl CodexAppServer {
                 "input":[{"type":"text","text":input_text,"textElements":[]}]
             }),
         )
+    }
+
+    /// Start a fresh native turn with the committed LiteCowork transcript
+    /// projected into Codex's bounded text-only input. The caller must create a
+    /// new native thread for the admitted Conversation turn; this method never
+    /// imports another binding's opaque thread or history.
+    pub(crate) fn turn_start_with_conversation_context(
+        &mut self,
+        thread_handle: &str,
+        context: &ConversationContextPackage,
+    ) -> Result<RpcId, TransportError> {
+        let prompt = encode_conversation_context_prompt(context).map_err(|error| match error {
+            ConversationPromptError::InputTooLarge => TransportError::MessageTooLarge,
+            ConversationPromptError::InvalidContext
+            | ConversationPromptError::ResourceMaterializationRequired => {
+                TransportError::InvalidRequestInput
+            }
+        })?;
+        self.turn_start(thread_handle, &prompt)
     }
 
     /// Start a text-only plan turn with Codex's read-only sandbox and shell
@@ -1375,5 +1396,91 @@ mod initialize_validation_tests {
         let observed = observed.lock().unwrap_or_else(|error| error.into_inner());
         assert_eq!(observed.len(), 1);
         assert_eq!(observed[0]["method"], "initialized");
+    }
+
+    #[test]
+    fn codex_turn_request_carries_same_chat_prefix_and_prior_agent_source() {
+        use storage_core::conversation::{ConversationContextMessage, ConversationContextPackage};
+
+        let (mut server, writes) = transport_with_initialize_response(valid_initialize_response());
+        let observed = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let writer_observed = Arc::clone(&observed);
+        let writer = thread::spawn(move || {
+            while let Ok(job) = writes.recv() {
+                writer_observed
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push(serde_json::from_slice(&job.bytes).expect("decode outbound JSONL"));
+                job.ack.send(Ok(())).expect("acknowledge outbound JSONL");
+            }
+        });
+
+        let initialized = server
+            .poll_event()
+            .expect("valid initialize response")
+            .expect("initialize response event");
+        drop(initialized);
+        let context = ConversationContextPackage {
+            conversation_id: "conversation-one".to_owned(),
+            target_agent_binding_id: "binding-b".to_owned(),
+            through_message_id: "user-current".to_owned(),
+            messages: vec![
+                ConversationContextMessage {
+                    message_id: "user-first".to_owned(),
+                    role: "USER".to_owned(),
+                    turn_id: Some("turn-a".to_owned()),
+                    source_agent_binding_id: None,
+                    content: json!([{"kind":"TEXT","text":"What did you find?"}]),
+                    resource_refs: json!([]),
+                    created_at: "2026-10-25T12:00:00Z".to_owned(),
+                },
+                ConversationContextMessage {
+                    message_id: "agent-first".to_owned(),
+                    role: "AGENT".to_owned(),
+                    turn_id: Some("turn-a".to_owned()),
+                    source_agent_binding_id: Some("binding-a".to_owned()),
+                    content: json!([{"kind":"TEXT","text":"I found a race condition."}]),
+                    resource_refs: json!([]),
+                    created_at: "2026-10-25T12:01:00Z".to_owned(),
+                },
+                ConversationContextMessage {
+                    message_id: "user-current".to_owned(),
+                    role: "USER".to_owned(),
+                    turn_id: Some("turn-b".to_owned()),
+                    source_agent_binding_id: None,
+                    content: json!([{"kind":"TEXT","text":"Fix that race."}]),
+                    resource_refs: json!([]),
+                    created_at: "2026-10-25T12:02:00Z".to_owned(),
+                },
+            ],
+        };
+
+        server
+            .turn_start_with_conversation_context("thread-b", &context)
+            .expect("send the same-chat context to the selected agent");
+        drop(server);
+        writer.join().expect("outbound writer exits");
+
+        let observed = observed.lock().unwrap_or_else(|error| error.into_inner());
+        let turn = observed
+            .iter()
+            .find(|message| message["method"] == "turn/start")
+            .expect("Codex turn/start request");
+        assert_eq!(turn["params"]["threadId"], "thread-b");
+        let input = turn["params"]["input"][0]["text"]
+            .as_str()
+            .expect("text input");
+        let transcript: Value =
+            serde_json::from_str(input.split_once('\n').expect("instruction separator").1)
+                .expect("valid transcript JSON");
+        assert_eq!(transcript["conversation_id"], "conversation-one");
+        assert_eq!(transcript["through_message_id"], "user-current");
+        assert_eq!(transcript["messages"][0]["message_id"], "user-first");
+        assert_eq!(
+            transcript["messages"][1]["source_agent_binding_id"],
+            "binding-a"
+        );
+        assert_eq!(transcript["messages"][2]["content"][0], "Fix that race.");
+        assert_eq!(transcript["messages"].as_array().map(Vec::len), Some(3));
     }
 }

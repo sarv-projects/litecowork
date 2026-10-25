@@ -27,9 +27,13 @@ unit/storage tests. The load_conversation_context_for_turn operation derives its
 AgentBinding from the immutable turn-created event, reads only the same owner's same-
 Workspace Conversation messages through that turn's user message, and strips native
 session handles. No session supervisor or turn route consumes this package yet.
-Agent-response persistence and Conversation usage ingestion also remain absent, so this
-proves context preparation, not delivery to a running agent. Send stays disabled until the
-full path is connected.
+The Codex App Server and OpenCode transports now expose context-aware request helpers. Each
+projects the exact ordered package into one bounded JSON-escaped text input, keeps source
+AgentBinding provenance, and refuses unmaterialized Resource blocks or over-limit input
+without truncation. These helpers are not called by the route; the transports remain staged,
+and no native readiness, Conversation response persistence/stream, or usage ingestion is
+connected. This proves context preparation and wire serialization, not delivery to a running
+agent. Send stays disabled until the full path is connected.
 
 For an exact idempotent submit replay, the route checks the authenticated principal's
 payload-digest receipt before consulting the current AgentBinding selection. It reuses the
@@ -165,6 +169,12 @@ The user-visible Conversation is the continuity boundary: changing its selected 
 At admission, the immutable turn-created event pins the selected AgentBinding. The supervisor loads a ConversationContextPackage through the current user message and supplies that canonical prefix to the selected agent's own adapter. The package includes committed USER, AGENT, and CHANNEL messages with source-binding provenance; it excludes product SYSTEM_NOTICE messages and all provider-private session handles. ResourceRefs are references only and must be reauthorized/materialized through the normal same-Workspace path. Native auth, cookies, session IDs, tool state, and hidden provider history never cross bindings.
 
 The context package is capped at 1,024 messages and 4 MiB. Exceeding either bound returns CONVERSATION_CONTEXT_LIMIT_EXCEEDED; the system must not silently truncate history. If the selected native model has a smaller context window, show a reviewable compaction/context selection that preserves the complete saved transcript and identifies any summary/range used. Count any additional agent call for compaction in the same Conversation usage ledger. A provider may start a new opaque AgentSession internally; this does not create a new user-visible chat.
+
+### Provider wire projection
+
+`ConversationContextPackage` is provider-neutral state, not a provider wire payload. Each adapter must implement a deterministic role/content projection and validate the exact `through_message_id` before dispatch. Preserve the ordered USER, CHANNEL, and prior AGENT messages; label prior agent provenance; treat all transcript text and prior agent answers as untrusted conversation data; never promote it to system/developer policy. Provider-private session/history identifiers, credentials, cookies, and native tool state are never copied across bindings.
+
+The current Codex App Server `turn/start` and OpenCode Server prompt transports accept one text prompt and each enforce a 256 KiB input bound. Their initial cross-agent projection is therefore one JSON-escaped transcript envelope in a single user input. Do not silently omit RESOURCE blocks or references: reauthorize and materialize them through the normal Workspace path first, or fail the turn with a visible resource-preparation error. If the serialized envelope exceeds the adapter/transport limit, refuse dispatch without truncation; a reviewable compaction path must retain the full saved transcript and account any extra inference in the same Conversation usage ledger. A provider's pre-existing native session history is never treated as the cross-agent transcript.
 
 ## Slash, @, and editor semantics
 

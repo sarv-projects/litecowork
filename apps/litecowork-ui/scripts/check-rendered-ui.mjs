@@ -896,6 +896,8 @@ async function runConversationChecks() {
   await clickHarness("configureConversationList", "empty");
   await clickHarness("mountProductionApp", "first-use-conversation");
   await waitFor(() => evaluate("Boolean(document.querySelector('.workspace-switcher'))"), "production App shell for first-use Conversation");
+  await evaluate("document.querySelector('.brand')?.click()");
+  await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'New task'"), "production Home route after explicit navigation");
   await waitFor(() => evaluate("Boolean(document.querySelector('#task-draft'))"), "production Home Task composer");
   await evaluate("document.querySelector('#task-draft').focus()");
   await pressKey("Tab");
@@ -915,14 +917,14 @@ async function runConversationChecks() {
   assert.notEqual(homeComposerFocus.outlineStyle, "none", "the Home Task composer shows a visible keyboard focus indicator");
   assert.equal(homeComposerFocus.outlineWidth, "2px", "the Home Task composer uses the semantic 2px focus ring");
   checks.push("Home Task composer retains a visible semantic focus ring when reached by keyboard");
-  await clickButtonContaining(["conversations"]);
+  await clickButtonContaining(["recent chats"]);
   await waitFor(() => evaluate("document.querySelector('.conversation-first-use') !== null"), "production App first-use Conversation");
   await typeInputValue("#conversation-first-use-draft", "Explain the project plan in plain language");
   assert.equal(await evaluate("document.querySelector('.conversation-first-use button') === null"), true, "the ready empty state cannot route a user into irrelevant setup");
   await clickButtonContaining(["settings"]);
   await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'Settings'"), "normal navigation opens Settings");
   assert.equal(await evaluate("document.querySelector('#conversation-first-use-draft') === null"), true, "the composer unmounts while Settings is open");
-  await clickButtonContaining(["conversations"]);
+  await clickButtonContaining(["recent chats"]);
   await waitFor(() => evaluate("document.querySelector('#conversation-first-use-draft')?.value === 'Explain the project plan in plain language'"), "draft restored after Settings navigation");
   const firstUseAppCalls = await currentCalls();
   assert.equal(firstUseAppCalls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "opening and returning from setup performs no Conversation mutation");

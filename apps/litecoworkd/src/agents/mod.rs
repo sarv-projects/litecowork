@@ -10,6 +10,7 @@ mod codex;
 mod codex_app_server;
 mod codex_profile_probe;
 pub(crate) mod control_descriptor;
+mod conversation_prompt;
 pub(crate) mod module_registry;
 mod native_cli;
 mod opencode;
@@ -989,7 +990,8 @@ mod tests {
     }
 
     #[test]
-    fn version_probe_uses_a_non_workspace_working_directory() {        let temporary = TemporaryDirectory::new();
+    fn version_probe_uses_a_non_workspace_working_directory() {
+        let temporary = TemporaryDirectory::new();
         let binary = temporary.0.join("cwd-sensitive-version");
         let expected_cwd = version_probe_working_directory();
         let expected_cwd = expected_cwd.to_string_lossy().replace('\'', "'\\''");

@@ -26,6 +26,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde_json::{Value, json};
 
 use super::AgentChild;
+use super::conversation_prompt::{ConversationPromptError, encode_conversation_context_prompt};
+use storage_core::conversation::ConversationContextPackage;
 
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HEALTH_RESPONSE_BYTES: usize = 64 * 1024;
@@ -563,6 +565,25 @@ impl OpenCodeServer {
         } else {
             Err(OpenCodeError::InvalidResponse)
         }
+    }
+
+    /// Send the committed LiteCowork transcript through OpenCode's bounded
+    /// text-only prompt API. The caller must supply a fresh session created for
+    /// this admitted Conversation turn; native session history is not continuity.
+    pub(crate) fn send_conversation_context_async(
+        &mut self,
+        session_id: &str,
+        native_message_id: &str,
+        context: &ConversationContextPackage,
+    ) -> Result<(), OpenCodeError> {
+        let prompt = encode_conversation_context_prompt(context).map_err(|error| match error {
+            ConversationPromptError::InputTooLarge => OpenCodeError::RequestTooLarge,
+            ConversationPromptError::InvalidContext
+            | ConversationPromptError::ResourceMaterializationRequired => {
+                OpenCodeError::InvalidConfiguration
+            }
+        })?;
+        self.send_message_async(session_id, native_message_id, &prompt, None)
     }
 
     /// Requests cancellation of one native OpenCode session. `true` is only
