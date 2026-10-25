@@ -156,15 +156,19 @@ pub trait ConversationTurnStore: Send + Sync {
         turn_id: &str,
     ) -> Result<ConversationContextPackage, StoreError>;
 
-    /// Resolves the binding this Conversation selected plus the endpoint and Runtime
-    /// incarnation currently eligible to host its session.
+    /// Resolves the binding pinned to this committed turn from its unique immutable
+    /// `conversation.turn.created.v2` event, plus the endpoint and Runtime incarnation
+    /// currently eligible to host it.
     ///
-    /// Returns `Ok(None)` when no eligible host exists, which the caller must report as
-    /// `AGENT_UNAVAILABLE` rather than as an empty selection.
-    fn resolve_conversation_session_host(
+    /// A Conversation selector change applies only to later turns. Resolution is
+    /// observational and never falls back to the current selector or Workspace default.
+    /// Returns `Ok(None)` when the pinned host is no longer eligible.
+    fn resolve_conversation_session_host_for_turn(
         &self,
+        principal_id: &str,
         workspace_id: &str,
         conversation_id: &str,
+        turn_id: &str,
     ) -> Result<Option<ResolvedConversationHost>, StoreError>;
 
     /// Only lifecycle changes with a canonical event in EVENTS.md are accepted here.

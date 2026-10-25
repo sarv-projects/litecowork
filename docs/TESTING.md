@@ -59,6 +59,14 @@ message, private native session IDs are omitted, and oversized history is reject
 request-capture tests do not prove that a real native agent receives or executes the package;
 both providers still need qualification through the Conversation route and end to end.
 
+The SQLite turn-host resolver test commits a turn pinned to A, changes the live selector to B,
+and proves that A remains the only target. It also checks owner/Conversation scoping,
+expired endpoint and offline Runtime rejection, disabled-host no-fallback, and integrity
+failure for malformed or missing turn-creation authority. A litecoworkd route test resolves
+the committed turn against an eligible host, then verifies submission still fails closed
+because no native session supervisor is qualified. These checks do not prove native startup
+or route delivery.
+
 End-to-end acceptance remains blocked until a qualified session supervisor, dispatch path,
 agent-response writer, stream producer, and Conversation usage ingestion/read route exist.
 When connected, qualify this flow with two different native adapters:

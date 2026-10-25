@@ -815,15 +815,7 @@ async fn conversation_turn_submit_stays_fail_closed_when_runtime_is_ready_withou
     bind_conversation_agent(&database, WORKSPACE_A, conversation_id, binding_id);
     seed_ready_runtime_for_conversation(&database, WORKSPACE_A, binding_id);
 
-    let resolved_host = SqliteConversationStore::new(store.clone())
-        .resolve_conversation_session_host(WORKSPACE_A, conversation_id)
-        .expect("Runtime inventory resolution succeeds");
-    assert!(
-        resolved_host.is_some(),
-        "the fixture must satisfy the database inventory checks"
-    );
-
-    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
     let response = submit_turn_body(
         &router,
         WORKSPACE_A,
@@ -839,6 +831,30 @@ async fn conversation_turn_submit_stays_fail_closed_when_runtime_is_ready_withou
         .as_str()
         .unwrap_or_default()
         .contains("not sent"));
+
+    let connection = rusqlite::Connection::open(&database)
+        .expect("read committed turn identity");
+    let turn_id: String = connection
+        .query_row(
+            "SELECT turn_id FROM conversation_turns WHERE conversation_id=?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .expect("the unavailable turn remains committed");
+    drop(connection);
+    let resolved_host = SqliteConversationStore::new(store.clone())
+        .resolve_conversation_session_host_for_turn(
+            OWNER,
+            WORKSPACE_A,
+            conversation_id,
+            &turn_id,
+        )
+        .expect("turn-scoped Runtime inventory resolution succeeds");
+    assert_eq!(
+        resolved_host.map(|host| host.agent_binding_id),
+        Some(binding_id.to_owned()),
+        "the committed turn resolves only the binding recorded when it was created"
+    );
 
     let connection = rusqlite::Connection::open(&database)
         .expect("inspect storage after unqualified Runtime submit");

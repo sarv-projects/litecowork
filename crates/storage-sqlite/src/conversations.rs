@@ -838,92 +838,137 @@ impl ConversationTurnStore for SqliteConversationStore {
         })
     }
 
-    fn resolve_conversation_session_host(
+    fn resolve_conversation_session_host_for_turn(
         &self,
+        principal_id: &str,
         workspace_id: &str,
         conversation_id: &str,
+        turn_id: &str,
     ) -> Result<Option<ResolvedConversationHost>, StoreError> {
+        if principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || conversation_id.trim().is_empty()
+            || turn_id.trim().is_empty()
+        {
+            return Err(StoreError::Invalid(
+                "Conversation host resolution identity is invalid".to_owned(),
+            ));
+        }
+        let principal = principal_id.to_owned();
         let workspace = workspace_id.to_owned();
         let conversation = conversation_id.to_owned();
+        let turn = turn_id.to_owned();
         self.run(move |connection| {
-            let tx = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Deferred)
                 .map_err(map_database_error)?;
-            // Both selections come from nullable columns. A Conversation with no
-            // override stores SQL NULL, which `.optional()` does not cover: it only
-            // handles the absent-row case. The value is read as Option<String> and the
-            // absent-row wrapper is flattened, so NULL is a legitimate None.
-            let conversation_binding: Option<Option<String>> = tx
+            let allowed: bool = transaction
                 .query_row(
-                    "SELECT active_agent_binding_id FROM conversations WHERE workspace_id=?1 AND conversation_id=?2",
-                    params![workspace, conversation],
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2 AND status='ACTIVE')",
+                    params![workspace, principal],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            if !allowed {
+                return Err(StoreError::NotFound);
+            }
+
+            let user_message_id: String = transaction
+                .query_row(
+                    "SELECT t.user_message_id
+                       FROM conversation_turns t
+                       JOIN conversations c ON c.conversation_id=t.conversation_id
+                      WHERE c.workspace_id=?1 AND t.conversation_id=?2 AND t.turn_id=?3",
+                    params![workspace, conversation, turn],
                     |row| row.get(0),
                 )
                 .optional()
-                .map_err(map_database_error)?;
-            let conversation_binding = conversation_binding.flatten();
-            let workspace_default: Option<Option<String>> = tx
+                .map_err(map_database_error)?
+                .ok_or(StoreError::NotFound)?;
+
+            let (event_count, event_payload): (i64, Option<String>) = transaction
                 .query_row(
-                    "SELECT default_agent_binding_id FROM workspaces WHERE workspace_id=?1 AND status='ACTIVE'",
-                    params![workspace],
-                    |row| row.get(0),
+                    "SELECT COUNT(*),MIN(payload_json)
+                       FROM domain_events
+                      WHERE workspace_id=?1 AND entity_type='ConversationTurn'
+                        AND entity_id=?2 AND type='conversation.turn.created.v2'",
+                    params![workspace, turn],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
-                .optional()
                 .map_err(map_database_error)?;
-            let workspace_default = workspace_default.flatten();
-            let Some(binding) = conversation_binding.or(workspace_default) else {
-                return Ok(None);
-            };
-            // Same eligibility join the admission transaction re-checks, so a host
-            // reported here is one the admission will accept at this instant. The clock
-            // is formatted at second precision, matching how the stored instants are
-            // written, so the expiry comparison stays a correct string comparison.
-            let now_format = time::format_description::parse(
+            if event_count != 1 {
+                return Err(StoreError::Integrity(
+                    "Conversation turn creation event is missing or ambiguous".to_owned(),
+                ));
+            }
+            let event_payload = event_payload.ok_or_else(|| {
+                StoreError::Integrity("Conversation turn creation event is missing".to_owned())
+            })?;
+            let event: Value = serde_json::from_str(&event_payload).map_err(|_| {
+                StoreError::Integrity("Conversation turn creation event is invalid".to_owned())
+            })?;
+            if event.get("turn_id").and_then(Value::as_str) != Some(turn.as_str())
+                || event.get("conversation_id").and_then(Value::as_str)
+                    != Some(conversation.as_str())
+                || event.get("user_message_id").and_then(Value::as_str)
+                    != Some(user_message_id.as_str())
+            {
+                return Err(StoreError::Integrity(
+                    "Conversation turn creation event identity does not match its record"
+                        .to_owned(),
+                ));
+            }
+            let binding = event
+                .get("agent_binding_id")
+                .and_then(Value::as_str)
+                .filter(|binding| !binding.trim().is_empty())
+                .ok_or_else(|| {
+                    StoreError::Integrity(
+                        "Conversation turn creation event has no AgentBinding".to_owned(),
+                    )
+                })?
+                .to_owned();
+
+            let now_format = time::format_description::parse_borrowed::<1>(
                 "[year]-[month]-[day]T[hour]:[minute]:[second]Z",
             )
             .map_err(|_| StoreError::Invalid("timestamp format unavailable".to_owned()))?;
             let now = time::OffsetDateTime::now_utc()
                 .format(&now_format)
                 .map_err(|_| StoreError::Invalid("clock unavailable".to_owned()))?;
-            let resolved: Option<(String, String, String)> = tx
+            let resolved: Option<(String, String, String, String)> = transaction
                 .query_row(
-                    "SELECT b.agent_binding_id, e.endpoint_id, eb.runtime_id
+                    "SELECT b.agent_binding_id,e.endpoint_id,eb.runtime_id,eb.runtime_incarnation_id
                        FROM agent_bindings b
-                       JOIN agent_endpoints e ON e.agent_profile_id = b.agent_profile_id
-                       JOIN agent_endpoint_bindings eb ON eb.endpoint_id = e.endpoint_id
-                       JOIN runtimes r ON r.runtime_id = eb.runtime_id
+                       JOIN agent_endpoints e ON e.agent_profile_id=b.agent_profile_id
+                       JOIN agent_endpoint_bindings eb ON eb.endpoint_id=e.endpoint_id
+                       JOIN runtimes r ON r.runtime_id=eb.runtime_id
                        JOIN runtime_workspace_bindings rwb
-                         ON rwb.runtime_id = r.runtime_id AND rwb.workspace_id = ?1
-                        AND rwb.status = 'ACTIVE' AND rwb.revoked_at IS NULL
+                         ON rwb.runtime_id=r.runtime_id AND rwb.workspace_id=?1
+                        AND rwb.status='ACTIVE' AND rwb.revoked_at IS NULL
                        JOIN runtime_incarnations ri
-                         ON ri.runtime_id = r.runtime_id
-                        AND ri.runtime_incarnation_id = eb.runtime_incarnation_id
-                       WHERE b.workspace_id = ?1 AND b.agent_binding_id = ?2
-                         AND b.enabled = 1 AND b.lead_eligible = 1
-                         AND (json_extract(b.endpoint_selection_policy_json, '$.mode') <> 'PINNED_ENDPOINT'
-                              OR json_extract(b.endpoint_selection_policy_json, '$.endpoint_id') = e.endpoint_id)
-                         AND (eb.expires_at IS NULL OR eb.expires_at > ?3)
-                         AND EXISTS(SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value = 'EXECUTOR')
-                         AND r.availability = 'ONLINE'
-                         AND r.current_incarnation_id = eb.runtime_incarnation_id
-                         AND ri.recovery_state = 'READY'
-                       ORDER BY eb.observed_at DESC
-                       LIMIT 1",
+                         ON ri.runtime_id=r.runtime_id
+                        AND ri.runtime_incarnation_id=eb.runtime_incarnation_id
+                      WHERE b.workspace_id=?1 AND b.agent_binding_id=?2
+                        AND b.enabled=1 AND b.lead_eligible=1
+                        AND (json_extract(b.endpoint_selection_policy_json,'$.mode') <> 'PINNED_ENDPOINT'
+                             OR json_extract(b.endpoint_selection_policy_json,'$.endpoint_id')=e.endpoint_id)
+                        AND (eb.expires_at IS NULL OR eb.expires_at>?3)
+                        AND EXISTS(SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value='EXECUTOR')
+                        AND r.availability='ONLINE'
+                        AND r.current_incarnation_id=eb.runtime_incarnation_id
+                        AND ri.recovery_state='READY'
+                      ORDER BY eb.observed_at DESC
+                      LIMIT 1",
                     params![workspace, binding, now],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .optional()
                 .map_err(map_database_error)?;
-            let Some((agent_binding_id, endpoint_id, runtime_id)) = resolved else {
+            let Some((agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id)) = resolved
+            else {
                 return Ok(None);
             };
-            let runtime_incarnation_id: String = tx
-                .query_row(
-                    "SELECT current_incarnation_id FROM runtimes WHERE runtime_id=?1",
-                    params![runtime_id],
-                    |row| row.get(0),
-                )
-                .map_err(map_database_error)?;
             Ok(Some(ResolvedConversationHost {
                 agent_binding_id,
                 endpoint_id,

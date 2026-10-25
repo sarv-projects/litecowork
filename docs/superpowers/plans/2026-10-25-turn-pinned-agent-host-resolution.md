@@ -40,25 +40,27 @@
 **Interfaces:**
 - Produces: the turn-scoped resolver contract used by the storage and supervisor layers.
 
-- [ ] Clarify that session host resolution receives principal, Workspace, Conversation, and turn identity and derives the binding from the unique conversation.turn.created.v2 event.
-- [ ] State that selection changes after turn creation cannot reroute that turn and that disabled/stale pinned hosts fail closed without fallback.
-- [ ] Keep route-level native startup, readiness, dispatch, response streaming, and usage ingestion explicitly outstanding.
-- [ ] Run python3 scripts/validate_implementation_coverage.py --write and python3 scripts/validate_implementation_plan.py.
+- [x] Clarify that session host resolution receives principal, Workspace, Conversation, and turn identity and derives the binding from the unique conversation.turn.created.v2 event.
+- [x] State that selection changes after turn creation cannot reroute that turn and that disabled/stale pinned hosts fail closed without fallback.
+- [x] Keep route-level native startup, readiness, dispatch, response streaming, and usage ingestion explicitly outstanding.
+- [x] Run python3 scripts/validate_implementation_coverage.py --write and python3 scripts/validate_implementation_plan.py.
 
 ### Task 2: Add failing storage tests
 
 **Files:**
 - Modify: crates/storage-sqlite/src/agent_binding_tests.rs
+- Modify: apps/litecoworkd/src/conversation_operator_tests.rs to migrate the existing route test from unscoped to committed-turn host resolution.
 - Modify: crates/storage-core/src/conversation.rs only if test compilation requires the new typed contract.
 
 **Interfaces:**
 - Consumes: the current enabled binding and eligible Runtime fixture from setup().
 - Produces: SqliteWorkspaceStore::resolve_conversation_session_host_for_turn(principal_id, workspace_id, conversation_id, turn_id) -> Result<Option<ResolvedConversationHost>, StoreError>.
 
-- [ ] Add conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes. Create a turn pinned to BINDING_ID, move the Conversation selector to another enabled binding, and assert that the returned host still names BINDING_ID, ENDPOINT_ID, RUNTIME_ID, and INCARNATION_ID.
-- [ ] Add a mismatched turn/Conversation or non-owner assertion and require NotFound.
-- [ ] Add an ineligible pinned-binding case and require None, with no fallback to the newly selected binding.
-- [ ] Run cargo test --locked -p storage-sqlite conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes; expected: compile/test failure before implementation.
+- [x] Add conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes. Create a turn pinned to BINDING_ID, move the Conversation selector to another enabled binding, and assert that the returned host still names BINDING_ID, ENDPOINT_ID, RUNTIME_ID, and INCARNATION_ID.
+- [x] Add a mismatched turn/Conversation or non-owner assertion and require NotFound.
+- [x] Add disabled-binding, expired-endpoint, and offline-Runtime cases; each requires None with no fallback to the newly selected binding.
+- [x] Corrupt and remove the turn-created event in the fixture; require Integrity for malformed identity and missing authority.
+- [x] Run cargo test --locked -p storage-sqlite conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes; expected: compile/test failure before implementation.
 
 ### Task 3: Implement exact turn-scoped host resolution
 
@@ -70,23 +72,24 @@
 - Implement: resolve_conversation_session_host_for_turn(&self, principal_id: &str, workspace_id: &str, conversation_id: &str, turn_id: &str) -> Result<Option<ResolvedConversationHost>, StoreError>.
 - Preserve: ResolvedConversationHost fields agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id.
 
-- [ ] Read the active Workspace owner, turn-to-Conversation relation, and unique turn-created event in one deferred read transaction.
-- [ ] Validate the event payload identity and non-empty pinned AgentBinding ID; reject missing or ambiguous authority as Integrity.
-- [ ] Resolve only that exact same-Workspace binding against enabled/lead-eligible status, endpoint policy, fresh endpoint binding, active EXECUTOR Workspace enrollment, online Runtime, and exact READY current incarnation.
-- [ ] Return None for an ineligible pinned host. Do not read Conversation.active_agent_binding_id or Workspace.default_agent_binding_id as a substitute.
-- [ ] Include the incarnation from the exact eligible endpoint binding row rather than doing a second current-incarnation lookup.
-- [ ] Run the storage host-resolution tests to verify the implementation.
+- [x] Read the active Workspace owner, turn-to-Conversation relation, and unique turn-created event in one deferred read transaction.
+- [x] Validate the event payload identity and non-empty pinned AgentBinding ID; reject missing or ambiguous authority as Integrity.
+- [x] Resolve only that exact same-Workspace binding against enabled/lead-eligible status, endpoint policy, fresh endpoint binding, active EXECUTOR Workspace enrollment, online Runtime, and exact READY current incarnation.
+- [x] Return None for an ineligible pinned host. Do not read Conversation.active_agent_binding_id or Workspace.default_agent_binding_id as a substitute.
+- [x] Include the incarnation from the exact eligible endpoint binding row rather than doing a second current-incarnation lookup.
+- [x] Run the storage host-resolution tests to verify the implementation.
 
 ### Task 4: Revalidate contracts and checkpoint
 
 **Files:**
-- Include only the plan, normative docs, storage trait/implementation, focused tests, and generated coverage inventory.
+- Include only the plan, normative docs, storage trait/implementation, focused storage/route tests, and generated coverage inventory.
 
-- [ ] Run rustfmt check on changed Rust files and git diff --check.
-- [ ] Run the focused storage-sqlite host-resolution tests.
-- [ ] Run python3 scripts/validate_implementation_coverage.py --write, python3 scripts/validate_implementation_plan.py, and python3 scripts/audit_v1_contracts.py.
-- [ ] Review the final diff; leave all unrelated existing working-tree changes unstaged.
-- [ ] Commit and push the verified slice.
+- [x] Run rustfmt --check on the added storage test and git diff --check; inspect edited hunks in pre-existing Rust files whose whole-file formatting differs from the repository baseline.
+- [x] Run the focused host-resolution test and full storage-sqlite package suite.
+- [x] Run the migrated litecoworkd fail-closed route test and all storage-core tests.
+- [x] Run python3 scripts/validate_implementation_coverage.py --write, python3 scripts/validate_implementation_plan.py, and python3 scripts/audit_v1_contracts.py.
+- [x] Review the final diff; leave all unrelated existing working-tree changes unstaged.
+- [x] Commit and push the verified slice.
 
 ---
 
