@@ -747,6 +747,7 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "docs/DESKTOP-SHELL-LLD.md": "E02-S01",
             "docs/LEARNING.md": "E08-S03",
             "docs/INTERACTIVE-ARTIFACT-RUNTIME.md": "E08-S09",
+            "docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md": "E08-S08",
             "docs/PRODUCT-CONTRACT-INDEX.md": "E01-S01",
             "docs/NATIVE-COMPOSER-LLD.md": "E03-S02",
             "docs/REFERENCE-IMPLEMENTATIONS.md": "E13-S03",

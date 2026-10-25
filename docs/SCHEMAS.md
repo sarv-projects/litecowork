@@ -858,6 +858,44 @@ MessageContentBlock =
 Content blocks are ordered and immutable after message creation. Binary content is
 always carried by a ResourceRef; the message body never embeds arbitrary binary data.
 
+The supervisor prepares the context for each admitted turn from the committed transcript
+of that same user-visible Conversation:
+
+~~~text
+ConversationContextPackage = {
+  conversation_id: ConversationId,
+  target_agent_binding_id: AgentBindingId,
+  through_message_id: MessageId,
+  messages: ConversationContextMessage[]
+}
+ConversationContextMessage = {
+  message_id: MessageId,
+  role: USER | AGENT | CHANNEL,
+  turn_id: ConversationTurnId?,
+  source_agent_binding_id: AgentBindingId?, # present for AGENT provenance
+  content: MessageContentBlock[],
+  resource_refs: ResourceRef[],
+  created_at: Timestamp
+}
+~~~
+
+This is an internal adapter input, not a public API or provider-session migration. It
+contains the same Conversation ID and only committed messages up to and including the
+current turn's user message, ordered by the Conversation aggregate revision on each
+conversation.message.added event. The event revision, not a wall-clock timestamp or opaque
+message ID, defines the turn boundary. It includes earlier agents' committed answers with
+their original binding provenance. SYSTEM_NOTICE messages,
+uncommitted drafts, native session handles, provider cookies, credentials, and private
+provider history are excluded. ResourceRefs are reauthorized and materialized for the
+target binding at dispatch; carrying a reference does not grant access. The immutable turn
+creation event supplies the target AgentBinding, so changing the selector cannot reroute an
+already admitted turn.
+
+The v1 package limit is 1,024 messages and 4 MiB of projected JSON. Exceeding either limit
+returns CONVERSATION_CONTEXT_LIMIT_EXCEEDED; the package is never silently truncated. A
+smaller model window requires a user-reviewable context/compaction decision that leaves the
+saved transcript intact and attributes any compaction call and cost to this Conversation.
+
 ```text
 HostSkillRef = {
   host_skill_id: HostSkillId,

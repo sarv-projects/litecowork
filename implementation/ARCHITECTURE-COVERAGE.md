@@ -7,12 +7,12 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 110 source Markdown documents; 1870 heading-level sections are digest-pinned.
-- 108 implementation-plan documents and 1146 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 111 source Markdown documents; 1892 heading-level sections are digest-pinned.
+- 108 implementation-plan documents and 1157 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
 - 68 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
 - 144 flows and 91 benchmarks.
-- 228 OpenAPI operations and 402 component schemas; 0 components are unreachable from every Operator operation.
-- 131 error codes; 269 shared IDs/value definitions.
+- 229 OpenAPI operations and 405 component schemas; 0 components are unreachable from every Operator operation.
+- 131 error codes; 271 shared IDs/value definitions.
 - 148 event types and 147 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
 
@@ -65,6 +65,7 @@ USER tests provide that evidence when executed.
 | [`docs/FLOWS.md`](../docs/FLOWS.md) | E13-S03 | Architecture contract |
 | [`docs/HOST-GUIDANCE.md`](../docs/HOST-GUIDANCE.md) | E08-S08 | Architecture contract |
 | [`docs/IMPLEMENTATION.md`](../docs/IMPLEMENTATION.md) | E01-S01 | Architecture contract |
+| [`docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md`](../docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md) | E08-S08 | Architecture contract |
 | [`docs/INTERACTIVE-ARTIFACT-RUNTIME.md`](../docs/INTERACTIVE-ARTIFACT-RUNTIME.md) | E08-S09 | Architecture contract |
 | [`docs/LEARNING.md`](../docs/LEARNING.md) | E08-S03 | Architecture contract |
 | [`docs/LITESPM-LITECOWORK-INTEROP-LLD.md`](../docs/LITESPM-LITECOWORK-INTEROP-LLD.md) | E10-S01 | Architecture contract |

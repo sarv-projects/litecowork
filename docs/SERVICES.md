@@ -124,6 +124,8 @@ retry_turn(turn_id, expected_version, request_id) -> ConversationTurnReceipt
 cancel_turn(turn_id, expected_version, request_id) -> ConversationTurnReceipt
 get_conversation(ConversationId) -> ConversationView
 list_messages(ConversationId, Cursor?, Limit) -> Page<ConversationMessage>
+load_context_for_turn(ConversationTurnId) -> ConversationContextPackage
+get_conversation_usage(ConversationId) -> ConversationUsageSummary
 map_channel_thread(MapChannelThreadRequest) -> ConversationId
 create_user_request(CreateUserRequest) -> UserRequest
 resolve_user_request(ResolveUserRequest) -> UserRequestResponse
@@ -152,7 +154,14 @@ immutable RichPresentation aggregate, snapshot, event, and blob reference. Failu
 not alter the ConversationMessage or turn outcome.
 `cancel_turn(turn_id, expected_version, request_id)` requests adapter interruption and
 settles only after stop is observed; a completion/failure that wins the stop race remains
-the recorded outcome.
+the recorded outcome. For each admitted turn, ConversationService obtains the immutable
+turn-selected binding and the bounded context prefix, then passes both to the supervisor
+for adapter-specific startup/dispatch. Switching bindings keeps one Conversation while
+each adapter receives prior committed messages with their original provenance; native
+session identifiers and auth state never cross. Usage ingestion associates every
+observable leaf inference with this same Conversation and the originating turn/binding.
+The storage context reader is implemented, but this service call, supervisor handoff,
+response writer, usage writer, and usage query are not connected in the current build.
 
 **Coworker-owned Conversation target admission (not yet served):** ConversationService/CoworkerConversationService must validate immutable same-Workspace owner_coworker_id, use explicit Conversation override -> current Coworker default -> Workspace default, and reject an invalid first configured binding instead of falling through. ContextService may attach only eligible, current Coworker instructions and authorized Memory/ContextDocument receipts; native memory is not imported. TaskService must derive Coworker origin from the owned Conversation on chat->Task materialization and reject a conflicting caller-supplied coworker_id, except a separate explicitly reviewed cross-Coworker handoff. This requires matching Operator API and storage/schema promotion before shipping.
 

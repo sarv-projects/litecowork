@@ -340,6 +340,13 @@ to FAILED with a retryable reason after bounded reconciliation. A user response 
 same ConversationTurn with a new AgentSession only after its dependency is ready; an explicit
 retry likewise uses a new session. Durable Conversation messages and structured
 UserRequest/response records supply context, so a waiting turn does not pin an agent process.
+Changing the selected AgentBinding while the Conversation is idle changes only future turn
+admission and does not reset its Conversation ID or message history. Each new turn pins its
+binding in conversation.turn.created.v2; its ConversationContextPackage is a stable prefix
+through the submitted user message. Earlier completed agent messages remain in that prefix
+with their original binding attribution. No old native session handle is replayed. A turn
+that is already RUNNING remains pinned until it settles; a later turn uses the new selection.
+The context builder rejects over-limit history instead of silently dropping it.
 For Task planning, the same close-on-settlement rule applies to a PlanningAssignment. An
 Attempt may use sequential execution sessions only while its immutable execution identity,
 Runtime incarnation, valid lease, and reconciled Invocation/checkpoint state remain valid.

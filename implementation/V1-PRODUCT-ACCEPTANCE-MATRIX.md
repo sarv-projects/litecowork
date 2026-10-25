@@ -114,9 +114,13 @@ bridge and the local Operator emits no `turn.delta`/`turn.settled`/`rich.draft`.
 10. Output rendering: native image inputs/outputs and Intelligent UI are not end-to-end.
     Conversation content currently accepts TEXT/RESOURCE, RichResponseView is static,
     stream drafts have no producer or visible renderer, and the Interactive Artifact
-    Runtime remains target-only. Add a versioned, safe inline-interaction contract and
-    exact-route capability gates; use the isolated Artifact Runtime for full app bundles.
-    The product contract and acceptance gates are in
+    Runtime remains target-only. The turn-pinned context reader now has storage tests but
+    no dispatcher consumes it; agent-response persistence and Conversation usage ingestion
+    are also absent. Add the versioned, safe Intelligent UI layer above every selected
+    adapter, with same-binding generation and semantic fallback. Route capability gates
+    apply to native image input/output and executable app packages, not to LiteCowork's
+    common renderer. Keep the isolated Artifact Runtime for full app bundles. The product
+    contract and acceptance gates are in
     [Intelligent UI and Image Content](../docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md).
 
 **Evidence to flip.** CODE: storage admission + orchestrator + operator tests. SYSTEM: one

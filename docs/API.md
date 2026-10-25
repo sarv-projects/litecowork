@@ -306,13 +306,22 @@ POST /v1/conversations/{id}/turns/{turn_id}/cancel
 GET  /v1/conversations/{id}/messages?cursor=
 GET  /v1/conversations/{id}/presentation?cursor=&limit=
 GET  /v1/rich-presentations/{presentation_id}
+GET  /v1/conversations/{id}/usage
 GET  /v1/conversations/{id}/tasks?cursor=
 
-Implementation status (2026-10-25). `POST /v1/conversations/{id}/messages` and
-`GET /v1/conversations/{id}/messages` are **target-only**: they are declared in OpenAPI but
-no handler is mounted and the storage layer has no message reader. The mounted Conversation
-routes include create/list/get, AgentBinding mutation, presentation/rich-presentation/tasks,
-and the three turn routes below.
+Implementation status (2026-10-25). Message append/list and Conversation usage
+operations are **target-only**: they are declared in OpenAPI but no handler is mounted.
+The mounted Conversation routes include create/list/get, AgentBinding mutation,
+presentation/rich-presentation/tasks, and the three turn routes below.
+
+The context package builder and SQLite turn-prefix reader are implemented and covered by
+storage-core and SQLite tests. They resolve the new turn's binding from its immutable
+creation event and snapshot the same Conversation through the submitted user message.
+However, the turn route does not call this reader: the native session supervisor/dispatcher,
+agent response writer, stream producer, and Conversation usage writer are not connected.
+The package is not yet delivered to a running agent, and no live cross-agent cost total is
+available. Send remains disabled; this is a tested storage foundation, not end-to-end
+continuity.
 ```
 
 Conversation creation requires the selected Workspace, a bounded optional title, and an
@@ -332,7 +341,11 @@ checking current Workspace activity; reusing the key with a different request co
 Clearing the override restores Workspace-default resolution for future turns. A chosen
 binding is authoritative: if it later becomes unavailable, turn admission fails visibly and
 does not silently fall back. A running turn/session remains pinned to its admitted binding;
-changing the selector affects future turns only.
+changing the selector affects future turns only. In the target flow, the next turn uses the
+same Conversation ID and the selected binding receives its committed transcript prefix.
+Its new provider session is internal and does not create a new chat. Prior agent messages
+remain in the transcript with provenance, while private session state never crosses
+bindings.
 
 The selector chooses a configured AgentBinding and preserves the draft; per-harness
 model/session-option selection and child-agent routing remain separate unfinished work. It
@@ -365,7 +378,11 @@ FAILED and returns `503 DEPENDENCY_UNAVAILABLE`; it does not claim that a messag
 
 The Conversation presentation route returns a bounded authenticated snapshot of committed
 messages, linked trusted items, active-turn state, optional immutable RichPresentation refs,
-and the snapshot cursor. Rich documents are fetched separately and returned `no-store`
+and the snapshot cursor. The target GET /v1/conversations/{id}/usage returns the
+Conversation-wide usage rollup across every AgentBinding used in the chat. It deduplicates
+verified inference leaves, keeps agent/turn/provider attribution, separates
+provider-billed, agent/gateway-reported, and estimated costs, groups by currency, and reports
+partial/unknown coverage instead of inventing zero. This usage route and its ingestion path are not mounted in the current build. Rich documents are fetched separately and returned `no-store`
 only after same-Workspace authorization and digest verification. The client validates
 message/document binding, schema version, size, and exact host-bound source refs before
 rendering. Semantic ConversationMessage content is always rendered first and remains

@@ -1663,6 +1663,12 @@
     },
     {
       "method": "GET",
+      "operationId": "getConversationUsage",
+      "path": "/conversations/{conversationId}/usage",
+      "sha256": "e8e70de02866b228b5361ef87af113fec23dcd57c91f23f9bf218abb0c870fda"
+    },
+    {
+      "method": "GET",
       "operationId": "listCoworkers",
       "path": "/coworkers",
       "sha256": "5c5f5e0398958b34ba732042bc7bb4b48111a6a97482045dc86d6437bc0f573c"
@@ -2963,6 +2969,11 @@
     },
     {
       "method": "GET",
+      "operationId": "getConversationUsage",
+      "path": "/conversations/{conversationId}/usage"
+    },
+    {
+      "method": "GET",
       "operationId": "listCoworkers",
       "path": "/coworkers"
     },
@@ -4205,6 +4216,14 @@
       "sha256": "5b8f6b1106a5d1d778e63407843117971269f4b826df87e8c2f52b7778c32b04"
     },
     {
+      "name": "ConversationAgentUsage",
+      "sha256": "66ae2365ed95be186a5e1a5927bdfe6cdebec8eef6bc36eae099675498e2c026"
+    },
+    {
+      "name": "ConversationCurrencyCost",
+      "sha256": "f8542e563bf00ed66c84a166fc9e2c2d53b5579a33b1007e082526ed60823608"
+    },
+    {
       "name": "ConversationInvocationScope",
       "sha256": "708e4daa63c29d9d85933e933c46a9905e6c51978405369c1d8174a55a7ddc61"
     },
@@ -4231,6 +4250,10 @@
     {
       "name": "ConversationTurnReceipt",
       "sha256": "4e7bda5d32ed2221f792342438edf33a089447d65e134d0ff5e7e03500769e54"
+    },
+    {
+      "name": "ConversationUsageSummary",
+      "sha256": "1562dd3625a3be21ce82485b83b43f11d6da85b595ff1e314f7e1f0be279c378"
     },
     {
       "name": "CostLimit",
@@ -5230,7 +5253,7 @@
     },
     {
       "name": "UsageObservation",
-      "sha256": "53dd0036e0075e7e312c713796c775dfba808685e54070fc23bf41a8c27aef8c"
+      "sha256": "4a3a2aa7e0b1d400ac7ab49b5f547d4bd18d966459ea235330715c18c9068cf0"
     },
     {
       "name": "UsageQuantity",
@@ -5472,6 +5495,8 @@
     "ContextDocumentMetadata",
     "ContextOwnerRef",
     "Conversation",
+    "ConversationAgentUsage",
+    "ConversationCurrencyCost",
     "ConversationInvocationScope",
     "ConversationListPage",
     "ConversationMessage",
@@ -5479,6 +5504,7 @@
     "ConversationPresentationSnapshot",
     "ConversationTurnPresentation",
     "ConversationTurnReceipt",
+    "ConversationUsageSummary",
     "CostLimit",
     "Coworker",
     "CoworkerContextPolicy",
@@ -5822,6 +5848,8 @@
     "ContextDocumentKind",
     "ContextDocumentStatus",
     "ContextOwnerRef",
+    "ConversationContextMessage",
+    "ConversationContextPackage",
     "ConversationTurnStatus",
     "CoworkerRevisionRef",
     "CoworkerStatus",

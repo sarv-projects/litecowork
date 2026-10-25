@@ -340,6 +340,23 @@ export type paths = {
         patch: operations["setConversationAgentBinding"];
         trace?: never;
     };
+    "/conversations/{conversationId}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Target-only in this build. Returns deduplicated usage for this user-visible Conversation across all AgentBindings; native inference ingestion and the handler are not implemented. */
+        get: operations["getConversationUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}/presentation": {
         parameters: {
             query?: never;
@@ -5072,6 +5089,38 @@ export type components = {
                 [key: string]: components["schemas"]["JsonValue"];
             };
         };
+        ConversationUsageSummary: {
+            conversation_id: string;
+            /**
+             * @description UNKNOWN includes fixed-plan/subscription usage that the selected native agent does not expose; never interpret absent observations as zero.
+             * @enum {string}
+             */
+            coverage: "COMPLETE" | "PARTIAL" | "UNKNOWN";
+            observation_count: number;
+            /** @description Distinct verified leaf inference count; null when it cannot be established. */
+            inference_count: number | null;
+            unknown_inference_count: number;
+            costs_by_currency: components["schemas"]["ConversationCurrencyCost"][];
+            agent_bindings: components["schemas"]["ConversationAgentUsage"][];
+            /** Format: date-time */
+            last_observed_at?: string | null;
+        };
+        ConversationCurrencyCost: {
+            currency: string;
+            /** @description Exact base-10 decimal; null when no verified provider-billed value is available. */
+            provider_billed_amount: string | null;
+            /** @description Exact base-10 sum of deduplicated agent/gateway-reported amounts; not a provider billing assertion. */
+            agent_reported_amount: string | null;
+            /** @description Exact base-10 decimal; kept separate from billed amount. */
+            estimated_amount: string | null;
+            unreconciled_observation_count: number;
+        };
+        ConversationAgentUsage: {
+            agent_binding_id: string;
+            inference_count: number | null;
+            unknown_inference_count: number;
+            costs_by_currency: components["schemas"]["ConversationCurrencyCost"][];
+        };
         ConversationPresentationSnapshot: {
             workspace_id: string;
             conversation_id: string;
@@ -6590,7 +6639,14 @@ export type components = {
             environment_id?: string | null;
             attempt_id?: string | null;
             invocation_id?: string | null;
+            conversation_id?: string | null;
+            turn_id?: string | null;
+            agent_binding_id?: string | null;
             agent_session_id?: string | null;
+            /** @description Stable identity of one leaf inference for identity-based deduplication across adapter/gateway observations. */
+            inference_id?: string | null;
+            provider_id?: string | null;
+            model_id?: string | null;
             /** @enum {string} */
             source: "AGENT_REPORTED" | "PROVIDER_REPORTED" | "HOST_MEASURED";
             /** @enum {string} */
@@ -8124,6 +8180,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getConversationUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Source-attributed Conversation usage grouped by currency; unknown coverage is explicit */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationUsageSummary"];
                 };
             };
             default: components["responses"]["Error"];

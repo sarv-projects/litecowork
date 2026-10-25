@@ -1,5 +1,7 @@
 # Intelligent UI and Image Content Contract
 
+**Owning story:** E08-S08 — Semantic-first RichPresentation and Host Guidance.
+
 **Status:** Normative V1 desktop product target; the current implementation audit below is factual as of 2026-10-25. This document does not claim the target feature is implemented.
 
 ## Product meaning
@@ -35,7 +37,24 @@ Therefore current source contains a safe static rich-response foundation, not Ch
 
 The semantic answer is committed and readable first. Rich or visual output may improve that answer, but may not replace it or delay settlement. If an optional output cannot be generated, validated, stored, fetched, or rendered, preserve the answer and show a useful plain-language fallback.
 
-The chosen AgentBinding, native harness, model, account route, options, and session own output capability. The product may offer rich output only when the exact route observation is fresh and explicitly supports that output. UNKNOWN, missing, stale, NOT_EXPOSED, and UNSUPPORTED never mean supported. Do not switch agents, models, accounts, or credentials to obtain an output. Explain the route limitation and let the owner select another route.
+Intelligent UI is a LiteCowork product layer above every selected AgentBinding. The renderer
+and normalized presentation contract do not belong to a coding-agent harness; switching
+Claude Code, Codex, Cursor CLI, OpenCode, or another qualified adapter must not change the
+chat's output format contract. Every adapter qualified for full Conversation use must map
+responses into the common semantic-content/presentation-intent envelope. It may use the
+agent's native structured output or make a clearly accounted follow-up through that same
+selected AgentBinding; it must never switch providers to create UI. The common renderer,
+schema, lifecycle, and fallback belong to LiteCowork. Provider-specific capabilities still
+govern image input/output and executable interactive-app packages, but do not gate this
+agent-agnostic declarative UI layer. If a route cannot produce a valid intent, preserve its
+complete semantic answer and report that route's presentation limitation.
+
+If an adapter cannot supply a valid presentation intent, or the document fails validation,
+show the complete semantic answer with a useful fallback. Do not silently switch agent,
+model, account, or credentials to generate the UI. An additional presentation-planning
+inference is an ordinary, reviewable invocation through the selected binding and its cost
+belongs to the same Conversation and turn. UNKNOWN, missing, stale, NOT_EXPOSED, and
+UNSUPPORTED capability observations never authorize provider-specific image or app output.
 
 ### Inline declarative interface
 

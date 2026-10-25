@@ -102,7 +102,7 @@ The time-bounded `AgentControlDescriptor` defined in
 - non-secret adapter configuration schema;
 - agent-owned Model/Reasoning/Effort/session-option schemas;
 - text/image/file/resource input support;
-- output delivery support for semantic text, file Artifacts, RichPresentations and interactive-app packages; the descriptor reports transport capability only, not quality, safety or execution authority;
+- output delivery observations for semantic text, file Artifacts, provider-native RichPresentations, images, and interactive-app packages; these describe exact-route transport only, not quality, safety, or execution authority. LiteCowork's normalized Intelligent UI renderer is product-owned and is not gated by provider-native RichPresentation support;
 - slash-command and native reference/mention metadata;
 - native configuration targets and extension-state summaries.
 
@@ -380,7 +380,12 @@ period; close it when that operation settles or deliberately yields control. Dur
 Conversation messages, Task revisions, decisions, checkpoints, Invocation results, and
 Artifacts provide bounded context for a later session. Native agent transcripts and
 session handles are optional same-incarnation optimizations and never the continuity source
-of truth.
+of truth. Switching the selected AgentBinding keeps the same user-visible Conversation and
+uses the immutable committed transcript as the next binding's context source. The target
+turn pins its binding in the turn-created event; the context package is a bounded transcript
+prefix through that turn's user message. Native session IDs, auth, and private agent state
+remain local to their original binding. A new provider AgentSession is an internal adapter
+boundary and does not create another Conversation.
 
 - A Conversation turn gets a fresh Conversation-scoped AgentSession. On final response,
   structured `UserRequest`, cancellation, or failure settlement, close the session and

@@ -176,7 +176,9 @@ ConversationTurn {
 }
 ```
 
-Messages are append-only; edits create a replacement/revision event rather than destructive rewrite of history. Agent responses record the AgentSession and binding that produced them. Switching agents creates/selects a session without rewriting prior provenance.
+Messages are append-only; edits create a replacement/revision event rather than destructive rewrite of history. Agent responses record the AgentSession and binding that produced them. Switching agents keeps the same user-visible Conversation ID and applies to future turns. Each admitted turn pins its selected AgentBinding; its adapter receives the committed transcript prefix through that turn's user message, including earlier AGENT messages with their source-binding provenance. A provider may start a new opaque AgentSession internally, but native session IDs, credentials, cookies, and private history never transfer between bindings. A running turn is not rerouted. ResourceRefs cross only after normal same-Workspace reauthorization.
+
+The Conversation ID is also the user-visible usage rollup boundary across agent switches. Each usage leaf retains its turn, AgentBinding, provider/model when observable, source/confidence, and verified inference identity. Rollups deduplicate observations for the same inference, retain per-binding attribution, separate billed from estimated amounts, and group money by currency; unknown usage is never shown as zero.
 
 Each submitted user turn is durable independently of whether it materializes a Task. The
 turn selects the active Conversation AgentBinding and owns its response lifecycle.
@@ -1959,7 +1961,13 @@ UsageObservation {
   environment_id: EnvironmentId?
   attempt_id: AttemptId?
   invocation_id: CapabilityInvocationId?
+  conversation_id: ConversationId?
+  turn_id: ConversationTurnId?
+  agent_binding_id: AgentBindingId?
   agent_session_id: AgentSessionId?
+  inference_id: string? # stable dedupe identity for one leaf model inference
+  provider_id: string?
+  model_id: string?
   source: AGENT_REPORTED | PROVIDER_REPORTED | HOST_MEASURED
   metric: TOKEN_INPUT | TOKEN_OUTPUT | WALL_TIME | COST | BYTES_READ | BYTES_WRITTEN | CALL_COUNT
   quantity: decimal?   # null exactly when confidence = UNKNOWN; never encode unknown as 0

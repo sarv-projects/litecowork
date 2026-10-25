@@ -22,6 +22,15 @@ future supervisor must reserve durably, invoke the native adapter outside the tr
 then atomically activate the exact session and move the turn to RUNNING only after its
 readiness handshake is observed and the host/incarnation is revalidated.
 
+The canonical context package builder and SQLite turn-prefix reader now exist and have
+unit/storage tests. The load_conversation_context_for_turn operation derives its target
+AgentBinding from the immutable turn-created event, reads only the same owner's same-
+Workspace Conversation messages through that turn's user message, and strips native
+session handles. No session supervisor or turn route consumes this package yet.
+Agent-response persistence and Conversation usage ingestion also remain absent, so this
+proves context preparation, not delivery to a running agent. Send stays disabled until the
+full path is connected.
+
 For an exact idempotent submit replay, the route checks the authenticated principal's
 payload-digest receipt before consulting the current AgentBinding selection. It reuses the
 binding recorded in the committed turn-created event, so a later disable/change cannot
@@ -131,6 +140,7 @@ Actual schema names normalize existing AgentControlDescriptor/AgentInputSurfaceD
 | reconcileTurnReceipt | requestId, persisted turn/message/readback -> accepted/ambiguous/error | Lost HTTP receipt must not duplicate side effect; query authoritative state |
 | deriveTurnActions | active provider state -> stop/retry/resume/steer capability | Never show success on cancel request without confirmation |
 | chooseSessionTransition | old/new binding, session health -> same/live change/new session/explicit handoff | A different harness never inherits a private provider session |
+| loadConversationContextForTurn | principal/workspace/conversation/turn -> immutable ConversationContextPackage | Resolve target binding from the turn event; snapshot through its user message; reject cross-Workspace, missing-boundary, duplicate, unsupported-role, or over-limit history |
 | restoreComposerDraft | scoped storage key and schema version -> valid draft/conflict | Never read a different Workspace/Coworker; redact sensitive metadata |
 | trackDraftPublication | accepted turn receipt and draftVersion -> clear/not clear | Clear only original committed draft; preserve newer user typing |
 
@@ -150,7 +160,11 @@ selectAgent(nextBinding):
   do not auto-create session; do not dispatch turn; do not mutate an existing Attempt
 ~~~
 
-When an active conversation changes native harness, display "Continue with new agent" and make provenance explicit. For a provider that accepts compatible live model changes, use its documented native session option call and await its acknowledgment. Otherwise allocate a new AgentSession for the next turn; prior committed messages remain historical. Large context transfer must use explicit supported Conversation context construction, pinned sources and bounds rather than provider-private session migration.
+The user-visible Conversation is the continuity boundary: changing its selected AgentBinding keeps the same Conversation ID, saved transcript, draft, attachments, and pinned Resources. The change applies to the next turn. A turn already admitted remains pinned to its original binding and AgentSession; an agent change never reroutes an active turn.
+
+At admission, the immutable turn-created event pins the selected AgentBinding. The supervisor loads a ConversationContextPackage through the current user message and supplies that canonical prefix to the selected agent's own adapter. The package includes committed USER, AGENT, and CHANNEL messages with source-binding provenance; it excludes product SYSTEM_NOTICE messages and all provider-private session handles. ResourceRefs are references only and must be reauthorized/materialized through the normal same-Workspace path. Native auth, cookies, session IDs, tool state, and hidden provider history never cross bindings.
+
+The context package is capped at 1,024 messages and 4 MiB. Exceeding either bound returns CONVERSATION_CONTEXT_LIMIT_EXCEEDED; the system must not silently truncate history. If the selected native model has a smaller context window, show a reviewable compaction/context selection that preserves the complete saved transcript and identifies any summary/range used. Count any additional agent call for compaction in the same Conversation usage ledger. A provider may start a new opaque AgentSession internally; this does not create a new user-visible chat.
 
 ## Slash, @, and editor semantics
 

@@ -426,6 +426,19 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Conversation'}
         default: {$ref: '#/components/responses/Error'}
+  /conversations/{conversationId}/usage:
+    get:
+      tags: [conversations, usage]
+      operationId: getConversationUsage
+      description: Target-only in this build. Returns deduplicated usage for this user-visible Conversation across all AgentBindings; native inference ingestion and the handler are not implemented.
+      parameters: [{$ref: '#/components/parameters/ConversationId'}]
+      responses:
+        '200':
+          description: Source-attributed Conversation usage grouped by currency; unknown coverage is explicit
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationUsageSummary'}
+        default: {$ref: '#/components/responses/Error'}
   /conversations/{conversationId}/presentation:
     get:
       tags: [conversations, presentation]
@@ -6879,6 +6892,44 @@ components:
         label: {type: [string, 'null'], maxLength: 512}
         freshness: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
         payload: {type: object, maxProperties: 64, additionalProperties: {$ref: '#/components/schemas/JsonValue'}}
+    ConversationUsageSummary:
+      type: object
+      additionalProperties: false
+      required: [conversation_id, coverage, observation_count, inference_count, unknown_inference_count, costs_by_currency, agent_bindings]
+      properties:
+        conversation_id: {type: string, minLength: 1}
+        coverage: {type: string, enum: [COMPLETE, PARTIAL, UNKNOWN], description: 'UNKNOWN includes fixed-plan/subscription usage that the selected native agent does not expose; never interpret absent observations as zero.'}
+        observation_count: {type: integer, minimum: 0}
+        inference_count: {type: [integer, 'null'], minimum: 0, description: 'Distinct verified leaf inference count; null when it cannot be established.'}
+        unknown_inference_count: {type: integer, minimum: 0}
+        costs_by_currency:
+          type: array
+          items: {$ref: '#/components/schemas/ConversationCurrencyCost'}
+        agent_bindings:
+          type: array
+          items: {$ref: '#/components/schemas/ConversationAgentUsage'}
+        last_observed_at: {type: [string, 'null'], format: date-time}
+    ConversationCurrencyCost:
+      type: object
+      additionalProperties: false
+      required: [currency, provider_billed_amount, agent_reported_amount, estimated_amount, unreconciled_observation_count]
+      properties:
+        currency: {type: string, minLength: 3, maxLength: 12}
+        provider_billed_amount: {type: [string, 'null'], pattern: '^-?(0|[1-9][0-9]*)([.][0-9]+)?$', description: 'Exact base-10 decimal; null when no verified provider-billed value is available.'}
+        agent_reported_amount: {type: [string, 'null'], pattern: '^-?(0|[1-9][0-9]*)([.][0-9]+)?$', description: 'Exact base-10 sum of deduplicated agent/gateway-reported amounts; not a provider billing assertion.'}
+        estimated_amount: {type: [string, 'null'], pattern: '^-?(0|[1-9][0-9]*)([.][0-9]+)?$', description: 'Exact base-10 decimal; kept separate from billed amount.'}
+        unreconciled_observation_count: {type: integer, minimum: 0}
+    ConversationAgentUsage:
+      type: object
+      additionalProperties: false
+      required: [agent_binding_id, inference_count, unknown_inference_count, costs_by_currency]
+      properties:
+        agent_binding_id: {type: string, minLength: 1}
+        inference_count: {type: [integer, 'null'], minimum: 0}
+        unknown_inference_count: {type: integer, minimum: 0}
+        costs_by_currency:
+          type: array
+          items: {$ref: '#/components/schemas/ConversationCurrencyCost'}
     ConversationPresentationSnapshot:
       type: object
       additionalProperties: false
@@ -8902,7 +8953,13 @@ components:
         environment_id: {type: [string, 'null']}
         attempt_id: {type: [string, 'null']}
         invocation_id: {type: [string, 'null']}
+        conversation_id: {type: [string, 'null']}
+        turn_id: {type: [string, 'null']}
+        agent_binding_id: {type: [string, 'null']}
         agent_session_id: {type: [string, 'null']}
+        inference_id: {type: [string, 'null'], description: 'Stable identity of one leaf inference for identity-based deduplication across adapter/gateway observations.'}
+        provider_id: {type: [string, 'null']}
+        model_id: {type: [string, 'null']}
         source: {type: string, enum: [AGENT_REPORTED, PROVIDER_REPORTED, HOST_MEASURED]}
         metric: {type: string, enum: [TOKEN_INPUT, TOKEN_OUTPUT, WALL_TIME, COST, BYTES_READ, BYTES_WRITTEN, CALL_COUNT]}
         quantity: {type: [number, 'null']}

@@ -362,10 +362,13 @@ AgentControlDescriptor {
 
 The digest covers the normalized non-secret descriptor, including the output support
 states. `capabilities.output` is required and uses `OutputCapabilityState` for semantic
-text, file Artifacts, RichPresentations and interactive-app package delivery. Only
-`SUPPORTED` is routable and appears in derived `AgentFeature[]`; `UNKNOWN`,
-`NOT_EXPOSED`, and `UNSUPPORTED` stay distinct. Output support is transport evidence,
-not a content-quality claim, safety assessment, or permission to execute returned code.
+text, file Artifacts, provider-native RichPresentations, images, and interactive-app
+package delivery. Only `SUPPORTED` is routable for that exact native output and appears
+in derived `AgentFeature[]`; `UNKNOWN`, `NOT_EXPOSED`, and `UNSUPPORTED` stay
+distinct. These flags are transport evidence, not quality, safety, or execution authority.
+LiteCowork's normalized Intelligent UI is a product layer above all selected agents; the
+provider-native RichPresentation flag does not gate it. Image and interactive-app outputs
+remain subject to the selected route's explicit capability and trust contracts.
 The descriptor is bounded and closed; raw provider/native config objects are never copied
 into it.
 

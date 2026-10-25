@@ -597,6 +597,17 @@ stores the idempotency receipt together. Owner-scoped list/get operations read t
 Conversation projection only; message history remains served through the bounded
 Conversation presentation snapshot. This does not imply turn dispatch or agent execution.
 
+The turn-context reader runs in one owner- and Workspace-checked SQLite read transaction.
+It resolves the target AgentBinding from the immutable turn-created event, resolves the
+current user message's unique conversation.message.added event, and selects committed
+message rows whose unique Conversation event revision is at or before that boundary.
+Event revision defines the prefix; timestamps and opaque IDs do not. Missing or duplicate
+message events fail closed. The reader enforces the 1,024-message/4-MiB bound before
+materializing context and omits native AgentSession handles. It returns an internal
+ConversationContextPackage with ResourceRefs only; later dispatch must reauthorize each
+reference. This reader is implemented and tested but is not called by ConversationService
+or a session dispatcher in the current build.
+
 `EventStore::read_workspace_event_page` is the bounded local replay primitive. It reads
 one Workspace/origin's allocator head, retained floor, and ordered event metadata page in
 one SQLite read transaction. It uses `origin_sequence`, not HLC, caps requests at 500 rows,

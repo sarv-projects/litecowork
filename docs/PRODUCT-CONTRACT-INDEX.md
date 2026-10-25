@@ -4,7 +4,7 @@
 
 ## Product contract in one view
 
-- **Conversation is the front door.** Choose a native agent, then a model/options supported by that agent's own route. The native agent owns its reasoning and account; LiteCowork owns managed Task coordination, policy, evidence and outputs.
+- **Conversation is the front door.** Choose a native agent, then a model/options supported by that agent's own route. The native agent owns its reasoning and account; LiteCowork owns managed Task coordination, policy, evidence and outputs. Switching agents keeps the same user-visible Conversation; the next adapter receives the committed cross-agent transcript prefix. Usage accumulates under that Conversation across bindings, with measured, estimated, billed, currency, and unknown coverage kept distinct.
 - **Work is durable when needed.** A Conversation may remain ordinary chat or admit a durable Task. Task, Step, Attempt, AgentSession, Runtime, Environment, Capability, Effect, Artifact and Evidence remain distinct.
 - **Subagents have explicit routes.** The lead may use its own harness subagents, or configured external AgentBindings as LiteCowork-hosted workers. Settings provides a Workspace default; a Coworker may inherit it or select a narrower override. A Task pins the resolved policy at admission; it has no independent route override in V1. Native child model behavior is harness-specific. External workers use their own model/auth/entitlement. Only host-delegated workers receive LiteCowork child Attempts, leases and grants.
 - **The default desktop shell is three-pane.** Navigation and Settings on the left; conversation and composer in the center; a visible compact Browser/Terminal/File Workbench on the right. It can collapse, resize or expand. It remains one right-side surface.
@@ -18,6 +18,7 @@
 |---|---|---|
 | Product scope and invariants | [Architecture](../ARCHITECTURE.md) | [Product](PRODUCT.md), [V1 release contract](V1-PRODUCT-RELEASE-CONTRACT.md) |
 | Agent/account/model route eligibility | [Agent route matrix](AGENT-ACCOUNT-ROUTE-MATRIX.md) | [Delegation](DELEGATION.md), [Agent Fabric](AGENT-FABRIC.md), [Agent Control](AGENT-CONTROL.md) |
+| Same-chat cross-agent continuity and session-wide usage | [Native Composer LLD](NATIVE-COMPOSER-LLD.md), [Shared schemas](SCHEMAS.md) | [Data model](DATA-MODEL.md), [Storage](STORAGE.md), [API](API.md), [Usage LLD](V1-TELEMETRY-USAGE-RESILIENCE-LLD.md), [Testing](TESTING.md) |
 | Native and host delegation | [Delegation](DELEGATION.md) | [Task Runtime](TASK-RUNTIME.md), [Coworker target](COWORKERS-TARGET.md) |
 | Desktop shell and screen state | [V1 UI screen contract](V1-UI-SCREEN-CONTRACT.md) | [Desktop Shell LLD](DESKTOP-SHELL-LLD.md), [Motion](MOTION.md) |
 | Routines and automation templates | [Automation](AUTOMATION.md) | [Routines](ROUTINES.md), [UI action/state ledger](V1-UI-ACTION-STATE-LEDGER.md) |

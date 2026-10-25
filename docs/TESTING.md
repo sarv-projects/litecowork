@@ -45,6 +45,34 @@ the frozen `litecowork.*` namespace; execute SQLite DDL and inspect foreign keys
 ### E2E
 Real user workflows from BENCHMARKS.md.
 
+### Same-chat agent continuity and usage accounting
+
+The context preparation foundation is now covered by storage-core and SQLite tests:
+cross-binding history and provenance are preserved for the same Conversation, the immutable
+turn binding selects the target adapter, the snapshot stops at the current turn's user
+message, private native session IDs are omitted, and oversized history is rejected. These
+tests do not prove that a native agent receives the package.
+
+End-to-end acceptance remains blocked until a qualified session supervisor, dispatch path,
+agent-response writer, stream producer, and Conversation usage ingestion/read route exist.
+When connected, qualify this flow with two different native adapters:
+
+1. Send a request to agent A and persist its committed response in Conversation C.
+2. Change the selected agent to B without creating a new Conversation; assert the ID,
+   transcript, unsent draft, attachments, and pinned ResourceRefs remain unchanged.
+3. Submit a second turn. Verify B receives the canonical committed transcript prefix
+   through that turn's user message, including A's answer and source-binding attribution.
+   Verify A's AgentSession handle, auth, cookies, and private history are absent.
+4. While a turn is running, change the selector; verify that turn remains pinned to A and
+   only the next turn can use B. Reconnect/restart and verify committed history survives.
+5. Exceed the context message/byte limit and verify a visible retryable limit result;
+   never dispatch a silently truncated prefix.
+6. Read the Conversation usage view after both agents report usage. Verify distinct leaf
+   inference costs accumulate across A and B, adapter/gateway duplicates count once only
+   after identity reconciliation, agent attribution remains drillable, currencies stay
+   separate, billed and estimated values stay separate, and opaque/unknown usage is not
+   displayed as zero.
+
 ### Rich presentation conformance
 
 The CODE layer validates schemas, canonical digests, closed block variants, source
@@ -64,6 +92,8 @@ nontechnical and technical user can find the answer/output without Inspector.
 | Forged Approval/Verification/Task status or Artifact ID | Compiler rejects model-authored host state; semantic Message remains |
 | Cross-Workspace, stale, or revoked Resource/Artifact | Binding rejected or reauthorized unavailable; no content leak |
 | Missing/corrupt/unsupported RichPresentation | Semantic Message remains readable/searchable/exportable |
+| Cross-agent Conversation switch | Same chat ID; next adapter gets committed prefix and source-binding provenance; no private session handle crosses |
+| Conversation usage across switches | Distinct inference leaves accumulate across bindings; duplicate telemetry dedupes by verified identity; currency, billed/estimated, and unknown coverage remain explicit |
 | Retry-0 or duplicate/out-of-order rich frame | Stale frame rejected; bounded replay/resync or discard of draft |
 | HTML/script, unsafe URL, remote media, hostile diagram | No execution or implicit fetch; safe fallback or rejection |
 | 1,000 citations/large collection | Bounded document and virtualized UI; no giant binary/data payload |

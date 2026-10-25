@@ -579,6 +579,194 @@ impl ConversationTurnStore for SqliteConversationStore {
         })
     }
 
+    fn load_conversation_context_for_turn(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+    ) -> Result<ConversationContextPackage, StoreError> {
+        if principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || conversation_id.trim().is_empty()
+            || turn_id.trim().is_empty()
+        {
+            return Err(StoreError::Invalid(
+                "Conversation context read identity is invalid".to_owned(),
+            ));
+        }
+        let principal = principal_id.to_owned();
+        let workspace = workspace_id.to_owned();
+        let conversation = conversation_id.to_owned();
+        let turn = turn_id.to_owned();
+        self.run(move |connection| {
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Deferred)
+                .map_err(map_database_error)?;
+            let allowed: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2 AND status='ACTIVE')",
+                    params![workspace, principal],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            if !allowed {
+                return Err(StoreError::NotFound);
+            }
+
+            let (through_message_id, through_revision, target_event_count): (
+                String,
+                Option<i64>,
+                i64,
+            ) = transaction
+                .query_row(
+                    "SELECT t.user_message_id,MIN(e.entity_revision),COUNT(e.event_id) FROM conversation_turns t JOIN conversations c ON c.conversation_id=t.conversation_id JOIN conversation_messages m ON m.message_id=t.user_message_id AND m.conversation_id=t.conversation_id LEFT JOIN domain_events e ON e.workspace_id=c.workspace_id AND e.entity_type='Conversation' AND e.entity_id=t.conversation_id AND e.type='conversation.message.added.v1' AND json_extract(e.payload_json,'$.message_id')=m.message_id WHERE c.workspace_id=?1 AND t.conversation_id=?2 AND t.turn_id=?3 GROUP BY t.user_message_id",
+                    params![workspace, conversation, turn],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(map_database_error)?
+                .ok_or(StoreError::NotFound)?;
+            if target_event_count != 1 || through_revision.is_none_or(|revision| revision <= 0) {
+                return Err(StoreError::Integrity(
+                    "Conversation turn user message has no unique append revision".to_owned(),
+                ));
+            }
+            let through_revision = through_revision.expect("validated message revision");
+            let orphan_message_count: i64 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM conversation_messages m WHERE m.conversation_id=?1 AND NOT EXISTS (SELECT 1 FROM domain_events e WHERE e.workspace_id=?2 AND e.entity_type='Conversation' AND e.entity_id=m.conversation_id AND e.type='conversation.message.added.v1' AND json_extract(e.payload_json,'$.message_id')=m.message_id)",
+                    params![conversation, workspace],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            if orphan_message_count != 0 {
+                return Err(StoreError::Integrity(
+                    "Conversation contains a message without its append event".to_owned(),
+                ));
+            }
+
+            let event_payload: String = transaction
+                .query_row(
+                    "SELECT payload_json FROM domain_events WHERE workspace_id=?1 AND entity_type='ConversationTurn' AND entity_id=?2 AND type='conversation.turn.created.v2'",
+                    params![workspace, turn],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_database_error)?
+                .ok_or_else(|| StoreError::Integrity(
+                    "Conversation turn creation event is missing".to_owned(),
+                ))?;
+            let event_payload: Value = serde_json::from_str(&event_payload)
+                .map_err(|_| StoreError::Integrity(
+                    "Conversation turn creation event is invalid".to_owned(),
+                ))?;
+            let target_agent_binding_id = event_payload
+                .get("agent_binding_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| StoreError::Integrity(
+                    "Conversation turn has no selected AgentBinding".to_owned(),
+                ))?;
+
+            let (message_count, context_bytes, event_count): (i64, i64, i64) = transaction
+                .query_row(
+                    "SELECT COUNT(DISTINCT m.message_id),COALESCE(SUM(length(CAST(m.message_id AS BLOB))+length(CAST(m.role AS BLOB))+length(CAST(m.content_json AS BLOB))+length(CAST(m.resource_refs_json AS BLOB))+length(CAST(m.created_at AS BLOB))+COALESCE(length(CAST(m.agent_binding_id AS BLOB)),0)),0),COUNT(*) FROM conversation_messages m JOIN domain_events e ON e.workspace_id=?2 AND e.entity_type='Conversation' AND e.entity_id=m.conversation_id AND e.type='conversation.message.added.v1' AND json_extract(e.payload_json,'$.message_id')=m.message_id WHERE m.conversation_id=?1 AND e.entity_revision<=?3",
+                    params![conversation, workspace, through_revision],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(map_database_error)?;
+            if event_count != message_count {
+                return Err(StoreError::Integrity(
+                    "Conversation message has duplicate append revisions".to_owned(),
+                ));
+            }
+            if message_count < 0
+                || message_count as usize > CONVERSATION_CONTEXT_MAX_MESSAGES
+                || context_bytes < 0
+                || context_bytes as usize > CONVERSATION_CONTEXT_MAX_BYTES
+            {
+                return Err(StoreError::Invalid(
+                    "CONVERSATION_CONTEXT_LIMIT_EXCEEDED".to_owned(),
+                ));
+            }
+
+            let mut statement = transaction
+                .prepare(
+                    "SELECT m.message_id,m.conversation_id,m.author_json,m.role,m.agent_session_id,m.agent_binding_id,m.turn_id,m.content_json,m.resource_refs_json,m.source_channel_ref_json,m.created_at,e.entity_revision FROM conversation_messages m JOIN domain_events e ON e.workspace_id=?2 AND e.entity_type='Conversation' AND e.entity_id=m.conversation_id AND e.type='conversation.message.added.v1' AND json_extract(e.payload_json,'$.message_id')=m.message_id WHERE m.conversation_id=?1 AND e.entity_revision<=?3 ORDER BY e.entity_revision,m.message_id",
+                )
+                .map_err(map_database_error)?;
+            let rows = statement
+                .query_map(
+                    params![conversation, workspace, through_revision],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                            row.get::<_, Option<String>>(6)?,
+                            row.get::<_, String>(7)?,
+                            row.get::<_, String>(8)?,
+                            row.get::<_, Option<String>>(9)?,
+                            row.get::<_, String>(10)?,
+                            row.get::<_, i64>(11)?,
+                        ))
+                    },
+                )
+                .map_err(map_database_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_database_error)?;
+            drop(statement);
+            let messages = rows
+                .into_iter()
+                .map(|row| {
+                    let conversation_revision = u64::try_from(row.11).map_err(|_| {
+                        StoreError::Integrity("Conversation message revision is invalid".to_owned())
+                    })?;
+                    Ok(ConversationContextSourceMessage {
+                        conversation_revision,
+                        message: ConversationMessageRecord {
+                            message_id: row.0,
+                            conversation_id: row.1,
+                            author: serde_json::from_str(&row.2).map_err(|_| {
+                                StoreError::Integrity("Conversation message author is invalid".to_owned())
+                            })?,
+                            role: row.3,
+                            agent_session_id: row.4,
+                            agent_binding_id: row.5,
+                            turn_id: row.6,
+                            content: serde_json::from_str(&row.7).map_err(|_| {
+                                StoreError::Integrity("Conversation message content is invalid".to_owned())
+                            })?,
+                            resource_refs: serde_json::from_str(&row.8).map_err(|_| {
+                                StoreError::Integrity("Conversation message resources are invalid".to_owned())
+                            })?,
+                            source_channel_ref: row
+                                .9
+                                .map(|value| serde_json::from_str(&value))
+                                .transpose()
+                                .map_err(|_| StoreError::Integrity(
+                                    "Conversation message channel reference is invalid".to_owned(),
+                                ))?,
+                            created_at: row.10,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, StoreError>>()?;
+
+            let context = build_conversation_context_package(
+                &conversation,
+                target_agent_binding_id,
+                &through_message_id,
+                &messages,
+            )?;
+            transaction.commit().map_err(map_database_error)?;
+            Ok(context)
+        })
+    }
+
     fn transition_conversation_turn(
         &self,
         principal_id: &str,
