@@ -614,7 +614,7 @@ the external provider response.
 | `task.coworker.origin.pinned.v1` | Task / TaskService | Immutable Task origin provenance; Coworker revision is pinned |
 | `agent.binding.lead_eligibility.changed.v1` | AgentBinding / AgentBindingService | Workspace authorization state; no endpoint locator or credentials |
 | `agent.binding.configuration.changed.v1` | AgentBinding / AgentBindingService | Versioned non-secret configuration/default-session-option digests and declared credential slot IDs only; no SecretRefs, secret bytes, native config, or endpoint locators |
-| `agent.session.starting.v1` | AgentSession / AgentSessionStore | Reserves a Task planner slot before native startup; includes only normalized scope/selection IDs and Runtime incarnation, never a native handle |
+| `agent.session.starting.v1` | AgentSession / AgentSessionStore | Reserves one normalized Conversation-turn, Task-planning, or Attempt-execution session before native startup; includes scope/selection IDs and Runtime incarnation, never a native handle |
 | `agent.session.started.v1` | AgentSession / AgentSessionSupervisor | Adapter readiness and ACTIVE state; first planning also transitions Task to RUNNING atomically |
 | `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
 | `delegation_profile.*.v1` | DelegationProfile / DelegationProfileService | Profile revisions/status replicate; provider-native option values remain opaque, non-secret adapter-owned values |

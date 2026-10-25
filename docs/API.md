@@ -522,9 +522,11 @@ SecretLease, native session handle, or active Attempt.
 **Implementation status (2026-10-22) — read before using the three turn routes.** The
 prose in this subsection describes the accepted target contract, not current served
 behavior. Today `submitConversationTurn` commits the user message and the OPEN turn and
-then always returns `503 DEPENDENCY_UNAVAILABLE`, because the storage layer refuses every
-Conversation-scoped session admission; it never returns a receipt and never reaches an
-agent. `retryConversationTurn` and `cancelConversationTurn` are mounted but both always
+then always returns `503 DEPENDENCY_UNAVAILABLE`, because no qualified native session
+supervisor is integrated with the route. The route does not reserve or activate a
+Conversation-scoped session, return an admission receipt, or reach an agent. The storage
+reservation primitive is internal and does not by itself enable Send.
+`retryConversationTurn` and `cancelConversationTurn` are mounted but both always
 return `503 DEPENDENCY_UNAVAILABLE`. The whole turn state machine below —
 `OPEN → RUNNING → WAITING_USER/WAITING_DEPENDENCY → COMPLETED/FAILED/CANCELLED` — is
 unreachable in this build, and the desktop composer therefore renders Send disabled with a

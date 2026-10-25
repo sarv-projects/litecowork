@@ -15,12 +15,16 @@ The served Conversation submit route persists the USER message, settles its turn
 FAILED, and returns 503 DEPENDENCY_UNAVAILABLE while no qualified native session
 supervisor is connected. Runtime inventory (ONLINE, incarnation READY, and Workspace
 EXECUTOR) is not a native SESSION_READY handshake. No caller may create a STARTING
-session and mark the turn RUNNING or report 202 from those inventory facts alone. The
-unsafe low-level SQLite admission operation has been removed; the storage interface has
-no Conversation STARTING-session reservation or readiness activation operation yet. A
-future supervisor must reserve durably, invoke the native adapter outside the transaction,
-then atomically activate the exact session and move the turn to RUNNING only after its
-readiness handshake is observed and the host/incarnation is revalidated.
+session and mark the turn RUNNING or report 202 from those inventory facts alone. The storage interface does not yet expose a Conversation-scoped STARTING reservation or
+readiness activation operation. The existing SQLite schema already represents a
+Conversation-scoped AgentSession pinned to exactly one turn, enforces one active session per
+turn, and keeps opaque host/session bindings local. The next storage slice adds only the
+durable STARTING reservation and recovery read/settlement contract: it derives the binding
+from the unique turn-created event, rechecks that exact host in the reservation transaction,
+and never changes the turn to RUNNING or persists a native handle. A supervisor must invoke
+the native adapter outside the transaction and activate only after its exact readiness
+handshake and host/incarnation revalidation; until that activation operation and supervisor
+exist, Send remains fail-closed.
 The existing observational host lookup still reads the Conversation's live selector and
 Workspace default; it is not safe for an admitted turn. Replace it with
 resolve_conversation_session_host_for_turn(principal, workspace, conversation, turn),
