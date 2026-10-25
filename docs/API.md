@@ -320,7 +320,11 @@ is newest-first and uses a Workspace-bound opaque cursor. Conversation reads are
 scoped and remain separate from provider/session state. The desktop Conversation page can
 create, list, and read persisted semantic messages; it does not expose message submission
 as available until E03-S01 native session admission and E03-S02 turn execution are
-connected. An exact owner-scoped receipt replay is resolved before the active-Workspace
+connected. The explicit per-Conversation AgentBinding override is target-only in current
+source: create always stores null, no supported set/clear route exists, and storage
+validation rejects non-null. Therefore a Composer Agent picker is not available until that
+mutation is promoted with its scoped version/idempotency/event transaction and UI
+readback. An exact owner-scoped receipt replay is resolved before the active-Workspace
 check, so a lost-response retry still returns the committed Conversation after archival;
 a fresh create in an archived Workspace remains rejected. A rejected create response in the
 4xx range has no committed Conversation, creation event, or receipt for that request; this

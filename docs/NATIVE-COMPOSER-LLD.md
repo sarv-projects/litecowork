@@ -183,3 +183,8 @@ Version pin exact upstream API/CLI source snapshots in implementation/SOURCES.md
 ## Canonical mutation transport clarification (2026-10-12 audit)
 
 The earlier client pseudocode uses `requestId` as a durable logical submission identifier. The actual Operator transport MUST follow docs/API.md: the stable `Idempotency-Key` header is preserved across retries and maps to the domain RequestId; local IPC `request_id` is only a per-exchange correlation ID. Mutations use `If-Match` for versioned resources and `X-Workspace-ID` for scoped commands. Do not add duplicate routes: canonical ConversationTurn creation/retry/cancel and agent-profile control-descriptor reads already exist in API.md/OpenAPI. Client-side token validation does not replace Operator authorization or qualified native adapter checks.
+
+
+## Implementation gap found — Conversation agent selection (2026-10-25)
+
+The accepted Composer contract allows an explicit Conversation AgentBinding override before falling back to the Workspace default. Current source cannot set that override: Conversation creation always stores null, the served router has no set/clear mutation, and storage validation rejects a non-null binding. The submit handler's override-first resolution therefore describes a target branch that the supported UI/API cannot reach. Do not present an in-chat Agent picker as working until the override mutation has an authenticated Workspace-scoped, version-fenced, idempotent storage/event contract and the UI reads the committed selection. Even after that, Send remains gated on a qualified native session adapter, descriptor/model controls, dispatch, streaming, settlement, cancel/retry and recovery.

@@ -10099,3 +10099,12 @@ active Cargo test/rustc process remained. No owner caches, historical files, or 
 untracked data were deleted. This checkpoint stages only the new handoff, its README
 pointer, and the isolated current-run handoff entry; the mixed owner/implementation snapshot
 remains unstaged and is not part of this commit.
+
+
+## 2026-10-25 — Native route and Conversation switch re-audit
+
+- Rechecked OpenAI and Anthropic account routes against their current first-party terms. SIWC is a conditional, user-controlled connected-app route with explicit limits/consent; Claude Code's unmodified binary route and Agent SDK route have different authentication/commercial terms. Updated the agent/account matrix and competitor research.
+- Rechecked OpenCode's official permission defaults: most operations are allowed unless the harness configuration explicitly restricts them. A native UI wrapper must not claim LiteCowork Trust/effect mediation from the harness alone.
+- Found a concrete source/contract gap for the user's requested chat-bar agent switching: the target says Conversation override → Workspace default, but create always writes a null override, no served mutation sets/clears it, and current storage validation rejects non-null. The turn handler can read an override only if one appears outside the supported API. Updated API/Composer status notes; no fake selector is enabled.
+- V1 still has no qualified native Conversation session dispatch/streaming/cancel/retry loop. Send stays disabled. No route or release status is promoted by this audit.
+- Next implementation slice: add the Conversation AgentBinding override mutation with same-Workspace enabled/lead-eligible checks, `If-Match`, idempotency receipt, canonical event, UI selector/readback, and current-Workspace fencing; then continue the native session adapter work. Required native USER/SYSTEM proof stays pending until the real harness path is qualified.

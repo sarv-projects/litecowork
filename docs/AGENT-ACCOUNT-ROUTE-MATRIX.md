@@ -81,3 +81,25 @@ Settings → Agents owns native setup/auth and route readiness. Settings → Sub
 ## Release gate
 
 Before offering a route, require automated descriptor conformance plus human-reviewed route evidence. Re-review after terms/policy, product plan, provider API, authentication, OS, feature, region or data-handling changes. Unknown answers stay unknown and block only the dependent route; they must not be filled by assumption.
+
+
+## Vendor account routes rechecked — 2026-10-25
+
+This is route qualification evidence, not a grant of access or an inference that an account, plan, or model is eligible.
+
+### OpenAI Sign in with ChatGPT
+
+OpenAI now documents Sign in with ChatGPT (SIWC) as a supported way for an application to let users connect eligible ChatGPT plans, subject to the SIWC Terms. Requests must originate from the user's local runtime or a remote runtime the user controls; requests must arise from user activity or an expressly authorized background process, with express consent before background use. SIWC usage is limited to the connected application, cannot be exposed as a general-purpose API, carries plan eligibility/usage limits, and cannot be pooled, transferred, resold, or used for another user's requests. SIWC authentication tokens must come from the supported flow; persistent storage must remain local and under user control. The terms also require the connected service to be usable without charging the user or requiring a paid LiteCowork tier.
+
+Therefore, a native Codex installation or a catalog entry is not a blanket authorization to route arbitrary LiteCowork requests through a ChatGPT subscription. Any SIWC path must be an explicit, separately qualified product route that meets the current SIWC Terms, consent, disclosure, security, plan, and quota rules. Do not ask for ChatGPT passwords or cookies.
+
+### Anthropic Claude Code and Agent SDK
+
+Anthropic distinguishes embedding its Agent SDK from installing and running the published Claude Code harness. Developers building Claude integrations, including Agent SDK products, should use API-key authentication through Claude Console or a supported cloud provider; third-party apps must not offer Claude.ai login through the SDK or collect, store, or intermediate Claude.ai credentials/session tokens. Separately, Anthropic says a product may install and run the unmodified Claude Code binary if the developer agrees to its Commercial Terms and follows its conditions; the end user must authenticate with their own eligible Anthropic API key, Claude plan credentials, or supported third-party inference credential, and usage must be billed under that user's own agreement. Do not modify the binary, remove its authentication methods, or pay for, resell, or intermediate users' Claude usage.
+
+LiteCowork must qualify these as distinct route types. “Use Claude Code as Claude Code” means launching the unmodified user-authenticated harness under the applicable commercial terms; it does not authorize embedding subscription OAuth in a LiteCowork-owned SDK client or forwarding subscription credentials to other agents.
+
+### Sources checked
+
+- OpenAI, [Sign in with ChatGPT Terms](https://openai.com/policies/sign-in-with-chatgpt-terms/) (published 2026-09-29), and [Service Terms](https://openai.com/policies/service-terms/).
+- Anthropic, [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance) and [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview), checked 2026-10-25.
