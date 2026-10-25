@@ -62,6 +62,11 @@ Nothing below is claimed done.
 
 ### Chat — verdict BLOCKED
 
+**Implemented prerequisite:** A Conversation can now persist or clear an explicit
+Workspace-scoped AgentBinding override through the UI and
+PATCH /v1/conversations/{id}/agent-binding. The selector only chooses the configured
+lead binding for future turns; it does not establish harness readiness or enable Send.
+
 **Exists.** Conversation catalog is served and durable: `POST/GET /v1/conversations`,
 `GET /v1/conversations/{id}`, `GET /v1/conversations/{id}/presentation`,
 `GET /v1/conversations/{id}/tasks` (`conversation_operator.rs:101-220`,

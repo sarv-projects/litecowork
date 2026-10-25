@@ -213,6 +213,18 @@ Version pin exact upstream API/CLI source snapshots in implementation/SOURCES.md
 The earlier client pseudocode uses `requestId` as a durable logical submission identifier. The actual Operator transport MUST follow docs/API.md: the stable `Idempotency-Key` header is preserved across retries and maps to the domain RequestId; local IPC `request_id` is only a per-exchange correlation ID. Mutations use `If-Match` for versioned resources and `X-Workspace-ID` for scoped commands. Do not add duplicate routes: canonical ConversationTurn creation/retry/cancel and agent-profile control-descriptor reads already exist in API.md/OpenAPI. Client-side token validation does not replace Operator authorization or qualified native adapter checks.
 
 
-## Implementation gap found — Conversation agent selection (2026-10-25)
+## Implementation status — Conversation agent selection (2026-10-25)
 
-The accepted Composer contract allows an explicit Conversation AgentBinding override before falling back to the Workspace default. Current source cannot set that override: Conversation creation always stores null, the served router has no set/clear mutation, and storage validation rejects a non-null binding. The submit handler's override-first resolution therefore describes a target branch that the supported UI/API cannot reach. Do not present an in-chat Agent picker as working until the override mutation has an authenticated Workspace-scoped, version-fenced, idempotent storage/event contract and the UI reads the committed selection. Even after that, Send remains gated on a qualified native session adapter, descriptor/model controls, dispatch, streaming, settlement, cancel/retry and recovery.
+The earlier gap is closed in source. PATCH /v1/conversations/{id}/agent-binding is
+mounted in apps/litecoworkd/src/conversation_operator.rs; storage validates Workspace
+ownership, enabled/lead-eligible binding, expected Conversation version, and
+principal-scoped idempotency before atomically committing the projection, event, and
+receipt in crates/storage-sqlite/src/conversations.rs. The Tauri command and
+Conversation-page selector read and apply the committed record. The route test covers
+set, exact replay, clear, stale-version rejection, and disabled/non-lead/foreign-binding
+rejection.
+
+This selector only stores the binding for future turns and preserves the Conversation
+draft. It does not supply per-harness model/session options, qualify native readiness,
+or enable Send. Native session admission, dispatch, streaming, settlement, cancel/retry,
+and recovery remain blockers in the Chat acceptance journey.

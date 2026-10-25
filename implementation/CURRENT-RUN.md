@@ -10147,3 +10147,14 @@ remains unstaged and is not part of this commit.
 - Found a concrete source/contract gap for the user's requested chat-bar agent switching: the target says Conversation override → Workspace default, but create always writes a null override, no served mutation sets/clears it, and current storage validation rejects non-null. The turn handler can read an override only if one appears outside the supported API. Updated API/Composer status notes; no fake selector is enabled.
 - V1 still has no qualified native Conversation session dispatch/streaming/cancel/retry loop. Send stays disabled. No route or release status is promoted by this audit.
 - Next implementation slice: add the Conversation AgentBinding override mutation with same-Workspace enabled/lead-eligible checks, `If-Match`, idempotency receipt, canonical event, UI selector/readback, and current-Workspace fencing; then continue the native session adapter work. Required native USER/SYSTEM proof stays pending until the real harness path is qualified.
+
+## Conversation AgentBinding selector doc reconciliation (2026-10-25)
+
+The Conversation override path is implemented in the current source: mounted authenticated
+PATCH route, atomic Workspace/version/lead-eligibility/idempotency validation and event
+commit, Tauri command, and Conversation-page selector. The LLD's prior gap note was stale.
+The acceptance matrix now records this prerequisite while retaining Chat as BLOCKED
+because the native session supervisor, real dispatch/streaming, and stop/recovery path are
+still unavailable. Focused Operator route evidence: set, exact replay, clear, stale-version
+conflict, and rejection of disabled, non-lead, and foreign-Workspace bindings. This does
+not qualify a packaged desktop flow or enable Send.
