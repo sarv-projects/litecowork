@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import type { Automation, AutomationApi, AutomationCoworker, AutomationDefinitionInput, AutomationExecutionPolicy, AutomationRevision, CoworkerRevisionRef, Routine, TriggerSpec } from "./automation-api";
+import { AUTOMATION_TRIGGER_OPTIONS, isSupportedAutomationTriggerKind, isValidEditorCron5, isValidIanaTimezone, type AutomationTriggerKind } from "./automation-setup";
+import type { AutomationStarter } from "./automation-starters";
 
 type Props = {
   api: AutomationApi;
   workspaceId: string;
   existing?: { automation: Automation; revision: AutomationRevision };
+  starter?: AutomationStarter | null;
+  initialRoutineRef?: { routineId: string; revision: number } | null;
   onCancel: () => void;
   onSaved: (automation: Automation, action: "created" | "revised") => void;
 };
-type TriggerKind = "SCHEDULE" | "ONE_SHOT" | "MANUAL";
+type TriggerKind = AutomationTriggerKind;
 type RetryPolicy = AutomationExecutionPolicy["retry_policy"];
 const MAX_ROUTINE_REVISION_PAGES = 100;
-const CRON_FIELD = "[0-9*/,-]+";
-const CRON_FIVE_FIELDS = new RegExp(`^${CRON_FIELD}(?:\\s+${CRON_FIELD}){4}$`);
 
 async function findRoutineRevision(api: AutomationApi, workspaceId: string, routineId: string, revision: number, signal?: AbortSignal) {
   const routine = await api.getRoutine(routineId, signal);
@@ -75,8 +77,8 @@ function boundedInteger(value: string, min: number, max: number): number | null 
 function textRows(value: string): string[] { return value.split("\n").map(line => line.trim()).filter(Boolean); }
 
 /** Create/revise writes inert definitions only; it never enables or runs an Automation. */
-export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved }: Props) {
-  const [name, setName] = useState(existing?.automation.name ?? "");
+export function AutomationEditor({ api, workspaceId, existing, starter, initialRoutineRef, onCancel, onSaved }: Props) {
+  const [name, setName] = useState(existing?.automation.name ?? starter?.automationDraft.name ?? "");
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [routineCursor, setRoutineCursor] = useState<string | null>(null);
   const [routinesBusy, setRoutinesBusy] = useState(true);
@@ -88,11 +90,11 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
   const [coworkerError, setCoworkerError] = useState<string | null>(null);
   const initialCoworkerSelection = existing?.revision.coworker_ref ? "KEEP_EXISTING" : "NONE";
   const [coworkerSelection, setCoworkerSelection] = useState(initialCoworkerSelection);
-  const [selectedRoutineId, setSelectedRoutineId] = useState(existing?.revision.routine_id ?? "");
-  const [selectedRevision, setSelectedRevision] = useState(existing?.revision.routine_revision ?? 0);
+  const [selectedRoutineId, setSelectedRoutineId] = useState(existing?.revision.routine_id ?? initialRoutineRef?.routineId ?? "");
+  const [selectedRevision, setSelectedRevision] = useState(existing?.revision.routine_revision ?? initialRoutineRef?.revision ?? 0);
   const [verifiedRevision, setVerifiedRevision] = useState<{ routine_id: string; revision: number; objective_template: string } | null>(null);
-  const [triggerKind, setTriggerKind] = useState<TriggerKind>(decodeTrigger(existing?.revision).kind);
-  const [cron, setCron] = useState(decodeTrigger(existing?.revision).cron);
+  const [triggerKind, setTriggerKind] = useState<TriggerKind>(existing ? decodeTrigger(existing.revision).kind : starter?.automationDraft.triggerKind ?? decodeTrigger(undefined).kind);
+  const [cron, setCron] = useState(existing ? decodeTrigger(existing.revision).cron : starter?.automationDraft.cron ?? decodeTrigger(undefined).cron);
   const [timezone, setTimezone] = useState(decodeTrigger(existing?.revision).timezone);
   const [scheduledAt, setScheduledAt] = useState(decodeTrigger(existing?.revision).scheduledAt);
   const [misfire, setMisfire] = useState<"SKIP" | "RUN_ONCE_WHEN_AVAILABLE">(decodeTrigger(existing?.revision).misfire);
@@ -136,6 +138,13 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
           nextRoutines = [pinned, ...nextRoutines];
         } catch { /* A missing pinned dependency remains visible through the detail warning below. */ }
       }
+      if (initialRoutineRef && !nextRoutines.some(item => item.routine_id === initialRoutineRef.routineId)) {
+        const selected = await api.getRoutine(initialRoutineRef.routineId, controller.signal);
+        if (selected.workspace_id !== workspaceId || selected.routine_id !== initialRoutineRef.routineId || selected.status !== "ACTIVE") {
+          throw new Error("The Routine created from this starter is no longer an active definition in this Workspace.");
+        }
+        nextRoutines = [selected, ...nextRoutines];
+      }
       if (controller.signal.aborted || ownGeneration !== routineListGeneration.current) return;
       setRoutines(nextRoutines); setRoutineCursor(page.next_cursor);
       if (!selectedRoutineId) {
@@ -148,7 +157,7 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
       if (!controller.signal.aborted && ownGeneration === routineListGeneration.current) setRoutinesBusy(false);
     });
     return () => controller.abort();
-  }, [api, workspaceId]);
+  }, [api, existing?.revision.routine_id, initialRoutineRef?.routineId, workspaceId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -213,6 +222,7 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
 
   const buildTriggers = (): TriggerSpec[] => {
     if (existing && !replaceTriggerSet) return existing.revision.triggers;
+    if (!isSupportedAutomationTriggerKind(triggerKind)) throw new Error("One-time triggers are not supported by the current local trigger host.");
     if (triggerKind === "MANUAL") {
       const existingSpec = existing?.revision.triggers.length === 1 ? existing.revision.triggers[0] : null;
       const existingDef = existingSpec?.trigger && typeof existingSpec.trigger === "object" ? existingSpec.trigger as Record<string, unknown> : null;
@@ -220,9 +230,8 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
       return [{ trigger_id: id, placement: "AUTO", runtime_id: null, trigger: { kind: "MANUAL" } }];
     }
     if (triggerKind === "SCHEDULE") {
-      if (!CRON_FIVE_FIELDS.test(cron.trim()) || cron.trim().length > 128) throw new Error("Enter a five-field cron expression using bounded numeric syntax (maximum 128 characters).");
-      if (!timezone.trim() || timezone.length > 80) throw new Error("Enter an IANA time zone (maximum 80 characters).");
-      try { new Intl.DateTimeFormat("en", { timeZone: timezone.trim() }).format(); } catch { throw new Error("That time zone is not supported by this desktop."); }
+      if (!isValidEditorCron5(cron)) throw new Error("Enter a valid five-field numeric Cron schedule supported by the local trigger host (maximum 128 characters).");
+      if (!isValidIanaTimezone(timezone)) throw new Error("Enter a valid IANA time zone supported by this desktop (maximum 80 characters).");
       const existingSpec = existing?.revision.triggers.length === 1 ? existing.revision.triggers[0] : null;
       const existingDef = existingSpec?.trigger && typeof existingSpec.trigger === "object" ? existingSpec.trigger as Record<string, unknown> : null;
       const id = existingDef?.kind === "SCHEDULE" && typeof existingSpec?.trigger_id === "string" ? existingSpec.trigger_id : randomTriggerId();
@@ -335,16 +344,32 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
 
         {existing && existing.revision.triggers.length > 0 && <div className="automation-trigger-preserve">
           <strong>Existing trigger set</strong><span>{triggerSummary}</span>
-          <label><input type="checkbox" checked={!replaceTriggerSet} disabled={saving} onChange={event => setReplaceTriggerSet(!event.currentTarget.checked)} /> Keep all existing triggers exactly as saved</label>
+          <label><input type="checkbox" checked={!replaceTriggerSet} disabled={saving} onChange={event => {
+            const keepExisting = event.currentTarget.checked;
+            if (!keepExisting && !isSupportedAutomationTriggerKind(triggerKind)) setTriggerKind("MANUAL");
+            setReplaceTriggerSet(!keepExisting);
+          }} /> Keep all existing triggers exactly as saved</label>
           <small>Replacing the set removes its current trigger IDs and creates one new trigger. Existing triggers are otherwise preserved without edits.</small>
         </div>}
         {(!existing || replaceTriggerSet) && <fieldset className="automation-fieldset"><legend>Trigger definition</legend>
-          <div className="automation-trigger-kinds" role="group" aria-label="Trigger type"><button type="button" className={triggerKind === "SCHEDULE" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("SCHEDULE")}>Recurring schedule</button><button type="button" className={triggerKind === "ONE_SHOT" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("ONE_SHOT")}>One time</button><button type="button" className={triggerKind === "MANUAL" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("MANUAL")}>Manual</button></div>
+          <div className="automation-trigger-kinds" role="group" aria-label="Trigger type">
+            {AUTOMATION_TRIGGER_OPTIONS.map(option => <button
+              key={option.kind}
+              type="button"
+              className={`${triggerKind === option.kind ? "selected" : ""}${option.supported ? "" : " unavailable"}`}
+              disabled={saving}
+              aria-disabled={!option.supported}
+              title={option.reason || undefined}
+              aria-describedby={option.supported ? undefined : "automation-trigger-support"}
+              onClick={() => { if (!saving && option.supported) setTriggerKind(option.kind); }}
+            >{option.label}</button>)}
+          </div>
+          <p className="automation-policy-note" id="automation-trigger-support">This local Runtime supports Manual and locally valid recurring schedules. One-time, webhook, and connector-event hosting are not available here yet; existing trigger sets stay unchanged unless you explicitly replace them.</p>
           {triggerKind === "SCHEDULE" ? <>
-            <label className="automation-field"><span>Cron schedule · five fields</span><input value={cron} maxLength={128} onChange={event => setCron(event.currentTarget.value)} placeholder="0 9 * * 1-5"/><small>Syntax is bounded here; provider scheduling and timezone execution are not active.</small></label>
+            <label className="automation-field"><span>Cron schedule · five fields</span><input value={cron} maxLength={128} onChange={event => setCron(event.currentTarget.value)} placeholder="0 9 * * 1-5"/><small>The local trigger host evaluates enabled recurring schedules while it holds this Runtime’s binding. A due occurrence may create a READY Task; planning and agent execution are separate.</small></label>
             <label className="automation-field"><span>IANA time zone</span><input value={timezone} maxLength={80} onChange={event => setTimezone(event.currentTarget.value)} placeholder="America/New_York"/></label>
           </> : triggerKind === "ONE_SHOT" ? <label className="automation-field"><span>Scheduled date and time</span><input type="datetime-local" value={scheduledAt} onChange={event => setScheduledAt(event.currentTarget.value)} /></label> : <p className="automation-policy-note">Manual trigger only. Saving keeps this definition paused. You can explicitly create one READY Task from the definition; no schedule is started.</p>}
-          {triggerKind !== "MANUAL" && <label className="automation-field"><span>Missed trigger policy</span><select value={misfire} onChange={event => setMisfire(event.currentTarget.value as typeof misfire)}><option value="SKIP">Skip missed time</option><option value="RUN_ONCE_WHEN_AVAILABLE">One run when available</option></select><small>This is saved policy only. This build does not schedule occurrences.</small></label>}
+          {triggerKind !== "MANUAL" && <label className="automation-field"><span>Missed trigger policy</span><select value={misfire} onChange={event => setMisfire(event.currentTarget.value as typeof misfire)}><option value="SKIP">Skip missed time</option><option value="RUN_ONCE_WHEN_AVAILABLE">One run when available</option></select><small>The local trigger host applies this policy while the Runtime holds its binding.</small></label>}
         </fieldset>}
 
         <fieldset className="automation-fieldset"><legend>Execution policy</legend>

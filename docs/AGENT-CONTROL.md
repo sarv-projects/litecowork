@@ -5,7 +5,8 @@
 **Related:** [Architecture](../ARCHITECTURE.md), [Agent Fabric](AGENT-FABRIC.md),
 [Delegation](DELEGATION.md), [Services](SERVICES.md), [API](API.md),
 [Schemas](SCHEMAS.md), [Security](SECURITY.md), [Trust](TRUST.md),
-[Experience](EXPERIENCE.md), [LiteSPM capability boundary](CAPABILITY-FABRIC.md).
+[Experience](EXPERIENCE.md), [Agent/account route matrix](AGENT-ACCOUNT-ROUTE-MATRIX.md),
+[LiteSPM capability boundary](CAPABILITY-FABRIC.md).
 
 ## HorizonCode as a native AgentModule candidate
 
@@ -359,8 +360,14 @@ AgentControlDescriptor {
 }
 ```
 
-The digest covers the normalized non-secret descriptor. The descriptor is bounded and
-closed; raw provider/native config objects are never copied into it.
+The digest covers the normalized non-secret descriptor, including the output support
+states. `capabilities.output` is required and uses `OutputCapabilityState` for semantic
+text, file Artifacts, RichPresentations and interactive-app package delivery. Only
+`SUPPORTED` is routable and appears in derived `AgentFeature[]`; `UNKNOWN`,
+`NOT_EXPOSED`, and `UNSUPPORTED` stay distinct. Output support is transport evidence,
+not a content-quality claim, safety assessment, or permission to execute returned code.
+The descriptor is bounded and closed; raw provider/native config objects are never copied
+into it.
 
 ### 6.1 Authentication descriptors
 

@@ -67,6 +67,7 @@ new work. The Activity label remains static unless its source projection changes
 | Renderer fallback appears | Renderer resolution returns unsupported/disabled | Static fallback with reason; no failed-renderer shake or success-like transition |
 | Message expands to Task card | `task.created.v1` projection | Height + opacity, 180ms, enter easing |
 | Default AgentBinding changes | `workspace.default_agent_binding.changed.v1` projection | Update selected label with 120ms fade; no automatic agent-switch animation |
+| Desktop shell first hydration | Layout preferences and current capability probes have resolved | Render compact Workbench Start immediately without a cold-open/slide animation; restore a last tool only after object and authority validation |
 | Planning status appears | `agent.session.started.v1` for TASK_PLANNING | Opacity 120ms; no lane, spinner, or percentage |
 | Workstream lane appears | persisted Step/Attempt projection reaches RUNNING | Height + opacity, 180ms, enter easing |
 | Capability source attaches | activation/invocation reaches STARTING/DISPATCHED | Opacity 120ms; source text uses actual operation |
@@ -271,3 +272,7 @@ Switching Coworkers updates the selected identity only after an actual navigatio
 ## V1 detailed design integration — 2026-10-12
 
 DESKTOP-SHELL-LLD.md makes the existing 80/120/180/280ms motion tokens concrete for sidebar open/close, Workbench resize/max, native command palette, streaming commit, takeover and layout restoration. All motion corresponds to a true state or user action; reconnect and persisted messages do not replay typing animation. prefer-reduced-motion and keyboard/focus tests required. Browser video and large lists are not continuously re-animated.
+
+## Interactive Artifact Runtime feedback
+
+The host app animates only observed supervisor state: show Starting after the start command is accepted, Running after the exact-version renderer handshake, Stopping after Stop is accepted, and Stopped only after process-tree quiescence. A timer, renderer-authored progress label or success animation never substitutes for an observation. Keep Run/Stop controls stable outside the untrusted renderer; the preview-to-app transition follows an owner action and does not auto-open on Artifact arrival. On reduced motion, switch states immediately while preserving focus, text status and screen-reader announcements. See [Interactive Artifact Runtime](INTERACTIVE-ARTIFACT-RUNTIME.md).

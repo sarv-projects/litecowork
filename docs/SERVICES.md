@@ -833,6 +833,18 @@ chunk index and size. The returned session derives inclusive `received_ranges` a
 
 Defined in `ARTIFACTS-EVIDENCE.md`. It commits a digest-verified initial version and corresponding Artifact Resource/revision on create; every later version appends both under the expected Artifact aggregate version. Before publication it checks that `input_refs` exactly matches the distinct pinned refs in `ProvenanceRecord.source_inputs` and all transformation inputs; an external ArtifactContent source ref is included. Any paired observed digest must match its pinned ResourceRevision digest when both are present. A mismatch returns `INTEGRITY_FAILURE` before rows or events are committed. Library promotion and archive use the same optimistic concurrency boundary and emit their events atomically.
 
+### ArtifactRuntimeSupervisor
+
+```text
+prepare(WorkspaceId, ArtifactId, version) -> ArtifactRuntimePreview
+start(ArtifactRuntimeStartRequest) -> ArtifactRuntimeSessionView
+get_status(run_id) -> ArtifactRuntimeSessionView | Unavailable
+review_save_proposal(run_id, host_proposal_id, SAVE | CANCEL, CommandContext) -> ArtifactSaveReceipt | PendingReconciliation
+stop(run_id, reason) -> ArtifactRuntimeSessionView
+```
+
+This local Runtime service owns only volatile generated-app process supervision and the host/renderer protocol. It verifies the authenticated shell principal, active Workspace, immutable ArtifactVersion digest, package validation, qualified OS Runtime profile and selected exact ResourceRevision reads before creating one run-scoped isolation profile. It creates the run ID and Runtime-incarnation binding; callers cannot choose another profile, Workspace or ID. It terminates the process tree and revokes run-bound broker handles before returning STOPPED. If quiescence is unknown it returns INTERRUPTED. The service never creates Task, Attempt, DomainEvent, CapabilityGrant, Effect, Evidence or durable run history. For an explicitly approved save proposal it calls ArtifactStore.create for a separate managed FILE Artifact; the ArtifactStore owns content/version/events and the host-generated RequestId makes ambiguous retries idempotent. It depends on ArtifactStore/ResourceService read ports, the authenticated local IPC adapter and a qualified OS process isolation provider; it cannot call an AgentAdapter or use the main WebView bridge. `prepare` is inert and executes no package code. See [Interactive Artifact Runtime](INTERACTIVE-ARTIFACT-RUNTIME.md) for payloads, lifecycle, failure semantics and qualification.
+
 ### TrustService
 
 Defined in `TRUST.md`.

@@ -851,6 +851,21 @@ in one unit of work. An Artifact ResourceRef is valid Task input; a pinned revis
 the matching ArtifactVersion. Archive changes Library visibility but does not invalidate
 or remove the Artifact Resource or its immutable revisions.
 
+## Interactive Artifact Runtime session
+
+A runtime session is volatile Runtime-local state, not a durable aggregate or DomainEvent. The supervisor owns transitions; the renderer may report readiness but cannot set host status or authority.
+
+```text
+PREVIEW_ONLY -> STARTING
+STARTING -> RUNNING | STOPPING | FAILED | REVOKED | INTERRUPTED
+RUNNING -> STOPPING | FAILED | REVOKED | INTERRUPTED
+STOPPING -> STOPPED | FAILED | INTERRUPTED
+
+STOPPED | FAILED | REVOKED | INTERRUPTED -> STARTING only after a new owner Run
+```
+
+Admission checks the exact ArtifactVersion digest, active Workspace, package validation, OS Runtime profile and current access. Stop, revocation, Workspace switch, stale version, process exit and resource breach fence the run. `STOPPED` requires confirmed process-tree quiescence and revoked broker handles; otherwise the terminal result is `INTERRUPTED` with outcome unknown. A restart never resumes a run or state. See [Interactive Artifact Runtime](INTERACTIVE-ARTIFACT-RUNTIME.md) for the protocol, exact guards, and UI projection.
+
 ## Effect and Evidence
 
 ```text

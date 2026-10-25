@@ -667,6 +667,12 @@ not pass. Any unqualified OS/provider combination remains unavailable for native
 execution regardless of results on other platforms.
 
 
+### B91 Interactive Artifact Runtime qualification
+
+**Owning story:** E08-S09. This is a qualification protocol, not evidence that the runtime is implemented or that any OS has passed.
+
+On every claimed desktop OS, run an exact-version generated app through inert preview, explicit Run, normal interaction, Stop and owner-confirmed save. Compare the package content digest and resulting ArtifactVersion; verify no Task/Effect is inferred. Attempt remote fetch, loopback/Operator IPC, unauthorized file reads, forged/replayed messages, handle reuse, cross-Workspace access, process escape and descendant survival. Repeat with revoked authority, stale Artifact head, concurrent save, Runtime crash, OS sleep/lock, delete of optional local app state, high zoom, keyboard/screen-reader and reduced motion. Measure cold/warm start-to-first-useful-frame, time-to-interactive, CPU, peak memory, frame drops, bytes, crash rate and time-to-quiescence. Hold hardware, OS build, WebView and package constant in comparisons; separate agent generation latency from local preview/runtime latency. No screenshot or mock renderer passes.
+
 ## Connector/workflow/learning benchmark additions to schedule with implementation
 
 The final 2026-10-10 architecture requires benchmark coverage when its machine contracts
@@ -681,3 +687,68 @@ demo or one successful account connection is not benchmark evidence.
 ## V1 detailed design integration — 2026-10-12
 
 V1-DESIGN-COVERAGE.md introduces coverage cases (not fabricated performance results) for 10k tool rows, long native output, 50 Coworkers, 100 connections, large files, provider startup, side-browser frame mapping and cross-agent handoff. Benchmark budgets need measured baseline per OS/harness; existing canonical benchmark IDs remain authoritative. Distinguish visual frame rate from actual Task throughput.
+
+## 2026-10-24 desktop product-quality scorecard (proposed qualification gates)
+
+These are measurement contracts, not measured claims. A route is publishable only after
+the exact agent/harness, model, auth mode, OS build, Runtime, and dependency set is recorded.
+Cloud/mobile-only behavior is outside the V1 desktop scorecard.
+
+### Paired quality protocol
+
+For every supported agent/model route, run a paired corpus through (A) the agent's supported
+native desktop experience and (B) LiteCowork using the same agent binary/service, model,
+auth owner, task inputs, permissions, local files, network policy, and available tools.
+Record any unavoidable prompt/context or runtime differences. Do not compare a native
+subscription session with a different API model endpoint and call that same-route parity.
+
+Use separately scored classes: natural-language answers; research with citations;
+documents/slides/spreadsheets; code changes; browser/app workflows; and interactive
+artifacts. The fixed rubric scores factual correctness, requirement coverage, source
+provenance, visual/readability quality, accessibility, editability, and successful
+completion. Human reviewers are blind to lane for subjective dimensions; deterministic
+acceptance oracles are used where available. Preserve prompts, input revision digests,
+agent/model route, tool outcomes, artifact digests, rubric version, adjudication, and
+failure cases in the benchmark record.
+
+A provisional non-inferiority gate is a LiteCowork completion-rate difference whose lower
+95% confidence bound is at least -5 percentage points relative to the paired native lane,
+with no critical security, authorization, duplicate-effect, or data-loss failure. A quality
+score may not be collapsed into one vendor-independent “intelligence” number. Report every
+task class and route separately, with sample size and uncertainty. This proposed margin
+must be ratified against product risk before it becomes a release gate.
+
+### Desktop responsiveness and mediation overhead
+
+Measure on a named, supported hardware profile and exact OS/runtime build:
+
+| Measurement | Provisional target | Measurement boundary |
+|---|---:|---|
+| Composer keystroke, selection, or local panel response | p95 <= 100 ms | user input to visibly acknowledged local UI state; excludes provider work |
+| Local Task admission and initial progress receipt | p95 <= 250 ms | accepted click to durable Task/receipt and first local progress state; excludes agent startup |
+| LiteCowork mediation overhead before adapter dispatch | p95 <= 200 ms | Task/Conversation already admitted to exact qualified route; report each local IPC, policy, and adapter phase |
+| Small validated artifact first paint | p95 <= 1 s | artifact available to first useful visible render; test at declared size/content tier |
+| Long-running task responsiveness | no blocked composer | active background Task must not delay ordinary UI input; track CPU/memory and progress freshness |
+
+Targets are design budgets, not existing results. If a route misses a target, report its
+measured p50/p95 and cause rather than hiding the delay in one aggregate “agent speed.”
+Always report native-agent startup and provider/network latency separately from LiteCowork
+overhead. Do not weaken permission, evidence, or verification gates to improve a timing
+number.
+
+### Generative UI and artifact scorecard
+
+Every rich-output route is separately evaluated for semantic answer preservation, first
+render, successful interactions, keyboard access, screen-reader labeling, reduced motion,
+responsive layouts, sandbox policy enforcement, large-content stability, and safe fallback.
+Interactive output must not obtain filesystem, shell, cookie/profile, or network authority
+from model-authored markup. Compare both useful task outcome and interaction quality; a
+screenshot-only visual match is not a successful app artifact.
+
+### Quality reporting rule
+
+A public comparison may claim only the qualified routes and task classes actually measured.
+Show the selected agent/model, account/auth mode, tool set, corpus revision, paired native
+baseline, sample count, confidence interval, missing/unsupported cases, and artifact links.
+No documentation, UI badge, or benchmark may promise “ChatGPT Plus quality,” “Claude Pro
+quality,” or all-model parity based only on using the same model family name.

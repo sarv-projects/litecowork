@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://litecowork.dev/schemas/interactive-artifact-runtime.v1.json",
+  "title": "LiteCowork Interactive Artifact Runtime IPC v1",
+  "description": "Closed local IPC envelopes between the privileged Runtime supervisor and an untrusted, isolated Artifact renderer. This is not a public HTTP API.",
+  "$defs": {
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_id", "artifact_id", "version", "content_digest"],
+      "properties": {
+        "workspace_id": {"type": "string", "minLength": 1},
+        "artifact_id": {"type": "string", "minLength": 1},
+        "version": {"type": "integer", "minimum": 1},
+        "content_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    },
+    "resourceHandle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handle_id", "resource_id", "revision_id", "media_type", "content_digest"],
+      "properties": {
+        "handle_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "resource_id": {"type": "string", "minLength": 1},
+        "revision_id": {"type": "string", "minLength": 1},
+        "media_type": {"type": "string", "minLength": 1, "maxLength": 255},
+        "content_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+      }
+    },
+    "hostEnvelope": {
+      "type": "object",
+      "required": ["protocol_version", "run_id", "sequence", "type", "payload"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "run_id": {"$ref": "#/$defs/runId"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "type": {"enum": ["start", "stop", "read_result", "save_result"]},
+        "payload": {"type": "object"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {"const": "start"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["artifact", "runtime_profile_id", "runtime_profile_version", "resource_handles"],
+              "properties": {
+                "artifact": {"$ref": "#/$defs/artifactRef"},
+                "runtime_profile_id": {"type": "string", "minLength": 1},
+                "runtime_profile_version": {"type": "string", "minLength": 1},
+                "resource_handles": {
+                  "type": "array",
+                  "items": {"$ref": "#/$defs/resourceHandle"},
+                  "uniqueItems": true
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {"const": "stop"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reason"],
+              "properties": {
+                "reason": {
+                  "enum": ["OWNER_STOP", "WORKSPACE_SWITCH", "AUTHORITY_REVOKED", "VERSION_STALE", "BUDGET_EXCEEDED", "SUPERVISOR_SHUTDOWN"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {"const": "read_result"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["request_id", "status"],
+              "properties": {
+                "request_id": {"$ref": "#/$defs/requestId"},
+                "status": {"enum": ["AVAILABLE", "DENIED", "UNAVAILABLE"]},
+                "media_type": {"type": "string", "minLength": 1, "maxLength": 255},
+                "content_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+                "content_base64": {"type": "string"},
+                "failure_code": {"type": "string", "minLength": 1, "maxLength": 128}
+              },
+              "allOf": [
+                {
+                  "if": {"properties": {"status": {"const": "AVAILABLE"}}, "required": ["status"]},
+                  "then": {"required": ["media_type", "content_digest", "content_base64"]}
+                },
+                {
+                  "if": {"properties": {"status": {"enum": ["DENIED", "UNAVAILABLE"]}}, "required": ["status"]},
+                  "then": {"required": ["failure_code"]}
+                }
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {"const": "save_result"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["request_id", "status"],
+              "properties": {
+                "request_id": {"$ref": "#/$defs/requestId"},
+                "status": {"enum": ["SAVED", "CANCELLED", "CONFLICT", "REJECTED", "UNKNOWN"]},
+                "artifact_id": {"type": "string", "minLength": 1},
+                "version": {"type": "integer", "minimum": 1},
+                "failure_code": {"type": "string", "minLength": 1, "maxLength": 128}
+              },
+              "allOf": [
+                {
+                  "if": {"properties": {"status": {"const": "SAVED"}}, "required": ["status"]},
+                  "then": {"required": ["artifact_id", "version"]}
+                },
+                {
+                  "if": {"properties": {"status": {"enum": ["CONFLICT", "REJECTED", "UNKNOWN"]}}, "required": ["status"]},
+                  "then": {"required": ["failure_code"]}
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "rendererEnvelope": {
+      "type": "object",
+      "required": ["protocol_version", "run_id", "sequence", "type", "payload"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "run_id": {"$ref": "#/$defs/runId"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "type": {"enum": ["ready", "status", "read_request", "save_request", "failure"]},
+        "payload": {"type": "object"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {"const": "ready"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["app_protocol_version"],
+              "properties": {
+                "app_protocol_version": {"type": "string", "minLength": 1, "maxLength": 64}
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {"const": "status"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["readiness"],
+              "properties": {
+                "readiness": {"enum": ["IDLE", "READY", "BUSY", "ERROR"]},
+                "accessible": {"type": "boolean"}
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {"const": "read_request"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["request_id", "handle_id"],
+              "properties": {
+                "request_id": {"$ref": "#/$defs/requestId"},
+                "handle_id": {"type": "string", "minLength": 1, "maxLength": 128}
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {"const": "save_request"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["request_id", "display_name", "media_type", "content_digest", "content_base64"],
+              "properties": {
+                "request_id": {"$ref": "#/$defs/requestId"},
+                "display_name": {"type": "string", "minLength": 1, "maxLength": 255},
+                "media_type": {"enum": ["text/plain", "application/json"]},
+                "content_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+                "content_base64": {"type": "string"}
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {"const": "failure"},
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["failure_code"],
+              "properties": {
+                "failure_code": {"type": "string", "minLength": 1, "maxLength": 128},
+                "message": {"type": "string", "maxLength": 512}
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {"$ref": "#/$defs/hostEnvelope"},
+    {"$ref": "#/$defs/rendererEnvelope"}
+  ]
+}

@@ -115,6 +115,27 @@ latency. Use bounded outcome/category labels; never place prompts, message text,
 names, URLs, raw model IDs, or Resource IDs in metric labels. Rendering failure is an
 optional enhancement failure and must not be counted as Conversation failure.
 
+### Interactive Artifact generation and local runtime
+
+Emit these local metrics with bounded enum labels only:
+
+- `interactive_candidate_validation_total{outcome,reason_class}`
+- `interactive_artifact_publication_total{outcome,reason_class}`
+- `artifact_runtime_admission_total{outcome,profile_class}`
+- `artifact_runtime_start_seconds{profile_class,cold_or_warm}`
+- `artifact_runtime_first_frame_seconds{profile_class}` and `artifact_runtime_interactive_seconds{profile_class}`
+- `artifact_runtime_stop_quiescence_seconds{profile_class,outcome}`
+- `artifact_runtime_crash_total{profile_class,reason_class}`
+- `artifact_runtime_ipc_rejection_total{profile_class,reason_class}`
+- `artifact_runtime_handle_revocation_total{reason_class}`
+- `artifact_save_proposal_total{outcome,reason_class}`
+
+Never label with Artifact name/ID, app code, package path, prompt, URL, Resource ID, or
+raw provider model string. Include Runtime/incarnation and ArtifactVersion references only
+in access-controlled, redacted logs/traces with the normal retention policy. These are
+local operational observations, not DomainEvents or proof of app correctness. A renderer
+report does not become Task progress or verification.
+
 ### Delegation, budget, and prewarm
 
 - delegation_admission_total by bounded outcome/error class and selection mode

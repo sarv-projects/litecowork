@@ -2310,7 +2310,10 @@
             "minLength": 1
           },
           "lease_id": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1
           },
           "runtime_incarnation_id": {
@@ -8993,6 +8996,179 @@
           }
         },
         "additionalProperties": false
+      },
+      "workspace_delegation_settings_changed": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "previous_revision",
+          "revision",
+          "default_strategy",
+          "enabled_delegation_profile_revisions",
+          "native_child_model_policy",
+          "changed_by",
+          "aggregate_version"
+        ],
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "previous_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "default_strategy": {
+            "type": "string",
+            "enum": [
+              "NATIVE_DEFAULT",
+              "BALANCED",
+              "COST_SAVER",
+              "HOST_DELEGATION_ONLY"
+            ]
+          },
+          "enabled_delegation_profile_revisions": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "profile_id",
+                "revision"
+              ],
+              "properties": {
+                "profile_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "native_child_model_policy": {
+            "type": "string",
+            "enum": [
+              "AGENT_DEFAULT",
+              "INHERIT_PARENT_IF_SUPPORTED"
+            ]
+          },
+          "changed_by": {
+            "$ref": "#/$defs/principal_ref"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "task_delegation_policy_pinned": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "task_spec_revision",
+          "source",
+          "workspace_settings_revision",
+          "coworker_id",
+          "coworker_revision",
+          "strategy",
+          "native_child_model_policy",
+          "worker_profiles",
+          "aggregate_version"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_spec_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "WORKSPACE_DEFAULT",
+              "COWORKER_OVERRIDE"
+            ]
+          },
+          "workspace_settings_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "coworker_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "coworker_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "NATIVE_DEFAULT",
+              "BALANCED",
+              "COST_SAVER",
+              "HOST_DELEGATION_ONLY"
+            ]
+          },
+          "native_child_model_policy": {
+            "type": "string",
+            "enum": [
+              "AGENT_DEFAULT",
+              "INHERIT_PARENT_IF_SUPPORTED"
+            ]
+          },
+          "worker_profiles": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "profile_id",
+                "revision",
+                "worker_model_selection_policy"
+              ],
+              "properties": {
+                "profile_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "worker_model_selection_policy": {
+                  "type": "string",
+                  "enum": [
+                    "PROFILE_CONFIGURED",
+                    "MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE"
+                  ]
+                }
+              }
+            }
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
       }
     },
     "provenance_transformation": {
@@ -9101,138 +9277,138 @@
     "error_code": {
       "type": "string",
       "enum": [
-          "AGENT_NATIVE_CONFIG_CHANGED",
-          "AGENT_NOT_LEAD_ELIGIBLE",
-          "AGENT_QUOTA_EXHAUSTED",
-          "AGENT_SESSION_OVERRIDE_UNSUPPORTED",
-          "AGENT_UNAVAILABLE",
-          "APPROVAL_ALREADY_CONSUMED",
-          "APPROVAL_REQUIRED",
-          "ARTIFACT_ARCHIVED",
-          "AUTOMATION_DISABLED",
-          "AUTOMATION_NOT_FOUND",
-          "AUTOMATION_NOT_PAUSED",
-          "AUTOMATION_REVISION_NOT_FOUND",
-          "BUDGET_EXCEEDED",
-          "BUSY",
-          "CAPABILITY_UNAVAILABLE",
-          "CAPABILITY_UNHEALTHY",
-          "CAPACITY_EXCEEDED",
-          "CAPTURE_REFUSED",
-          "CHANNEL_INGRESS_GAP_CONFIRMATION_REQUIRED",
-          "CLAIM_WINDOW_UNAVAILABLE",
-          "COMPUTER_PROVIDER_UNAVAILABLE",
-          "CONFLICT",
-          "CONSENT_REQUIRED",
-          "CONTEXT_DOCUMENT_NOT_ACTIVE",
-          "CONTEXT_DOCUMENT_OWNER_SCOPE_MISMATCH",
-          "COWORKER_ARCHIVED",
-          "COWORKER_HAS_ACTIVE_WORK",
-          "COWORKER_PAUSED",
-          "DEADLINE_EXECUTION_PRECONDITION_FAILED",
-          "DELEGATION_CONCURRENCY_EXCEEDED",
-          "DELEGATION_DEPTH_EXCEEDED",
-          "DELEGATION_PROFILE_ARCHIVED",
-          "DELEGATION_PROFILE_DISABLED",
-          "DELEGATION_PROFILE_INCOMPATIBLE",
-          "DELEGATION_PROFILE_OPTIONS_INVALID",
-          "DEMONSTRATION_CAPTURE_LIMIT_REACHED",
-          "DEPENDENCY_UNAVAILABLE",
-          "EFFECT_AMBIGUOUS",
-          "EFFECT_RECONCILIATION_REQUIRED",
-          "EMPTY_CAPTURE",
-          "ENVIRONMENT_CLASS_MISMATCH",
-          "ENVIRONMENT_MISMATCH",
-          "ENVIRONMENT_UNAVAILABLE",
-          "FORBIDDEN",
-          "GOAL_ARCHIVED",
-          "IDEMPOTENCY_CONFLICT",
-          "INTEGRITY_FAILURE",
-          "INTERNAL",
-          "INVALID_ARGUMENT",
-          "INVALID_ARTIFACT_TRANSITION",
-          "INVALID_PLAN",
-          "INVALID_RESOURCE_REF",
-          "INVALID_TRANSITION",
-          "INVALID_TRIGGER",
-          "INVOCATION_AMBIGUOUS",
-          "INVOCATION_NOT_FOUND",
-          "LEAD_FAILOVER_POLICY_INVALID",
-          "LEASE_CONFLICT",
-          "LIMIT_EXCEEDED",
-          "MISFIRED_SLOT_SKIPPED",
-          "MISFIRE_LIMIT_EXCEEDED",
-          "NOT_AN_APP_PUBLISHER",
-          "NOT_FOUND",
-          "OBSERVATION_PROVIDER_UNAVAILABLE",
-          "OCCURRENCE_CONFLICT",
-          "OCCURRENCE_NOT_FOUND",
-          "PLACEMENT_UNAVAILABLE",
-          "PLAN_CYCLE",
-          "POLICY_DENIED",
-          "PROVIDER_INPUT_UNSUPPORTED",
-          "PROVIDER_UNAVAILABLE",
-          "RATE_LIMITED",
-          "RECOVERY_EXHAUSTED",
-          "REDACTION_FAILED",
-          "RESOURCE_CONFLICT",
-          "RESOURCE_CONTENT_EXTERNAL",
-          "RESOURCE_IDENTITY_CHANGED",
-          "RESOURCE_IDENTITY_UNAVAILABLE",
-          "RESOURCE_INDEX_UNAVAILABLE",
-          "RESOURCE_LOCATION_UNAVAILABLE",
-          "RESOURCE_REVISION_PARENT_MISMATCH",
-          "RESOURCE_STALE",
-          "RESOURCE_UNAVAILABLE",
-          "ROUTINE_ARCHIVED",
-          "ROUTINE_ARCHIVE_BLOCKED",
-          "ROUTINE_INPUT_INVALID",
-          "ROUTINE_NOT_ACTIVE",
-          "ROUTINE_NOT_FOUND",
-          "ROUTINE_REVISION_DRIFTED",
-          "ROUTINE_REVISION_NOT_FOUND",
-          "RUNTIME_MISMATCH",
-          "RUNTIME_STARTUP_UNAVAILABLE",
-          "RUNTIME_STOP_BLOCKED",
-          "RUNTIME_UNAVAILABLE",
-          "SCAN_UNAVAILABLE",
-          "SCAN_UNSUPPORTED_PLATFORM",
-          "SCHEDULE_PLAN_UNAVAILABLE",
-          "SECRET_UNAVAILABLE",
-          "SENSITIVE_INPUT_UNSUPPORTED",
-          "SKILL_DRIFT_DETECTED",
-          "SOURCE_REFERENCE_REQUIRED",
-          "STALE_CLAIM_EPOCH",
-          "STALE_FENCE",
-          "STALE_SPEC_REVISION",
-          "STALE_TASK_VERSION",
-          "STALE_VERSION",
-          "STALE_WORKSPACE_VERSION",
-          "STEP_NOT_READY",
-          "STORE_BUSY",
-          "SUGGESTION_EXPIRED",
-          "TASK_ALREADY_PAUSED",
-          "TASK_NOT_FOUND",
-          "TASK_PAUSE_UNSAFE",
-          "TASK_TERMINAL",
-          "TIMEOUT",
-          "TRIGGER_HOST_UNAVAILABLE",
-          "TRIGGER_UNSUPPORTED",
-          "UNAUTHORIZED",
-          "UNAVAILABLE",
-          "UNSUPPORTED_PROJECTION",
-          "UNSUPPORTED_VERSION",
-          "UPLOAD_EXPIRED",
-          "UPLOAD_OFFSET_CONFLICT",
-          "USER_REQUEST_EXPIRED",
-          "USER_REQUEST_NOT_FOUND",
-          "USER_REQUEST_RESPONSE_TOO_LARGE",
-          "VERIFICATION_FAILED",
-          "WORKER_BUDGET_EXCEEDED",
-          "WORKER_QUALITY_FLOOR_UNMET",
-          "WORKSPACE_ARCHIVED",
-          "WORKSPACE_NOT_QUIESCENT"
-        ]
+        "AGENT_NATIVE_CONFIG_CHANGED",
+        "AGENT_NOT_LEAD_ELIGIBLE",
+        "AGENT_QUOTA_EXHAUSTED",
+        "AGENT_SESSION_OVERRIDE_UNSUPPORTED",
+        "AGENT_UNAVAILABLE",
+        "APPROVAL_ALREADY_CONSUMED",
+        "APPROVAL_REQUIRED",
+        "ARTIFACT_ARCHIVED",
+        "AUTOMATION_DISABLED",
+        "AUTOMATION_NOT_FOUND",
+        "AUTOMATION_NOT_PAUSED",
+        "AUTOMATION_REVISION_NOT_FOUND",
+        "BUDGET_EXCEEDED",
+        "BUSY",
+        "CAPABILITY_UNAVAILABLE",
+        "CAPABILITY_UNHEALTHY",
+        "CAPACITY_EXCEEDED",
+        "CAPTURE_REFUSED",
+        "CHANNEL_INGRESS_GAP_CONFIRMATION_REQUIRED",
+        "CLAIM_WINDOW_UNAVAILABLE",
+        "COMPUTER_PROVIDER_UNAVAILABLE",
+        "CONFLICT",
+        "CONSENT_REQUIRED",
+        "CONTEXT_DOCUMENT_NOT_ACTIVE",
+        "CONTEXT_DOCUMENT_OWNER_SCOPE_MISMATCH",
+        "COWORKER_ARCHIVED",
+        "COWORKER_HAS_ACTIVE_WORK",
+        "COWORKER_PAUSED",
+        "DEADLINE_EXECUTION_PRECONDITION_FAILED",
+        "DELEGATION_CONCURRENCY_EXCEEDED",
+        "DELEGATION_DEPTH_EXCEEDED",
+        "DELEGATION_PROFILE_ARCHIVED",
+        "DELEGATION_PROFILE_DISABLED",
+        "DELEGATION_PROFILE_INCOMPATIBLE",
+        "DELEGATION_PROFILE_OPTIONS_INVALID",
+        "DEMONSTRATION_CAPTURE_LIMIT_REACHED",
+        "DEPENDENCY_UNAVAILABLE",
+        "EFFECT_AMBIGUOUS",
+        "EFFECT_RECONCILIATION_REQUIRED",
+        "EMPTY_CAPTURE",
+        "ENVIRONMENT_CLASS_MISMATCH",
+        "ENVIRONMENT_MISMATCH",
+        "ENVIRONMENT_UNAVAILABLE",
+        "FORBIDDEN",
+        "GOAL_ARCHIVED",
+        "IDEMPOTENCY_CONFLICT",
+        "INTEGRITY_FAILURE",
+        "INTERNAL",
+        "INVALID_ARGUMENT",
+        "INVALID_ARTIFACT_TRANSITION",
+        "INVALID_PLAN",
+        "INVALID_RESOURCE_REF",
+        "INVALID_TRANSITION",
+        "INVALID_TRIGGER",
+        "INVOCATION_AMBIGUOUS",
+        "INVOCATION_NOT_FOUND",
+        "LEAD_FAILOVER_POLICY_INVALID",
+        "LEASE_CONFLICT",
+        "LIMIT_EXCEEDED",
+        "MISFIRED_SLOT_SKIPPED",
+        "MISFIRE_LIMIT_EXCEEDED",
+        "NOT_AN_APP_PUBLISHER",
+        "NOT_FOUND",
+        "OBSERVATION_PROVIDER_UNAVAILABLE",
+        "OCCURRENCE_CONFLICT",
+        "OCCURRENCE_NOT_FOUND",
+        "PLACEMENT_UNAVAILABLE",
+        "PLAN_CYCLE",
+        "POLICY_DENIED",
+        "PROVIDER_INPUT_UNSUPPORTED",
+        "PROVIDER_UNAVAILABLE",
+        "RATE_LIMITED",
+        "RECOVERY_EXHAUSTED",
+        "REDACTION_FAILED",
+        "RESOURCE_CONFLICT",
+        "RESOURCE_CONTENT_EXTERNAL",
+        "RESOURCE_IDENTITY_CHANGED",
+        "RESOURCE_IDENTITY_UNAVAILABLE",
+        "RESOURCE_INDEX_UNAVAILABLE",
+        "RESOURCE_LOCATION_UNAVAILABLE",
+        "RESOURCE_REVISION_PARENT_MISMATCH",
+        "RESOURCE_STALE",
+        "RESOURCE_UNAVAILABLE",
+        "ROUTINE_ARCHIVED",
+        "ROUTINE_ARCHIVE_BLOCKED",
+        "ROUTINE_INPUT_INVALID",
+        "ROUTINE_NOT_ACTIVE",
+        "ROUTINE_NOT_FOUND",
+        "ROUTINE_REVISION_DRIFTED",
+        "ROUTINE_REVISION_NOT_FOUND",
+        "RUNTIME_MISMATCH",
+        "RUNTIME_STARTUP_UNAVAILABLE",
+        "RUNTIME_STOP_BLOCKED",
+        "RUNTIME_UNAVAILABLE",
+        "SCAN_UNAVAILABLE",
+        "SCAN_UNSUPPORTED_PLATFORM",
+        "SCHEDULE_PLAN_UNAVAILABLE",
+        "SECRET_UNAVAILABLE",
+        "SENSITIVE_INPUT_UNSUPPORTED",
+        "SKILL_DRIFT_DETECTED",
+        "SOURCE_REFERENCE_REQUIRED",
+        "STALE_CLAIM_EPOCH",
+        "STALE_FENCE",
+        "STALE_SPEC_REVISION",
+        "STALE_TASK_VERSION",
+        "STALE_VERSION",
+        "STALE_WORKSPACE_VERSION",
+        "STEP_NOT_READY",
+        "STORE_BUSY",
+        "SUGGESTION_EXPIRED",
+        "TASK_ALREADY_PAUSED",
+        "TASK_NOT_FOUND",
+        "TASK_PAUSE_UNSAFE",
+        "TASK_TERMINAL",
+        "TIMEOUT",
+        "TRIGGER_HOST_UNAVAILABLE",
+        "TRIGGER_UNSUPPORTED",
+        "UNAUTHORIZED",
+        "UNAVAILABLE",
+        "UNSUPPORTED_PROJECTION",
+        "UNSUPPORTED_VERSION",
+        "UPLOAD_EXPIRED",
+        "UPLOAD_OFFSET_CONFLICT",
+        "USER_REQUEST_EXPIRED",
+        "USER_REQUEST_NOT_FOUND",
+        "USER_REQUEST_RESPONSE_TOO_LARGE",
+        "VERIFICATION_FAILED",
+        "WORKER_BUDGET_EXCEEDED",
+        "WORKER_QUALITY_FLOOR_UNMET",
+        "WORKSPACE_ARCHIVED",
+        "WORKSPACE_NOT_QUIESCENT"
+      ]
     },
     "pinned_resource_ref": {
       "type": "object",
@@ -12026,6 +12202,44 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/conversation_turn_status_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "workspace.delegation.settings.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/workspace_delegation_settings_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task.delegation.policy.pinned.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/task_delegation_policy_pinned"
           }
         }
       }

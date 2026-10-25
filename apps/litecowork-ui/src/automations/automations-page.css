@@ -89,6 +89,7 @@
 .automation-trigger-kinds { display: flex; gap: 8px; }
 .automation-trigger-kinds button { min-height: 35px; padding: 7px 11px; border: 1px solid #d7dee4; border-radius: 8px; background: #fff; color: #4f5d69; font: inherit; font-size: 12px; cursor: pointer; }
 .automation-trigger-kinds button.selected { border-color: #7898ae; background: #edf4f8; color: #294a60; font-weight: 650; }
+.automation-trigger-kinds button[aria-disabled="true"] { border-style: dashed; background: #f4f6f7; color: #687681; opacity: .82; cursor: not-allowed; }
 .automation-two-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: end; }
 .automation-policy-note { margin: 0; color: var(--ink-muted, #73808d); font-size: 11px; line-height: 1.5; }
 .automation-editor-footer { display: flex; justify-content: flex-end; gap: 9px; padding-top: 16px; border-top: 1px solid var(--line, #e4e8ec); }
@@ -130,3 +131,47 @@
 .automation-setup li[data-state="BLOCKED"]::before { content: "!"; color: #a44b2a; font-weight: 700; }
 .automation-setup li strong { color: var(--ink-strong, #202a35); font-size: 12px; }
 .automation-setup li span { color: var(--ink-muted, #627080); font-size: 11px; }
+
+.automation-template-gallery {
+  display: grid;
+  gap: 16px;
+  margin: 0 0 22px;
+  padding: 20px;
+  border: 1px solid #dfe6ea;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #f8fbfc 0%, #f4f7f9 100%);
+}
+.automation-template-gallery-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.automation-template-gallery-heading h2 { margin: 5px 0; color: var(--ink-strong, #202a35); font-size: 20px; letter-spacing: -0.025em; }
+.automation-template-gallery-heading p { max-width: 700px; margin: 0; color: var(--ink-muted, #627080); font-size: 13px; line-height: 1.5; }
+.automation-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+.automation-template-card { display: grid; align-content: start; gap: 11px; min-width: 0; padding: 17px; border: 1px solid #dce4e9; border-radius: 13px; background: rgba(255,255,255,.94); transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
+.automation-template-card:hover { transform: translateY(-2px); border-color: #bbccd6; box-shadow: 0 8px 22px rgba(39,63,79,.08); }
+.automation-template-coding { border-top: 3px solid #557b92; }
+.automation-template-cowork { border-top: 3px solid #8b79a9; }
+.automation-template-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.automation-template-art { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px; color: #36576a; background: radial-gradient(circle at 70% 25%, #fff 0 8%, transparent 9%), linear-gradient(145deg, #e2edf3, #f4f8fa); font-size: 22px; font-weight: 650; }
+.automation-template-cowork .automation-template-art { color: #695782; background: radial-gradient(circle at 70% 25%, #fff 0 8%, transparent 9%), linear-gradient(145deg, #eee8f5, #faf8fc); }
+.automation-template-category { padding: 5px 9px; border: 1px solid #e0e6ea; border-radius: 999px; color: #526675; background: #f7f9fa; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.automation-template-card h3 { margin: 0; color: var(--ink-strong, #202a35); font-size: 16px; letter-spacing: -.015em; }
+.automation-template-summary { margin: 0; color: var(--ink-muted, #627080); font-size: 12px; line-height: 1.5; }
+.automation-template-details { display: grid; gap: 8px; padding: 10px 11px; border: 1px solid #e7ecef; border-radius: 9px; background: #fafcfd; color: #526373; font-size: 11px; line-height: 1.45; }
+.automation-template-details summary { color: #36576a; font-size: 11px; font-weight: 650; cursor: pointer; }
+.automation-template-details strong { color: #415361; font-size: 11px; }
+.automation-template-details ul { display: grid; gap: 4px; margin: 0; padding-left: 16px; }
+.automation-template-details p { margin: -5px 0 0; }
+.automation-template-card > button { justify-self: start; min-height: 36px; margin-top: 1px; }
+.automation-template-progress { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 18px; padding: 13px 15px; border: 1px solid #d6e5dc; border-radius: 11px; background: #f5faf6; }
+.automation-template-progress > div { display: grid; gap: 3px; }
+.automation-template-progress strong { color: #315b3c; font-size: 12px; }
+.automation-template-progress p { margin: 0; color: #536b58; font-size: 11px; line-height: 1.45; }
+@media (max-width: 760px) {
+  .automation-template-gallery { padding: 15px; }
+  .automation-template-grid { grid-template-columns: 1fr; }
+  .automation-template-progress { align-items: stretch; flex-direction: column; }
+  .automation-template-progress button { align-self: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .automation-template-card { transition: none; }
+  .automation-template-card:hover { transform: none; }
+}

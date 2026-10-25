@@ -21,7 +21,7 @@ Main sidebar
   Settings                         Agents (chief), Subagents (external profiles), Runtime
 Coworker contextual destinations
   Chat | Responsibilities | Work | Memory & Knowledge | Connections & Tools | Settings
-Workbench: resizable on right, initially closed; never discard unsaved edits.
+Workbench: visible compact Start panel on the right by default; restore a validated last tool; never discard unsaved edits.
 ~~~
 
 Main composer: generous multiline input, accessible Add, native chief/model/effort, Send/Task/Schedule options and Workbench open state; availability is derived from actual adapter capability. A one-off user may never interact with Coworkers. Task creation and Chat sending are distinct actions even if they look like one natural-language experience. Do not silently create a Task, schedule or saved memory during a simple conversation unless the appropriate accepted policies exist. The current Home save-Task flow may remain until turn admission exists, but it must never claim a live native chat.
@@ -42,9 +42,10 @@ First run: choose/create Workspace, select and authenticate a compatible native 
 | Work and run details | Canonical Task and verified output | Inspect, Pause/Resume, Cancel, answer Needs You, open Artifact | provider ambiguous, missing artifact, stale lease, unsafe retry, offline OS | E03/04/07 |
 | Memory & Knowledge | Quiet scoped source/record list | Inspect source, revision, correct, revoke, delete, filter, view Context used | no extractor, temporary chat, conflict, pending purge, stale provider data | E08-S03 |
 | Global Needs You | Pending actual requests only | Open exact request, Approve/Deny/Answer/Sign in/Take over | resolved/expired/stale approval, wrong principal assurance, offline response | E02-S04, E04 |
-| Workbench and outputs | Right context panel, closed by default | Preview, compare, edit, Save As, restore version, open source | dirty navigation, revoked artifact, unsupported format, digest mismatch | E08-S07 |
+| Workbench and outputs | Visible compact right panel; Start on first launch or stale saved selection | Browser, Terminal, Files/Library entry cards with truthful availability; preview, compare, edit, Save As, restore version, inspect source; interactive apps use inert preview plus exact-version Run/Stop only through a qualified isolated Artifact Runtime; host-confirmed Save As creates a new FILE Artifact | dirty navigation, revoked/stale artifact, invalid package, unqualified OS/runtime, sandbox failure, digest mismatch, unavailable provider | E08-S07/E08-S09 |
 | Runtime/background | Shows real status and availability | Start, launch at login, keep background, stop/preview drain | sleep/lock/offline/crash, existing AMBIGUOUS actions, poweroff | E01/E07/E09 |
-| Global Automations | Cross-Coworker canonical list | Filter, new, edit, pause, run now, create test Task, view trigger/occurrence | invalid scope, missed slots, duplicate run/test, host offline, disabled/archived | E09 |
+| Global Automations | Cross-Coworker canonical list and starter gallery | Browse coding and general-cowork templates; preview needs/output; create editable Routine draft; save, configure dependencies/host/timezone, enable, run or inspect history as separate actions | Template selection never installs/connects/grants/enables/runs; invalid scope, missed slots, duplicate run/test, host offline, disabled/archived | E09 |
+| Settings → Subagents | Workspace default and Coworker-specific inheritance/override | Choose native-only, balanced, cost-aware or qualified host-only Task delegation; set native child model behavior only when adapter supports it; enable exact host worker profiles; let Coworkers inherit or narrow | Applies to future Task admission; plain conversation remains selected agent-native; unsupported parent-model inheritance and widened profile requests block explicitly; no credential transfer | E05 |
 
 ## Interaction inventory: exact action, prerequisites, outcomes, recovery
 
@@ -194,15 +195,15 @@ A React mock with static cards is visual exploration only. Route and API actions
 Existing E02–E10 features remain in scope: Workspace local-only setup, persistent Resource Library and ZIP intake, Task Work/Live Desk, Goals and Suggestions, Agents/Subagents, approval inbox, provenance-rich Artifacts and Workbench, Browser/Computer takeover, Discover/Skill installation, scheduling, and final production accessibility/security/packaging.
 
 
-## Right Workbench shell — finalized 2026-10-10
+## Right Workbench shell — owner-approved screenshot layout (2026-10-24)
 
-The supplied desktop reference is adopted as the EMPTY Workbench pattern, not as an always-open default. The useful parts are the calm single-surface layout, strong central launch actions, compact title row, and persistent layout controls. LiteCowork keeps chat as the focal surface and opens the Workbench only because the user explicitly asked for a surface or restores a user-owned prior pane state.
+The 2026-10-24 owner-approved desktop layout supersedes the closed-by-default policy below. The Workbench shell is visible by default on desktop as a compact Start panel beside the central Conversation. Start shows Browser, Terminal, and File entry tiles with their actual availability labels; tile presence never claims that a provider is qualified. Keep the calm single-surface layout, strong central launch actions, compact title row, and persistent layout controls. On narrow layouts, Workbench becomes an overlay/route rather than competing with Conversation for width.
 
 ### Open and restore policy
 
-- Brand-new ordinary chat: Workbench closed. This preserves reading/composer width and avoids making terminal/browser look mandatory.
-- Existing window/Workspace: restore the user's last explicit open/closed state and width, provided the referenced pane is still authorized; otherwise show Start.
-- Tool/background result: never steal focus or auto-open. The message/activity row offers **Open in Workbench**. Exception: an explicit user command whose requested outcome is to open Browser, Computer, File, or Artifact may open it because that navigation itself was user intent.
+- First desktop launch/new window: show the compact Start panel by default. The owner may collapse it; remember that layout choice and width per Workspace/window.
+- Existing window/Workspace: restore the user's last explicit visible/collapsed state and width, provided the referenced pane remains authorized; otherwise show Start. Do not restore expired grants, stale sessions, or a private object owned by another Coworker.
+- Tool/background result: never steal focus or replace the current Workbench surface. The message/activity row offers **Open in Workbench**. An explicit user command to open Browser, Computer, File, or Artifact may navigate there because that navigation itself was user intent.
 - Coworker/session switch: preserve the panel shell, but only keep an active object when the user remains authorized and there is no dirty-draft conflict. Never show one Coworker's private object as if it belongs to another.
 - App restart: restore layout preference, not stale authority. Re-resolve the object/provider before rendering content.
 
@@ -210,19 +211,19 @@ The supplied desktop reference is adopted as the EMPTY Workbench pattern, not as
 
 Header: semantic title **Start**; back/forward only when real panel history exists; right-side controls for split-ratio preset, maximize/restore, and close. Close restores focus to the control that opened the panel. The body uses one vertical launcher list with generous whitespace, not nested dashboards.
 
-Default launch rows, shown only when actually supported:
+Default launch tiles on desktop are **Browser**, **Terminal**, and **Files**. Keep all three visible in Start and show the real availability label on each; only enable activation when its provider and required scope are qualified:
 
-1. **Workspace files** — browse/search authorized Resource roots and pinned Library items.
-2. **Browser** — opens the qualified built-in/controlled browser. If no browser provider is ready, keep the row discoverable only when repair is useful and name the reason.
-3. **Computer** — shown when a qualified desktop/computer-use Environment exists. It opens live view and Take control; it is not synonymous with Browser.
-4. **Terminal** — advanced/developer capability. Hide from the ordinary Start list unless the selected native harness/Workspace exposes a qualified terminal, or place it under **More**.
+1. **Browser** — opens the qualified built-in/controlled browser. If unavailable, keep the tile visible but disabled with the actual reason and a repair action only when one exists.
+2. **Terminal** — advanced/developer surface. Keep the tile visible; enable it only when the selected native harness/Workspace exposes a qualified terminal, otherwise show why it is unavailable.
+3. **Files** — browse/search authorized Resource roots and pinned Library items; if no Workspace is selected, show that prerequisite instead of a false empty list.
+4. **Computer** — optional under **More** when a qualified desktop/computer-use Environment exists. It opens live view and Take control; it is not synonymous with Browser.
 5. **Recent outputs** — optional compact row when actual authorized Artifacts exist; never fabricate recents.
 
 Connections, MCP servers, Skills, and permissions are NOT Start-view launchers. They belong to Discover/Connections & Tools or appear as a task-time repair card.
 
 ### Geometry and responsiveness
 
-- First explicit desktop open: target roughly 42% of usable content width, clamped to a comfortable tokenized minimum and about 72% maximum.
+- Default visible desktop Start panel: target 320 CSS px, resizable within a 280–420 px range so the central surface keeps the remaining width. The first-launch width is compact; restore a validated user-chosen width per window/Workspace.
 - Pointer and keyboard resize; remember width per window/Workspace.
 - Maximize makes Workbench the content surface while retaining global app chrome; Restore returns the exact prior width.
 - Below the responsive breakpoint, Workbench becomes a full-screen route/sheet rather than crushing chat beside it.
@@ -238,7 +239,7 @@ The Workbench is a presentation and interaction host, never an authority source.
 
 ### Screenshot-specific decision
 
-Adopt: compact **Start** header, spacious neutral dark/light surface, 3–5 large launcher rows, shortcut hints on the right, maximize/close controls, and clear icon + title + one-line description. Do not copy: an always-visible Terminal card for every user, unexplained layout glyphs, or a permanently open panel. Every icon control needs a tooltip and accessible name.
+Adopt: compact **Start** header, spacious neutral dark/light surface, the owner-approved Browser, Terminal, and File entry tiles with truthful availability labels, shortcut hints on the right, resize/maximize/collapse controls, and clear icon + title + one-line description. The Start shell remains visible by default on desktop and can be collapsed. Never imply a tile is usable when its provider is unavailable; every icon control needs a tooltip and accessible name.
 
 
 ## Competitor-derived Coworker details refinements

@@ -844,13 +844,19 @@
         "docs/DELEGATION.md",
         "docs/AGENT-FABRIC.md",
         "docs/TASK-RUNTIME.md",
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/SCHEMAS.md",
+        "docs/EVENTS.md",
+        "docs/schemas/operator-api.openapi.yaml",
+        "docs/schemas/sqlite-v28.sql",
         "docs/TRUST.md",
         "docs/OBSERVABILITY.md"
       ],
-      "implementation": "Source slice now has typed profile commands; SQLite idempotent create/revise/duplicate/disable/archive; authenticated Operator routes; and desktop create/revise/duplicate/disable/archive controls. Profiles are created disabled and enablement remains fail-closed until adapter option validation, Trust, Environment, and Task admission are integrated. Same-binding multiple profiles are supported. The desktop profile card now shows allowlisted Codex probe stages and makes untested inference/session start and unproven writer quiescence explicit; these diagnostics are not execution readiness. Code/system/owner acceptance, lockfile resolution, and verification remain open.",
-      "acceptance": "Disabled by default including lead; revision pin never mutates running child; enable starts no process.",
-      "negative_cases": "Enable disconnected agent, stale profile edit, archived binding, unsupported model.",
-      "demo": "Create fast and reviewer profiles on one installed harness.",
+      "implementation": "Source slice now has typed profile commands; SQLite idempotent create/revise/duplicate/disable/archive; authenticated Operator routes; and desktop create/revise/duplicate/disable/archive controls. Profiles are created disabled and enablement remains fail-closed until adapter option validation, Trust, Environment, and Task admission are integrated. Same-binding multiple profiles are supported. The target contract now also defines immutable Workspace delegation-settings revisions, Coworker inherit-or-narrow policy, and the exact resolved policy snapshot pinned at Task admission. Settings changes affect future Task admissions only. Ordinary composer Send continues through the selected agent's native subagent mechanism; cross-agent host workers are Task-only and require their own eligible route and authentication. No per-Task route override, credential/session transfer, or silent fallback is allowed. The desktop profile card now shows allowlisted Codex probe stages and makes untested inference/session start and unproven writer quiescence explicit; these diagnostics are not execution readiness. This is contract scope, not a source-completion claim. Code/system/owner acceptance, lockfile resolution, and verification remain open.",
+      "acceptance": "Disabled by default including lead; revision pin never mutates running child; enable starts no process. Workspace settings are versioned and CAS-protected; Coworker overrides cannot widen the Workspace profile ceiling; each newly admitted Task pins the exact resolved policy/profile revisions. Plain composer Send remains native-agent controlled, while cross-agent workers require explicit Task dispatch and separate eligible authentication. No per-Task route override, credential transfer, or silent route fallback.",
+      "negative_cases": "Enable disconnected agent; stale profile or Workspace settings revision; archived/disabled binding or profile; unsupported model; Coworker override outside the Workspace ceiling; concurrent settings update; stale TaskSpec; unknown native control scope; worker auth/quota loss; attempted credential/session transfer; direct-conversation cross-agent dispatch; per-Task route override; silent fallback.",
+      "demo": "Create fast and reviewer profiles on one installed harness; configure a Workspace default and a narrower Coworker override; send a normal message and verify native subagent behavior; explicitly accept a Task and verify the pinned host-worker route, authentication boundary, and fail-closed unavailable state.",
       "tests": [
         "E05-S01-CODE",
         "E05-S01-SYSTEM",
@@ -1677,7 +1683,7 @@
         "docs/SECURITY.md",
         "docs/RESPONSIBILITIES.md"
       ],
-      "implementation": "PARTIAL / BLOCKED on the unpublished LiteSPM package contract: the LiteCowork-side contract, storage, Operator routes, and desktop projection are implemented. The MCP App sandbox boundary is implemented as a host-issued frame: the frame origin is host-assigned, the iframe sandbox is exactly allow-scripts, the CSP applies default-src 'none' with only the exact declared domains, and a hostile or absent declaration blocks every external connection and resource. The bridge guard refuses a wrong origin, a replayed host-issued nonce, an unknown method, an oversized payload, and a payload that carries a credential. The MCP_SKILL manifest conformance guard rejects a duplicated entry, a malformed digest, an oversized tree, and a dynamic manifest that may never be activated. The Skill definition and revision surface is served with a fail-closed lifecycle guard: a new definition is always DRAFT, a revision may only narrow the lifecycle, and a Skill is loadable only through a scoped CapabilityGrant bound to the exact capability reference and manifest digest. The Discover projection is a read-only projection over capabilities LiteCowork already owns: a catalog row is never authority (authoritative is always false and the validator rejects a row that claims it), install/auth/compatibility are reported as observed, an unknown state is an error rather than 'available', and the Runtime's observed capability hosts stay a separate observation stream. The LiteSPM package path is blocked: docs/CAPABILITY-FABRIC.md publishes only the service base URL and defers the API, authentication, manifests, package taxonomy, and installation, so the catalog reports package_service_qualified=false with reason LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED, connect-or-install returns DEPENDENCY_UNAVAILABLE, and the capability test returns health UNKNOWN without contacting any provider. No LiteSPM endpoint, method, authentication, or package schema was invented. The needed published contract is recorded in implementation/reviews/E10-S01.md; this epic adds no migration.",
+      "implementation": "PARTIAL / BLOCKED on the unpublished LiteSPM package contract: the LiteCowork-side contract, storage, Operator routes, and desktop projection are implemented. The MCP App sandbox boundary is implemented as a host-issued frame: the frame origin is host-assigned, the iframe sandbox is exactly allow-scripts, the CSP applies default-src 'none' with only the exact declared domains, and a hostile or absent declaration blocks every external connection and resource. The bridge guard refuses a wrong origin, a replayed host-issued nonce, an unknown method, an oversized payload, and a payload that carries a credential. The MCP_SKILL manifest conformance guard rejects a duplicated entry, a malformed digest, an oversized tree, and a dynamic manifest that may never be activated. The Skill definition and revision surface is served with a fail-closed lifecycle guard: a new definition is always DRAFT, a revision may only narrow the lifecycle, and a Skill is loadable only through a scoped CapabilityGrant bound to the exact capability reference and manifest digest. The Discover projection is a read-only projection over capabilities LiteCowork already owns: a catalog row is never authority (authoritative is always false and the validator rejects a row that claims it), install/auth/compatibility are reported as observed, an unknown state is an error rather than 'available', and the Runtime's observed capability hosts stay a separate observation stream. The LiteSPM package path is blocked: docs/CAPABILITY-FABRIC.md publishes only the service base URL and defers the API, authentication, manifests, package taxonomy, and installation, so the catalog reports package_service_qualified=false with reason LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED, connect-or-install returns DEPENDENCY_UNAVAILABLE, and the capability test returns health UNKNOWN without contacting any provider. No LiteSPM endpoint, method, authentication, or package schema was invented. The needed published contract is recorded in implementation/reviews/E10-S01.md; this epic adds no migration.",
       "acceptance": "App cannot steal Operator credentials; exact-origin transport only; install metadata not authority; incompatible option disabled. Two Coworkers reuse one installed connection with separate assignment and revocation boundaries; secure provider OAuth can be cancelled; task-time Connect revalidates original Task; 100+ catalog items do not eagerly load tool schemas or spawn processes. A blocked Task can connect an eligible app securely, cancel without losing work, or reauthenticate; successful connection revalidates and resumes the original Task exactly once. Two Coworkers may reuse one installation/account with independent assignments.",
       "negative_cases": "Forged app message, CORS escape, hostile manifest, missing package service. 10k catalog entries; OAuth cancel/timeout; changed MCP/Skill digest; reused account revoked for one Coworker only; task-time connection completes after Task cancellation; ambiguous external Effect before reconnect.",
       "demo": "Render real compatible MCP App and deny out-of-scope tool action.",
@@ -2168,6 +2174,56 @@
         "R-CLAUDE-USE",
         "R-CHATGPT-WORK",
         "R-OPENINTELLIGENTUI"
+      ]
+    },
+    {
+      "id": "E08-S09",
+      "epic": "E08",
+      "title": "Isolated interactive Artifact Runtime",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S05",
+        "E07-S00",
+        "E08-S07"
+      ],
+      "authorities": [
+        "ARCHITECTURE.md",
+        "docs/INTERACTIVE-ARTIFACT-RUNTIME.md",
+        "docs/AGENT-ACCOUNT-ROUTE-MATRIX.md",
+        "docs/AGENT-CONTROL.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/schemas/operator-api.openapi.yaml",
+        "docs/DATA-MODEL.md",
+        "docs/STATE-MACHINES.md",
+        "docs/API.md",
+        "docs/SERVICES.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/DESKTOP-SHELL-LLD.md",
+        "docs/SCHEMAS.md",
+        "docs/EVENTS.md",
+        "docs/SECURITY.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/V1-UI-SCREEN-CONTRACT.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/BENCHMARKS.md",
+        "docs/schemas/interactive-artifact-package.schema.json",
+        "docs/schemas/interactive-artifact-runtime.schema.json"
+      ],
+      "implementation": "Require fresh AgentControlDescriptor output.interactive_app=SUPPORTED for generation; never switch agent, model, account or execution route to fill a missing capability. Validate a self-contained interactive-app package and exact ArtifactVersion digest; define local Runtime supervisor operations and closed host/renderer IPC; create a volatile exact-version run; start only in a dedicated unprivileged renderer with an OS-qualified isolation profile; provide inert preview, explicit Run/Stop, exact-resource read handles, host-owned save proposal/confirmation, optional device-local app state, termination/revocation, static/source fallback and truthful UI states. Runtime state is not a durable Task, Attempt, DomainEvent or restartable run. No V1 app network, arbitrary host API, direct Effect, native-agent credential or MCP access.",
+      "acceptance": "Generation is offered only when the fresh selected AgentControlDescriptor reports output.interactive_app=SUPPORTED; missing, stale, UNKNOWN, NOT_EXPOSED or UNSUPPORTED state yields text/source fallback without hidden route change. A candidate is validated and published as an immutable INTERACTIVE_APP ArtifactVersion before preview. Owner Run is required after package, Workspace, exact-version, Runtime-profile and authority checks. No generated code executes in the privileged renderer. Every claimed OS proves filesystem/process/network/IPC isolation and process-tree quiescence; unqualified OS remains preview-only. Reads bind to owner-selected exact same-Workspace Resource revisions. Saves create a separate managed FILE Artifact through ArtifactStore.create only after host preview and owner confirmation, pin the exact app version as provenance, and use a host-owned idempotency receipt; executable app content is never overwritten. Restart never resumes a run. Accessible Workbench states and semantic/source/static fallback remain available. Per-OS performance and accessibility evidence is published for the exact package/build/runtime.",
+      "negative_cases": "Missing/stale/UNKNOWN/NOT_EXPOSED/UNSUPPORTED interactive-app output capability; hidden agent/model/account fallback; malformed manifest/digest; archive traversal, links, collisions or expansion abuse; remote code/data; unsupported profile/protocol; forged, replayed, oversized, wrong-run or out-of-order IPC; handle reuse; cross-Workspace or stale revision; revocation or Workspace switch during display; Artifact save conflict/cancel; process hang or surviving descendant; stop timeout; Runtime restart; sleep/lock; resource-budget breach; local state deletion failure; accessibility, keyboard, zoom, high-contrast, screen-reader or reduced-motion failure.",
+      "demo": "On each claimed desktop OS, verify unavailable output capability preserves the selected route and returns text/source fallback; run a real valid interactive Artifact through inert preview, explicit Run, keyboard/pointer use, Stop and owner-confirmed Save As to create a separate managed FILE Artifact. Inject hostile package, denial, revoked/archived version, unavailable profile, process crash; authorized historical version remains exact after head advances, revoke and concurrent save. Record cold/warm latency, CPU, peak memory, dropped frames, package bytes, cleanup time, exact builds, sanitized evidence and nontechnical owner feedback.",
+      "tests": [
+        "E08-S09-CODE",
+        "E08-S09-SYSTEM",
+        "E08-S09-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE",
+        "R-CHATGPT-WORK"
       ]
     }
   ]

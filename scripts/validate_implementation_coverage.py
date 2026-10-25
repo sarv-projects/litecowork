@@ -144,6 +144,7 @@ def schema_docs() -> list[str]:
         if not path.startswith(
             (
                 "implementation/",
+                ".claude/",
                 "docs/superpowers/plans/",
                 "archive_code/",
                 "archives_docs/",
@@ -487,6 +488,7 @@ MIGRATION_TABLE_STORY: dict[str, str] = {
     "channel_host_drain_proofs": "E11-S04",
     "channel_host_lease_releases": "E11-S04",
     "delegation_results": "E05-S01",
+    "workspace_delegation_settings_revisions": "E05-S01",
     "goal_artifact_links": "E08-S02",
     "resource_content_blob_registry": "E06-S01",
     "resource_index_blob_registry": "E06-S01",
@@ -599,6 +601,8 @@ def operation_story(path: str, method: str, operation_id: str) -> str:
     op = operation_id.lower()
     if "backup" in p or "restore" in p:
         return "E13-S01"
+    if p.startswith("/workspaces") and p.endswith("/delegation-settings"):
+        return "E05-S01"
     if p.startswith("/workspaces"):
         return "E02-S02" if "instruction" not in p else "E02-S02"
     if p.startswith("/conversations"):
@@ -735,12 +739,15 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "README.md": "E02-S01",
             "apps/litecowork-ui/README.md": "E02-S01",
             "docs/AGENT-CONTROL.md": "E03-S06",
+            "docs/AGENT-ACCOUNT-ROUTE-MATRIX.md": "E05-S01",
             "docs/CHROME-BROWSER-LLD.md": "E07-S01",
             "docs/COWORKER-FLOWS.md": "E09-S02",
             "docs/COWORKERS-TARGET.md": "E08-S01",
             "docs/CONNECTORS-WORKFLOWS.md": "E04-S02",
             "docs/DESKTOP-SHELL-LLD.md": "E02-S01",
             "docs/LEARNING.md": "E08-S03",
+            "docs/INTERACTIVE-ARTIFACT-RUNTIME.md": "E08-S09",
+            "docs/PRODUCT-CONTRACT-INDEX.md": "E01-S01",
             "docs/NATIVE-COMPOSER-LLD.md": "E03-S02",
             "docs/REFERENCE-IMPLEMENTATIONS.md": "E13-S03",
             "docs/RENDERING-CONFORMANCE-LLD.md": "E08-S06",
@@ -816,6 +823,7 @@ def doc_sections(path: str, text: str) -> list[tuple[str, str, str]]:
         ("FLOW", "F141"): "E03-S10",
         ("FLOW", "F142"): "E03-S10",
         ("FLOW", "F143"): "E04-S06",
+        ("BENCHMARK", "B91"): "E08-S09",
     }
     for position, (start, level, title) in enumerate(headings):
         end = len(lines)
@@ -1086,6 +1094,7 @@ def build_coverage(previous: list[dict[str, str]], inventory: dict[str, object])
         ("FLOW", "F141"): ("E03-S10", "Agent-adaptive composer dependency refresh."),
         ("FLOW", "F142"): ("E03-S10", "Native slash/reference semantic input."),
         ("FLOW", "F143"): ("E04-S06", "Cross-agent LiteSPM capability bridge qualification."),
+        ("BENCHMARK", "B91"): ("E08-S09", "Isolated interactive Artifact Runtime qualification."),
     }
     for path, pattern, kind in [
         (ROOT / "docs/FLOWS.md", r"^## (F\d+) — (.+)$", "FLOW"),

@@ -29,7 +29,7 @@ export type SkillProposalReviewState = {
 };
 
 const DRIFT_BLOCKER = "SKILL_DRIFT_DETECTED";
-const PACKAGE_BLOCKER = "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED";
+const PACKAGE_BLOCKER = "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED";
 
 export function skillProposalReviewState(proposal: SkillProposal): SkillProposalReviewState {
   const drifted = proposal.drift !== null;

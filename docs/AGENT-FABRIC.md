@@ -34,7 +34,7 @@ interface AgentAdapter {
 }
 ```
 
-Optional features are capability-negotiated. Never branch on agent brand name.
+Optional features are capability-negotiated. Never branch on agent brand name. Native delegation's child model, visibility, cancellation and per-session disable behavior are independent descriptor fields. Unknown is not equivalent to supported; adapters report only observed/enforced guarantees. Native child records remain harness-owned and do not become Core Attempts.
 
 
 Authentication is intentionally not a universal `AgentAdapter.authenticate()` operation.
@@ -53,10 +53,35 @@ AgentCapabilities {
   session: { resume, steer, interrupt, cancel, fork, model_switch: LIVE | NEW_SESSION | UNSUPPORTED }
   input: { text, image, file, resources }
   extension: { mcp_stdio, mcp_http, skills, plugins, dynamic_attach }
+  output: {
+    semantic_text: OutputCapabilityState,
+    file_artifact: OutputCapabilityState,
+    rich_presentation: OutputCapabilityState,
+    interactive_app: OutputCapabilityState
+  }
   host_instruction_delivery: NATIVE_SYSTEM | NATIVE_DEVELOPER | SESSION_GUIDANCE | CONTEXT_ATTACHMENT | UNSUPPORTED
-  reporting: { tool_calls, plan, usage, native_subagents, approvals }
+  reporting: { tool_calls, plan, usage, native_delegation?: NativeDelegationDescriptor, approvals }
   environment: { cwd, extra_directories }
   limits: { max_context_hint?, max_concurrent_sessions? }
+}
+
+OutputCapabilityState =
+  SUPPORTED | UNSUPPORTED | UNKNOWN | NOT_EXPOSED
+
+Only SUPPORTED outputs are included as `output.*` AgentFeatures. UNKNOWN and
+NOT_EXPOSED stay distinct in the descriptor but are not routable. A missing descriptor
+value is a schema error, not an implicit SUPPORTED value.
+
+NativeDelegationDescriptor {
+  support: SUPPORTED | UNSUPPORTED | UNKNOWN
+  control_scope: PER_TURN | PER_SESSION | UNKNOWN
+  child_visibility: NONE | SUMMARY | EVENTS
+  child_model_semantics: AGENT_DEFAULT | PARENT_INHERIT_SUPPORTED | EXPLICIT_OVERRIDE_SUPPORTED | UNKNOWN
+  model_reporting: EXACT | AGENT_REPORTED | UNKNOWN | NOT_EXPOSED
+  cancellation: PER_CHILD | SESSION_ONLY | UNSUPPORTED | UNKNOWN
+  disable_per_session: ENFORCED | UNSUPPORTED | UNKNOWN
+  max_depth?: u32
+  max_concurrent_children?: u32
 }
 ```
 
@@ -77,6 +102,7 @@ The time-bounded `AgentControlDescriptor` defined in
 - non-secret adapter configuration schema;
 - agent-owned Model/Reasoning/Effort/session-option schemas;
 - text/image/file/resource input support;
+- output delivery support for semantic text, file Artifacts, RichPresentations and interactive-app packages; the descriptor reports transport capability only, not quality, safety or execution authority;
 - slash-command and native reference/mention metadata;
 - native configuration targets and extension-state summaries.
 

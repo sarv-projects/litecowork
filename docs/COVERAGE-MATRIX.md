@@ -15,9 +15,10 @@
    assurance, and acceptance.
 7. ADRs explain rationale and never override the current authority.
 
-When two documents conflict, the higher authority wins and the lower document must be
-corrected in the same change. A schema or example cannot silently create a new product
-decision.
+For each concern row below, the first linked document is the primary normative owner;
+subsequent links are supporting contracts, not co-equal sources. When two documents conflict,
+the primary owner wins and the supporting document must be corrected in the same change.
+Schemas and examples cannot silently create product decisions.
 
 ## Concern-to-authority map
 
@@ -25,25 +26,29 @@ decision.
 |---|---|
 | Domain language | [`../GLOSSARY.md`](../GLOSSARY.md) |
 | Product identity, HLD, ownership, invariants | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) |
-| Product promise, user-visible outcomes, Core non-goals | [`PRODUCT.md`](PRODUCT.md) |
+| Product promise, user-visible outcomes, Core non-goals | [`PRODUCT.md`](PRODUCT.md), [`PRODUCT-CONTRACT-INDEX.md`](PRODUCT-CONTRACT-INDEX.md), [`V1-PRODUCT-RELEASE-CONTRACT.md`](V1-PRODUCT-RELEASE-CONTRACT.md) |
+| Agent/account/model route qualification | [`AGENT-ACCOUNT-ROUTE-MATRIX.md`](AGENT-ACCOUNT-ROUTE-MATRIX.md), [`AGENT-CONTROL.md`](AGENT-CONTROL.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md) |
+| Interactive app artifacts: selected-route output capability, immutable package, local IPC, volatile run states, OS isolation, explicit Run/Stop, fallback and qualification | [`INTERACTIVE-ARTIFACT-RUNTIME.md`](INTERACTIVE-ARTIFACT-RUNTIME.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`API.md`](API.md), [`SCHEMAS.md`](SCHEMAS.md), [`SECURITY.md`](SECURITY.md), [`ARTIFACTS-EVIDENCE.md`](ARTIFACTS-EVIDENCE.md); [`schemas/interactive-artifact-package.schema.json`](schemas/interactive-artifact-package.schema.json), [`schemas/interactive-artifact-runtime.schema.json`](schemas/interactive-artifact-runtime.schema.json) |
 | Workspace identity, instructions, roots, owner, lifecycle, and replication policy | [`DATA-MODEL.md`](DATA-MODEL.md), [`CONTEXT.md`](CONTEXT.md), [`WORLD-RESOURCES.md`](WORLD-RESOURCES.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md) |
 | One-time folder attachment path provenance and upload-session pinning | [`DATA-MODEL.md`](DATA-MODEL.md), [`WORLD-RESOURCES.md`](WORLD-RESOURCES.md), [`API.md`](API.md), [`EVENTS.md`](EVENTS.md), `schemas/operator-api.openapi.yaml`, `schemas/domain-event.schema.json`, `schemas/sqlite-v2.sql`, [`FLOWS.md`](FLOWS.md) |
 | Entity meaning, fields, relationships, invariants | [`DATA-MODEL.md`](DATA-MODEL.md) |
+| Persisted Workspace delegation settings and immutable Task policy snapshot | [`DATA-MODEL.md`](DATA-MODEL.md), [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`API.md`](API.md), [`EVENTS.md`](EVENTS.md), `schemas/domain-event.schema.json`, `schemas/operator-api.openapi.yaml`, `schemas/sqlite-v28.sql` |
 | Shared enums, value types, error taxonomy | [`SCHEMAS.md`](SCHEMAS.md) |
 | Legal lifecycle transitions and transition owners | [`STATE-MACHINES.md`](STATE-MACHINES.md) |
 | Service methods, dependencies, forbidden edges | [`SERVICES.md`](SERVICES.md) and owning domain contracts |
 | Task, plan, Attempt, checkpoint semantics | [`TASK-RUNTIME.md`](TASK-RUNTIME.md) |
 | Truthful Task progress, active workstreams, activity/evidence freshness | [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
 | Step placement preview, candidate selection, and recovery version checks | [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
-| Agent registry/distribution discovery, install/update, native auth/API-key configuration, AgentControlDescriptor, agent-owned session options and native slash/reference/input surface | [`AGENT-CONTROL.md`](AGENT-CONTROL.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), ADR [0025](adr/0025-agent-module-registry-and-native-configuration.md) |
+| Native agent auth/configuration, agent-owned model/session options, output-capability states, and native slash/reference/input surface | [`AGENT-CONTROL.md`](AGENT-CONTROL.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), ADR [0025](adr/0025-agent-module-registry-and-native-configuration.md) |
 | Agent sessions, runtime adapters and protocol normalization | [`AGENT-FABRIC.md`](AGENT-FABRIC.md) |
-| Native harness integrity, DelegationProfiles, host/native/capability worker classes, selection, escalation, cost, quotas, warmth, and handoff | [`DELEGATION.md`](DELEGATION.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`API.md`](API.md), `schemas/delegation.schema.json`, `schemas/operator-api.openapi.yaml` |
+| Native harness integrity, Workspace/Coworker/Task delegation policy, native child model/visibility/cancellation guarantees, DelegationProfiles, host/native/capability worker classes, route/account eligibility, escalation, cost, quotas, warmth, and handoff | [`DELEGATION.md`](DELEGATION.md), [`AGENT-ACCOUNT-ROUTE-MATRIX.md`](AGENT-ACCOUNT-ROUTE-MATRIX.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`AGENT-CONTROL.md`](AGENT-CONTROL.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`API.md`](API.md), `schemas/delegation.schema.json`, `schemas/operator-api.openapi.yaml`, `schemas/domain-event.schema.json`, `schemas/sqlite-v28.sql` |
 | Lead failover policy, Attempt profile pinning, Coworker-owned Automation revisions, ActionBatch membership, execution-method provenance, and ContextDocument revision/deletion controls | [`DELEGATION.md`](DELEGATION.md), [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`AUTOMATION.md`](AUTOMATION.md), [`CAPABILITY-INVOCATIONS.md`](CAPABILITY-INVOCATIONS.md), [`CONTEXT.md`](CONTEXT.md), [`EVENTS.md`](EVENTS.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml`, `schemas/domain-event.schema.json`, `schemas/sqlite-v1.sql` |
 | Optional chat-first Coworkers, standing responsibility grouping, quiet scoped memory, consumer connection UX and proposed target flows (non-operational until schema/API implementation) | [Coworker target](COWORKERS-TARGET.md), [Coworker flows](COWORKER-FLOWS.md), [EXPERIENCE.md](EXPERIENCE.md), [RESPONSIBILITIES.md](RESPONSIBILITIES.md), [CONTEXT.md](CONTEXT.md), [UI acceptance](../implementation/UI.md) |
 | Coworker identity/presence, evidence-linked Goals and immutable Task/Routine/Artifact links, Suggestions, personal context, and user-authored ContextDocuments | [`RESPONSIBILITIES.md`](RESPONSIBILITIES.md), [`CONTEXT.md`](CONTEXT.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml`, `schemas/sqlite-v10.sql`, [`STORAGE.md`](STORAGE.md), [`FLOWS.md`](FLOWS.md), [`EXPERIENCE.md`](EXPERIENCE.md) |
 | Durable AgentSession provenance, operation-scoped lifetime, replacement, and Runtime-local native/session handles | [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`STORAGE.md`](STORAGE.md), [`EVENTS.md`](EVENTS.md) |
-| ACP Agent Registry metadata, AgentModule matching, installation/update observations, AgentControlDescriptor refresh, native auth/configuration and Workspace binding configuration | [`AGENT-CONTROL.md`](AGENT-CONTROL.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), [`FLOWS.md`](FLOWS.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), `schemas/operator-api.openapi.yaml`, `schemas/sqlite-v16.sql`, [`implementation/epics/E03.md`](../implementation/epics/E03.md) |
+| ACP Agent Registry metadata, AgentModule matching, installation/update observations, AgentControlDescriptor refresh, and Workspace binding configuration | [`AGENT-CONTROL.md`](AGENT-CONTROL.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), [`FLOWS.md`](FLOWS.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), `schemas/operator-api.openapi.yaml`, `schemas/sqlite-v16.sql`, [`implementation/epics/E03.md`](../implementation/epics/E03.md) |
 | Workspace default lead selection and standalone Task persistence/admission boundaries | [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), [`EVENTS.md`](EVENTS.md), [`FLOWS.md`](FLOWS.md), `schemas/operator-api.openapi.yaml`, `schemas/domain-event.schema.json`, [`implementation/CURRENT-RUN.md`](../implementation/CURRENT-RUN.md) |
+| LiteSPM catalog/inventory, installability by package/host/scope, local bridge/CLI qualification, plan/approval, ownership, and first-party Discover UI | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md), [`LITESPM-LITECOWORK-INTEROP-LLD.md`](LITESPM-LITECOWORK-INTEROP-LLD.md), [`V1-UI-SCREEN-CONTRACT.md`](V1-UI-SCREEN-CONTRACT.md), [`V1-UI-ACTION-STATE-LEDGER.md`](V1-UI-ACTION-STATE-LEDGER.md), [`COMPETITIVE-RESEARCH.md`](COMPETITIVE-RESEARCH.md) |
 | Capability use and LiteSPM package boundary | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md) |
 | Qualified cross-agent exposure of one LiteSPM-managed connector/MCP/plugin/skill capability through AgentCapabilityBridge | [`AGENT-CONTROL.md`](AGENT-CONTROL.md), [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md), [`CAPABILITY-INVOCATIONS.md`](CAPABILITY-INVOCATIONS.md), ADR [0003](adr/0003-litespm-is-independent.md), [`implementation/epics/E04.md`](../implementation/epics/E04.md) |
 | Runtime-local provider instance readiness, health freshness, sharing isolation, and derived Activation-use count | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
@@ -79,11 +84,12 @@ decision.
 | Durable event envelope, registry, evolution | [`EVENTS.md`](EVENTS.md), `schemas/domain-event.schema.json` |
 | Operator, Mesh, Agent, Capability, Environment boundaries | [`PROTOCOLS.md`](PROTOCOLS.md) |
 | User-facing request/response API | [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
-| Transactions, tables, migrations, blobs | [`STORAGE.md`](STORAGE.md), consolidated `schemas/sqlite-v1.sql`, and ordered migrations through `schemas/sqlite-v19.sql` |
+| Workspace/Coworker delegation defaults and admitted Task pinning | [`DELEGATION.md`](DELEGATION.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`AGENT-ACCOUNT-ROUTE-MATRIX.md`](AGENT-ACCOUNT-ROUTE-MATRIX.md), `schemas/operator-api.openapi.yaml`, `schemas/domain-event.schema.json`, `schemas/sqlite-v28.sql` |
+| Transactions, tables, migrations, blobs | [`STORAGE.md`](STORAGE.md), consolidated `schemas/sqlite-v1.sql`, and ordered migrations through `schemas/sqlite-v28.sql` |
 | Workspace backup manifests, encryption references, and restore behavior | [`DATA-MODEL.md`](DATA-MODEL.md), [`STORAGE.md`](STORAGE.md), [`RUNTIME-MESH.md`](RUNTIME-MESH.md), [`FLOWS.md`](FLOWS.md), [`API.md`](API.md) |
 | Actor-by-actor end-to-end sequences | [`FLOWS.md`](FLOWS.md) |
 | Failure matrix, retry, reconcile, failover | [`FAILURE-RECOVERY.md`](FAILURE-RECOVERY.md) |
-| Navigation, screens, interaction and UI states | [`EXPERIENCE.md`](EXPERIENCE.md) |
+| Navigation, screens, interaction and UI states | [`V1-UI-SCREEN-CONTRACT.md`](V1-UI-SCREEN-CONTRACT.md), [`DESKTOP-SHELL-LLD.md`](DESKTOP-SHELL-LLD.md), [`MOTION.md`](MOTION.md), [`EXPERIENCE.md`](EXPERIENCE.md), [`implementation/UI.md`](../implementation/UI.md) |
 | Typed Operator presentation items, renderers, transient stream/reconnect behavior, context-use disclosure, Artifact workbench/version interactions | [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md), [`EXPERIENCE.md`](EXPERIENCE.md), [`API.md`](API.md), [`SERVICES.md`](SERVICES.md), [`ARTIFACTS-EVIDENCE.md`](ARTIFACTS-EVIDENCE.md) |
 | Semantic-message authority, optional RichPresentation schema/compiler/bindings/fallbacks, citations and exact Artifact deliverables | [`RICH-RESPONSE.md`](RICH-RESPONSE.md), [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`SCHEMAS.md`](SCHEMAS.md), [`EVENTS.md`](EVENTS.md), [`API.md`](API.md), [`STORAGE.md`](STORAGE.md), ADR [0022](adr/0022-rich-presentation-is-optional.md) |
 | Built-in zero-authority HostSkills and negotiated instruction delivery | [`HOST-GUIDANCE.md`](HOST-GUIDANCE.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md), ADR [0023](adr/0023-host-guidance-is-not-capability-authority.md) |
@@ -107,9 +113,10 @@ decision.
 
 These are visible dependencies, not blanks to fill by guesswork:
 
-- LiteSPM API version, authentication, package/plugin schema, MCP discovery, and
-  install/activation lifecycle. The selected base URL is recorded in
-  [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md); LiteSPM owns the contract.
+- LiteSPM machine-service endpoint, API version, authentication, package/plugin schema,
+  MCP discovery, and install/activation lifecycle. The previously selected but
+  unqualified endpoint candidate is recorded in [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md);
+  LiteSPM owns the machine contract.
 - UI component-library choice and implementation-specific asset tooling. The v1 color,
   type, spacing, shape, layout, component-state, responsive, and accessibility contracts
   are fixed in [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md); an implementation may change them

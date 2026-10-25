@@ -1779,10 +1779,12 @@ expected Resource version.
    retry. `DELETED` is committed only when the acknowledged receipts exactly cover the
    sealed plan; an empty plan completes only after local inventory verification.
 
-The acknowledgement event is independent of target membership count, but the current
-contract does not define a maximum purge-manifest cardinality or total reconciliation work.
-Resource and event-envelope identifiers retain their existing string bounds, so this is
-not a strict whole-event or end-to-end work cap.
+The V1 local admission contract bounds the canonical sealed manifest at 4096 unique targets,
+16384 member references, and 4 MiB UTF-8, with an indexed limit-plus-one preflight. Any
+exceeded limit returns `PURGE_MANIFEST_LIMIT_EXCEEDED` before the tombstone and removes
+nothing. Reconciliation handles at most 64 targets per slice; each target remains
+independently receipt-backed and retryable. A manifest-limit rejection is all-or-nothing,
+not a partially admitted deletion.
 
 **Failure/UI/postcondition:** Retryable physical-removal failures leave the Resource
 tombstoned and unreadable; they never restore content. The owner sees deletion pending,
@@ -1975,8 +1977,10 @@ and a renderer qualified for the selected content kind.
 
 1. Workbench pins the selected Artifact ID and immutable current version, then loads the
    authorized version list and provenance.
-2. If the renderer supports comparison, the user selects two committed versions. Otherwise
-   the compare action is absent and both versions remain independently open/downloadable.
+2. If the renderer supports comparison, the user selects two committed versions. Text
+   comparison/preview is eligible only for UTF-8 `text/plain` content at or below 1 MiB;
+   other versions remain independently open/downloadable through a qualified viewer or
+   Save As, without an implicit parse. Otherwise the compare action is absent.
 3. Restore selects an existing version as content input; ArtifactStore checks current
    Artifact aggregate version and publication state.
 4. ArtifactStore appends a new ArtifactVersion and matching ResourceRevision with the

@@ -77,6 +77,10 @@ confirms only Operator API serving for the reported local incarnation, not Task 
 readiness or Mesh registration. No loopback HTTP/bearer fallback is present in the desktop
 Tauri client or daemon Operator listener.
 
+## Interactive Artifact renderer
+
+The Artifact renderer is an untrusted process and cannot connect to Local Operator IPC, loopback services, private networks, public internet, proxy endpoints, alternate DNS or cloud metadata. Enforce no-network at the OS profile as well as Content Security Policy; CSP alone is not an isolation boundary. Do not expose a Tauri/native bridge, bearer token, port number or authenticated Operator origin to app code. Exact owner-selected Resource revisions are read through run-bound broker handles only. A package cannot choose a host or request broad egress. Any future egress exception requires a reviewed capability, destination/operation scope, authenticated broker path, explicit owner policy, and OS-specific tests; it is outside V1. See [Interactive Artifact Runtime](INTERACTIVE-ARTIFACT-RUNTIME.md) and [Security](SECURITY.md).
+
 ## LiteCowork Capability Gateway authentication
 
 The Gateway authenticates each AgentSession with a short-lived, unguessable session

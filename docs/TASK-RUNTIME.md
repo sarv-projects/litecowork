@@ -4,6 +4,12 @@
 
 Task Runtime owns durable intent, plan revisions, Steps, Attempts, completion evaluation,
 cancellation/steering coordination, placement admission, and portable Task checkpoints.
+At Task admission it also resolves the Workspace delegation settings and the
+selected Coworker's inheritance/override policy, then pins the exact effective snapshot
+in TaskSpecRevision. There is no caller-supplied per-Task route override. Later Settings
+changes apply to newly admitted Tasks; applying new settings to an existing Task requires
+an explicit TaskSpec revision action that re-resolves current Workspace/Coworker policy.
+A child Attempt cannot consult a mutable setting to change its route.
 
 It does not own reasoning strategy, model routing, domain tools or external-agent private memory.
 

@@ -49,7 +49,7 @@ HorizonCode is an AgentModule/qualified worker candidate, not the default invisi
 
 First use: launch → choose Workspace → detect an eligible native agent → select native sign-in/setup if needed → blank Conversation with optional attachment and agent/model/effort controls. Never force Coworker creation, Task plan, capability wizard or workflow-builder.
 
-Persistent sidebar: **New Chat**, conversation search/history, **Coworkers**, **Needs You**, **Work**, **Automations**, **Library**, **Discover**; Settings/Agent management and Inspector are progressive disclosure. The right Workbench is closed by default unless the user explicitly preserved a preference; it opens for meaningful active work or upon request. New Chat and Coworker chats use one composer and Conversation model. No separate Code/Cowork worlds.
+Persistent sidebar: **New Chat**, conversation search/history, **Coworkers**, **Needs You**, **Work**, **Automations**, **Library**, **Discover**; Settings/Agent management and Inspector are progressive disclosure. The default desktop layout shows the right Workbench beside the composer, using the approved compact Browser/Terminal/File start surface. The owner may collapse, resize or expand it; restore the last explicit per-Workspace choice only after authorization checks. New Chat and Coworker chats use one composer and Conversation model. No separate Code/Cowork worlds.
 
 Composer: attach files; choose **native agent first** → show that agent's valid native models/modes/effort only; send; optional actions (Run as Task, Schedule, Save as Routine) through explicit review, not permanent forced pills. Sending a message creates a Conversation turn; it does not create a Task by inference alone. A Task admitted later links its origin message and carries independent durable state.
 
@@ -59,7 +59,7 @@ Never style absent data as successful. Show blocked / needs setup / offline / un
 
 ### Workbench and deliverables
 
-Workbench tabs are views over real authorized objects, never simulated process or browser state. Browser WebView presentation is not Chrome automation. Rich presentation is an optional projection; semantic text survives rendering failure. Artifact UI must declare which formats are truly viewable, editable, exportable, comparable, or unsupported. Do not present a PDF preview as full DOCX editing.
+Workbench is a visible compact start surface on desktop and a set of views over real authorized objects, never simulated process or browser state. Browser WebView presentation is not Chrome automation. Rich presentation is an optional projection; semantic text survives rendering failure. Answers, RichPresentations, editable file artifacts and interactive app artifacts have separate contracts; generated apps use only the isolated [Interactive Artifact Runtime](INTERACTIVE-ARTIFACT-RUNTIME.md). Interactive Artifact Run is enabled only for an exact qualified OS/Runtime profile after E08-S09 evidence; until then the Workbench remains inert preview/source-only. Artifact UI must declare which formats are truly viewable, editable, exportable, comparable, or unsupported. Do not present a PDF preview as full DOCX editing.
 
 ## 5. V1 vs V2 hard boundary
 

@@ -44,7 +44,10 @@ cross-device support and teamwork remain V2.
     start work without the normal user and Task admission path.
 17. Technical and nontechnical users share one product flow. Plain-language outcomes are
     the default; progressively disclosed work detail and Inspector retain technical
-    provenance without creating separate product modes.
+    provenance without creating separate product modes. The primary surface speaks in
+    terms of work, updates, decisions and deliverables. Agent and model selection stays
+    explicit in the composer, while internal Attempt/lease/bridge mechanics stay under
+    Activity or Inspector unless a user needs them to resolve a blocker.
 18. Presentation is derived from authorized projections. Transient streamed output is not
     durable until its ConversationMessage commits; UI frames cannot authorize or settle work.
 

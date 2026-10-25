@@ -12,6 +12,7 @@ Workspace {
   replication_policy: ReplicationPolicy
   replication_scope_root_ids: WorkspaceRootId[]
   current_instruction_revision: u64?
+  current_delegation_settings_revision: u64
   default_agent_binding_id: AgentBindingId?
   primary_coworker_id: CoworkerId?
   hub_runtime_id: RuntimeId?
@@ -35,6 +36,32 @@ Clearing it is explicit. It never changes a Task's origin Coworker or lead bindi
 `hub_runtime_id`, when present, identifies the installation hosting this Workspace's
 Mesh authority. That Runtime must also have an ACTIVE `MESH_PAIRING`
 `RuntimeWorkspaceBinding` for this Workspace; the RuntimeId itself is not authorization.
+
+### WorkspaceDelegationSettingsRevision
+
+Immutable, versioned default policy for newly admitted Tasks in one Workspace.
+
+```text
+WorkspaceDelegationSettingsRevision {
+  workspace_id: WorkspaceId
+  revision: u64
+  default_strategy: DelegationStrategy
+  enabled_delegation_profile_revisions: {profile_id: DelegationProfileId, revision: u64}[]
+  native_child_model_policy: AGENT_DEFAULT | INHERIT_PARENT_IF_SUPPORTED
+  authored_by: PrincipalRef
+  created_at: Timestamp
+}
+```
+
+The profile list is a Workspace ceiling, not permission to execute. It contains exact
+same-Workspace enabled profile revisions and is rechecked for status, descriptor freshness,
+route/account qualification and Trust at child admission. The default route is
+NATIVE_DEFAULT with an empty host-worker list. `native_child_model_policy` applies only to
+native children; per-profile `worker_model_selection_policy` applies only to HOST_DELEGATED
+workers. A new revision applies to future Tasks. Coworker policy may inherit it or narrow
+its strategy/profile subset; it cannot widen the Workspace ceiling. TaskSpecRevision stores
+the fully resolved immutable policy snapshot, including exact worker profile revisions and
+the selected native-child model policy.
 
 ### WorkspaceInstructionRevision
 
@@ -61,7 +88,7 @@ revision. A stale request returns `STALE_WORKSPACE_VERSION` and creates no revis
 explicit merge may name multiple existing parents. Offline edits on a non-Hub Runtime are
 pending intents until the authoritative Hub accepts them; they are never silently
 last-writer-wins.
-Workspace has at most one default enabled AgentBinding; a Conversation may override it.
+Workspace has at most one default enabled AgentBinding; a Conversation may override it. Workspace also has a versioned default delegation policy, independently of the selected lead/model. A Coworker may inherit that policy or use an explicit narrower override within the Workspace worker-profile ceiling. Tasks pin the resolved policy snapshot at admission; there is no caller-supplied per-Task route override.
 Changing the default affects newly admitted Conversation turns and Tasks only.
 The Workspace default and Conversation override are preferences for admission, not
 permanent ownership: every ConversationTurn records its chosen AgentBinding, and each
@@ -251,6 +278,7 @@ TaskSpecRevision {
   workspace_instruction_revision: u64?
   budget: BudgetSpec?
   delegation_budget_policy: DelegationBudgetPolicy?
+  delegation_policy_snapshot: ResolvedDelegationPolicySnapshot
   lead_failover_policy: LeadFailoverPolicy
   deadline: Timestamp?
   source_message_refs: MessageId[]
@@ -272,6 +300,23 @@ creation resolves an explicit request first, then the selected CoworkerRevision 
 then `DISABLED`. Omission during a later TaskSpec edit inherits the previous policy;
 disabling is an explicit `DISABLED` value. The policy only selects a replacement lead
 after a typed provider-confirmed trigger and never transfers authority.
+
+```text
+ResolvedDelegationPolicySnapshot {
+  source: WORKSPACE_DEFAULT | COWORKER_OVERRIDE
+  workspace_settings_revision: u64
+  coworker_revision?: u64
+  strategy: DelegationStrategy
+  enabled_delegation_profile_revisions: {profile_id: DelegationProfileId, revision: u64}[]
+  native_child_model_policy: AGENT_DEFAULT | INHERIT_PARENT_IF_SUPPORTED
+  resolved_at: Timestamp
+}
+```
+
+The snapshot is created in the same admission transaction as Task and its initial
+TaskSpecRevision. Profile revisions are immutable pins; a profile disabled or a route
+revoked after Task admission blocks new child admission but does not rewrite the snapshot
+or already admitted Attempt provenance. Changing settings cannot change a running Task.
 
 ### PlanRevision
 
@@ -1118,9 +1163,11 @@ Artifact {
   version: u64
 }
 
-Library promotion/archive increments `Artifact.version` only on a status transition.
-`current_version`, every ArtifactVersion, and the backing Resource head remain unchanged;
-a no-op archive or recorded retry never creates a content revision.
+Library promotion/archive increments `Artifact.version` only on a status transition. `current_version`, every ArtifactVersion, and the backing Resource head remain unchanged; a no-op archive or recorded retry never creates a content revision.
+
+For `kind=INTERACTIVE_APP`, the immutable managed ArtifactVersion contains the self-contained package described by `schemas/interactive-artifact-package.schema.json`; its exact ResourceRevision digest binds the entire archive. The package manifest and validator determine the entrypoint and complete declared asset set. HTML or JavaScript in an interactive app is never treated as an ordinary safe preview or opened in the privileged desktop renderer.
+
+A runtime run is not a persisted domain aggregate in V1. Its volatile identity is bound to one Workspace, ArtifactVersion, Runtime incarnation and optional Conversation/Task in the local supervisor. It has no domain-event stream, Task status, independent grant, or restart/resume API. Durable outputs and mediated external work remain represented by their existing Artifact, CapabilityGrant, Effect and Evidence owners. Durable run history would require a separate schema/API/event and retention decision.
 
 ArtifactVersion {
   artifact_id: ArtifactId

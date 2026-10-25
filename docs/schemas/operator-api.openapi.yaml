@@ -183,6 +183,34 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Workspace'}
         default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/delegation-settings:
+    get:
+      tags: [delegation]
+      operationId: getWorkspaceDelegationSettings
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}]
+      responses:
+        '200':
+          description: Current immutable Workspace delegation settings revision; controls Task admission policy, not conversation-native subagents.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkspaceDelegationSettingsRevisionView'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      tags: [delegation]
+      operationId: setWorkspaceDelegationSettings
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/IdempotencyKey'}, {$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkspaceDelegationSettingsInput'}
+      responses:
+        '200':
+          description: New immutable settings revision; affects future Task admissions only and increments the Workspace aggregate version.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkspaceDelegationSettingsRevisionView'}
+        default: {$ref: '#/components/responses/Error'}
   /workspaces/{workspaceId}/backups:
     get:
       tags: [workspaces]
@@ -2840,7 +2868,7 @@ paths:
         Requests the connection or installation of one capability. LiteSPM owns
         package discovery, verification, and installation, and its wire
         contract is not published, so the command currently reports
-        DEPENDENCY_UNAVAILABLE with reason LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED.
+        DEPENDENCY_UNAVAILABLE with reason LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED.
         It never invents a package endpoint and never claims that a package was
         installed.
       parameters:
@@ -4707,7 +4735,7 @@ components:
         agent_binding_id: {type: [string, 'null'], description: Null clears the default binding.}
     Workspace:
       type: object
-      required: [workspace_id, name, owner_principal_id, replication_policy, replication_scope_root_ids, current_instruction_revision, default_agent_binding_id, primary_coworker_id, hub_runtime_id, status, version, created_at, updated_at]
+      required: [workspace_id, name, owner_principal_id, replication_policy, replication_scope_root_ids, current_instruction_revision, current_delegation_settings_revision, default_agent_binding_id, primary_coworker_id, hub_runtime_id, status, version, created_at, updated_at]
       properties:
         workspace_id: {type: string}
         name: {type: string}
@@ -4717,6 +4745,7 @@ components:
           type: array
           items: {type: string, minLength: 1}
         current_instruction_revision: {type: [integer, 'null'], minimum: 1}
+        current_delegation_settings_revision: {type: integer, minimum: 1}
         default_agent_binding_id: {type: [string, 'null']}
         primary_coworker_id: {type: [string, 'null']}
         hub_runtime_id: {type: [string, 'null']}
@@ -4732,6 +4761,64 @@ components:
           type: array
           items: {$ref: '#/components/schemas/Workspace'}
         next_cursor: {type: [string, 'null']}
+    DelegationProfileRevisionRef:
+      type: object
+      additionalProperties: false
+      required: [profile_id, revision]
+      properties:
+        profile_id: {type: string, minLength: 1}
+        revision: {type: integer, minimum: 1}
+    WorkspaceDelegationSettingsInput:
+      type: object
+      additionalProperties: false
+      required: [default_strategy, enabled_delegation_profile_revisions, native_child_model_policy]
+      properties:
+        default_strategy: {type: string, enum: [NATIVE_DEFAULT, BALANCED, COST_SAVER, HOST_DELEGATION_ONLY]}
+        enabled_delegation_profile_revisions:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/DelegationProfileRevisionRef'}
+        native_child_model_policy: {type: string, enum: [AGENT_DEFAULT, INHERIT_PARENT_IF_SUPPORTED]}
+    WorkspaceDelegationSettingsRevisionView:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, revision, default_strategy, enabled_delegation_profile_revisions, native_child_model_policy, authored_by, created_at]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        revision: {type: integer, minimum: 1}
+        default_strategy: {type: string, enum: [NATIVE_DEFAULT, BALANCED, COST_SAVER, HOST_DELEGATION_ONLY]}
+        enabled_delegation_profile_revisions:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/DelegationProfileRevisionRef'}
+        native_child_model_policy: {type: string, enum: [AGENT_DEFAULT, INHERIT_PARENT_IF_SUPPORTED]}
+        authored_by: {$ref: '#/components/schemas/PrincipalRef'}
+        created_at: {type: string, format: date-time}
+    ResolvedDelegationPolicySnapshot:
+      type: object
+      additionalProperties: false
+      required: [source, workspace_settings_revision, coworker_id, coworker_revision, strategy, native_child_model_policy, worker_profiles, resolved_at]
+      properties:
+        source: {type: string, enum: [WORKSPACE_DEFAULT, COWORKER_OVERRIDE]}
+        workspace_settings_revision: {type: integer, minimum: 1}
+        coworker_id: {type: [string, 'null']}
+        coworker_revision: {type: [integer, 'null'], minimum: 1}
+        strategy: {type: string, enum: [NATIVE_DEFAULT, BALANCED, COST_SAVER, HOST_DELEGATION_ONLY]}
+        native_child_model_policy: {type: string, enum: [AGENT_DEFAULT, INHERIT_PARENT_IF_SUPPORTED]}
+        worker_profiles:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required: [profile_id, revision, worker_model_selection_policy]
+            properties:
+              profile_id: {type: string, minLength: 1}
+              revision: {type: integer, minimum: 1}
+              worker_model_selection_policy: {type: string, enum: [PROFILE_CONFIGURED, MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE]}
+        resolved_at: {type: string, format: date-time}
     RuntimeEventCursor:
       type: object
       additionalProperties: false
@@ -5347,7 +5434,7 @@ components:
         opened: {type: boolean}
     AgentCapabilities:
       type: object
-      required: [protocol, session, input, extension, reporting, environment, limits]
+      required: [protocol, session, input, extension, output, reporting, environment, limits]
       properties:
         protocol: {type: string}
         protocol_version: {type: [string, 'null']}
@@ -5369,6 +5456,18 @@ components:
             image: {type: boolean}
             file: {type: boolean}
             resources: {type: boolean}
+        output:
+          type: object
+          additionalProperties: false
+          description: >
+            Observed output delivery support for this exact adapter route. This does not
+            attest output quality, safety, correctness, or permission to execute an Artifact.
+          required: [semantic_text, file_artifact, rich_presentation, interactive_app]
+          properties:
+            semantic_text: {$ref: '#/components/schemas/OutputCapabilityState'}
+            file_artifact: {$ref: '#/components/schemas/OutputCapabilityState'}
+            rich_presentation: {$ref: '#/components/schemas/OutputCapabilityState'}
+            interactive_app: {$ref: '#/components/schemas/OutputCapabilityState'}
         extension:
           type: object
           required: [mcp_stdio, mcp_http, skills, plugins, dynamic_attach]
@@ -5642,6 +5741,9 @@ components:
             type: array
             uniqueItems: true
             items: {$ref: '#/components/schemas/AgentEndpointTopology'}
+    OutputCapabilityState:
+      type: string
+      enum: [SUPPORTED, UNSUPPORTED, UNKNOWN, NOT_EXPOSED]
     AgentFeature:
       type: string
       enum:
@@ -5659,6 +5761,10 @@ components:
       - extension.skills
       - extension.plugins
       - extension.dynamic_attach
+      - output.semantic_text
+      - output.file_artifact
+      - output.rich_presentation
+      - output.interactive_app
       - reporting.tool_calls
       - reporting.plan
       - reporting.usage
@@ -6878,6 +6984,7 @@ components:
       - input_refs
       - placement_preference
       - lead_failover_policy
+      - delegation_policy_snapshot
       - authored_by
       - created_at
       properties:
@@ -6917,6 +7024,9 @@ components:
         placement_preference: {$ref: '#/components/schemas/PlacementPreference'}
         preferred_lead_agent_binding_id: {type: [string, 'null']}
         lead_failover_policy: {$ref: '#/components/schemas/LeadFailoverPolicy'}
+        delegation_policy_snapshot:
+          oneOf: [{$ref: '#/components/schemas/ResolvedDelegationPolicySnapshot'}, {type: 'null'}]
+          description: Null only for a legacy pre-v28 TaskSpecRevision; every new admission/revision carries the server-resolved immutable snapshot.
         authored_by: {$ref: '#/components/schemas/PrincipalRef'}
         created_at: {type: string, format: date-time}
     Task:
@@ -9208,7 +9318,7 @@ components:
     DelegationProfileRevisionInput:
       type: object
       additionalProperties: false
-      required: [name, routing_description, session_options, session_options_descriptor_digest, required_features, preferred_features, enforced_policy, optimization_preference, max_concurrency, max_host_delegation_depth, latency_class, environment_policy, native_delegation_policy, warm_policy]
+      required: [name, routing_description, session_options, session_options_descriptor_digest, required_features, preferred_features, enforced_policy, optimization_preference, max_concurrency, max_host_delegation_depth, latency_class, environment_policy, native_delegation_policy, worker_model_selection_policy, warm_policy]
       properties:
         name: {type: string, minLength: 1, maxLength: 120, description: Trimmed and NFC-normalized; compared by Unicode case-folding within the AgentBinding.}
         routing_description: {type: string, minLength: 1, maxLength: 240}
@@ -9226,6 +9336,7 @@ components:
         latency_class: {type: string, enum: [STANDARD, INTERACTIVE, DEADLINE_SENSITIVE]}
         environment_policy: {$ref: '#/components/schemas/DelegatedEnvironmentPolicy'}
         native_delegation_policy: {type: string, enum: [INHERIT, ALLOW, DENY_IF_SUPPORTED]}
+        worker_model_selection_policy: {type: string, enum: [PROFILE_CONFIGURED, MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE]}
         warm_policy: {$ref: '#/components/schemas/WarmPolicy'}
       allOf:
       - if:
@@ -9241,7 +9352,7 @@ components:
     DelegationProfileRevisionView:
       type: object
       additionalProperties: false
-      required: [delegation_profile_id, revision, workspace_id, name, routing_description, session_options, session_options_descriptor_digest, required_features, preferred_features, enforced_policy, optimization_preference, max_concurrency, max_host_delegation_depth, latency_class, environment_policy, native_delegation_policy, warm_policy, authored_by, created_at]
+      required: [delegation_profile_id, revision, workspace_id, name, routing_description, session_options, session_options_descriptor_digest, required_features, preferred_features, enforced_policy, optimization_preference, max_concurrency, max_host_delegation_depth, latency_class, environment_policy, native_delegation_policy, worker_model_selection_policy, warm_policy, authored_by, created_at]
       properties:
         delegation_profile_id: {type: string}
         revision: {type: integer, minimum: 1}
@@ -9262,6 +9373,7 @@ components:
         latency_class: {type: string, enum: [STANDARD, INTERACTIVE, DEADLINE_SENSITIVE]}
         environment_policy: {$ref: '#/components/schemas/DelegatedEnvironmentPolicy'}
         native_delegation_policy: {type: string, enum: [INHERIT, ALLOW, DENY_IF_SUPPORTED]}
+        worker_model_selection_policy: {type: string, enum: [PROFILE_CONFIGURED, MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE]}
         warm_policy: {$ref: '#/components/schemas/WarmPolicy'}
         authored_by: {$ref: '#/components/schemas/PrincipalRef'}
         created_at: {type: string, format: date-time}
@@ -9368,12 +9480,13 @@ components:
     CoworkerRevisionInput:
       type: object
       additionalProperties: false
-      required: [name, role_description, delegation_strategy, enabled_delegation_profile_ids, interaction_policy, context_policy, notification_policy]
+      required: [name, role_description, delegation_policy_source, delegation_strategy, enabled_delegation_profile_ids, interaction_policy, context_policy, notification_policy]
       properties:
         name: {type: string, minLength: 1, maxLength: 120}
         avatar_ref: {oneOf: [{$ref: '#/components/schemas/PinnedResourceRef'}, {type: 'null'}]}
         role_description: {type: string, maxLength: 2000}
         default_lead_agent_binding_id: {type: [string, 'null']}
+        delegation_policy_source: {type: string, enum: [WORKSPACE_DEFAULT, COWORKER_OVERRIDE]}
         delegation_strategy: {type: string, enum: [NATIVE_DEFAULT, BALANCED, COST_SAVER, HOST_DELEGATION_ONLY]}
         enabled_delegation_profile_ids: {type: array, uniqueItems: true, items: {type: string}}
         delegation_budget_policy: {oneOf: [{$ref: '#/components/schemas/DelegationBudgetPolicy'}, {type: 'null'}]}
@@ -9381,6 +9494,14 @@ components:
         interaction_policy: {$ref: '#/components/schemas/CoworkerInteractionPolicy'}
         context_policy: {$ref: '#/components/schemas/CoworkerContextPolicy'}
         notification_policy: {$ref: '#/components/schemas/NotificationPolicy'}
+      allOf:
+      - if:
+          properties: {delegation_policy_source: {const: WORKSPACE_DEFAULT}}
+          required: [delegation_policy_source]
+        then:
+          properties:
+            delegation_strategy: {const: NATIVE_DEFAULT}
+            enabled_delegation_profile_ids: {maxItems: 0}
     CreateCoworkerRequest:
       type: object
       additionalProperties: false

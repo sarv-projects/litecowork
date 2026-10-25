@@ -35,7 +35,7 @@ use crate::skill::SqliteSkillStore;
 
 /// The reason code reported whenever the LiteSPM package service is required
 /// but its published contract is unavailable.
-pub const PACKAGE_SERVICE_NOT_QUALIFIED: &str = "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED";
+pub const PACKAGE_SERVICE_NOT_QUALIFIED: &str = "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED";
 
 /// The maximum number of Runtime capability-host observations one page carries.
 pub const DISCOVER_MAX_RUNTIME_CAPABILITIES: usize = 50;

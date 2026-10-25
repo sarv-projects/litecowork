@@ -1,10 +1,10 @@
-# Competitive Product Research (Snapshot: 2026-10-10; earlier checks retained)
+# Competitive Product Research (latest snapshot: 2026-10-24; earlier checks retained)
 
 This is dated product research, not a normative competitor dependency. Product behavior
 changes quickly; cited vendor pages are the evidence, while LiteCowork contracts are owned
 by `ARCHITECTURE.md` and the domain documents.
 
-## Verified patterns and corrections
+## Earlier snapshot (2026-10-10): verified patterns and corrections
 
 | Product | Verified behavior | LiteCowork implication |
 |---|---|---|
@@ -345,3 +345,149 @@ shell and reliable Workbench outcomes; provider breadth and visual polish cannot
 for a nonfunctional primary action. LiteCowork can differentiate through local-first
 ownership, explicit Workspace and file scope, native-agent parity, and durable trust/effect
 records, but those are product claims only where the actual provider path enforces them.
+
+## 2026-10-24 deep product and repository audit
+
+This dated addendum supersedes earlier snapshots where rollout, packaging, or capability
+claims differ. It separates official product surfaces from open-source repository
+descriptions and from LiteCowork design requirements. Vendor pages establish what a
+vendor presents or documents; they do not establish independent quality, latency, safety,
+or reliability parity.
+
+### Products and desktop-relevant capabilities
+
+| Product | Surface and execution model documented in this audit | Boundary and LiteCowork implication |
+|---|---|---|
+| **Grok Bot** | X describes a persistent computer-use agent with its own cloud computer, Bot identity, goals/routines, task handoff/collaboration, approval/takeover, and desktop/mobile access. Its FAQ and computer-use docs describe distinct cloud and local-computer paths, including an Ask-every-time default for local control. Each Bot has a screen; the shared Bot environment means files, browser state, and credentials are not automatically isolated by Bot identity. | Treat identity, screen, account, computer, and permission scope as separate concepts. Make local-vs-cloud execution visible, require explicit local control, and never imply that separate worker profiles form a security boundary. A local V1 Task cannot promise cloud continuation. |
+| **OpenAI Dots** | OpenAI presents Dots as persistent cloud agents with their own cloud computer, saved context/preferences, integrations, and cross-surface access through ChatGPT, desktop, Slack/Teams, and supported voice/call entry points. The launch documentation describes a distinct cloud-agent experience and separately identifies Codex environments and local computer connection. | Do not collapse Dots, ChatGPT Work, Codex, and a native OpenAI model into one “agent” route. A local computer connection is a placement dependency, not cloud execution. Model entitlement, connected account, local environment, and agent identity must remain distinct in LiteCowork. |
+| **Claude Cowork / unified Claude** | Anthropic documents Cowork in the Claude experience across web, desktop, and mobile, with availability/rollout depending on account. Its desktop surface supports local files and integrations; cloud tasks can continue separately, while a local-folder/app task depends on the desktop bridge remaining available. Artifacts include documents, slides, designs, dashboards, and interactive experiences. Computer use is documented as a controlled capability. | The strongest comparison is the finished cowork experience: one conversation, visible work progress, reviewable outputs, and a useful artifact surface. Preserve the exact Claude Code/native harness when selected; do not emulate its subscription or pass Claude credentials to another worker. Keep local resource availability distinct from cloud continuation. |
+| **ChatGPT Work and Dots** | The official materials checked describe ChatGPT Work as the user-facing work experience and Dots as a distinct persistent agent product. Work supports cloud work, scheduled work and an opt-in local-work path; local actions still depend on an available connected computer. Codex remains a distinct coding-agent surface. | “ChatGPT Cowork” is not treated as a separately verified official product name in this snapshot. Compare against the actual Work, Dots, and Codex surfaces separately. LiteCowork should make ordinary cowork tasks feel first-class without labeling the whole product as a coding-agent UI. |
+| **Meta Muse** | Meta presents Muse as a personal agent using a secure virtual environment, browser/app access, goals, memory, scoped permissions, and an audit trail, with Muse app, WhatsApp, web, and staged regional/device availability described in its rollout material. | The important desktop pattern is a persistent objective with an inspectable action history and clear permission scope. Do not overstate region/platform availability or assume an agent's VM is equivalent to a user's local desktop. |
+| **Microsoft 365 Copilot Cowork** | Microsoft documents Cowork for eligible Microsoft 365 Copilot tenants, with task creation across Microsoft 365 content/apps, approvals and enterprise governance. Published model choices are tenant/region/plan dependent; administrators separately govern model families and feature access. | A model picker is a qualified route catalog, not a promise that every account can use every model. Surface the actual signed-in account, plan/tenant eligibility, app permissions, and available model routes before execution. |
+| **Eigent** | The public repository describes an Electron/React desktop client, a local FastAPI service, CAMEL-based multi-agent orchestration, model/provider configuration, MCP/skills, and browser/terminal work. Repository claims and release status can change; source review is not a production qualification. | Its architecture is evidence that desktop UI and an agent orchestration/runtime boundary can be separate. LiteCowork should support provider-native lead agents plus explicit host-managed workers, but retain its own admission, permission, effect, and verification authorities. |
+| **OpenWork** | The public repository describes an Electron cowork surface built around OpenCode, with local workspaces, multiple model/provider paths, browser/tool access, schedules, artifacts, and optional remote/organization services. Its repository also exposes a separate server/control-plane path; exact features depend on release and configuration. | Study its polished cowork framing and local-first entry points. Keep local worker availability, remote control plane, schedule host, and execution environment as separate status facts. Do not infer an always-on OS service from the presence of a desktop scheduler. |
+| **OpenCowork (name collision)** | Several unrelated public repositories use this or a near-identical name, including `LeonGaoHaining/opencowork`, `OpenCoworkAI/open-cowork`, and `opencowork-ai/opencowork`. They differ in ownership, runtime, maturity, and feature claims. | Always cite the owner/repository and commit or release. “OpenCowork” alone is not a stable product or architecture reference and must not be used as a dependency identifier. |
+| **DeepSeek Harness** | `deepseek-ai/deepseek-harness` is the public developer-preview harness repository checked here, with a web entry point, a desktop app, and a plugin-oriented tool/runtime design. The project labels itself preview/developer-facing; its interfaces may change. | Treat this as an agent harness that can be launched and qualified, not as a model subscription route or a universal model endpoint. An adapter must report the exact executable, version, auth mode, features, OS, and supported control semantics. |
+| **Devin** | Devin's official docs describe a cloud agent and desktop/IDE surfaces, reviewable work, computer use, and reusable automation templates. Devin is proprietary; no public Devin desktop source repository was verified. | Borrow reviewable task progress and clear handoff. Do not imply that a proprietary worker can be embedded, controlled, or delegated to without a documented supported interface. |
+| **Cursor** | Cursor's official docs describe cloud agents, automations, repository/environment setup, tool/capability controls, and remote desktop/computer-use support for qualified workers. Cursor is proprietary; no public Cursor Desktop implementation repository was verified. | Learn from setup prerequisites, task artifacts, and automation lifecycle. Distinguish cloud-agent features from the local IDE and do not treat Cursor as an embeddable open-source harness. |
+
+### Capability comparison translated into LiteCowork's V1 desktop bar
+
+The goal is to match the best experience a user can achieve **on the user's currently
+available desktop/laptop**, while preserving every selected agent's native behavior and
+authorization. It is not a claim of equality with every competitor's cloud service,
+mobile surface, model, paid plan, or private benchmark.
+
+1. **Agent-native lead selection in the chat composer.** The user selects an installed,
+   authenticated, eligible agent/harness and one of its supported models/options in the
+   same composer. The visible choice is the exact binding and qualified route, not a
+   generic model string. Switching agents preserves draft content but clears incompatible
+   controls visibly. No unsupported route is silently substituted.
+2. **Native subagents remain native.** A normal conversation turn goes to the selected
+   lead agent. Its own child-agent mechanisms, tool semantics, auth, context, visibility,
+   cancellation, and model controls are used only to the extent reported by that adapter.
+   LiteCowork must not describe opaque native children as independently authorized or
+   independently metered.
+3. **Cross-agent subagents are a separate, explicit Task path.** Workspace Settings choose
+   whether Task delegation uses native delegation, named LiteCowork worker profiles, or a
+   supported combination. Coworkers may inherit or narrow that Workspace ceiling. Each
+   host worker profile pins a qualified agent/harness, OS/runtime, independent auth,
+   model-selection policy, allowed capability set, budget, and cancellation behavior.
+   The user can choose “Run as Task” or accept a Task plan; ordinary Send is never silently
+   promoted to a Task. Parent credentials/subscriptions never transfer.
+4. **Task-grade progress and control.** A user can see what is happening, which worker and
+   environment own each step, what needs approval, what changed, and what was verified.
+   Pause, resume, cancel, take-control, and handoff have observable process/effect
+   semantics; a UI toggle alone is not a stop receipt.
+5. **Real desktop capabilities, qualified per route.** Browser, terminal, selected files,
+   local applications, and computer-use are offered only when that agent/runtime/OS path is
+   qualified. The screen identifies local resource dependencies, machine availability,
+   and whether a step can continue after the app closes. No cloud continuation is inferred
+   from a local daemon.
+6. **Cowork outputs are first-class.** Semantic answers, files, rich presentations, and
+   safe interactive artifacts have distinct contracts. Users can preview, compare,
+   download, revise, and find outputs without reading raw logs or code-agent traces. A
+   renderer failure must preserve the answer and downloadable verified files.
+7. **Connectors and packages have honest boundaries.** LiteSPM is the inbuilt manager for
+   its supported MCP/skill/plugin catalog and install lifecycle. Installing a package is
+   not connecting an account, granting a Workspace permission, attaching it to an agent,
+   or launching that agent as a worker. Unsupported agent/package combinations remain
+   visible as unsupported.
+8. **Automation starts as an explainable draft.** Coding and general cowork templates
+   preview their requirements, accounts, permissions, outputs, and runtime placement.
+   Choosing one creates an editable Routine draft only. Saving, connecting/assigning
+   dependencies, selecting a local trigger host/timezone, enabling, and running are
+   separate owner actions.
+9. **Reliability is visible.** Durable Task/Event/Evidence history, idempotent admission,
+   bounded replay/recovery, exact artifact versions, and Effect reconciliation protect
+   against duplicate work and false success. Native session continuity is claimed only
+   when the native agent adapter proves it.
+10. **Usage and quality are route-specific.** Display model/agent identity, auth owner,
+    plan/quota availability, feature gaps, and usage-confidence provenance per route.
+    Compare LiteCowork mediation with the same agent/model's direct native path. Never
+    claim that changing the wrapper makes a weaker model equal to ChatGPT Plus or Claude
+    Pro.
+
+### Requirements confirmed, missing-contract checks, and decisions
+
+| Requirement | Current contract outcome | Required follow-through |
+|---|---|---|
+| V1 is the full desktop/laptop product; cloud/mobile continuation is later | Confirmed in Product Index, release contract, and UI contract | Keep local/remote placement and machine-online state visible; do not leave “cloud” wording in V1 promises |
+| Switch lead agents/models in the central composer | Agent route matrix and native composer flow define route pinning and visible incompatibility | Every catalog row must expose install/auth/eligibility/features; qualify exact OS and harness |
+| Use selected agent's native subagents, with optional LiteCowork workers from other agents | Two delegation mechanisms are defined; direct chat uses native only, host delegation requires an admitted Task | Settings/schema/storage/API/event must use one source-of-truth revision and pin it at Task admission |
+| Inherit parent model or use a worker's configured model | Model policy is explicit and route-qualified | Disable inheritance unless the exact agent supports it and the worker independently authenticates that route |
+| LiteSPM installs MCPs, skills, and plugins | Catalog/install lifecycle is separate from connections, grants, and worker launch | Never model LiteSPM as the multi-agent scheduler or claim every item supports every agent |
+| Coding and general cowork automation examples | Automation gallery creates a draft only | Template detail must show inputs, account/connector needs, local host, output and approval points before save |
+| Attractive cowork experience instead of coding-agent control panel | The shell is three-pane with conversation center and compact, visible Workbench | Default to useful end-user language and artifact views; expose logs, diffs and agent diagnostics progressively |
+| “Plus/Pro-equivalent” artifacts, generative UI, and content | No product-wide parity can be promised from docs or vendor marketing | Define route-matched paired quality and responsiveness benchmarks; publish tested routes and limitations |
+| Multi-provider auth without subscription proxying | Route matrix separates native sign-in, API keys, quotas, and agent-owned sessions | Each integration needs documented vendor-supported auth; no cookie/session/token copying or hidden fallback |
+
+### First-party sources and repositories checked for this addendum
+
+- xAI, [Introducing Grok Bot](https://x.ai/news/introducing-grok-bot), [overview](https://docs.x.ai/grok-bot/overview), [FAQ](https://docs.x.ai/grok-bot/faq), [computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), [approvals, security and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy), and [chat and collaboration](https://docs.x.ai/grok-bot/chat-and-collaboration).
+- OpenAI, [Introducing Dots](https://openai.com/index/introducing-dots/), [Dots documentation](https://learn.chatgpt.com/docs/dots), and [Getting started with your Dot](https://help.openai.com/en/articles/20001530-getting-started-with-your-dot).
+- Anthropic, [Cowork on web, desktop and mobile](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile), [Cowork and chat are one Claude](https://support.claude.com/en/articles/16761823-claude-cowork-and-chat-are-one-claude), [Artifacts](https://support.claude.com/en/articles/17153992-what-are-artifacts-and-how-do-i-use-them), and [computer use in Cowork](https://support.claude.com/en/articles/14128542-let-claude-use-your-computer-in-cowork).
+- Meta, [Introducing Muse, a personal AI agent](https://about.fb.com/news/2026/09/introducing-muse-personal-ai-agent/), [Muse availability](https://ai.meta.com/muse/download/), and [Muse Wonder models](https://about.fb.com/news/2026/10/introducing-muse-wonder-models/).
+- Microsoft, [Copilot Cowork](https://learn.microsoft.com/en-us/microsoft-365/copilot/cowork/), [model availability](https://learn.microsoft.com/en-us/microsoft-365/copilot/cowork/cowork-models), [admin governance](https://learn.microsoft.com/en-us/microsoft-365/copilot/cowork/cowork-admin-governance), and [What's new](https://learn.microsoft.com/en-us/microsoft-365/copilot/cowork/whats-new).
+- Open-source repositories: [Eigent](https://github.com/eigent-ai/eigent), [OpenWork](https://github.com/different-ai/openwork), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [LeonGaoHaining/opencowork](https://github.com/LeonGaoHaining/opencowork), [OpenCoworkAI/open-cowork](https://github.com/OpenCoworkAI/open-cowork), and [opencowork-ai/opencowork](https://github.com/opencowork-ai/opencowork).
+- Proprietary product documentation: [Devin introduction](https://docs.devin.ai/get-started/devin-intro), [Devin desktop](https://docs.devin.ai/desktop/getting-started), [Devin computer use](https://docs.devin.ai/work-with-devin/computer-use), [Cursor cloud agents](https://cursor.com/docs/cloud-agent), [Cursor automations](https://cursor.com/docs/cloud-agent/automations), [Cursor capabilities](https://cursor.com/docs/cloud-agent/capabilities), and [Cursor setup](https://cursor.com/docs/cloud-agent/setup).
+
+Sources above were checked on 2026-10-24. Product availability, rollouts, repository heads,
+plan entitlements, regions, and model lists are time-sensitive. For any future release
+comparison, recheck the first-party page and a pinned repository revision; do not treat
+this snapshot as a current adapter qualification or a promise of provider capability.
+
+
+## LiteSPM dependency verification — 2026-10-24
+
+This is a dated dependency check, not a LiteCowork wire contract. I opened the LiteSPM
+public catalog, its developer and security pages, and the linked
+[upstream repository README](https://github.com/sarv-projects/LiteSPM). The pages describe
+a local CLI that syncs/searches a catalog, targets supported agent hosts, previews
+configuration changes, backs up files, records managed ownership and supports removal
+or restore. The developer guide documents a stdio MCP bridge and says an agent can search
+and prepare a `/marketplace` plan but cannot approve that plan itself.
+
+The upstream README showed **69,376 catalog listings** and **26,554 one-command
+installable listings** at the time checked. It reported 50 MCP host targets, 81 skill
+targets, and that some hosts do not support remote-URL MCP entries. These values are
+dynamic. The critical design finding is the category difference: a catalog result may
+be discovery-only, and host compatibility varies by package type, OS, target and scope.
+The product must display those states instead of treating the catalog as a universal
+install list.
+
+The README also describes package-plan review, a human approval step, backups and
+managed-entry ownership, while the public security page warns that installed capabilities
+run with the user's machine permissions and are not sandboxed. A source badge, install
+success, or LiteSPM's package verification does not prove that third-party code is safe or
+that LiteCowork has granted it an action capability. Keep install/connection/auth/assignment/
+grant/activation/invocation as separate product states.
+
+The linked
+[CLI product-surface specification](https://github.com/sarv-projects/LiteSPM/blob/main/ARCH/38-CLI-PRODUCT-SURFACE.md)
+labels several areas as designed rather than shipped (including parts of the orient,
+profiles and expanded generic plan/apply command families), even though the current
+individual install flow has plan/approval behavior. Do not promote a documented target or
+command tree into an available integration promise without release-pinned implementation evidence.
+Our in-app Discover UX, LiteSPM interoperability LLD and route qualification gates now
+preserve this distinction. Recheck upstream release evidence before enabling the adapter.

@@ -130,6 +130,22 @@ export type paths = {
         patch: operations["updateWorkspacePolicy"];
         trace?: never;
     };
+    "/workspaces/{workspaceId}/delegation-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getWorkspaceDelegationSettings"];
+        put: operations["setWorkspaceDelegationSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workspaces/{workspaceId}/backups": {
         parameters: {
             query?: never;
@@ -1173,7 +1189,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
-        /** @description Runs one bounded local trigger-host settlement pass for the selected Workspace. The command requires the local Runtime to hold an ACTIVE TRIGGER_HOST Workspace binding. It settles every due slot of the Automation triggers this Runtime owns, materializes each permitted slot as one ordinary READY Task, records every elapsed slot as a bounded SKIPPED occurrence with a typed reason, and advances the persisted cursor. It creates no Plan, Step, AgentSession, Attempt, lease, Environment, Effect, or capability grant. The route and the supervised trigger-host worker never produce a second occurrence or a second Task for one logical slot, because the occurrence identity is derived from the trigger and the resolved slot instant. */
+        /** @description Runs one bounded local trigger-host settlement pass for the selected Workspace. The command requires the local Runtime to hold an ACTIVE TRIGGER_HOST Workspace binding. It settles every due slot of the Automation triggers this Runtime owns, materializes each permitted slot as one ordinary READY Task, records every elapsed slot as a bounded SKIPPED occurrence with a typed reason, and advances the persisted cursor. It creates no Plan, Step, AgentSession, Attempt, lease, Environment, Effect, or capability grant. Idempotency note: unlike every other mutating command this reconciliation pass takes no Idempotency-Key, because its identity is derived from (trigger, resolved slot instant) and a repeated pass settles each slot exactly once; the occurrence version guard, not a caller-supplied key, is the fence. The route and the supervised trigger-host worker never produce a second occurrence or a second Task for one logical slot, because the occurrence identity is derived from the trigger and the resolved slot instant. */
         post: operations["settleAutomationTriggers"];
         delete?: never;
         options?: never;
@@ -2260,7 +2276,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
-        /** @description Requests the connection or installation of one capability. LiteSPM owns package discovery, verification, and installation, and its wire contract is not published, so the command currently reports DEPENDENCY_UNAVAILABLE with reason LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED. It never invents a package endpoint and never claims that a package was installed. */
+        /** @description Requests the connection or installation of one capability. LiteSPM owns package discovery, verification, and installation, and its wire contract is not published, so the command currently reports DEPENDENCY_UNAVAILABLE with reason LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED. It never invents a package endpoint and never claims that a package was installed. */
         post: operations["connectOrInstallCapability"];
         delete?: never;
         options?: never;
@@ -3508,6 +3524,7 @@ export type components = {
             replication_policy: "LOCAL_ONLY" | "METADATA_ONLY" | "ACTIVE_TASK_INPUTS" | "SELECTED_FOLDERS" | "FULL_WORKSPACE";
             replication_scope_root_ids: string[];
             current_instruction_revision: number | null;
+            current_delegation_settings_revision: number;
             default_agent_binding_id: string | null;
             primary_coworker_id: string | null;
             hub_runtime_id: string | null;
@@ -3522,6 +3539,48 @@ export type components = {
         WorkspacePage: {
             items: components["schemas"]["Workspace"][];
             next_cursor?: string | null;
+        };
+        DelegationProfileRevisionRef: {
+            profile_id: string;
+            revision: number;
+        };
+        WorkspaceDelegationSettingsInput: {
+            /** @enum {string} */
+            default_strategy: "NATIVE_DEFAULT" | "BALANCED" | "COST_SAVER" | "HOST_DELEGATION_ONLY";
+            enabled_delegation_profile_revisions: components["schemas"]["DelegationProfileRevisionRef"][];
+            /** @enum {string} */
+            native_child_model_policy: "AGENT_DEFAULT" | "INHERIT_PARENT_IF_SUPPORTED";
+        };
+        WorkspaceDelegationSettingsRevisionView: {
+            workspace_id: string;
+            revision: number;
+            /** @enum {string} */
+            default_strategy: "NATIVE_DEFAULT" | "BALANCED" | "COST_SAVER" | "HOST_DELEGATION_ONLY";
+            enabled_delegation_profile_revisions: components["schemas"]["DelegationProfileRevisionRef"][];
+            /** @enum {string} */
+            native_child_model_policy: "AGENT_DEFAULT" | "INHERIT_PARENT_IF_SUPPORTED";
+            authored_by: components["schemas"]["PrincipalRef"];
+            /** Format: date-time */
+            created_at: string;
+        };
+        ResolvedDelegationPolicySnapshot: {
+            /** @enum {string} */
+            source: "WORKSPACE_DEFAULT" | "COWORKER_OVERRIDE";
+            workspace_settings_revision: number;
+            coworker_id: string | null;
+            coworker_revision: number | null;
+            /** @enum {string} */
+            strategy: "NATIVE_DEFAULT" | "BALANCED" | "COST_SAVER" | "HOST_DELEGATION_ONLY";
+            /** @enum {string} */
+            native_child_model_policy: "AGENT_DEFAULT" | "INHERIT_PARENT_IF_SUPPORTED";
+            worker_profiles: {
+                profile_id: string;
+                revision: number;
+                /** @enum {string} */
+                worker_model_selection_policy: "PROFILE_CONFIGURED" | "MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE";
+            }[];
+            /** Format: date-time */
+            resolved_at: string;
         };
         RuntimeEventCursor: {
             origin_runtime_id: string;
@@ -3935,6 +3994,13 @@ export type components = {
                 file: boolean;
                 resources: boolean;
             };
+            /** @description Observed output delivery support for this exact adapter route. This does not attest output quality, safety, correctness, or permission to execute an Artifact. */
+            output: {
+                semantic_text: components["schemas"]["OutputCapabilityState"];
+                file_artifact: components["schemas"]["OutputCapabilityState"];
+                rich_presentation: components["schemas"]["OutputCapabilityState"];
+                interactive_app: components["schemas"]["OutputCapabilityState"];
+            };
             extension: {
                 mcp_stdio: boolean;
                 mcp_http: boolean;
@@ -4136,7 +4202,9 @@ export type components = {
             preferred_topologies: components["schemas"]["AgentEndpointTopology"][];
         };
         /** @enum {string} */
-        AgentFeature: "session.resume" | "session.steer" | "session.interrupt" | "session.cancel" | "session.fork" | "input.text" | "input.image" | "input.file" | "input.resources" | "extension.mcp_stdio" | "extension.mcp_http" | "extension.skills" | "extension.plugins" | "extension.dynamic_attach" | "reporting.tool_calls" | "reporting.plan" | "reporting.usage" | "reporting.native_subagents" | "reporting.approvals" | "environment.cwd" | "environment.extra_directories";
+        OutputCapabilityState: "SUPPORTED" | "UNSUPPORTED" | "UNKNOWN" | "NOT_EXPOSED";
+        /** @enum {string} */
+        AgentFeature: "session.resume" | "session.steer" | "session.interrupt" | "session.cancel" | "session.fork" | "input.text" | "input.image" | "input.file" | "input.resources" | "extension.mcp_stdio" | "extension.mcp_http" | "extension.skills" | "extension.plugins" | "extension.dynamic_attach" | "output.semantic_text" | "output.file_artifact" | "output.rich_presentation" | "output.interactive_app" | "reporting.tool_calls" | "reporting.plan" | "reporting.usage" | "reporting.native_subagents" | "reporting.approvals" | "environment.cwd" | "environment.extra_directories";
         /** @enum {string} */
         AgentEndpointTopology: "LOCAL_INTERACTIVE" | "REMOTE_AGENT_SERVICE" | "VENDOR_SERVICE" | "PROCESS_ADAPTER";
         PrincipalRef: {
@@ -5085,6 +5153,8 @@ export type components = {
             placement_preference: components["schemas"]["PlacementPreference"];
             preferred_lead_agent_binding_id?: string | null;
             lead_failover_policy: components["schemas"]["LeadFailoverPolicy"];
+            /** @description Null only for a legacy pre-v28 TaskSpecRevision; every new admission/revision carries the server-resolved immutable snapshot. */
+            delegation_policy_snapshot: components["schemas"]["ResolvedDelegationPolicySnapshot"] | null;
             authored_by: components["schemas"]["PrincipalRef"];
             /** Format: date-time */
             created_at: string;
@@ -6861,6 +6931,8 @@ export type components = {
             environment_policy: components["schemas"]["DelegatedEnvironmentPolicy"];
             /** @enum {string} */
             native_delegation_policy: "INHERIT" | "ALLOW" | "DENY_IF_SUPPORTED";
+            /** @enum {string} */
+            worker_model_selection_policy: "PROFILE_CONFIGURED" | "MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE";
             warm_policy: components["schemas"]["WarmPolicy"];
         } & (unknown & unknown);
         DelegationProfileRevisionView: {
@@ -6888,6 +6960,8 @@ export type components = {
             environment_policy: components["schemas"]["DelegatedEnvironmentPolicy"];
             /** @enum {string} */
             native_delegation_policy: "INHERIT" | "ALLOW" | "DENY_IF_SUPPORTED";
+            /** @enum {string} */
+            worker_model_selection_policy: "PROFILE_CONFIGURED" | "MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE";
             warm_policy: components["schemas"]["WarmPolicy"];
             authored_by: components["schemas"]["PrincipalRef"];
             /** Format: date-time */
@@ -6976,6 +7050,8 @@ export type components = {
             role_description: string;
             default_lead_agent_binding_id?: string | null;
             /** @enum {string} */
+            delegation_policy_source: "WORKSPACE_DEFAULT" | "COWORKER_OVERRIDE";
+            /** @enum {string} */
             delegation_strategy: "NATIVE_DEFAULT" | "BALANCED" | "COST_SAVER" | "HOST_DELEGATION_ONLY";
             enabled_delegation_profile_ids: string[];
             delegation_budget_policy?: components["schemas"]["DelegationBudgetPolicy"] | null;
@@ -6983,7 +7059,7 @@ export type components = {
             interaction_policy: components["schemas"]["CoworkerInteractionPolicy"];
             context_policy: components["schemas"]["CoworkerContextPolicy"];
             notification_policy: components["schemas"]["NotificationPolicy"];
-        };
+        } & unknown;
         CreateCoworkerRequest: {
             workspace_id: string;
             revision: components["schemas"]["CoworkerRevisionInput"];
@@ -7598,6 +7674,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Workspace"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getWorkspaceDelegationSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current immutable Workspace delegation settings revision; controls Task admission policy, not conversation-native subagents. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDelegationSettingsRevisionView"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setWorkspaceDelegationSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceDelegationSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description New immutable settings revision; affects future Task admissions only and increments the Workspace aggregate version. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDelegationSettingsRevisionView"];
                 };
             };
             default: components["responses"]["Error"];
@@ -8262,6 +8392,15 @@ export interface operations {
                     "application/json": components["schemas"]["TaskPlanningReadiness"];
                 };
             };
+            /** @description STALE_TASK_VERSION — the supplied If-Match is not the current Task version */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
@@ -8286,6 +8425,15 @@ export interface operations {
                     "application/json": components["schemas"]["TaskPresentationSnapshot"];
                 };
             };
+            /** @description INVALID_ARGUMENT — the snapshot source set exceeds the 100-Step/200-Artifact caps; no partial snapshot is returned */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
@@ -8303,6 +8451,7 @@ export interface operations {
             /** @description Rebuildable factual progress projection; no synthetic percentage or ETA */
             200: {
                 headers: {
+                    "Cache-Control"?: "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -8564,6 +8713,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskSpecRevision"];
+                };
+            };
+            /** @description CONFLICT or STALE_TASK_VERSION — the Task left the READY edit window or the expected version is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description INVALID_ARGUMENT — the requested objective or fields are not acceptable for this revision */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];

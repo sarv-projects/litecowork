@@ -365,7 +365,7 @@ async fn connect_or_install_capability(
         "DEPENDENCY_UNAVAILABLE",
         "Package installation is unavailable until the LiteSPM package contract is published and qualified",
         Some(json!({
-            "reason": "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED",
+            "reason": "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED",
             "capability_id": capability_id,
             "requested_scope_granted": false,
             "requested_scope": request.requested_scope,

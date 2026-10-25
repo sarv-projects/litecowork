@@ -66,6 +66,8 @@ POST /v1/workspaces
 GET  /v1/workspaces/{id}
 PATCH /v1/workspaces/{id}
 PATCH /v1/workspaces/{id}/default-agent-binding
+GET  /v1/workspaces/{id}/delegation-settings
+PUT  /v1/workspaces/{id}/delegation-settings
 POST /v1/workspaces/{id}/archive
 GET  /v1/workspaces/{id}/backups?cursor=&limit=
 GET  /v1/workspaces/{id}/backups/{backup_id}
@@ -79,6 +81,29 @@ V1 client operates with `LOCAL_ONLY`. It does not initiate cloud continuation or
 Runtime transfer. If a Workspace has a previously saved non-local policy, the local UI
 reports it as inactive and allows an explicit reset to `LOCAL_ONLY`; it never implies that
 the saved policy is currently transferring data.
+
+Workspace delegation settings are local V1 policy, separate from replication
+settings. `GET /v1/workspaces/{id}/delegation-settings` returns the current immutable
+settings revision. `PUT` requires the current Workspace `If-Match` version, an
+idempotency key, and the complete validated settings object. It creates a new immutable
+settings revision, advances the Workspace settings head/version, writes the idempotency
+receipt, and emits `workspace.delegation.settings.changed.v1` atomically. It applies only
+to later Task admissions and never changes an admitted Task.
+
+The Workspace revision sets the default delegation strategy, the exact enabled
+`(profile_id, profile_revision)` ceiling, and native-child model policy. A Coworker may
+select `WORKSPACE_DEFAULT` or `COWORKER_OVERRIDE`; an override must be a subset of the
+current Workspace ceiling. There is no per-Task route override. Admission rechecks that
+each referenced profile belongs to this Workspace and is enabled, then pins the resolved
+Workspace/Coworker revisions, strategy, native-child policy, and exact worker-profile
+revisions into the TaskSpecRevision. Settings do not authenticate agents, transfer their
+sessions or credentials, or grant capability access.
+
+Ordinary conversation Send remains a native turn owned by the selected agent/harness; its
+native subagents use only controls the adapter reports and the selected agent's own auth.
+LiteCowork host-delegated workers require a durable Task and accepted plan/Step, with
+independent route authorization and ordinary grants. The UI must make Run as Task or Task
+acceptance explicit; it cannot silently convert a chat turn into a Task.
 
 Instruction revision creation requires the selected Workspace header to match the path,
 the current Workspace `If-Match` version, an idempotency key, and a pinned ResourceRef for
@@ -610,6 +635,22 @@ authorization on every transfer. A signed URL, if used by a deployment, is short
 and scoped to one immutable blob digest. Artifact list, metadata, version, and content
 responses use `Cache-Control: no-store` so local clients and intermediaries do not retain
 Workspace artifact metadata or bytes as reusable cache entries.
+
+## Interactive Artifact Runtime local IPC
+
+The generated-app Runtime is accessed only through the authenticated local Runtime supervisor, not a public HTTP/Operator route. Its closed host/renderer envelopes are defined in [interactive-artifact-runtime.schema.json](schemas/interactive-artifact-runtime.schema.json); package manifests are defined in [interactive-artifact-package.schema.json](schemas/interactive-artifact-package.schema.json). The Tauri shell maps the following typed owner operations to the supervisor; the local principal and Workspace come from the authenticated shell binding, never caller-supplied credentials:
+
+- `prepare(workspace_id, artifact_id, version)` returns exact ArtifactVersion identity/digest, package validation, static-preview availability and qualified Runtime-profile readiness. It executes no code.
+- `start(artifact_ref, selected_resource_revision_refs[])` is accepted only after the owner selects Run and all current Workspace/version/digest/profile/authority checks pass; TRANSIENT and SAVED Artifacts are eligible, ARCHIVED Artifacts are preview-only. The supervisor creates the run ID and returns STARTING. A duplicate start for the same active target returns that run; a different target conflicts until the current run is stopped. No caller chooses a run ID or profile.
+- `get_status(run_id)` returns volatile state, exact ArtifactVersion and Runtime-profile identity. After supervisor restart an unknown ID returns unavailable; it never implies that the prior app completed.
+- `review_save_proposal(run_id, host_proposal_id, SAVE | CANCEL)` submits a host-owned decision for a proposal already validated and staged by the supervisor. Save creates a separate managed FILE Artifact through ArtifactStore.create with text/plain or application/json bytes and pins the exact app version as provenance; the authenticated owner RequestId makes retry idempotent. The renderer cannot choose the target Artifact or idempotency key. An ambiguous store result remains pending until the same receipt is reconciled.
+- `stop(run_id)` is idempotent for that run and returns STOPPING until renderer and descendants are confirmed quiescent. A timeout or unknown descendant yields INTERRUPTED, never success.
+
+These operations are local Runtime service methods, not OpenAPI operations. No start command or message is a durable Task mutation.
+
+Renderer messages are untrusted. The supervisor binds each envelope to the volatile run ID, exact immutable ArtifactVersion, Runtime incarnation and a monotonically increasing sequence. It validates and mediates `ready`, `status`, `read_request`, `save_request` and `failure` messages; replay, wrong-run, unknown-type, stale-version and over-budget requests fail closed. A read request must use a host-issued handle for an exact owner-selected same-Workspace ResourceRevision. A save request is only a proposal: the host shows the exact source app version, output name/type/size/digest and proposed new FILE destination, then requires owner confirmation. The supervisor creates a separate managed FILE Artifact through ArtifactStore.create, pins the exact source ArtifactVersion as provenance, and uses the authenticated CommandContext/RequestId receipt for safe retry. It never updates the executable app Artifact and does not use the narrower text editor route. This is local Runtime IPC and an existing ArtifactStore service call, not a new OpenAPI operation.
+
+No V1 route exposes app code to network, arbitrary host functions or direct Effects. Runtime lifecycle messages are volatile and do not create DomainEvents, Task/Attempt records, grants or Evidence. A renderer restart creates no resumed run; a new owner action starts a fresh run after reauthorization. See [Interactive Artifact Runtime](INTERACTIVE-ARTIFACT-RUNTIME.md) for lifecycle, isolation, fallback and qualification requirements.
 
 ## Automations
 
@@ -1289,7 +1330,7 @@ observation stream. A catalog row is a projection and never authority: it never 
 that an entry is installed, authenticated, assigned, or authorized, it never carries a
 credential or a provider handle, and `authoritative` is always `false`. The LiteSPM
 package service is not qualified, so `provider_status.package_service_qualified` is
-`false` with reason `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED` and the installable package
+`false` with reason `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED` and the installable package
 catalog is empty until that contract is published and qualified. The host observations are
 not installable rows: mixing "installed", "offered", and "available" into one row is
 forbidden by the capability fabric.
@@ -1299,7 +1340,7 @@ summaries. It never contains a full provider tool schema, a provider handle, or 
 credential.
 
 `POST /v1/capabilities/{id}/connect-or-install` reports `DEPENDENCY_UNAVAILABLE` with
-reason `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED` until the LiteSPM package contract is
+reason `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED` until the LiteSPM package contract is
 published and qualified. It never invents a package endpoint and never claims that a
 package was installed. `POST /v1/capabilities/{id}/test` reports health `UNKNOWN` with the
 same reason and contacts no provider, because a probe against an unqualified provider
@@ -1523,6 +1564,14 @@ managed content-location and all ResourceIndex projection/term rows. The respons
 `ContextDocumentDeletionStatus` projection containing status, manifest digest, and required
 and acknowledged target counts; it never returns a provider locator. An exact retry returns
 the original response. A stale Resource version or same-key changed request conflicts.
+
+Manifest construction is bounded before the tombstone: at most 4096 unique targets, 16384
+member references, and 4 MiB of canonical UTF-8 manifest bytes. The indexed preflight reads
+no more than one item above each cap. Exceeding any cap returns
+`PURGE_MANIFEST_LIMIT_EXCEEDED` with no status transition, manifest, receipt or partial
+removal. The immutable manifest is reconciled in slices of at most 64 targets; each target
+has its own durable idempotent receipt, so restart/retry does not require loading the entire
+plan into memory.
 
 After admission, the v19 ResourceIndex, v17 Resource-content, and v18 upload-chunk
 collectors reconcile the sealed local targets. The exact object must be physically removed

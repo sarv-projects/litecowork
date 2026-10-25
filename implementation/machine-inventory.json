@@ -725,6 +725,10 @@
       "sha256": "9f57b75e5ac6a5dd454121ee444733d223a80a0c4716fcdc6c4cabf90945545d"
     },
     {
+      "name": "task_delegation_policy_pinned",
+      "sha256": "0b1ee9916f69d2e113908947d2cf27359bd835929390a1e97c67de891723b1d3"
+    },
+    {
       "name": "task_lead_agent_changed",
       "sha256": "aba776c6e1fd80882a29a7cf75c828f54c3c99159dc8301e26b05e9253faab52"
     },
@@ -787,6 +791,10 @@
     {
       "name": "workspace_default_agent_binding_changed",
       "sha256": "616bfd045a7d3e7cd4404513d8defe262b931a987cb765fcbb369f192b3617d3"
+    },
+    {
+      "name": "workspace_delegation_settings_changed",
+      "sha256": "04694377837adfbd2c20bf9d2720674051086baca2fc98d424defe7321d5c588"
     },
     {
       "name": "workspace_instructions_revision_created",
@@ -852,7 +860,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "a376cc704217831a3428b2c02660a55e131a50b645f18bba341e59df0665e21e"
+      "sha256": "b1e260754fda1f00c5a5f200b40f9692f59c53975cc7cd9ad4cfd10d6d556048"
     },
     {
       "name": "pinned_resource_ref",
@@ -1047,6 +1055,7 @@
     "suggestion_visibility_changed",
     "task_coworker_origin_pinned",
     "task_created",
+    "task_delegation_policy_pinned",
     "task_lead_agent_changed",
     "task_pause_requested",
     "task_paused",
@@ -1063,6 +1072,7 @@
     "workspace_archived",
     "workspace_created",
     "workspace_default_agent_binding_changed",
+    "workspace_delegation_settings_changed",
     "workspace_instructions_revision_created",
     "workspace_primary_coworker_changed",
     "workspace_replication_policy_changed",
@@ -1194,6 +1204,7 @@
     "suggestion.visibility.changed.v1",
     "task.coworker.origin.pinned.v1",
     "task.created.v1",
+    "task.delegation.policy.pinned.v1",
     "task.lead_agent.changed.v1",
     "task.pause.requested.v1",
     "task.paused.v1",
@@ -1210,6 +1221,7 @@
     "workspace.archived.v1",
     "workspace.created.v1",
     "workspace.default_agent_binding.changed.v1",
+    "workspace.delegation.settings.changed.v1",
     "workspace.instructions.revision.created.v1",
     "workspace.primary_coworker.changed.v1",
     "workspace.replication_policy.changed.v1",
@@ -2467,6 +2479,18 @@
     },
     {
       "method": "GET",
+      "operationId": "getWorkspaceDelegationSettings",
+      "path": "/workspaces/{workspaceId}/delegation-settings",
+      "sha256": "b5ddfc2942a8a90557a62be589af92a668bd2caecafcc529484794e8e208ba5f"
+    },
+    {
+      "method": "PUT",
+      "operationId": "setWorkspaceDelegationSettings",
+      "path": "/workspaces/{workspaceId}/delegation-settings",
+      "sha256": "87b762081a07732be3118900b5d6bffa148e7a4d9408b5c793b309f9c7111bd5"
+    },
+    {
+      "method": "GET",
       "operationId": "listWorkspaceEnvironments",
       "path": "/workspaces/{workspaceId}/environments",
       "sha256": "f58816f7682102955728104267402c5c7fe8a1c586155643e93c9ddf631cfd5f"
@@ -3612,6 +3636,16 @@
     },
     {
       "method": "GET",
+      "operationId": "getWorkspaceDelegationSettings",
+      "path": "/workspaces/{workspaceId}/delegation-settings"
+    },
+    {
+      "method": "PUT",
+      "operationId": "setWorkspaceDelegationSettings",
+      "path": "/workspaces/{workspaceId}/delegation-settings"
+    },
+    {
+      "method": "GET",
       "operationId": "listWorkspaceEnvironments",
       "path": "/workspaces/{workspaceId}/environments"
     },
@@ -3735,7 +3769,7 @@
     },
     {
       "name": "AgentCapabilities",
-      "sha256": "a32345ef2c76e179debf126d03b7459301a46ca552525c097855c105422a0b23"
+      "sha256": "33b8320bdb424eaa1ec3b435a3d72cdf83e223ec9383469137a10dda1623025b"
     },
     {
       "name": "AgentConfigurationDescriptor",
@@ -3775,7 +3809,7 @@
     },
     {
       "name": "AgentFeature",
-      "sha256": "ccbe7335a0439b0bcde80ab9fa60813abd33f67eff3215c1c3972c0c160c55c9"
+      "sha256": "d5e586db70607b04b1977fb9ce71055b4dc0eceaf19bf3a2514183eeb71b38dc"
     },
     {
       "name": "AgentHarnessCapabilities",
@@ -4207,7 +4241,7 @@
     },
     {
       "name": "CoworkerRevisionInput",
-      "sha256": "6116be3f505af70c0445d498f976d2a2c3ab0454bb4fa560f7b7585f8c69598f"
+      "sha256": "bc4ecd3f88f8d362ffc0404a73cf06810a8144dd7cb5503b22176a5b19311c4c"
     },
     {
       "name": "CoworkerRevisionRecord",
@@ -4315,15 +4349,19 @@
     },
     {
       "name": "DelegationProfileRevisionInput",
-      "sha256": "32ee11e8aad45a1cbda9365a60b54cb778333691ae4d0cf6f4cce4e96237a6ba"
+      "sha256": "ca6b37d8258c15b1702300786ed9f9f6f453d85ecbfd9e0d03a30d1d6fe8b3b0"
     },
     {
       "name": "DelegationProfileRevisionPage",
       "sha256": "0d1733caacb9e6b509121bb64703a9d99e6703f01f6cdf56ef7a248fc034517e"
     },
     {
+      "name": "DelegationProfileRevisionRef",
+      "sha256": "c944e5735706a2a64f98901ec9c374930a1af3ea793372a09e10fc4ba674c595"
+    },
+    {
       "name": "DelegationProfileRevisionView",
-      "sha256": "e9de28d0a95808703d900f8c9b7e1389ed8d8f3035a10c469f99850b1c4bd3cc"
+      "sha256": "eab15b1f5cc8a98b1ab10635b390683ebd2603ed6a6f6b4dd00913e17344626f"
     },
     {
       "name": "DelegationProfileStatusRequest",
@@ -4630,6 +4668,10 @@
       "sha256": "ac004f117251f46d8a11cb79ab3488a8cf8ce38973a1d6ee42eb0aad357a236d"
     },
     {
+      "name": "OutputCapabilityState",
+      "sha256": "bea7b66ac0ce3f70cc8e669f078650ad5847b91b0074df5ceba268a993fc2863"
+    },
+    {
       "name": "OutputRequirement",
       "sha256": "c9aee32c7cbd35fc1232231fe4f5c4f6ce165f143f2ef0fbfbad1f54c5d1d50c"
     },
@@ -4728,6 +4770,10 @@
     {
       "name": "ResolveSuggestionRequest",
       "sha256": "a0816a1c09cca34ae1684412a9dd4ae59206b667b9324b25699aa0b4a964caa8"
+    },
+    {
+      "name": "ResolvedDelegationPolicySnapshot",
+      "sha256": "337943a79dcf452d3e3078fabda035cf7a5d04c24edc1feeff8fad75dbd6d986"
     },
     {
       "name": "Resource",
@@ -5099,7 +5145,7 @@
     },
     {
       "name": "TaskSpecRevision",
-      "sha256": "0052160af39daa4b2d84b2b889aa11204aec23139d9fa5d9dc5ecef0ccf9d5f5"
+      "sha256": "844a7f94855991347c73febd60b7d63cd06e770a8f226d027a142372c35d1d61"
     },
     {
       "name": "TaskSummary",
@@ -5223,7 +5269,7 @@
     },
     {
       "name": "Workspace",
-      "sha256": "6f66a1c90aea976b59705373dd6281366eb287779bea4b613db3d5ba9731c9d2"
+      "sha256": "9ec92744ada5af2d4163154465a7b888fc591d6efba5992ab478f4c9b944847e"
     },
     {
       "name": "WorkspaceBackupManifest",
@@ -5232,6 +5278,14 @@
     {
       "name": "WorkspaceBackupPage",
       "sha256": "dea97610c14166d09a0bdf5d24f85c402814654f0c7388d172b20dcedcdee516"
+    },
+    {
+      "name": "WorkspaceDelegationSettingsInput",
+      "sha256": "219ae843dae9040255434f7d1184f0eccebbca59cb8a83587bb4af1e0a6282c2"
+    },
+    {
+      "name": "WorkspaceDelegationSettingsRevisionView",
+      "sha256": "ee5173a052cb53ab8df32ffe66cf1939d273757341896c55552b012e3602185b"
     },
     {
       "name": "WorkspaceInstructionRevision",
@@ -5439,6 +5493,7 @@
     "DelegationProfilePage",
     "DelegationProfileRevisionInput",
     "DelegationProfileRevisionPage",
+    "DelegationProfileRevisionRef",
     "DelegationProfileRevisionView",
     "DelegationProfileStatusRequest",
     "DemonstrationCapturePolicy",
@@ -5516,6 +5571,7 @@
     "OpenCodeModelOption",
     "OpenCodeProfileProbeConstraints",
     "OpenCodeProviderOption",
+    "OutputCapabilityState",
     "OutputRequirement",
     "PairingToken",
     "PauseTaskRequest",
@@ -5541,6 +5597,7 @@
     "RecoverStepRequest",
     "ResolveApprovalRequest",
     "ResolveSuggestionRequest",
+    "ResolvedDelegationPolicySnapshot",
     "Resource",
     "ResourceContentScan",
     "ResourceDependencyPage",
@@ -5667,6 +5724,8 @@
     "Workspace",
     "WorkspaceBackupManifest",
     "WorkspaceBackupPage",
+    "WorkspaceDelegationSettingsInput",
+    "WorkspaceDelegationSettingsRevisionView",
     "WorkspaceInstructionRevision",
     "WorkspaceInstructionRevisionPage",
     "WorkspacePage",
@@ -5744,6 +5803,8 @@
     "ConversationTurnStatus",
     "CoworkerRevisionRef",
     "CoworkerStatus",
+    "DelegationPolicySource",
+    "DelegationProfileRevisionRef",
     "DelegationProfileSelection",
     "DelegationProfileStatus",
     "DelegationStrategy",
@@ -5792,6 +5853,8 @@
     "MessageContentBlock",
     "MessageTextSliceRef",
     "MisfirePolicy",
+    "NativeChildModelPolicy",
+    "NativeDelegationDescriptor",
     "NativeHarnessIntegrityMode",
     "NativeReferenceSelectionMode",
     "NeedsYouFilter",
@@ -5804,6 +5867,7 @@
     "OfferReadiness",
     "OpenCodeProfileProbeConstraints",
     "OptimizationPreference",
+    "OutputCapabilityState",
     "PinnedResourceRef",
     "PlacementPreference",
     "PredicateRef",
@@ -5816,6 +5880,7 @@
     "ProviderTaskStatus",
     "QuotaState",
     "ReplicationPolicy",
+    "ResolvedDelegationPolicySnapshot",
     "ResourceCapacity",
     "ResourceEdgeRelation",
     "ResourceFreshness",
@@ -5864,6 +5929,8 @@
     "WakePolicy",
     "WarmTrigger",
     "Weekday",
+    "WorkerModelSelectionPolicy",
+    "WorkspaceDelegationSettingsInput",
     "WorkspaceRootStatus",
     "WorkspaceStatus"
   ],

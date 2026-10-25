@@ -612,10 +612,12 @@ its immutable SQL-source checksum, the fingerprint of the resulting SQLite schem
 objects, and application time. `PRAGMA user_version` is the
 supported schema version marker. Fresh databases apply `sqlite-v1.sql`, then
 `sqlite-v2.sql`, then `sqlite-v3.sql` in one transaction, followed by the V4 table rebuild
-in its own immediate transaction with foreign-key enforcement temporarily disabled outside
-the transaction and restored on every exit path. V4 runs `foreign_key_check` before
-commit. Existing databases verify each recorded source checksum before applying remaining
-forward migrations; V1-V4 source files and checksums remain immutable. V5 adds
+in its own immediate transaction with `PRAGMA foreign_keys=OFF` and
+`PRAGMA legacy_alter_table=ON` set before the transaction. V4 runs
+`PRAGMA foreign_key_check` inside the transaction and commits only when it is clean;
+both PRAGMAs are restored on every exit path. Existing databases verify each recorded
+source checksum before applying remaining forward migrations; V1-V4 source files and
+checksums remain immutable. V5 adds
 PlanRevision update/delete rejection, Step identity/deletion protection, and unique logical
 keys within each Task/PlanRevision. Initial-plan acceptance binds its idempotency digest to
 the normalized typed plan. In the same transaction it rechecks the producer's host binding,
@@ -1068,12 +1070,24 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   Task once and then becomes immutable. No AutomationOccurrence or AutomationCursor is
   written, and the database triggers refuse a test Task that also carries occurrence
   provenance or points at an unlinked reservation with different Workspace/Routine pins.
+- migration 28 adds immutable `workspace_delegation_settings_revisions`, the Workspace
+  settings head, Coworker `delegation_policy_source`, exact per-profile
+  `worker_model_selection_policy`, and nullable `task_spec_revisions.delegation_policy_snapshot_json`.
+  Existing Workspaces receive deterministic revision 1 with `NATIVE_DEFAULT` and
+  `AGENT_DEFAULT`; its worker-profile ceiling captures the then-enabled profiles at
+  exact immutable revisions so existing Coworker overrides remain bounded. Existing
+  Coworker revisions migrate as `COWORKER_OVERRIDE`, preserving their current strategy
+  and profile IDs. Legacy TaskSpec rows stay NULL; no past policy is invented. New Task
+  admissions and new TaskSpec revisions must write a server-resolved immutable snapshot
+  and a matching `task.delegation.policy.pinned.v1` event. The migration does not append
+  fabricated user-authored setting events or change active Attempts. Its source is
+  `schemas/sqlite-v28.sql`.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
   the schema-object fingerprint at that migration boundary. Reopening verifies every
   recorded migration name/source checksum and compares the active schema version's
   fingerprint with the current non-internal `sqlite_master` objects; historical
   fingerprints are retained because later migrations intentionally add schema objects.
-  The current schema version is 27, so the v27 fingerprint is checked against the full
+  The current schema version is 28, so the v28 fingerprint is checked against the full
   current schema. Missing migration records, changed source checksums, or changed current
   schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances

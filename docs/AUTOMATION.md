@@ -25,6 +25,26 @@ An Automation defines when or why a pinned Routine should create ordinary Tasks.
 not a workflow engine, agent, or worker process. Trigger hosting and Task execution are
 independent placements.
 
+## Starter template gallery (V1 desktop)
+
+The Automation destination includes a curated starter gallery with two top-level families:
+**Coding** and **General cowork**. Example cards include “Review a repository change and
+prepare a patch for approval” and “Prepare a weekly team update from selected sources.”
+Each card is a versioned Routine template with a readable objective, required inputs,
+capability/account prerequisites, execution location, output format, approval points, and
+an example result preview. The preview is static and inert: it does not install packages,
+connect accounts, assign capabilities, grant access, create an enabled trigger, or start a
+Task.
+
+Choosing a card creates an editable **Routine draft** only. To make it recurring, the
+owner separately reviews and saves the Routine, chooses a supported trigger and Workspace,
+checks timezone/misfire/overlap/retry/budget behavior, previews required permissions and
+output, and explicitly enables the Automation. To run once, the owner selects Run now and
+confirms ordinary Task admission. A missing agent, account, LiteSPM package, runtime,
+source, or OS dependency remains a named prerequisite; the gallery never makes it look
+installed or ready. A gallery template is not a LiteSPM package and cannot widen Trust
+policy.
+
 ## Trigger model
 
 An immutable `AutomationRevision` has one or more `TriggerSpec` records. Trigger semantics

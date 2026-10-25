@@ -24,6 +24,7 @@ crates/
     planning-coordinator/
     agent-session-supervisor/
     agent-host-supervisor/
+    artifact-runtime-supervisor/ # volatile local interactive Artifact runs; OS isolation adapter
     lifecycle/
     dependency-planner/
     scheduler/
@@ -88,6 +89,10 @@ apps/operator UI
 
 application/runtime services
       -> domain + ports
+
+ArtifactRuntimeSupervisor
+      -> ArtifactStore/Resource read ports + authenticated local IPC + OS isolation provider
+      -X-> AgentAdapter, TaskPlanner, Effect executor
 
 adapters (ACP, LiteSPM, SQLite, S3, channels)
       -> ports/domain types

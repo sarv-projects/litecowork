@@ -6,12 +6,17 @@ Status: NORMATIVE V1 TARGET, not an assertion of shipped browser integration. Ow
 
 A Tauri WebView is not Google Chrome. Windows WebView2 is Edge Chromium; macOS WKWebView and Linux WebKitGTK are WebKit. A Chrome-grade live browser cannot be promised from an ordinary embedded Tauri WebView. V1 must qualify a real Chromium/Google Chrome execution provider and independently choose a live-view surface with correct browser rendering/interaction. Do not claim a page is "Chrome" when it is only a screenshot or WebView. Browser provider and presentation adapter are separate contracts.
 
+V1 provider availability is a separate value from the user's chosen interaction mode:
+`AvailabilityStatus = READY | NEEDS_SETUP | UNAVAILABLE | OFFLINE | UNKNOWN`. `UNAVAILABLE`
+is never a browser mode. A user may select MANAGED_CHROMIUM, CONNECT_EXISTING_CHROME,
+MANUAL_ONLY, or HEADLESS_TASK only when the corresponding provider and session surface are
+qualified; otherwise the UI shows the unavailable status and repair path.
+
 V1 eligible modes:
 - MANAGED_CHROMIUM: owned isolated browser data directory, persistent under explicit Workspace/profile policy, Chrome/Chromium/Chrome for Testing chosen from installed qualified distribution. Launch with Playwright or approved CDP adapter. Browser runs outside direct untrusted model access behind control-lease gateway.
 - CONNECT_EXISTING_CHROME: consent-based attach to an already running compatible Chrome; only after per-session explicit authorization from Chrome/user, with clear high-trust warning; feature gate by actual Chrome version and API. Chrome 144+ DevTools auto-connect is a candidate, not universal.
 - MANUAL_ONLY: user owns actions in browser session; agent can observe only what was explicitly authorized. No hidden automation on sensitive sites.
 - HEADLESS_TASK: noninteractive managed browser for authorized background steps; handoff to visible managed browser is a new surface transition only after provider support, not pretend same session.
-- UNAVAILABLE: truthful upgrade/repair/fallback when Chrome provider, OS capture or display integration unsupported.
 
 Chrome 136+ disregards remote debugging switches against its default user directory. Playwright explicitly does not support automating the default Chrome user profile. Therefore do not point Playwright at the normal profile or copy its encrypted cookies. Managed profiles are separate, user-visible, data-minimized and permission-controlled. Existing-profile import is limited to supported user-authorized exports/preferences/bookmarks. Existing signed-in session reuse requires a separate explicit Chrome connection and warning, never stealth cookie extraction.
 

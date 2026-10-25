@@ -161,7 +161,16 @@ session-stop/replacement behavior requires a separately qualified session-lifecy
 it is not implied by the Resource tombstone. Existing Task/Evidence provenance retains the
 Resource ID, revision IDs, and digests without restoring revoked/deleted bytes.
 
-Deletion is a recoverable purge saga. Before `ACTIVE|REVOKED -> DELETION_PENDING`,
+Deletion is a recoverable purge saga. The local V1 path uses indexed, bounded manifest admission:
+`MAX_CONTEXT_PURGE_TARGETS=4096`, `MAX_CONTEXT_PURGE_REFERENCES=16384`, and
+`MAX_CONTEXT_PURGE_MANIFEST_UTF8_BYTES=4194304` (4 MiB). The preflight reads at most each
+limit plus one item to detect overflow. If any limit is exceeded, the request returns
+`PURGE_MANIFEST_LIMIT_EXCEEDED` before changing status or deleting any bytes; the owner may
+retry after reducing retained source revisions through normal Resource lifecycle. The sealed
+manifest is processed in slices of at most 64 targets, with per-target idempotent receipts.
+These constants are part of the API, event and storage contract.
+
+Before `ACTIVE|REVOKED -> DELETION_PENDING`,
 ResourceService seals an immutable `ContextDocumentPurgePlan` over the exact revision set
 and each registered Core-owned blob/index replica selected by the applicable deletion
 path. The current local command fails closed before the tombstone if any exact revision
@@ -215,7 +224,7 @@ revocation behavior are specified in [`PRESENTATION-RUNTIME.md`](PRESENTATION-RU
 
 ## Scoped automatic memory target and revocation test obligations
 
-On meaningful committed Conversation-turn and verified Task-outcome checkpoints, an eligible agent-backed extractor may produce bounded memory candidates; no independent Core model planner is introduced. Deterministic gates validate consent eligibility, exact source revision, Workspace/Coworker/private scope, third-party privacy and secret classifications, provenance, deduplication, contradiction, age and budget. Only approved private eligibility permits quiet automatic commit. Connected sources are searchable KNOWLEDGE by default, not automatically mined into permanent memory. Memory corrections create immutable superseding revisions; stale or conflicting claims remain reviewable and do not overwrite evidence. Temporary chats never queue extraction, including deferred summaries. Shared Workspace/personal learning requires separately authorized policy. ContextUsed disclosures show only actual attached or retrieved sources. Revocation immediately blocks new retrieval and invalidates allowed context caching; an already-active external native session may have seen old bytes, so restart/fence affected sessions at a safe boundary. Provider deletion completion is truthful and receipt-backed. Extraction, metadata and read API are proposed—not current product capability.
+On meaningful committed Conversation-turn and verified Task-outcome checkpoints, an eligible agent-backed extractor may produce bounded memory candidates; no independent Core model planner is introduced. Deterministic gates validate consent eligibility, exact source revision, Workspace/Coworker/private scope, third-party privacy and secret classifications, provenance, deduplication, contradiction, age and budget. Only approved private eligibility permits quiet automatic commit. Connected sources are searchable KNOWLEDGE by default, not automatically mined into permanent memory. Memory corrections create immutable superseding revisions; stale or conflicting claims remain reviewable and do not overwrite evidence. Temporary chats never queue extraction, including deferred summaries. Shared Workspace/personal learning requires separately authorized policy. ContextUsed disclosures show only actual attached or retrieved sources. Revocation immediately blocks newly admitted retrieval and invalidates allowed context caching. It does not stop or replace an already-active external native session, recall bytes already delivered, or rewrite that session's transcript. New turns and Task attempts recheck the current grant and source state. Provider deletion completion is truthful and receipt-backed. Extraction, metadata and read API are proposed—not current product capability.
 
 
 ## Learning versus context — finalized 2026-10-10

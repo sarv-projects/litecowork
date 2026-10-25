@@ -2,10 +2,11 @@
 
 > **Canonical V1 screen contract:** [V1 UI Screen Contract](V1-UI-SCREEN-CONTRACT.md).
 > Default launch = New Chat or last eligible Conversation, not Task-first Home.
-> Left navigation, central native-agent composer and optional right Workbench
-> are one unified product surface. No mandatory Coworker or Task, no fake
-> terminal/browser execution, no extra global model router. A layout
-> preference never restores expired grants or an old control lease.
+> Left navigation, central native-agent composer and the visible compact right Workbench
+> are one unified product surface. The screenshot-approved desktop composition is the
+> normative launch layout; small windows may reflow the Workbench into its own route.
+> No mandatory Coworker or Task, no fake terminal/browser execution, no extra global
+> model router. A layout preference never restores expired grants or an old control lease.
 
 Status NORMATIVE TARGET. Owners E02/E03/E08/E09/E10/E13. Authority: EXPERIENCE, DESIGN-SYSTEM, MOTION, PRESENTATION-RUNTIME, UI delivery. No speculative control is active until backed by Operator/UI ownership, entitlement and USER qualification.
 
@@ -28,7 +29,7 @@ AppWindow
         StickyAgentComposer
     RightWorkbench(resizable, closable, max, history)
       Start, Browser, Computer, Terminal, Artifact/Office, Code/Diff,
-      Image/PDF, MCP App, Generated UI, Task details
+      Image/PDF, MCP App, Interactive Artifact Runtime, Task details
   GlobalOverlays(command palette, native palette, dialogs, toast, progress)
   AccessibilityLiveRegion
 ~~~
@@ -56,7 +57,7 @@ Persist user layout preferences by Workspace and window; do not persist grant/le
 ## Geometry and responsive behavior
 
 - Left rail compact icon navigation with usable accessible labels. Open width user-adjustable; independent of right Workbench. New first-run shows Discoverable routes without inventing data.
-- Right Workbench closed for new session; last explicit choice restored per Workspace. First open target ~42% width with minimum token limits, max ~72%; horizontal divider keyboard-operable and accessible; maximize preserves app chrome and exact prior ratio.
+- Desktop launch shows a compact Workbench Start surface on the right. Start is a stable, truthful entry point with Browser, Terminal, and Files/Library availability cards; each card exposes READY, NEEDS_SETUP, UNAVAILABLE, or OFFLINE from live capability state. Restore the user's last selected tool only when its Workspace-bound object and authority still validate; otherwise show Start. The compact panel occupies about 24% of available width, clamped to 300–400 CSS px while preserving at least 520 CSS px for the center pane; on narrower windows it becomes a full-surface route. The divider is keyboard-operable and accessible; maximize preserves app chrome and prior ratio.
 - Below 900 CSS pixels, right Workbench becomes a full-surface route/sheet, not squeezed beside chat. Narrow mobile-like view keeps accessible composer. At 200/400% zoom no essential action clipped.
 - At most one high-priority modal; secondary menus/popovers dismiss safely. Overlays portal to window root to avoid clipping; focus restore after close; no loss of typed draft.
 - Central chat scroll anchors: if user at bottom, stream keeps within threshold; if scrolled up, do not jump on new tokens; show "New messages" affordance. Large message virtualization retains stable anchor and accessible reading order.
@@ -73,7 +74,7 @@ Persist user layout preferences by Workspace and window; do not persist grant/le
 | resizeWorkbench | ratio/key delta -> clamped width | pointer/keyboard; persists on release |
 | closeWorkbench | unsaved state -> closed or confirm | re-focus opener; stop no Task implicitly |
 | toggleWorkbenchMax | prior ratio -> fullscreen/restore | preserve layout and scroll |
-| hydrateLayout | saved prefs + permission probes -> safe state | show Start on stale object; never restore old grants |
+| hydrateLayout | saved prefs + permission probes -> safe state | show compact Start by default; restore only a still-authorized last tool; never restore old grants |
 | openGlobalPalette | shortcut and surface priority -> overlay | native composer autocomplete takes priority when open |
 | deriveSidebarCounts | authoritative projections -> counts/UNKNOWN | don't display zero for unavailable API |
 | takeFocusForAlert | priority, user action -> focus | only for critical action; stream never autofocus |
@@ -130,7 +131,7 @@ Implementation may group panels visually but cannot hide necessary per-agent set
 
 ## Right pane surface state and actions
 
-Start shows Workspace Files, Browser, Computer, Terminal if qualified, Recent Outputs if real. Tabs/surface navigation use controlled history, not uncontrolled nested independent sidebars. Artifact viewer and editor share exact version/dirty state. Browser header includes actual browser owner mode and Take/Return. Computer shows current display target, permissions, privacy/capture status and stop control. Terminal shows provider, working directory, output retention, action permissions. MCP App/Generated UI uses sandboxed host capability bindings and fallback; no arbitrary untrusted script execution. Inspector reveals exact Task/Attempt/Effect evidence on demand, without intimidating ordinary chat.
+Start shows Workspace Files, Browser, Computer, Terminal if qualified, Recent Outputs if real. Tabs/surface navigation use controlled history, not uncontrolled nested independent sidebars. Artifact viewer and editor share exact version/dirty state. Generated apps use inert preview, exact-version Run/Stop, a visible requested-capability disclosure, and host-confirmed Save As in the same Workbench; no app package executes in the main WebView. Browser header includes actual browser owner mode and Take/Return. Computer shows current display target, permissions, privacy/capture status and stop control. Terminal shows provider, working directory, output retention, action permissions. MCP Apps and generated interactive Artifacts use distinct containment owners. An MCP App uses its capability-scoped presentation binding. Generated apps remain inert until an explicit Run and execute only in the exact-version isolated Artifact Runtime; Run/Stop and provenance controls remain host-owned outside the renderer. No arbitrary script executes in the main app WebView. Until OS isolation is qualified, show source/static preview only. Inspector reveals exact Task/Attempt/Effect evidence on demand, without intimidating ordinary chat.
 
 ## Microinteraction and animation specification
 
@@ -170,7 +171,7 @@ Each row is a required user-visible operation, not an assumption that an existin
 | Agents auth | openNativeSignIn, addSecureKeySlot, testNativeAuth, reauthenticate, signOutNative | native owner scope, failed OAuth, secret not persisted to React, revoked session |
 | Agents defaults | createBinding, disableBinding, setWorkspaceDefault, setCoworkerDefault, setModelDefault, setEffortDefault, setModeDefault | agent-dependent descriptor, stale option, active Attempt pinning, new-session limit |
 | Local models | discoverLocalServer, listAvailableModels, pairCompatibleAgent, checkHardwareReadiness | inventory only; no global provider abstraction; missing runtime/VRAM |
-| Subagents | createWorkerProfile, cloneProfile, setWorkerCapabilities, setParallelLimit, setBudgets, changeRouting, archiveProfile | capability checks, quota UNKNOWN, preserved Task revision |
+| Subagents | editWorkspaceDelegationSettings, setCoworkerDelegationPolicy, createWorkerProfile, cloneProfile, setWorkerCapabilities, setParallelLimit, setBudgets, changeRouting, archiveProfile | native-only vs host-worker strategy; exact same-Workspace profile revisions; native child model behavior only when supported; Coworker inherit/narrow override; future Task admissions only; capability checks, quota UNKNOWN, preserved Task revision |
 | Connections | searchCatalog, filterKind, previewPackage, installPackage, connectAccount, assignCoworker, repairConnection | install != activate != grant, trusted publisher, remote auth, missing dependency |
 | MCP | addLocalServer, addRemoteServer, showTransport, testServer, disconnectServer, setToolAllowlist | private process args redacted; weak server auth; stale manifest |
 | Skills | previewSkill, inspectManifest, testSkill, addSkill, updateSkill, removeSkill | untrusted instructions, changed digest, non-authoritative text |
@@ -188,7 +189,7 @@ Each row is a required user-visible operation, not an assumption that an existin
 | Security | viewActiveGrants, revokeGrant, inspectCredentialPresence, rotateLocalSecret, viewEgressScope, setRetentionPolicy | no secret bytes, pending revoke on active Effect, version fences |
 | Backup | previewBackup, exportWorkspace, verifyManifest, importBackup, previewRestore, confirmRestore | encryption ownership, collision, stale schema, no silent overwrite |
 | Storage | inspectStorageUsage, previewSafeCleanup, pruneAgentBuildDebris, manageArtifactRetention | owner file vs generated build, active processes, no native session deletion |
-| Usage & Monitoring | inspectUsageTotals, filterUsageDateRange, filterUsageAgent, inspectUsageConfidence, inspectCostPriceSource, inspectQuotaHealth, inspectFailureTimeline, exportUsageReport, setTelemetryRetention, setDiagnosticSampling | native opaque usage UNKNOWN, estimates distinct from billed; currency separation; no raw secrets |
+| Usage & Monitoring | inspectUsageTotals, filterUsageDateRange, filterUsageAgent, inspectUsageConfidence, inspectCostPriceSource, inspectQuotaHealth, inspectFailureTimeline, exportUsageReport | native opaque usage UNKNOWN, estimates distinct from billed; currency separation; no raw secrets |
 | Terminal | inspectShellProfiles, chooseDefaultShellProfile, previewCustomShellPath, validateCustomShellPath, setTerminalScrollback, setTerminalRetention, setShellIntegration, setTerminalPasteConfirmation, viewTerminalHealth, clearTerminalViewport | profile OS/Runtime pin, PTY owner, control epoch, no stealth command replay |
 | About/Diagnostics | showVersion, exportRedactedLogs, runProviderDiagnostic, copyBuildInfo, openSupportDocs | sanitized, time-bound, no fake provider test success |
 
@@ -226,7 +227,7 @@ Every row has busy/empty/unavailable/error/permission denied/success and optimis
 | Ctrl/Cmd+Enter | eligible composer, IME idle | immutable turn submit exactly once |
 | Enter | palette open | choose highlighted entry; don't send |
 | Escape | nested palette/dialog | close highest safe overlay; if pending side effect cannot discard |
-| New session | left rail | ordinary chat with selected default binding, Workbench closed unless persisted preference |
+| New session | left rail | ordinary chat with selected default binding; right Workbench visible in compact Start by default on desktop, with user collapse/layout preference remembered |
 | Coworker click | left roster | exact owner-revision chat, or honest owner API unavailable |
 | + new Coworker | left roster | Quick Create; not forced multi-page wizard |
 | Collapse rail | desktop shell | icons retain visible focus/tooltip and accessible names |

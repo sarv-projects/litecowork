@@ -7,6 +7,7 @@ import { desktopDelegationProfileCatalogApi } from "../coworkers/desktop-delegat
 import { DelegationProfileHistory } from "./DelegationProfileHistory";
 import { DelegationProfilePerformance } from "./DelegationProfilePerformance";
 import { AgentQuotaObservation } from "./QuotaObservation";
+import { AgentControlDescriptorPanel } from "./AgentControlDescriptorPanel";
 import { desktopAgentQuotaObservationApi } from "./desktop-agent-quota-api";
 import { scheduleOfferExpiryRefresh } from "./agent-offer-expiry";
 import { AGENT_CANDIDATES } from "./agent-candidate-catalog";
@@ -435,6 +436,7 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const [registryError, setRegistryError] = useState<string | null>(null);
   const registryGeneration = useRef(0);
   const [leadEligibleByProfile, setLeadEligibleByProfile] = useState<Record<string, boolean>>({});
+  const [inspectedControlKey, setInspectedControlKey] = useState<string | null>(null);
   const [offerClock, setOfferClock] = useState(() => Date.now());
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
@@ -810,6 +812,8 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
               const currentOfferIsIncompatible = observationIsFresh(observation, offerClock) && observation?.compatible === false;
               const protocols = [...new Set(profile.endpoints.map((endpoint) => humanize(endpoint.protocol)))];
               const features = capabilitySummary(profile);
+              const controlKey = workspaceId ? `${workspaceId}\\u0000${profile.agentProfileId}` : null;
+              const controlsExpanded = controlKey !== null && inspectedControlKey === controlKey;
               const bindingActionLabel = busyAction === `create:${profile.agentProfileId}`
                 ? "Adding…"
                 : offerReady
@@ -881,6 +885,20 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                   </div>
                   <p>Provider catalog IDs are display-only; they do not establish connection, authentication, entitlement, or inference. No Task or AgentSession is started, and this profile is incompatible with Task execution.</p>
                 </details>}
+                {workspaceId && controlKey && <div className="agent-catalog__control-inspection">
+                  <button
+                    type="button"
+                    className="agent-catalog__secondary"
+                    aria-expanded={controlsExpanded}
+                    onClick={() => setInspectedControlKey((current) => current === controlKey ? null : controlKey)}
+                  >{controlsExpanded ? "Hide native controls" : "Inspect native controls"}</button>
+                  {controlsExpanded && <AgentControlDescriptorPanel
+                    key={controlKey}
+                    workspaceId={workspaceId}
+                    profileId={profile.agentProfileId}
+                    displayName={profile.displayName}
+                  />}
+                </div>}
                 {isBound ? <p className="agent-catalog__bound">A Workspace binding exists below. A detected profile alone does not make it a lead or a worker.</p> : (
                   <div className="agent-catalog__configure">
                     {offerReady

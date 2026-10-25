@@ -30,6 +30,7 @@ mod context_document_deletion_bridge;
 mod coworker_bridge;
 mod delegation_profile_bridge;
 mod delegation_profile_write_bridge;
+mod discover_bridge;
 mod goal_bridge;
 mod needs_you_bridge;
 mod notification_bridge;
@@ -5366,6 +5367,7 @@ pub fn run() {
             agent_control_bridge::get_agent_control_descriptor,
             agent_control_bridge::refresh_agent_control_descriptor,
             agent_quota_bridge::get_agent_quota_observation,
+            discover_bridge::discover_request,
             agent_registry_bridge::list_agent_registry,
             agent_registry_bridge::refresh_agent_registry,
             list_agent_profiles,

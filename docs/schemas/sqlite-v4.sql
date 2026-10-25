@@ -1,9 +1,9 @@
 -- Rebuild Runtime-owned tables for installation-scoped Runtime identity.
--- Applied by the migration runner with foreign_keys and legacy_alter_table enabled
--- before BEGIN IMMEDIATE. This permits rebuilding runtimes while immutable v1 triggers
--- still refer to the table name; the runner restores both PRAGMAs after validation.
--- The runner validates PRAGMA foreign_key_check inside the transaction and restores
--- foreign_keys before returning. v1-v3 source files remain immutable.
+-- Applied by the migration runner with foreign_keys disabled and legacy_alter_table
+-- enabled before BEGIN IMMEDIATE. This permits rebuilding runtimes and dependent tables
+-- while immutable v1 triggers and foreign keys still refer to their old shapes. The runner
+-- validates PRAGMA foreign_key_check inside the transaction, commits only when it is clean,
+-- then restores both PRAGMAs on every exit path. v1-v3 source files remain immutable.
 
 DROP TRIGGER attempt_environment_owner_guard;
 

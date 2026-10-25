@@ -9,7 +9,10 @@
 
 This document owns the LiteCowork-hosted delegation contract. Agent-native subagents
 remain owned by their native harness; deterministic operations remain Capability
-Invocations. LiteCowork creates a child Attempt only for host delegation.
+Invocations. LiteCowork creates a child Attempt only for host delegation. Agent and
+account route eligibility is owned by [AGENT-ACCOUNT-ROUTE-MATRIX.md](AGENT-ACCOUNT-ROUTE-MATRIX.md).
+Workspace-level defaults, Coworker overrides, model-selection semantics, and Task pinning
+are defined below and are not provider credentials or model-router authority.
 
 ## Goals and non-goals
 
@@ -139,6 +142,7 @@ DelegationProfileRevision {
   latency_class: STANDARD | INTERACTIVE | DEADLINE_SENSITIVE
   environment_policy: DelegatedEnvironmentPolicy
   native_delegation_policy: INHERIT | ALLOW | DENY_IF_SUPPORTED
+  worker_model_selection_policy: PROFILE_CONFIGURED | MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE
   warm_policy: WarmPolicy
   authored_by: PrincipalRef
   created_at: Timestamp
@@ -243,12 +247,88 @@ DelegationStrategy = NATIVE_DEFAULT | BALANCED | COST_SAVER | HOST_DELEGATION_ON
 OptimizationPreference = QUALITY_FIRST | BALANCED | COST_FIRST | LATENCY_FIRST
 ```
 
-`NATIVE_DEFAULT` leaves native delegation unchanged and does not add a host preference.
-`BALANCED` exposes enabled profiles to the lead. `COST_SAVER` guides the lead toward lower
-known-cost eligible profiles only when verification supports the required quality floor.
-`HOST_DELEGATION_ONLY` is accepted only when the adapter can safely prevent native
-delegation for that session; otherwise the setting is unavailable. None silently changes
-the selected lead AgentBinding or model.
+`NATIVE_DEFAULT` preserves the lead harness's native delegation configuration and does
+not expose LiteCowork-hosted worker profiles for that Task. It is the explicit native-only
+route. `BALANCED` permits both harness-native children and the Workspace/Coworker-approved
+host-worker profiles; it does not force the lead to use a host worker. `COST_SAVER` has the
+same eligibility boundary as BALANCED and may prefer lower-cost profiles only when cost
+is observed/qualified and the Task quality floor is met. `HOST_DELEGATION_ONLY` permits
+host workers only and is available only when the lead adapter can enforce native
+delegation disabled for that session. No strategy silently changes the selected lead
+AgentBinding or its model.
+
+### Settings scope and resolution
+
+`WorkspaceDelegationSettings` is the default for ordinary Workspace Tasks and Coworker
+Tasks. A Coworker may select `WORKSPACE_DEFAULT` or `COWORKER_OVERRIDE`; newly created
+Coworkers default to `WORKSPACE_DEFAULT`. The override may narrow the Workspace's enabled
+worker-profile ceiling but cannot add profiles excluded by Workspace policy. Existing
+Coworker revisions migrate as `COWORKER_OVERRIDE` to preserve their saved behavior. V1
+has no independent per-Task route override. Precedence is: Coworker
+`COWORKER_OVERRIDE` (within the exact Workspace allowlist) → Workspace default; a Coworker
+with `WORKSPACE_DEFAULT` uses the current Workspace revision. Task admission pins that
+resolved policy in its initial TaskSpecRevision. An invalid, stale or widened override
+fails admission; no lower-precedence strategy or profile is silently substituted.
+
+The Workspace setting stores the default `DelegationStrategy`, exact enabled worker-profile
+revisions, and `native_child_model_policy` (`AGENT_DEFAULT` or
+`INHERIT_PARENT_IF_SUPPORTED`). Each `DelegationProfileRevision` separately stores its
+`worker_model_selection_policy` (`PROFILE_CONFIGURED` or
+`MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE`) because the policy belongs to that worker route.
+Only exact, qualified, independently authorized worker routes can honor a parent-model
+match. Parent credentials, sessions, subscription entitlements and provider settings never
+cross bindings.
+
+At Task admission, TaskService resolves and pins the source, Workspace settings revision,
+optional Coworker revision, strategy, native-child model policy, and exact eligible worker
+profile revisions in TaskSpecRevision. Worker model policy is read from each pinned profile
+revision. Settings edits affect future Task admissions only. An existing Task retains its
+pinned policy; applying new settings requires an explicit TaskSpec revision action that
+re-resolves policy server-side. The caller never submits a per-Task route override.
+
+A pre-v28 TaskSpecRevision may have a null policy snapshot because the earlier schema did
+not preserve this contract. Do not interpret null as native-only or reconstruct a policy
+from current mutable settings. Existing Attempts remain under their recorded provenance;
+new child admission for a legacy Task is blocked until an explicit TaskSpec revision
+resolves and pins policy under the current contract.
+
+### Composer conversation versus Task worker dispatch
+
+The central composer selects the lead AgentBinding and that agent's own qualified model,
+auth mode, session options, input formats, and native command/reference catalog. A normal
+Send admits a ConversationTurn to that selected agent. Its built-in subagents remain
+agent-owned: LiteCowork can expose only what the fresh native descriptor reports for
+support, turn/session scope, model semantics, visibility, cancellation, and safe disable.
+An unknown descriptor stays unknown; no host worker is silently substituted.
+
+Settings → Subagents governs Task delegation. It does not silently rewrite subagent
+settings for an already-running native Conversation session. A native-child model policy
+is passed only when the selected Task planning/session adapter can enforce it at the
+reported control scope. If the adapter can configure only a new session, the policy is
+applied before that Task session starts and later Settings changes do not reset an active
+session or rewrite its transcript.
+
+A cross-agent child is a LiteCowork host worker, not a native child. The user explicitly
+chooses Run as Task or accepts a Task plan before LiteCowork admits Steps and Attempts.
+Task admission resolves the Workspace default or the Coworker's narrower override,
+validates the exact enabled worker-profile revisions and independent auth/route
+eligibility, then pins them before any worker starts. The Task view names each worker,
+model policy, environment, permission scope, budget, and current status in user-facing
+language. A parent's model can be inherited only when the worker supports that exact model
+route and independently authenticates it; otherwise admission blocks with a typed
+explanation. Parent cookies, tokens, sessions, subscriptions, quotas, and provider settings
+never transfer, and no cheaper or otherwise available route is silently substituted.
+
+### Native child model behavior and observability
+
+Native child behavior belongs to the lead harness. `AGENT_DEFAULT` leaves it unchanged.
+`INHERIT_PARENT_IF_SUPPORTED` is selectable only if the current adapter descriptor says
+the harness supports and enforces exact parent-model inheritance. A native child may be
+reported as `EXACT`, `AGENT_REPORTED`, `UNKNOWN`, or `NOT_EXPOSED`; these meanings are
+never collapsed. Child visibility may be none, summary-only, or event-level. Cancellation
+and per-session disable are separate advertised guarantees. If the harness cannot disable
+native delegation, HOST_DELEGATION_ONLY is unavailable. Native activity is never given a
+LiteCowork child Attempt, ExecutionLease, Grant or Effect claim.
 
 ## DelegateRequest and accepted-plan rule
 

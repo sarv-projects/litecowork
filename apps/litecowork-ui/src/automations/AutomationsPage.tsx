@@ -3,10 +3,11 @@ import type { Automation, AutomationApi, AutomationHealth, AutomationOccurrence,
 import { routineInputFields, type ResourceOption } from "../routines/routine-inputs";
 import { AutomationEditor } from "./AutomationEditor";
 import { AutomationInputFields } from "./AutomationInputFields";
-import { automationSetupSteps } from "./automation-setup";
+import { automationSetupSteps, unsupportedAutomationTriggerKinds } from "./automation-setup";
+import { AUTOMATION_STARTERS, getAutomationStarter, type AutomationStarterId, type AutomationTemplateFlow } from "./automation-starters";
 import "./automations-page.css";
 
-type Props = { api: AutomationApi; workspaceId: string; resources: ResourceOption[]; resourcesNextCursor: string | null; resourcesPageBusy: boolean; onLoadMoreResources: () => Promise<void>; onOpenTask?: (taskId: string) => void };
+type Props = { api: AutomationApi; workspaceId: string; resources: ResourceOption[]; resourcesNextCursor: string | null; resourcesPageBusy: boolean; onLoadMoreResources: () => Promise<void>; onOpenTask?: (taskId: string) => void; templateFlow?: AutomationTemplateFlow | null; onStartTemplate?: (starterId: AutomationStarterId) => void; onResumeTemplateRoutine?: () => void; onCompleteTemplateFlow?: () => void };
 type PendingRequest = { signature: string; id: string };
 type PendingRun = PendingRequest & { key: string; workspaceId: string; triggerId: string; automation: Automation; revision: AutomationRevision; inputs: Record<string, unknown> };
 const MAX_PENDING_RUNS = 32;
@@ -70,6 +71,14 @@ function triggerLabels(revision: AutomationRevision | null): string[] {
     return typeof definition?.kind === "string" ? definition.kind.replaceAll("_", " ") : "Unknown trigger";
   }) ?? [];
 }
+
+function unsupportedTriggerKinds(revision: AutomationRevision | null): string[] {
+  const kinds = revision?.triggers.map(spec => {
+    const definition = spec.trigger && typeof spec.trigger === "object" ? spec.trigger as Record<string, unknown> : null;
+    return typeof definition?.kind === "string" ? definition.kind : "UNKNOWN";
+  }) ?? [];
+  return unsupportedAutomationTriggerKinds(kinds);
+}
 function driftLabel(state: AutomationHealth["drift_state"]): string {
   switch (state) {
     case "HEALTHY": return "Healthy";
@@ -94,8 +103,8 @@ function occurrenceStatusLabel(status: AutomationOccurrence["status"]): string {
   }
 }
 
-/** This page manages definitions and explicit one-shot ManualTrigger Task creation; it never hosts automatic triggers. */
-export function AutomationsPage({ api, workspaceId, resources, resourcesNextCursor, resourcesPageBusy, onLoadMoreResources, onOpenTask }: Props) {
+/** This page manages definitions and explicit ManualTrigger Tasks; the daemon's local trigger host polls supported recurring schedules. */
+export function AutomationsPage({ api, workspaceId, resources, resourcesNextCursor, resourcesPageBusy, onLoadMoreResources, onOpenTask, templateFlow, onStartTemplate, onResumeTemplateRoutine, onCompleteTemplateFlow }: Props) {
   const [items, setItems] = useState<Automation[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -114,6 +123,10 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
   const [confirmDisable, setConfirmDisable] = useState(false);
   const [editorMode, setEditorMode] = useState<"create" | "revise" | null>(null);
   const [editRevision, setEditRevision] = useState<AutomationRevision | null>(null);
+  const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false);
+  const [editorStarter, setEditorStarter] = useState<ReturnType<typeof getAutomationStarter>>(null);
+  const [initialRoutineRef, setInitialRoutineRef] = useState<{ routineId: string; revision: number } | null>(null);
+  const handledTemplateFlow = useRef<string | null>(null);
   const [revisionLoading, setRevisionLoading] = useState(false);
   const [revisionError, setRevisionError] = useState<string | null>(null);
   const [runInputs, setRunInputs] = useState<Record<string, unknown>>({});
@@ -378,18 +391,52 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
     return unsubscribe;
   }, [workspaceId]);
 
+  useEffect(() => {
+    const flow = templateFlow;
+    if (!flow || flow.workspaceId !== workspaceId || !flow.routineId || !flow.routineRevision) {
+      handledTemplateFlow.current = null;
+      return;
+    }
+    const key = `${flow.workspaceId}:${flow.starterId}:${flow.routineId}:${flow.routineRevision}`;
+    if (handledTemplateFlow.current === key) return;
+    const starter = getAutomationStarter(flow.starterId);
+    if (!starter) { onCompleteTemplateFlow?.(); return; }
+    handledTemplateFlow.current = key;
+    setEditorStarter(starter);
+    setInitialRoutineRef({ routineId: flow.routineId, revision: flow.routineRevision });
+    setEditRevision(null);
+    setEditorMode("create");
+  }, [templateFlow, workspaceId, onCompleteTemplateFlow]);
+
+  const showTemplateGallery = templateGalleryOpen || items.length === 0;
+
   return (
     <div className="page-content automations-content">
       <header className="automations-heading">
         <div><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Automations</h1><p>Save a Routine definition for later triggers, or create one Task manually from a Manual-trigger definition.</p></div>
-        <div className="automation-heading-actions"><button className="primary-button" type="button" onClick={() => { setEditorMode("create"); setEditRevision(null); }} disabled={loading || !workspaceId}>New Automation</button><button className="quiet-button" type="button" onClick={() => setReload(value => value + 1)} disabled={loading || loadingMore}>Refresh</button></div>
+        <div className="automation-heading-actions"><button className="quiet-button" type="button" aria-expanded={showTemplateGallery} aria-controls="automation-starter-gallery" onClick={() => setTemplateGalleryOpen(value => !value)}>{showTemplateGallery ? "Hide templates" : "Browse templates"}</button><button className="primary-button" type="button" onClick={() => { setEditorStarter(null); setInitialRoutineRef(null); setEditorMode("create"); setEditRevision(null); }} disabled={loading || !workspaceId || Boolean(templateFlow)}>New Automation</button><button className="quiet-button" type="button" onClick={() => setReload(value => value + 1)} disabled={loading || loadingMore}>Refresh</button></div>
       </header>
 
       <section className="automation-capability-note" role="note" aria-label="Automation execution status">
-        <strong>Schedules run only while this local Runtime hosts them.</strong>
-        <span>An Enabled schedule fires from this device when it holds the trigger-host binding. A paused or disabled definition, a revoked binding, or an unavailable Runtime leaves the slot unrun and records it honestly.</span>
+        <strong>Recurring schedules are polled by the local trigger host.</strong>
+        <span>An Enabled schedule is checked while this Runtime holds the trigger-host binding. A due occurrence may create an ordinary READY Task; it does not start planning or agent execution. Paused or disabled definitions, revoked bindings, and unavailable Runtimes remain visible in occurrence history.</span>
         <span>A Manual trigger can create one ordinary READY Task. This does not start planning or an agent; review the Task in Work.</span>
       </section>
+
+      {showTemplateGallery && <section className="automation-template-gallery" id="automation-starter-gallery" aria-labelledby="automation-starter-heading">
+        <div className="automation-template-gallery-heading"><div><div className="eyebrow">START WITH A REVIEWABLE DRAFT</div><h2 id="automation-starter-heading">Templates</h2><p>Choose a Coding or Cowork workflow. Each starts as an editable Routine; the schedule is saved separately and stays paused.</p></div></div>
+        <div className="automation-template-grid">{AUTOMATION_STARTERS.map(starter => <article className={`automation-template-card automation-template-${starter.category.toLowerCase()}`} key={starter.id}>
+          <div className="automation-template-card-top"><div className="automation-template-art" aria-hidden="true">{starter.category === "CODING" ? "⌘" : "✦"}</div><span className="automation-template-category">{starter.categoryLabel}</span></div>
+          <h3>{starter.title}</h3><p className="automation-template-summary">{starter.summary}</p>
+          <details className="automation-template-details"><summary>Review requirements and result</summary><strong>Before saving</strong><ul>{starter.requirements.map(item => <li key={item}>{item}</li>)}</ul><strong>Expected result</strong><p>{starter.expectedOutput}</p></details>
+          <button className="quiet-button" type="button" disabled={!workspaceId || Boolean(templateFlow)} onClick={() => onStartTemplate?.(starter.id)}>Create Routine draft <span aria-hidden="true">→</span></button>
+        </article>)}</div>
+      </section>}
+
+      {templateFlow?.workspaceId === workspaceId && templateFlow.routineId && templateFlow.routineRevision && <section className="automation-template-progress" aria-label="Automation template setup">
+        <div><strong>{getAutomationStarter(templateFlow.starterId)?.title ?? "Template setup"} · Routine revision {templateFlow.routineRevision}</strong><p>This exact saved Routine revision is pinned in the editor below. The new Automation will remain paused.</p></div>
+        <button className="text-button" type="button" onClick={onResumeTemplateRoutine}>Review Routine</button>
+      </section>}
 
       {unresolvedRuns.map(pending => <section className="automation-run-retry" role="alert" key={pending.key}>
         <div><strong>{pending.automation.name} · revision {pending.revision.revision} has an unknown {pending.triggerId === TEST_TRIGGER ? "test " : ""}Run outcome.</strong><span>The exact request is held in this desktop process. Retry it to recover its receipt before creating another Task.</span></div>
@@ -398,11 +445,14 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
         <small>Discarding may allow a duplicate Task if the original request committed.</small>
       </section>)}
 
-      {editorMode && <AutomationEditor key={`${workspaceId}:${editorMode}:${editRevision?.automation_id ?? "new"}`} api={api} workspaceId={workspaceId}
+      {editorMode && <AutomationEditor key={`${workspaceId}:${editorMode}:${editRevision?.automation_id ?? "new"}:${editorStarter?.id ?? "manual"}:${initialRoutineRef?.revision ?? "current"}`} api={api} workspaceId={workspaceId}
         existing={editorMode === "revise" && selected && editRevision ? { automation: selected, revision: editRevision } : undefined}
-        onCancel={() => { setEditorMode(null); setEditRevision(null); }}
+        starter={editorStarter}
+        initialRoutineRef={initialRoutineRef}
+        onCancel={() => { setEditorMode(null); setEditRevision(null); setEditorStarter(null); setInitialRoutineRef(null); if (editorStarter) onCompleteTemplateFlow?.(); }}
         onSaved={(updated, action) => {
           setEditorMode(null); setEditRevision(null); setSelected(updated); setSelectedId(updated.automation_id);
+          if (editorStarter) { setEditorStarter(null); setInitialRoutineRef(null); onCompleteTemplateFlow?.(); }
           setItems(current => action === "created" ? [updated, ...current.filter(item => item.automation_id !== updated.automation_id)] : current.map(item => item.automation_id === updated.automation_id ? updated : item));
           setDetailReload(value => value + 1);
           setMessage(action === "created" ? "Automation saved paused. Recurring triggers are off; Manual trigger definitions can create one Task when you choose Run once." : "New Automation revision saved; the definition remains paused.");
@@ -413,7 +463,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
       ) : listError ? (
         <section className="automation-empty automation-error" role="alert"><h2>Automations could not be loaded</h2><p>{listError}</p><button className="text-button" type="button" onClick={() => setReload(value => value + 1)}>Try again</button></section>
       ) : items.length === 0 ? (
-        <section className="automation-empty"><div className="automation-empty-icon" aria-hidden="true">◷</div><h2>No saved Automations</h2><p>When Routine selection is connected, you can save a definition here. Nothing is scheduled or running now.</p></section>
+        <section className="automation-empty"><div className="automation-empty-icon" aria-hidden="true">◷</div><h2>No saved Automations</h2><p>Choose a Coding or Cowork template to draft a Routine, or create one manually in Routines. Nothing is scheduled or running now.</p></section>
       ) : (
         <div className="automation-layout">
           <section className="automation-list" aria-label="Saved Automation definitions">
@@ -438,7 +488,8 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
                 <div><dt>Record version</dt><dd>{selected.version}</dd></div>
               </dl>
               {selectedRevision && <p className="automation-state-note">Triggers in this revision: {triggerLabels(selectedRevision).join(" · ") || "None"}.</p>}
-              {selected.status === "ENABLED" && <p className="automation-state-warning">Stored status is Enabled. The schedule only fires while this Runtime holds the trigger-host binding; a Manual Run now remains an explicit one-shot action.</p>}
+              {selectedRevision && unsupportedTriggerKinds(selectedRevision).length > 0 && <p className="automation-state-warning" role="note">This revision contains unsupported trigger types ({unsupportedTriggerKinds(selectedRevision).map(kind => kind.replaceAll("_", " ")).join(", ")}). Keep it unchanged, or revise it to a Manual or recurring schedule trigger before enabling.</p>}
+              {selected.status === "ENABLED" && <p className="automation-state-warning">Stored status is Enabled. The local host polls its schedule while this Runtime holds the binding. Due occurrences create READY Tasks; planning and agent execution are separate. A Manual Run remains an explicit one-shot action.</p>}
               {selected.status === "PAUSED" && <p className="automation-state-note">Paused definition. Recurring triggers remain off. A Manual trigger can still create one Task when you choose Run now.</p>}
               {selected.status === "DISABLED" && <p className="automation-state-note">Disabled permanently. The definition remains available for history.</p>}
               {selectedRevision && <section className="automation-setup" aria-labelledby="automation-setup-heading">
@@ -450,6 +501,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
                     hasTestTask: testResult?.automation_id === selected.automation_id,
                     routineActive: pinnedRoutine?.status === "ACTIVE",
                     hostReady: health?.host_ready ?? null,
+                    triggerSupported: unsupportedTriggerKinds(selectedRevision).length === 0,
                   }).map(step => <li key={step.id} data-state={step.state}>
                     <strong>{step.label}</strong>
                     <span>{step.detail}</span>
@@ -490,7 +542,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
               {confirmDisable && <div className="automation-confirm" role="group" aria-label="Confirm permanent disable"><p>Disable this definition permanently? This keeps the record but cannot be undone from this screen.</p><button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirmDisable(false)}>Keep it</button><button type="button" className="danger-button" disabled={busy} onClick={() => void transition("disable")}>{busy ? "Disabling…" : "Confirm disable"}</button></div>}
               {selected.status !== "DISABLED" && <div className="automation-actions">
                 {selected.status === "PAUSED" && <button className="quiet-button" type="button" disabled={busy || revisionLoading} onClick={() => void startRevision()}>{revisionLoading ? "Loading pinned revision…" : "Edit definition"}</button>}
-                {selected.status === "PAUSED" && <button className="quiet-button" type="button" disabled={busy || revisionLoading} onClick={() => void transition("resume")}>{busy ? "Enabling…" : "Enable definition"}</button>}
+                {selected.status === "PAUSED" && <button className="quiet-button" type="button" disabled={busy || revisionLoading || unsupportedTriggerKinds(selectedRevision).length > 0} onClick={() => void transition("resume")}>{busy ? "Enabling…" : "Enable definition"}</button>}
                 {selected.status === "ENABLED" && <button className="quiet-button" type="button" disabled={busy} onClick={() => void transition("pause")}>{busy ? "Pausing…" : "Pause definition"}</button>}
                 {!confirmDisable && <button className="danger-button" type="button" disabled={busy} onClick={() => { setActionError(null); setConfirmDisable(true); }}>Disable permanently</button>}
               </div>}

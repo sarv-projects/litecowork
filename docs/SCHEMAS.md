@@ -23,6 +23,10 @@ JsonValue = null | boolean | number | string | JsonValue[] | JsonObject
 JsonObject = map<string, JsonValue>
 ```
 
+Closed local Runtime wire formats are defined separately from Core domain values:
+[interactive app package manifest](schemas/interactive-artifact-package.schema.json) and
+[interactive Artifact Runtime IPC](schemas/interactive-artifact-runtime.schema.json). These schemas describe untrusted package metadata and volatile host/renderer messages; they do not add a persisted RuntimeRun entity or DomainEvent.
+
 ## Identifiers
 
 ```text
@@ -134,11 +138,52 @@ InteractionDefault = STANDARD_TRUST_POLICY | REQUIRE_OWNER_APPROVAL | HANDOFF_TO
 ContextOwnerRef = USER(PrincipalId) | WORKSPACE(WorkspaceId) | COWORKER(WorkspaceId, CoworkerId) | GOAL(WorkspaceId, GoalId)
 BudgetThresholdAction = WARN | REDUCE_CONCURRENCY | PREFER_CHEAPER | REQUIRE_APPROVAL | STOP_NEW_DELEGATION
 DemonstrationSessionStatus = CREATED | CAPTURING | PAUSED | REVIEW | CONVERTED | ABORTED
+OutputCapabilityState = SUPPORTED | UNSUPPORTED | UNKNOWN | NOT_EXPOSED
 AgentFeature = session.resume | session.steer | session.interrupt | session.cancel | session.fork |
   input.text | input.image | input.file | input.resources | extension.mcp_stdio |
   extension.mcp_http | extension.skills | extension.plugins | extension.dynamic_attach |
-  reporting.tool_calls | reporting.plan | reporting.usage | reporting.native_subagents |
+  output.semantic_text | output.file_artifact | output.rich_presentation | output.interactive_app |
+  reporting.tool_calls | reporting.plan | reporting.usage | reporting.native_delegation |
   reporting.approvals | environment.cwd | environment.extra_directories
+DelegationPolicySource = WORKSPACE_DEFAULT | COWORKER_OVERRIDE
+NativeChildModelPolicy = AGENT_DEFAULT | INHERIT_PARENT_IF_SUPPORTED
+WorkerModelSelectionPolicy = PROFILE_CONFIGURED | MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE
+
+DelegationProfileRevisionRef = {profile_id: DelegationProfileId, revision: u64}
+WorkspaceDelegationSettingsInput = {
+  default_strategy: DelegationStrategy,
+  enabled_delegation_profile_revisions: DelegationProfileRevisionRef[0..64],
+  native_child_model_policy: NativeChildModelPolicy
+}
+ResolvedDelegationPolicySnapshot = {
+  source: DelegationPolicySource,
+  workspace_settings_revision: u64,
+  coworker_id: CoworkerId?,
+  coworker_revision: u64?,
+  strategy: DelegationStrategy,
+  native_child_model_policy: NativeChildModelPolicy,
+  worker_profiles: {profile_id: DelegationProfileId, revision: u64,
+    worker_model_selection_policy: WorkerModelSelectionPolicy}[0..64],
+  resolved_at: Timestamp
+}
+
+NativeDelegationDescriptor = {
+  support: SUPPORTED | UNSUPPORTED | UNKNOWN,
+  control_scope: PER_TURN | PER_SESSION | UNKNOWN,
+  child_visibility: NONE | SUMMARY | EVENTS,
+  child_model_semantics: AGENT_DEFAULT | PARENT_INHERIT_SUPPORTED | EXPLICIT_OVERRIDE_SUPPORTED | UNKNOWN,
+  model_reporting: EXACT | AGENT_REPORTED | UNKNOWN | NOT_EXPOSED,
+  cancellation: PER_CHILD | SESSION_ONLY | UNSUPPORTED | UNKNOWN,
+  disable_per_session: ENFORCED | UNSUPPORTED | UNKNOWN,
+  max_depth?: u32,
+  max_concurrent_children?: u32
+}
+
+`control_scope` distinguishes per-turn controls from per-session controls. If the
+descriptor is `PER_SESSION`, policy is applied before that session starts; a Settings
+change never silently resets an active native session or rewrites its history. Unknown
+scope disables controls whose enforcement cannot be proven.
+
 AgentInstallation = {
   agent_id: string,
   display_name: string,

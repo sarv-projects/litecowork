@@ -550,11 +550,11 @@ RecordChannelHostDrainProofRequest {
   host_epoch
   lease_id
   expected_lease_control_version
-  proof_digest
-  unsettled_receipt_count: 0
-  unresolved_effect_count: 0
-  unreplicated_receipt_count: 0
 }
+
+The request names the exact lease only. RuntimeMesh derives the proof digest, verifier identity,
+and zero counters from authoritative Hub receipt, Effect, and replication state; callers cannot
+assert those values.
 
 ReleaseChannelHostLeaseRequest {
   request_id

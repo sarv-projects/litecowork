@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://litecowork.dev/schemas/interactive-artifact-package.v1.json",
+  "title": "LiteCowork Interactive Artifact Package Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "package_schema_version",
+    "display_name",
+    "entrypoint",
+    "host_protocol_min",
+    "host_protocol_max",
+    "assets",
+    "requested_capabilities"
+  ],
+  "properties": {
+    "package_schema_version": {"const": 1},
+    "display_name": {"type": "string", "minLength": 1, "maxLength": 255},
+    "entrypoint": {"$ref": "#/$defs/packagePath"},
+    "host_protocol_min": {"type": "integer", "minimum": 1, "description": "The validator requires this value to be less than or equal to host_protocol_max."},
+    "host_protocol_max": {"type": "integer", "minimum": 1, "description": "The Runtime supervisor protocol version must fall within the declared inclusive range."},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "media_type", "sha256"],
+        "properties": {
+          "path": {"$ref": "#/$defs/packagePath"},
+          "media_type": {"type": "string", "minLength": 1, "maxLength": 255},
+          "sha256": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+        }
+      }
+    },
+    "requested_capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Advisory declaration only. It grants no authority. V1 read access requires exact owner-selected Resource revisions; saving always requires a separate host-owned confirmation.",
+      "items": {"enum": ["artifact.read", "artifact.save"]}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"required": ["host_protocol_min", "host_protocol_max"]},
+      "then": {
+        "properties": {
+          "host_protocol_max": {"minimum": 1}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "packagePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+      "description": "Canonical relative POSIX path. The fixed root manifest.json is not listed as an asset; entrypoint is listed in assets. The package validator rejects dot-segments, duplicates after platform normalization, links, and any path not declared here."
+    }
+  }
+}

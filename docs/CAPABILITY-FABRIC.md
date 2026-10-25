@@ -3,9 +3,11 @@
 
 ## LiteSPM cross-agent package boundary
 
-LiteSPM is the independent package-system authority for **supported** MCP servers,
-plugins, skills and other eligible capabilities: discovery, native/existing inventory,
-package provenance, install, adopt, update, reconcile, unmanage and removal.
+LiteSPM is the independent package-system authority for its currently installable
+package kinds only: MCP servers at metadata-verified provenance and skills/plugins at
+runtime-verified provenance. Other catalog listing kinds may be discovery-only and are
+not thereby installable. LiteSPM owns discovery, native/existing inventory, package
+provenance, install, adopt, update, reconcile, unmanage and removal.
 **First-class connector packages/runtime are still design-only in LiteSPM**
 (ARCH/26 and ARCH/29). LiteCowork V1 app Connections require separately
 qualified provider/custody paths, not inference from a package kind enum.
@@ -52,15 +54,37 @@ authorization grant, activation record, invocation policy, provenance, and revoc
 edge. LiteSPM owns the package ecosystem and package lifecycle. LiteCowork does not implement a registry, marketplace,
 installer, package verifier, or plugin manager of its own.
 
-The selected LiteSPM service base URL is:
-
-```text
-https://litepsm.sarveshbh-2022.workers.dev/
-```
-
-This is the currently configured endpoint hostname. The product spelling update does not
-provide a replacement DNS name; change this URL only when the endpoint owner supplies and
-verifies a replacement.
+The repository's previously selected LiteSPM candidate endpoint remains
+`https://litepsm.sarveshbh-2022.workers.dev/`; it is preserved as an unqualified
+integration setting, not verified here as a machine API.
+The public catalog/product site checked in the inbuilt browser on 2026-10-24 is
+`https://litespm.sarveshbh-2022.workers.dev/`; it presents a searchable marketplace and
+agent/package guidance. Its [How LiteSPM works](https://litespm.sarveshbh-2022.workers.dev/how-it-works/)
+page documents a local CLI flow (`litespm setup`, package install/list/remove) with a
+reviewable installation plan, configuration backup, and managed-entry removal. The
+[Developer docs](https://litespm.sarveshbh-2022.workers.dev/docs/) also publish
+`litespm catalog sync`, host list/setup, and `litespm bridge stdio --host codex`; they
+describe agent-side `/marketplace` as search/plan with human approval kept outside the
+agent. This confirms an MCP-stdio integration candidate, not a LiteCowork-qualified
+launch target, stable tool schema or permission mapping. The agent host ID, target config
+scope, plan digest, owner approval, one-use approval token and receipt must be qualified
+before a LiteCowork UI can mutate package state. Its
+[Security page](https://litespm.sarveshbh-2022.workers.dev/security/) says installed
+capabilities run with the user's permissions and are not sandboxed; publisher/source
+labels and compatibility are not security audits. These are product-site statements, not a security qualification of a particular package
+or a substitute for LiteCowork's release-pinned tool-schema, host-target, approval and
+receipt conformance. The verified public site is a browser UI, not a contracted
+machine API. The previously selected machine-service candidate endpoint
+`https://litepsm.sarveshbh-2022.workers.dev/` remains unqualified and differs from the
+verified public catalog hostname; do not treat the two hosts as aliases or imply that
+either is a contracted LiteCowork endpoint. V1 uses LiteSPM's inbuilt/local management
+surface only through a published and qualified local protocol (for example a supported
+CLI or stdio MCP bridge); this document
+does not specify its method names, authentication, schemas or transport. Do not call the
+public site as an RPC endpoint, scrape its UI, or invent an HTTP API. A catalog listing,
+agent compatibility label, successful install, or visible package is not a LiteCowork
+Connection, CapabilityAssignment, Grant, runtime, or authorization to invoke. Any change
+to the selected service endpoint requires an explicit endpoint decision and qualification.
 
 This architecture records the service selection and system boundary only. The LiteSPM
 API, authentication, manifests, package taxonomy, plugin composition, MCP discovery,

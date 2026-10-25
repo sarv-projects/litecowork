@@ -90,7 +90,7 @@ and the current evidence at [CURRENT-RUN](CURRENT-RUN.md).
 The audit lists open source defects, corrected documentation contradictions, tooling
 gaps, exact observed checks and remaining E01–E10/E13 qualification. It does not
 promote story status or certify universal semantic/runtime correctness. The 2026-10-13
-next-session handoff is historical. For the latest verified worktree, active ownership,
-remaining local V1 story inventory, and restart instructions, use the
-[2026-10-20 next-session handoff](NEXT-SESSION-HANDOFF-2026-10-20.md) together with
-[CURRENT-RUN](CURRENT-RUN.md) and machine status in [backlog.json](backlog.json).
+audit and 2026-10-20 next-session handoff are historical snapshots. For the latest
+worktree evidence, read the newest dated section in [CURRENT-RUN](CURRENT-RUN.md), then
+confirm story status and dependencies in [backlog.json](backlog.json), the status
+authority.

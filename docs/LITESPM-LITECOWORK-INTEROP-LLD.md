@@ -1,9 +1,27 @@
 # LiteSPM ↔ LiteCowork — Local Package Management and Invocation Interoperability LLD
 
-**Status:** binding integration **TARGET**, not a published compatible wire protocol or a qualified connection.  
+**Status:** binding integration **TARGET**. LiteSPM publicly documents a local CLI and MCP stdio bridge; this is a candidate transport, not a LiteCowork-qualified versioned integration.
 **Owners:** LiteSPM owns package/catalog/inventory/config-mutation authority; LiteCowork owns Workspace/Coworker/Task authorization, execution and evidence.  
-**Prerequisites:** LiteSPM must publish versioned machine endpoint and operation schemas. Do not build client calls by scraping CLI output or guessing the RPC name.  
+**Prerequisites:** Pin a LiteSPM release and qualify its exact MCP server/tool schemas, host-target semantics, plan/approval protocol, operation receipt, idempotency and UNKNOWN recovery before enabling any LiteCowork adapter. The public developer page shows `litespm bridge stdio --host <host-id>` and agent-side `/marketplace`; it does not by itself qualify LiteCowork's local process launch or authorization mapping. Do not scrape CLI output or guess RPC/tool names.
 **References:** [Product](V1-PRODUCT-RELEASE-CONTRACT.md), [Capability Fabric](CAPABILITY-FABRIC.md), [Capability Invocations](CAPABILITY-INVOCATIONS.md), [Agent Control](AGENT-CONTROL.md), [Trust](TRUST.md), [LiteSPM ARCH/33](https://github.com/sarv-projects/LiteSPM/blob/main/ARCH/33-DEPLOYMENT-LEDGER-RECONCILIATION.md), [ARCH/38](https://github.com/sarv-projects/LiteSPM/blob/main/ARCH/38-CLI-PRODUCT-SURFACE.md).
+
+## Current public product and source evidence (checked 2026-10-24)
+
+The [LiteSPM developer page](https://litespm.sarveshbh-2022.workers.dev/docs/) documents
+a local CLI for setup, catalog sync/search, host selection, install/list/remove and a
+stdio MCP bridge. The [upstream README](https://github.com/sarv-projects/LiteSPM) says
+agent-side `/marketplace` can search and prepare a plan but cannot approve it; a
+single-use approval token comes from the human-controlled `litespm approve` path. This
+confirms that local CLI/MCP integration is a viable candidate. It does not establish that
+the bridge is safe to launch for every host, that its target ID means the selected
+AgentBinding, or that it supplies the durable receipts/idempotency guarantees LiteCowork
+requires. Those are release-pinned source and conformance questions.
+
+The upstream README also distinguishes catalog size from installability: at the time
+checked, it reported 69,376 listings and 26,554 one-command installs, with the remaining
+listings discovery-only. It reported 50 MCP host targets and 81 skill targets. These
+counts change and are research snapshots, not V1 promises; the UI must consume current
+capability evidence and display installability per package/host/scope.
 
 ## 1. Problem and ownership
 

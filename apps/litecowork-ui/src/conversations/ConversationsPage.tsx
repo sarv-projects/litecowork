@@ -155,6 +155,9 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   snapshotLoadedKeyRef.current = snapshotLoadedKey;
   const mounted = useRef(false);
   const activeWorkspace = useRef(workspaceId);
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
+  const pendingCreateDrafts = useRef(new Map<string, string>());
   activeWorkspace.current = workspaceId;
   const selectionKey = workspaceId && selectedId ? conversationDraftScope(workspaceId, selectedId) : null;
   const composerDraftKey = selectionKey;
@@ -373,6 +376,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
 
   const submitCreate = async (request: PendingConversationCreate) => {
     if (!operatorReady || busy || createJournalStatus !== "READY") return;
+    const createDraftKey = request.workspaceId + " " + request.requestId;
     const requestSelection = conversationWorkspaceSelections.capture(request.workspaceId);
     if (!requestSelection) return;
     const isCurrentCreateRequest = () => mounted.current
@@ -420,6 +424,13 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
       }
       if (!isCurrentCreateRequest()) return;
       setTitle("");
+      const carriedDraft = pendingCreateDrafts.current.get(createDraftKey);
+      if (carriedDraft) {
+        const draftKey = conversationDraftScope(request.workspaceId, created.conversation_id);
+        setConversationDrafts(current => ({ ...current, [draftKey]: carriedDraft }));
+        if (latestDraft.current === carriedDraft) onDraftChange("");
+      }
+      pendingCreateDrafts.current.delete(createDraftKey);
       setItems(current => [created, ...current.filter(item => item.conversation_id !== created.conversation_id)]);
       setSelectedId(created.conversation_id);
       setSnapshot({ workspace_id: request.workspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
@@ -449,11 +460,14 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
     }
   };
 
-  const create = async () => {
+  const create = async (requestedTitle?: string) => {
     if (!operatorReady || busy || createJournalStatus !== "READY") return;
-    const normalizedTitle = title.trim() || null;
+    const normalizedTitle = requestedTitle === undefined ? title.trim() || null : requestedTitle.trim() || null;
     try {
       const request = pendingCreates.get(workspaceId, normalizedTitle, () => crypto.randomUUID());
+      if (!selectedId && draft.trim()) {
+        pendingCreateDrafts.current.set(workspaceId + " " + request.requestId, draft);
+      }
       void submitCreate(request);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -505,8 +519,12 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   </section>;
 
   return <div className="page-content conversations-page">
-    <div className="eyebrow">WORKSPACE CONVERSATIONS</div>
-    <h1>Conversations</h1>
+    <div className="conversation-page-heading">
+      <div><div className="eyebrow">WORKSPACE CHATS</div><h1>Chats</h1></div>
+      <button className="primary-button conversation-new-chat" type="button" onClick={() => void create("")} disabled={!workspaceId || !operatorReady || busy || createJournalStatus !== "READY"} aria-busy={busy} title={!workspaceId ? "Select a Workspace before creating a chat." : !operatorReady ? "Start the local Runtime before creating a chat." : createJournalStatus !== "READY" ? "Wait until pending conversation requests are checked." : undefined}>
+        <span aria-hidden="true">＋</span> New chat
+      </button>
+    </div>
     <p className="conversation-intro">{workspaceId ? `Conversations are saved locally in ${workspaceName}.` : "Select a Workspace to view its locally saved conversations."}</p>
     {!workspaceId || (!operatorReady && items.length === 0) ? firstUseView : <div className="conversation-layout">
       <aside className="conversation-list" aria-label="Saved conversations">

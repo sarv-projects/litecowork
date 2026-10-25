@@ -159,6 +159,7 @@ Minimum v1 registry:
 workspace.created.v1
 workspace.replication_policy.changed.v1
 workspace.default_agent_binding.changed.v1
+workspace.delegation.settings.changed.v1
 workspace.primary_coworker.changed.v1
 workspace.archived.v1
 workspace.instructions.revision.created.v1
@@ -188,6 +189,7 @@ conversation.turn.settled.v1
 rich.presentation.published.v1
 
 task.created.v1
+task.delegation.policy.pinned.v1
 task.spec.revised.v1
 task.plan.revised.v1
 task.lead_agent.changed.v1
@@ -472,7 +474,9 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `resource.revision.created` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
 
 | `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by`, `origin_coworker_id?`, `origin_coworker_revision?`, `routine_id?`, `routine_revision?`, `automation_id?`, `automation_occurrence_id?`, `automation_test_run_id?` |
+| `task.delegation.policy.pinned.v1` | `task_id`, `task_spec_revision`, `source`, `workspace_settings_revision`, `coworker_id`, `coworker_revision`, `strategy`, `native_child_model_policy`, `worker_profiles[]`, `aggregate_version` |
 | `workspace.primary_coworker.changed` | `workspace_id`, `from_coworker_id`, `to_coworker_id`, `changed_by`, `aggregate_version` |
+| `workspace.delegation.settings.changed.v1` | `workspace_id`, `previous_revision`, `revision`, `default_strategy`, `enabled_delegation_profile_revisions[]`, `native_child_model_policy`, `changed_by`, `aggregate_version` |
 | `suggestion.preference.changed` | `workspace_id`, `kind`, `from_muted`, `to_muted`, `changed_by`, `aggregate_version` |
 | `task.coworker.origin.pinned` | `task_id`, `coworker_id`, `coworker_revision`, `aggregate_version` |
 | `agent.binding.lead_eligibility.changed` | `agent_binding_id`, `workspace_id`, `from`, `to`, `aggregate_version`, `requested_by` |
@@ -494,6 +498,23 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `suggestion.visibility.changed` | `suggestion_id`, `from_snoozed_until`, `to_snoozed_until`, `changed_by`, `aggregate_version` |
 | `demonstration.status.changed` | `demonstration_session_id`, `environment_id`, `from`, `to`, `capture_policy_digest`, `captured_action_count`, `captured_trace_bytes`, `trace_resource_id?`, `skill_proposal_id?`, `aggregate_version` |
 | `environment.sharing_scope.changed` | `environment_id`, `from`, `to`, `changed_by`, `aggregate_version` |
+
+`workspace.delegation.settings.changed.v1` stores the complete immutable settings revision
+and its prior revision in the same transaction that advances the Workspace settings head,
+Workspace aggregate version, and idempotency receipt. Workspace creation seeds revision 1
+with `NATIVE_DEFAULT`, an empty worker ceiling, and `AGENT_DEFAULT`; migration v28 seeds
+existing Workspaces deterministically and does not fabricate user-authored setting events.
+The v1 settings event contains no credentials, model-provider secrets, native session data,
+or capability grant. The settings event changes future Task admission policy only.
+
+`task.delegation.policy.pinned.v1` is emitted once for every TaskSpecRevision whose policy
+snapshot is newly resolved, atomically with that immutable revision. It records the source
+and exact Workspace/Coworker revisions, strategy, native-child policy, and exact worker
+profile revisions plus each profile's model-selection policy. Initial Task admission emits
+it alongside `task.created.v1`; an explicit TaskSpec revision that re-resolves settings
+emits it alongside `task.spec.revised.v1`. The original `task.created.v1` payload remains
+unchanged. No auth token, provider subscription, native transcript, or delegated secret is
+included.
 
 `conversation.turn.status.changed` records nonterminal state changes. Its `to` values are
 `RUNNING`, `WAITING_USER`, `WAITING_DEPENDENCY`, and `CANCEL_REQUESTED`; `reason_code` is
@@ -795,6 +816,8 @@ ArtifactLibraryTransitionV1 {
   aggregate_version
 }
 ```
+
+Interactive Artifact Runtime session state is intentionally absent from the DomainEvent journal. Run, stop, readiness, static preview, IPC failure and renderer interruption are Runtime-local volatile observations; they do not create Artifact/Task events or claim completion. An owner-confirmed save uses the existing ArtifactVersion publication transaction and its ordinary Artifact/Resource events. A future durable run history must add its own entity, versioned event schemas, replay/migration and retention policy before any UI relies on it.
 
 Local Library commands append `artifact.library.promoted.v1` or
 `artifact.library.archived.v1` with the post-transition aggregate state and receipt in the

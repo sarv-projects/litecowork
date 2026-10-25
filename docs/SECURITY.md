@@ -12,6 +12,7 @@
 8. External messaging channels
 9. External content being processed
 10. Embedded MCP App iframe
+11. Untrusted generated interactive Artifact package and isolated renderer
 
 No boundary is implicitly trusted merely because it is local.
 
@@ -92,6 +93,17 @@ Controls:
 - immutable ArtifactVersion
 - provenance
 - blob verification after replication
+
+### Generated interactive Artifact
+Controls:
+- self-contained package manifest and exact ArtifactVersion digest; path/archive validation before preview or execution
+- inert static preview; executable content never runs in the privileged desktop renderer
+- a distinct unprivileged renderer under a proven OS isolation profile; unsupported profiles remain preview-only
+- deny-by-default network, filesystem, process, app IPC and secret access; loopback is not a bypass
+- closed run-bound IPC with sequence/replay checks and run-scoped exact-revision read handles
+- host-owned save preview and confirmation; app messages never authorize Effects or report verified completion
+- process-tree quiescence and broker-handle revocation before STOPPED; interruption remains unknown
+- explicit, deletable, Workspace/ArtifactVersion-namespaced local app state; no credential storage or sync
 
 ## Secrets
 

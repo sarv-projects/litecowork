@@ -166,7 +166,7 @@ through the shell and verifies authority revalidation on return.
 `daemon.handshake` with `SO_PEERCRED` peer auth, `tools.list`, `host.detect_config`,
 22 registered methods) and was observed live on this host against `litespm v0.3.0`.
 The Operator routes for connect/install/test deliberately refuse with
-`LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED`, and no `LiteSpmClient` exists in the daemon.
+`LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED`, and no `LiteSpmClient` exists in the daemon.
 
 **Remains.** A bounded `LiteSpmClient` (handshake + `tools.list` + `host.detect_config`),
 the Discover surface mounted and driven by it with preview-before-mutation, adopt/unmanage

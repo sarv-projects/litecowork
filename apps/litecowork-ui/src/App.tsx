@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { WorkbenchPanel } from "./workbench/WorkbenchPanel";
 import { invoke } from "@tauri-apps/api/core";
 import { ArtifactLibrary } from "./artifacts/ArtifactLibrary";
 import { TaskArtifactOutputs } from "./artifacts/TaskArtifactOutputs";
@@ -21,6 +22,7 @@ import { TaskPresentationPanel } from "./presentation/TaskPresentationPanel";
 import { TaskSpecRevisionHistory } from "./tasks/TaskSpecRevisionHistory";
 import { AutomationsPage } from "./automations/AutomationsPage";
 import { desktopAutomationApi } from "./automations/desktop-automation-api";
+import type { AutomationStarterId, AutomationTemplateFlow } from "./automations/automation-starters";
 import { RoutinesPage } from "./routines/RoutinesPage";
 import { desktopRoutineApi } from "./routines/desktop-routine-api";
 import { AgentCatalogSettings } from "./agents/AgentCatalogSettings";
@@ -72,6 +74,8 @@ import { canOfferLocalRuntimeStart } from "./runtime/runtime-start-readiness";
 import { RuntimeInventoryStreamController, type RuntimeInventoryStreamStatus } from "./runtime/runtime-inventory-stream.ts";
 import { desktopRuntimeInventoryStreamDriver } from "./runtime/desktop-runtime-inventory-stream.ts";
 import { ConversationsPage } from "./conversations/ConversationsPage";
+import { DiscoverPage } from "./discover/DiscoverPage";
+import { desktopDiscoverApi } from "./discover/desktop-discover-api";
 import {
   WorkspaceInstructionDraftCache,
   canApplyWorkspaceInstructionResponse,
@@ -121,7 +125,7 @@ import {
   type PendingWorkspaceCreate,
 } from "./workspaces/workspace-onboarding.ts";
 
-type Page = "Home" | "Conversations" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Notifications" | "Routines" | "Automations" | "Settings";
+type Page = "Home" | "Conversations" | "Work" | "Library" | "Discover" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Notifications" | "Routines" | "Automations" | "Settings";
 type RuntimeStatus = {
   state: string;
   runtimeId: string | null;
@@ -331,13 +335,14 @@ type WorkspaceInstructionView = {
   createdAt: string;
 };
 
-const navigation: { label: Page; icon: string; group?: string }[] = [
-  { label: "Conversations", icon: "▤" },
+const navigation: { label: Page; displayLabel?: string; icon: string; group?: string }[] = [
+  { label: "Conversations", displayLabel: "Recent chats", icon: "▤" },
   { label: "Coworkers", icon: "◉" },
-  { label: "Home", icon: "⌂" },
+  { label: "Home", displayLabel: "New task", icon: "⌂" },
   { label: "Needs You", icon: "◇" },
   { label: "Work", icon: "▤" },
   { label: "Library", icon: "▧" },
+  { label: "Discover", icon: "⌕" },
   { label: "Automations", icon: "◷" },
   { label: "Routines", icon: "↻" },
   { label: "Goals", icon: "◎" },
@@ -450,7 +455,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function App() {
-  const libraryNavigation = useLibraryNavigation<Page>("Home");
+  const libraryNavigation = useLibraryNavigation<Page>("Conversations");
   const {
     page,
     pendingNavigation: pendingLibraryNavigation,
@@ -464,11 +469,44 @@ function App() {
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationTriggerRef = useRef<HTMLButtonElement>(null);
   const navigationDrawerRef = useRef<HTMLElement>(null);
+  const workbenchTriggerRef = useRef<HTMLButtonElement>(null);
+  const workbenchPanelRef = useRef<HTMLElement>(null);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [workbenchNarrow, setWorkbenchNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 1200px)").matches);
+  const [workbenchLayoutByWorkspace, setWorkbenchLayoutByWorkspace] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem("litecowork.workbench.layout.v1") ?? "{}");
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+        return Object.fromEntries(Object.entries(saved).filter(([, visible]) => typeof visible === "boolean")) as Record<string, boolean>;
+      }
+    } catch {
+      // The default layout remains available when WebView storage is disabled.
+    }
+    return {};
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("litecowork.workbench.layout.v1", JSON.stringify(workbenchLayoutByWorkspace));
+    } catch {
+      // Panel visibility is a convenience preference, not a prerequisite for the app.
+    }
+  }, [workbenchLayoutByWorkspace]);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1200px)");
+    const updateLayout = () => setWorkbenchNarrow(media.matches);
+    updateLayout();
+    media.addEventListener("change", updateLayout);
+    return () => media.removeEventListener("change", updateLayout);
+  }, []);
   const closeNavigation = useCallback((restoreFocus = true) => {
     setNavigationOpen(false);
     if (restoreFocus) window.requestAnimationFrame(() => {
       if (window.innerWidth <= 900) navigationTriggerRef.current?.focus();
     });
+  }, []);
+  const closeWorkbench = useCallback((restoreFocus = true) => {
+    setWorkbenchOpen(false);
+    if (restoreFocus) window.requestAnimationFrame(() => workbenchTriggerRef.current?.focus());
   }, []);
   useEffect(() => {
     if (!navigationOpen) return;
@@ -513,6 +551,36 @@ function App() {
       window.removeEventListener("resize", closeOnDesktopResize);
     };
   }, [navigationOpen, closeNavigation]);
+  useEffect(() => {
+    if (!workbenchNarrow || !workbenchOpen) return;
+    const focusableElements = () => Array.from(
+      workbenchPanelRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), a[href], select:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    workbenchPanelRef.current?.querySelector<HTMLElement>(".workbench-close")?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeWorkbench();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusableElements();
+      const first = elements[0];
+      const last = elements.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [workbenchNarrow, workbenchOpen, closeWorkbench]);
   const [draft, setDraft] = useState("");
   const [taskSaving, setTaskSaving] = useState(false);
   const taskSavingRef = useRef(false);
@@ -595,6 +663,7 @@ function App() {
   const [resourceListFailed, setResourceListFailed] = useState(false);
   const [resourceUploadResumeForget, setResourceUploadResumeForget] = useState<ResourceUploadResumeForget | null>(null);
   const [previewResourceId, setPreviewResourceId] = useState<string | null>(null);
+  const [previewResourceRevisionId, setPreviewResourceRevisionId] = useState<string | null>(null);
   const [previewResourceName, setPreviewResourceName] = useState<string | null>(null);
   const [resourcePreview, setResourcePreview] = useState<string | null>(null);
   const [resourcePreviewHighlights, setResourcePreviewHighlights] = useState<SourceHighlightResult | null>(null);
@@ -609,7 +678,9 @@ function App() {
     catch { return ""; }
   });
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
+  const [automationTemplateFlow, setAutomationTemplateFlow] = useState<AutomationTemplateFlow | null>(null);
   const artifactApi = useMemo(() => desktopArtifactApi(selectedWorkspaceId), [selectedWorkspaceId]);
+  const discoverApi = useMemo(() => selectedWorkspaceId ? desktopDiscoverApi(selectedWorkspaceId) : null, [selectedWorkspaceId]);
   const automationApi = useMemo(() => desktopAutomationApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const routineApi = useMemo(() => desktopRoutineApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const coworkerApi = useMemo(() => desktopCoworkerApi(selectedWorkspaceId), [selectedWorkspaceId]);
@@ -626,6 +697,7 @@ function App() {
     if (previousWorkspaceId !== workspaceId) {
       workspaceSelectionEpoch.current += 1;
       setResourceMessage(null);
+      setAutomationTemplateFlow(null);
     }
     if (!previousWorkspaceId && workspaceId) {
       setConversationDrafts(current => {
@@ -1025,6 +1097,7 @@ function App() {
     previewGeneration.current += 1;
     const generation = ++resourceListGeneration.current;
     setPreviewResourceId(null);
+    setPreviewResourceRevisionId(null);
     setPreviewResourceName(null);
     setResourcePreview(null);
     setResourcePreviewHighlights(null);
@@ -1904,6 +1977,7 @@ function App() {
     if (!selectedWorkspaceId) return;
     const generation = ++previewGeneration.current;
     setPreviewResourceId(resourceId);
+    setPreviewResourceRevisionId(revisionId);
     setPreviewResourceName(displayName);
     setResourcePreview(null);
     setResourcePreviewHighlights(null);
@@ -1991,6 +2065,10 @@ function App() {
   };
 
   const mainAreaInert = libraryNavigationMainIsInert(navigationOpen, pendingLibraryNavigation !== null);
+  const routeContentInert = mainAreaInert || (workbenchNarrow && workbenchOpen);
+  const workbenchLayoutKey = selectedWorkspaceId || "__no_workspace__";
+  const workbenchDesktopVisible = workbenchLayoutByWorkspace[workbenchLayoutKey] !== false;
+  const workbenchShown = workbenchNarrow ? workbenchOpen : workbenchDesktopVisible;
 
   return (
     <div className={`app-shell ${navigationOpen ? "navigation-open" : ""}`}>
@@ -2042,7 +2120,7 @@ function App() {
                 }}
               >
                 <span className="nav-icon" aria-hidden="true">{item.icon}</span>
-                <span>{item.label}</span>
+                <span>{item.displayLabel ?? item.label}</span>
               </button>
             </div>
           ))}
@@ -2069,16 +2147,40 @@ function App() {
             aria-label="Open main navigation"
             aria-controls="main-navigation"
             aria-expanded={navigationOpen}
-            onClick={() => setNavigationOpen(true)}
+            onClick={() => { setWorkbenchOpen(false); setNavigationOpen(true); }}
           >
             <span aria-hidden="true">☰</span>
             <span>Menu</span>
           </button>
-          <div className="breadcrumbs"><span>LiteCowork</span><span className="crumb-separator">/</span><strong>{page}</strong></div>
+          <div className="breadcrumbs"><span>LiteCowork</span><span className="crumb-separator">/</span><strong>{page === "Conversations" ? "Recent chats" : page === "Home" ? "New task" : page}</strong></div>
           <div className="topbar-actions">
+            <button
+              ref={workbenchTriggerRef}
+              className="workbench-toggle"
+              type="button"
+              aria-label={workbenchShown ? "Hide Workbench" : "Show Workbench"}
+              aria-controls="desktop-workbench"
+              aria-expanded={workbenchShown}
+              onClick={() => {
+                if (workbenchNarrow) {
+                  if (workbenchOpen) closeWorkbench();
+                  else {
+                    closeNavigation(false);
+                    setWorkbenchOpen(true);
+                  }
+                } else {
+                  setWorkbenchLayoutByWorkspace(current => ({ ...current, [workbenchLayoutKey]: !workbenchDesktopVisible }));
+                }
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M15 3v18" /></svg>
+              <span>Workbench</span>
+            </button>
           </div>
         </header>
 
+        <div className={`workspace-shell ${workbenchShown ? "has-workbench" : ""}`}>
+          <div className="workspace-route-content" inert={routeContentInert} aria-hidden={routeContentInert || undefined}>
         {page === "Home" ? (
           <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} onWorkspaceNameChange={setWorkspaceName} workspaceCreateBusy={workspaceCreateBusy} pendingWorkspaceRequest={pendingWorkspaceRequest} createWorkspace={createWorkspace} workspacesCount={workspaces.length} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => requestPageNavigation("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => requestPageNavigation("Settings")} onOpenCoworkers={() => requestPageNavigation("Coworkers")} onWorkspaceUpdated={(updated) => updateWorkspaceProjection(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Conversations" ? (
@@ -2097,7 +2199,7 @@ function App() {
           <LibraryPage selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => {
             setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item));
             onLibraryDraftCommitted();
-          }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} listFailed={resourceListFailed} uploadResumeForget={resourceUploadResumeForget} onForgetUploadResume={forgetResourceUploadResume} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
+          }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} listFailed={resourceListFailed} uploadResumeForget={resourceUploadResumeForget} onForgetUploadResume={forgetResourceUploadResume} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceRevisionId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
         ) : page === "Needs You" ? (
           <TaskAttentionPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} operatorReady={runtime?.operatorReady === true} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Coworkers" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
@@ -2151,15 +2253,34 @@ function App() {
         ) : page === "Routines" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
           <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Routines</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">↻</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load or change Routine definitions. Run now can save a Task in READY state; planning and agent execution are not available yet.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Routines" ? (
-          <RoutinesPage key={selectedWorkspaceId} api={routineApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources} onOpenTask={(task) => {
+          <RoutinesPage key={selectedWorkspaceId} api={routineApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources}
+            automationTemplateFlow={automationTemplateFlow?.workspaceId === selectedWorkspaceId ? automationTemplateFlow : null}
+            onAutomationTemplateRoutineSaved={(routineId, revision) => setAutomationTemplateFlow(current => current?.workspaceId === selectedWorkspaceId ? { ...current, routineId, routineRevision: revision } : current)}
+            onContinueAutomationTemplate={() => requestPageNavigation("Automations")}
+            onCancelAutomationTemplate={() => setAutomationTemplateFlow(null)}
+            onOpenTask={(task) => {
             if (task.workspace_id !== selectedWorkspaceId || task.status !== "READY" || !task.task_id) return;
             setOpenedTask({ workspaceId: task.workspace_id, taskId: task.task_id });
             requestPageNavigation("Work");
           }} />
+        ) : page === "Discover" && !selectedWorkspaceId ? (
+          <div className="page-content subpage-content"><div className="eyebrow">CAPABILITIES</div><h1>Discover</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">⌕</div><h2>Select a Workspace</h2><p>Choose a Workspace to view local skills and observed capability hosts.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Workspace settings <span aria-hidden="true">→</span></button></section></div>
+        ) : page === "Discover" && runtime?.operatorReady !== true ? (
+          <div className="page-content subpage-content"><div className="eyebrow">CAPABILITIES</div><h1>Discover</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">⌕</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to read workspace-scoped capabilities. Discover never installs or authorizes a catalog entry.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
+        ) : page === "Discover" && discoverApi ? (
+          <DiscoverPage key={selectedWorkspaceId} api={discoverApi} />
         ) : page === "Automations" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
           <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Automations</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◷</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading Automation definitions. No Automation state is cached in this view.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Automations" ? (
-          <AutomationsPage key={selectedWorkspaceId} api={automationApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources} onOpenTask={(taskId) => {
+          <AutomationsPage key={selectedWorkspaceId} api={automationApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources}
+            templateFlow={automationTemplateFlow?.workspaceId === selectedWorkspaceId ? automationTemplateFlow : null}
+            onStartTemplate={(starterId: AutomationStarterId) => {
+              setAutomationTemplateFlow({ workspaceId: selectedWorkspaceId, starterId, routineId: null, routineRevision: null });
+              requestPageNavigation("Routines");
+            }}
+            onResumeTemplateRoutine={() => requestPageNavigation("Routines")}
+            onCompleteTemplateFlow={() => setAutomationTemplateFlow(null)}
+            onOpenTask={(taskId) => {
             setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
             requestPageNavigation("Work");
           }} />
@@ -2168,6 +2289,48 @@ function App() {
         ) : (
           <PlaceholderPage page={page} onSettings={() => requestPageNavigation("Settings")} />
         )}
+          </div>
+          {workbenchNarrow && workbenchOpen && (
+            <button className="workbench-backdrop" type="button" tabIndex={-1} aria-label="Close Workbench" onClick={() => closeWorkbench()} />
+          )}
+          {workbenchShown && (
+            <WorkbenchPanel
+              key={selectedWorkspaceId}
+              panelRef={workbenchPanelRef}
+              modal={workbenchNarrow}
+              workspaceId={selectedWorkspaceId}
+              workspaceName={workspaces.find(workspace => workspace.workspaceId === selectedWorkspaceId)?.name ?? ""}
+              runtimeState={runtime?.state ?? null}
+              operatorReady={runtime?.operatorReady === true}
+              resources={resources}
+              resourceNextCursor={resourceNextCursor}
+              resourcePageBusy={resourcePageBusy}
+              resourceBusy={resourceBusy}
+              resourceListFailed={resourceListFailed}
+              previewResourceId={previewResourceId}
+              previewResourceRevisionId={previewResourceRevisionId}
+              previewResourceName={previewResourceName}
+              preview={resourcePreview}
+              previewError={previewError}
+              onClose={() => closeWorkbench()}
+              onOpenLibrary={() => requestPageNavigation("Library")}
+              onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }}
+              onOpenSettings={() => requestPageNavigation("Settings")}
+              onLoadMoreResources={() => { void loadMoreResources(); }}
+              onRefreshResources={() => setResourceCatalogRefreshNonce(current => current + 1)}
+              onPreviewResource={resource => { void previewText(resource.resourceId, resource.displayName, resource.resourceRevisionId); }}
+              onClosePreview={() => {
+                previewGeneration.current += 1;
+                setPreviewResourceId(null);
+                setPreviewResourceRevisionId(null);
+                setPreviewResourceName(null);
+                setResourcePreview(null);
+                setResourcePreviewHighlights(null);
+                setPreviewError(null);
+              }}
+            />
+          )}
+        </div>
       </main>
       <LibraryNavigationDialog
         pending={pendingLibraryNavigation}
@@ -3164,6 +3327,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
     Conversations: { title: "Conversations", description: "Saved local conversation history." },
     Work: { title: "Work", description: "Durable Tasks and their real progress will appear here after Task execution and the Operator API are integrated." },
     Library: { title: "Library", description: "Saved files and committed Artifacts for this Workspace." },
+    Discover: { title: "Discover", description: "Browse workspace skills and observed capability hosts. Catalog entries are not installation, authentication, or authorization." },
     "Needs You": { title: "Needs You", description: "Review Workspace-scoped open items and their resolved source history." },
     Ideas: { title: "Ideas", description: "Read-only proposals from approved Suggestion producers. Viewing an idea never starts work." },
     Coworkers: { title: "Coworkers", description: "Workspace assistants and their saved settings." },

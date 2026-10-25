@@ -14,7 +14,7 @@ Library
 Discover
 ```
 
-The desktop sidebar also contains search and a persistent Recent Conversations list.
+The desktop sidebar also contains search and a persistent Recent Conversations list. The center remains the conversation/composer surface; the right Workbench is visible by default in a compact Start state on desktop, with reflow at narrow widths.
 (Implementation status 2026-10-22: the current sidebar contains only the Workspace
 selector, the nav list, a Runtime note and the user row; search and the Recent
 Conversations list live inside the Conversations page, not the sidebar.) Work
@@ -42,11 +42,7 @@ unavailable read.
 
 ## V1 client scope
 
-V1 interaction implementation targets the desktop Operator. Responsive layouts inform
-future clients and constrain desktop accessibility, but native mobile/web clients are not
-release targets until after desktop, cloud Runtime, and remote Runtime qualification. Mobile
-flows in domain continuity tests use an available desktop Operator or qualified channel;
-they do not claim mobile rendering or app-store support.
+V1 interaction implementation targets the desktop Operator on Windows, macOS, and Linux where each native dependency is qualified. Responsive layouts inform desktop accessibility; native mobile/web clients and cloud/remote Runtime continuation are post-V1. Mobile flows in domain continuity tests use an available desktop Operator or qualified channel and do not claim mobile rendering or app-store support. A V1 desktop may launch the vendor's own supported cloud service as part of that native agent; this is distinct from LiteCowork cloud continuation.
 
 ## Workspace setup and selection
 
@@ -1099,4 +1095,4 @@ first and exposes commands/tool JSON only on inspection.
 
 ## V1 detailed design integration — 2026-10-12
 
-Detailed shell Settings/sidebars/Workbench and animation reducers live in DESKTOP-SHELL-LLD.md; native chat / @ model selection in NATIVE-COMPOSER-LLD.md; Chrome modes/profile imports/takeover in CHROME-BROWSER-LLD.md; normalized central rendering and fallbacks in RENDERING-CONFORMANCE-LLD.md. Existing presentation and conversation honesty rules still apply. New chat starts with right Workbench closed unless explicit prior user preference. No native Chrome claim from Tauri WebView alone.
+Detailed shell Settings/sidebars/Workbench and animation reducers live in DESKTOP-SHELL-LLD.md; native chat / @ model selection in NATIVE-COMPOSER-LLD.md; Chrome modes/profile imports/takeover in CHROME-BROWSER-LLD.md; normalized central rendering and fallbacks in RENDERING-CONFORMANCE-LLD.md. Existing presentation and conversation honesty rules still apply. The owner-approved 2026-10-24 screen contract supersedes that earlier default: new desktop chat shows the right Workbench in compact Start state; restore only a user's visible/collapsed layout preference, not stale object authority. No native Chrome claim from Tauri WebView alone.

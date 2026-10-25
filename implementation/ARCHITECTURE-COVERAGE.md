@@ -7,13 +7,13 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 107 source Markdown documents; 1812 heading-level sections are digest-pinned.
-- 108 implementation-plan documents and 1145 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
-- 67 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
-- 144 flows and 90 benchmarks.
-- 225 OpenAPI operations and 396 component schemas; 0 components are unreachable from every Operator operation.
-- 131 error codes; 261 shared IDs/value definitions.
-- 145 event types and 144 typed event payload schemas.
+- 110 source Markdown documents; 1861 heading-level sections are digest-pinned.
+- 108 implementation-plan documents and 1146 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 68 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
+- 144 flows and 91 benchmarks.
+- 227 OpenAPI operations and 401 component schemas; 0 components are unreachable from every Operator operation.
+- 131 error codes; 269 shared IDs/value definitions.
+- 147 event types and 146 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
 
 Machine-object names and canonical digests are compared to current source contracts by
@@ -37,6 +37,7 @@ USER tests provide that evidence when executed.
 | [`assets/host-skills/rich-response-design/SKILL.md`](../assets/host-skills/rich-response-design/SKILL.md) | E08-S08 | Architecture contract |
 | [`capabilities/zip_intake/README.md`](../capabilities/zip_intake/README.md) | E06-S01 | Architecture contract |
 | [`crates/domain-responsibility/README.md`](../crates/domain-responsibility/README.md) | E08-S02 | Architecture contract |
+| [`docs/AGENT-ACCOUNT-ROUTE-MATRIX.md`](../docs/AGENT-ACCOUNT-ROUTE-MATRIX.md) | E05-S01 | Architecture contract |
 | [`docs/AGENT-CONTROL.md`](../docs/AGENT-CONTROL.md) | E03-S06 | Architecture contract |
 | [`docs/AGENT-FABRIC.md`](../docs/AGENT-FABRIC.md) | E03-S05 | Architecture contract |
 | [`docs/API.md`](../docs/API.md) | E01-S04 | Architecture contract |
@@ -64,6 +65,7 @@ USER tests provide that evidence when executed.
 | [`docs/FLOWS.md`](../docs/FLOWS.md) | E13-S03 | Architecture contract |
 | [`docs/HOST-GUIDANCE.md`](../docs/HOST-GUIDANCE.md) | E08-S08 | Architecture contract |
 | [`docs/IMPLEMENTATION.md`](../docs/IMPLEMENTATION.md) | E01-S01 | Architecture contract |
+| [`docs/INTERACTIVE-ARTIFACT-RUNTIME.md`](../docs/INTERACTIVE-ARTIFACT-RUNTIME.md) | E08-S09 | Architecture contract |
 | [`docs/LEARNING.md`](../docs/LEARNING.md) | E08-S03 | Architecture contract |
 | [`docs/LITESPM-LITECOWORK-INTEROP-LLD.md`](../docs/LITESPM-LITECOWORK-INTEROP-LLD.md) | E10-S01 | Architecture contract |
 | [`docs/LOCAL-OPERATOR-IPC.md`](../docs/LOCAL-OPERATOR-IPC.md) | E01-S04 | Architecture contract |
@@ -72,6 +74,7 @@ USER tests provide that evidence when executed.
 | [`docs/NETWORK-SECURITY.md`](../docs/NETWORK-SECURITY.md) | E04-S02 | Architecture contract |
 | [`docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md) | E13-S02 | Architecture contract |
 | [`docs/PRESENTATION-RUNTIME.md`](../docs/PRESENTATION-RUNTIME.md) | E08-S06 | Architecture contract |
+| [`docs/PRODUCT-CONTRACT-INDEX.md`](../docs/PRODUCT-CONTRACT-INDEX.md) | E01-S01 | Architecture contract |
 | [`docs/PRODUCT.md`](../docs/PRODUCT.md) | E08-S01 | Architecture contract |
 | [`docs/PROTOCOLS.md`](../docs/PROTOCOLS.md) | E01-S04 | Architecture contract |
 | [`docs/REFERENCE-IMPLEMENTATIONS.md`](../docs/REFERENCE-IMPLEMENTATIONS.md) | E13-S03 | Architecture contract |

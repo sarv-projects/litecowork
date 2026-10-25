@@ -70,3 +70,23 @@
 @media (prefers-reduced-motion: reduce) {
   .routine-row { scroll-behavior: auto; }
 }
+
+.routine-template-continuation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid #d6e5dc;
+  border-radius: 11px;
+  background: #f5faf6;
+}
+.routine-template-continuation > div { flex: 1 1 300px; }
+.routine-template-continuation strong { color: #315b3c; font-size: 13px; }
+.routine-template-continuation p { margin: 4px 0 0; color: #536b58; font-size: 12px; line-height: 1.45; }
+.routine-template-continuation .primary-button { min-height: 38px; }
+@media (max-width: 760px) {
+  .routine-template-continuation { align-items: stretch; flex-direction: column; }
+  .routine-template-continuation button { width: 100%; }
+}

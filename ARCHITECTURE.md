@@ -23,11 +23,14 @@ Coworker? → scoped identity, context, chats, explicitly approved responsibilit
 LiteSPM   → cross-agent discover / native inventory / install / adopt / manage
 ```
 
-The complete ten-part local V1 product definition, free-core constraint and V2
-boundary are in [V1 Product Release Contract](docs/V1-PRODUCT-RELEASE-CONTRACT.md);
-the [Final UI contract](docs/V1-UI-SCREEN-CONTRACT.md) governs New Chat and the
-optional Workbench. [LiteSPM integration LLD](docs/LITESPM-LITECOWORK-INTEROP-LLD.md)
-owns shared lifecycle semantics. [HorizonCode](docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
+The complete desktop V1 product definition and post‑V1 cloud/mobile boundary are in
+[Product Contract Index](docs/PRODUCT-CONTRACT-INDEX.md) and
+[V1 Product Release Contract](docs/V1-PRODUCT-RELEASE-CONTRACT.md). The
+[Final UI contract](docs/V1-UI-SCREEN-CONTRACT.md) owns the default-visible right
+Workbench. [Agent/account route matrix](docs/AGENT-ACCOUNT-ROUTE-MATRIX.md) owns route
+qualification; [Interactive Artifact Runtime](docs/INTERACTIVE-ARTIFACT-RUNTIME.md) owns
+safe generated app execution. [LiteSPM integration LLD](docs/LITESPM-LITECOWORK-INTEROP-LLD.md)
+owns package lifecycle interop. [HorizonCode](docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
 is a native chief/worker candidate, not privileged Core software.
 
 A compatible agent can be a worker; capabilities can be discovered and activated as
@@ -94,7 +97,10 @@ user's Task.
 14. **Native agents remain themselves and remain fully configurable.** LiteCowork does
     not rewrite a harness's native configuration or claim ownership of its provider
     accounts, API keys, private subagents, prompts, memory, tools, commands, references,
-    extensions, or effects. Agent-specific installation/update, native authentication,
+    extensions, or effects. Agent/model/account routes are offered only when the exact
+    AgentModule, auth route, OS, features, entitlement and terms are qualified; see
+    [Agent/account route matrix](docs/AGENT-ACCOUNT-ROUTE-MATRIX.md). A selected model
+    never authorizes credential transfer or subscription proxying. Agent-specific installation/update, native authentication,
     provider/API-key setup, models, reasoning/session options, slash commands, mention
     semantics and configuration targets are projected through the selected AgentModule.
     Unsupported or stale options fail explicitly; they are never silently replaced.

@@ -75,7 +75,7 @@ normative contradiction.
 | Module | Files / lines | Audit result |
 |---|---:|---|
 | 00 Governance/core | 8 / 1,654 | Corrected root README from coding/Coworker-mandatory positioning to general desktop cowork with optional Coworkers; corrected stale audit counts/current-app assumptions and closed already-decided toolchain/storage choices. |
-| 01 Product/Coworker/UI | 13 / 3,297 | Workbench rules remain consistent: closed on new chat, user-controlled Start shell, no background auto-open, Terminal conditional. Updated desktop and Artifact READMEs to current source reality and pinned toolchain. |
+| 01 Product/Coworker/UI | 13 / 3,297 | **Superseded 2026-10-24:** owner-approved screenshot makes Workbench visible in compact Start by default on desktop; the earlier closed-on-new-chat conclusion is obsolete. User-controlled collapse and no background object auto-open remain. Updated desktop and Artifact READMEs to current source reality and pinned toolchain. |
 | 02 Agents/delegation | 3 / 1,278 | No unresolved authority conflict found. Native harness owns reasoning/subagents; host delegation remains explicit bounded Task/Attempt work; no generic provider/model router introduced. |
 | 03 Capabilities/trust/security | 7 / 1,997 | No unresolved authority conflict found. Catalog/install/auth/assignment/grant/activation/invocation remain distinct; assignment is a ceiling, not authority; large inventories stay lazy/bounded. |
 | 04 Task/runtime/environment/recovery | 7 / 3,231 | Core Task/Attempt/Effect/recovery ownership remains consistent. Added explicit post-V1 label to cloud/Hub cells in sleep/offline table so local desktop availability cannot be overstated. |

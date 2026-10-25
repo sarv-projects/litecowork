@@ -1,3 +1,30 @@
+## 2026-10-25 — Coding and Cowork Automation starter flow
+
+- Added two Automation starter cards, with requirements and expected Task behavior disclosed before selection. Both produce editable Routine drafts; choosing a card does not save or schedule anything.
+- Wired the saved Routine ID and immutable current revision across Routines → Automations. The Automation editor verifies and pins that exact revision, then saves the definition paused. The schedule and local time zone remain editable.
+- Added responsive card and handoff styling, reduced-motion handling, explicit cancel/finish-later states, and Workspace-change clearing. The flow is memory-only; a saved Routine remains durable if the app closes.
+- Due schedules in this build create READY Tasks only. No agent or subagent execution, file edits, external sends, or publishing are implied.
+- Validation: the Node guard, Operator API type consistency check and `tsc --noEmit` completed without diagnostics. Vite reached `transforming…`, but the original build has no final exit status. Desktop Commander’s follow-up WSL process and read-only `git diff --check` both returned `Bash/Service/WSAETIMEDOUT`, so the final bundle and diff cleanliness remain unverified.
+- Tests were not run; automatic review blocked a prior test-file action under the governing no-tests-without-request instruction.
+- This screen slice does not close the V1 release gaps listed below; it is not a V1-ready claim. Superdesign visual review remains blocked at the existing authentication handoff; no account sign-in or terms acceptance was performed.
+
+## 2026-10-25 — Workbench Start screen wiring
+- Added a shared right-side Start Workbench to the desktop shell. It is visible by default above 1200px, and its collapsed preference is remembered per Workspace in local WebView storage.
+- Wired Files to a Workbench view over loaded Workspace resources, cursor paging and exact-revision text preview; full Library remains a secondary action. Work / Runtime & settings route to their existing screens. Browser, Terminal and Computer remain unavailable with explicit provider reasons; there is no simulated tool output.
+- Narrow layouts open Workbench as a modal side drawer, close the navigation drawer first, trap keyboard focus, restore focus on dismissal, and close the drawer after choosing a route.
+- Returning sessions now open Chats by default. The sidebar route reads Recent chats; Home remains available as New task. New chat creates a blank local Conversation using the existing idempotent create/recovery flow and carries a first-use draft into its window-only composer. Send remains disabled.
+- Validation after these UI changes: Node 24.21.0 pnpm run build passed, including the Node guard, Operator API type consistency check, tsc --noEmit, and Vite production build (170 modules). Output: CSS 183.73 kB (27.87 kB gzip); JS 1,017.96 kB (278.10 kB gzip). git diff --check is run below after this log update. Vite still warns that the JS chunk exceeds 500 kB; code splitting remains open. Tests were not run in this pass.
+- Release status remains blocked: native message send/session admission, agent/model selector behavior, complete agent/subagent routing, and qualified Browser, Computer and Terminal providers are still unavailable. This is a partial screen implementation, not a V1-ready claim.
+
+## 2026-10-24 — Desktop screen wiring continuation
+
+- **Discover surface advanced.** Added Explore / Installed / native / Managed / Connections sections, cursor paging for Workspace-local skills, 250 ms debounced search, stale-request fencing, deduplication, and source-specific unavailable states. Installed/native explicitly shows only Runtime-observed hosts (maximum 50), not a full native inventory. Detail disclosure remains on-demand and read-only; package actions and local skill execution remain disabled with per-source reasons.
+- **Package reason-code spelling corrected** from LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED to LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED across Rust, tests, OpenAPI, generated API types and docs.
+- **Focused Discover UI test:** 1/1 passed. API generation consistency check passed during pnpm run build.
+- **Latest validation status:** the last production build passed before this screen change. The latest build attempt returned Wsl/Service/WSAETIMEDOUT before running package scripts, so this change has no fresh compile result yet. The existing full UI suite has several mounted Needs You browser failures tied to Chrome startup/no DevTools page; other assertions continue to pass, and the suite has not emitted a final summary. The targeted Tauri Rust test remains in GTK/WebKit dependency compilation with no final result.
+- **Formatting status:** cargo fmt --all -- --check reported formatting drift across multiple existing Rust files outside this screen patch. The broader user working tree was left untouched.
+- **Release status:** no implementation story was moved to ACCEPTED. LiteSPM package management, native conversation send/session admission, complete agent/subagent routing and other V1 contract gaps remain open.
+
 ## 2026-10-22 — Four competitive-gap designs: events, connectors, skills, usage
 
 The owner turned the competitive study's gap list into four design mandates. Each was
@@ -359,7 +386,7 @@ codebase before stopping. No product code changed.
   the only two such operations of 225. Both now require a bounded key. Focused route test
   `capability_commands_require_an_idempotency_key_and_stay_truthful` passes 1/1: missing key
   `400`, install still truthfully `503 DEPENDENCY_UNAVAILABLE` with
-  `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED`, and the probe still reports `UNKNOWN` health.
+  `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED`, and the probe still reports `UNKNOWN` health.
 - **Desktop truthfulness.** The Library no longer renders "No files in this Workspace yet"
   after a failed read; it shows an alert that the list is unavailable plus a Retry, because
   a failed read proves nothing about the Workspace. The Task detail "Completed" pill no
@@ -843,7 +870,7 @@ seven candidates. Six were implemented; one was measured and rejected. No contra
 - **LiteSPM is not invented.** `docs/CAPABILITY-FABRIC.md` publishes only the service base
   URL and defers the API, authentication, manifests, package taxonomy, and installation, so
   the catalog reports `package_service_qualified = false` with reason
-  `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED`, `connect-or-install` returns
+  `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED`, `connect-or-install` returns
   `DEPENDENCY_UNAVAILABLE`, and the capability test returns health `UNKNOWN` without
   contacting any provider. The contract that must be published is the LiteSPM package
   API/authentication/manifest section of `docs/CAPABILITY-FABRIC.md`.

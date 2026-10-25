@@ -59,7 +59,7 @@ pub const SKILL_DRIFT_BLOCKER_CODE: &str = "SKILL_DRIFT_DETECTED";
 
 /// Canonical reason code used whenever the LiteSPM package lifecycle is required
 /// but its published contract is unavailable.
-pub const PACKAGE_SERVICE_NOT_QUALIFIED: &str = "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED";
+pub const PACKAGE_SERVICE_NOT_QUALIFIED: &str = "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED";
 
 /// Every deterministic rejection this module can produce.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

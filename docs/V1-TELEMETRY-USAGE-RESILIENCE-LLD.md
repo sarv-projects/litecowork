@@ -141,7 +141,7 @@ Functions with required outcomes:
 - exportSanitizedSupportBundle(selection, redactionPolicy) -> preview, manifest, bounded archive; no credentials/private chats.
 - applyTelemetryRetention(policy, activeTraceRefs) -> rotated logs and protected immutable evidence, not task history deletion.
 
-**No served API assumed:** proposed GET UsageSummary/UsageItems/Health/Trace/Logs/CacheStats projections require explicit authenticated Operator OpenAPI + Command/Schema/SQLite owner promotion. Settings like log retention/metrics opt-in must use canonical Trust/Runtime settings service; clear-cache is a scoped versioned mutation, not an ad-hoc frontend action.
+**No served API assumed:** proposed GET UsageSummary/UsageItems/Health/Trace/Logs/CacheStats projections require explicit authenticated Operator OpenAPI + Command/Schema/SQLite owner promotion. Settings like log retention/metrics opt-in must use canonical Trust/Runtime settings service; clear-cache is a scoped versioned mutation, not an ad-hoc frontend action. V1 therefore exposes no active `setTelemetryRetention` or `setDiagnosticSampling` control; bounded retention/sampling remain service policy until a durable local settings contract is promoted.
 
 ## UI layout acceptance
 

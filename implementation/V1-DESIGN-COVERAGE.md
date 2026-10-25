@@ -22,7 +22,7 @@ Status: documentation target / proposed implementations. This is a crosswalk, no
 | Managed Chrome/profile import | docs/CHROME-BROWSER-LLD | none qualified | browser Environment provider | E07 | UIV1-072–UIV1-081 |
 | Existing Chrome/Takeover/Computer | docs/CHROME-BROWSER-LLD | no finished UI | OS-specific control lease / provider | E07 | UIV1-082–UIV1-090 |
 | Task planning/steps/attempts | docs/V1-WORKFLOW-EVENT-LLD | task operator/storage foundations | durable task + verified effect admission | E03/E04 | UIV1-091–UIV1-100 |
-| Delegation/failover/cost | docs/V1-WORKFLOW-EVENT-LLD | native probes only | worker scheduler + Task handoff | E05 | UIV1-101–UIV1-109 |
+| Delegation/failover/cost and Settings → Subagents | docs/DELEGATION.md, DATA-MODEL.md, API.md, schemas/operator-api.openapi.yaml, schemas/sqlite-v28.sql, EVENTS.md | native probes only | WorkspaceDelegationSettingsService, Coworker inherit/narrow override, native descriptor, host worker scheduler, Task policy pin | E05 | UIV1-101–UIV1-109 |
 | MCP/packages/connection auth | docs/CONNECTORS-WORKFLOWS.md, function catalog | partial capability/runtime | LiteSPM bridge + Trust | E04/E10 | UIV1-110–UIV1-119 |
 | Goals/suggestions/memory | docs/LEARNING.md, COWORKERS-TARGET | partial pages | source-pinned context + memory policy | E08 | UIV1-120–UIV1-127 |
 | Routines/automations | docs/AUTOMATION.md, V1-WORKFLOW-EVENT-LLD | manual occurrence slice | trigger host and recovery | E09 | UIV1-128–UIV1-139 |
@@ -99,7 +99,7 @@ Status: documentation target / proposed implementations. This is a crosswalk, no
 - UIV1-059 Open Artifact exact immutable version and stale revision detection.
 - UIV1-060 Compare text versions, make draft, publish conflict and retry ambiguous.
 - UIV1-061 Open PDF/media with proper qualified viewer or honest fallback.
-- UIV1-062 Open MCP App/Generated UI under sandbox binding; unauthorized action denied.
+- UIV1-062 Open an MCP App only through its capability sandbox; open an Interactive Artifact through its inert exact-version preview and explicit Run/Stop only under a qualified isolated Artifact Runtime; deny forged, replayed, wrong-version and unauthorized host requests; Save As is host-confirmed, version-provenanced and never overwrites the app.
 - UIV1-063 Open Terminal only when provider/Workspace grant qualified.
 - UIV1-064 Inspector shows actual worker/Effect/evidence without inventing score/progress.
 - Range UIV1-065–UIV1-071 (summary only; individual definitions below): Media/office providers: valid/invalid XLSX formula, PPTX rendering, PDF font, invalid image, protected document, large CSV, missing linked source.
@@ -127,8 +127,8 @@ Status: documentation target / proposed implementations. This is a crosswalk, no
 
 ### Task, delegation, connector, automation, reliability
 - Range UIV1-091–UIV1-100 (summary only): Task immutable plan, ready Step, lease conflict, Effect external send, pause, resume, crash/restart, verified outcome, incomplete outcome, cancellation races.
-- Range UIV1-101–UIV1-109 (summary only): Host/native delegation, worker mismatch, quota exhaustion, retry budgets, stale Plan, cross-agent context envelope, handoff on crash, worker revision pin, stop criteria.
-- Range UIV1-110–UIV1-119 (summary only): Install/activate/assign/revoke real MCP/connector, cancellation of OAuth, missing task-time auth, service errors, stale scopes, outbox exactly-once semantics as far as provider allows, malicious package metadata, permission denial, no connection count artificial ceiling.
+- Range UIV1-101–UIV1-109 (summary only): Workspace default native-only/balanced/cost-aware/host-only strategy; Coworker inherit versus narrower profile/strategy override; unsupported native-delegation controls; native child model default versus exact parent inheritance; host worker profile on a second AgentBinding with independent auth; profile/route/model/OS mismatch; stale or disabled profile; quota UNKNOWN/exhaustion; exact TaskSpec policy revision pin; stop/cancel/handoff without duplicate Effects. Ordinary Send remains native and never starts a host worker; Run as Task/Task-plan acceptance is explicit.
+- Range UIV1-110–UIV1-119 (summary only): LiteSPM catalog and inventory freshness; installable vs discovery-only; MCP/Skill/Plugin package type and plugin component preview; per-host/OS/scope compatibility; structural plan and human approval (agent cannot self-approve); exact receipt and UNKNOWN reconciliation; managed vs observed/adopted/drifted ownership and safe removal; install separate from Connection/auth/assignment/Grant/activation/invocation; OAuth cancellation, missing Task-time auth, service errors, stale scopes, provider idempotency limits, hostile package metadata and permission denial.
 - Range UIV1-120–UIV1-127 (summary only): Scoped memory candidate, redact, duplicate/conflict, approval, source citation, temporary chat disabled learning, revoke source and pending purge.
 - Range UIV1-128–UIV1-139 (summary only): Schedule DST gaps/folds, manual Run now, duplicate trigger, provider event, missed offline slot, overlap, no-change watch, pause new work, Pause all safely, Task follow-up, notification quiet hours, actual event history.
 - Range UIV1-140–UIV1-147 (summary only): Needs You approval, expired grant, wrong principal, multi-window dedup, notification suppression, action from notification, reopen exact Task, offline state.

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { RoutineApiError, type MaterializedRoutineTask, type Routine, type RoutineApi, type RoutineRevision } from "./routine-api";
 import { pinnedResourceOptionKey, routineInputFields, type ResourceOption } from "./routine-inputs";
+import { getAutomationStarter, routineDraftFromStarter, type AutomationStarterId, type AutomationTemplateFlow } from "../automations/automation-starters";
 import "./routines-page.css";
 
-type Props = { api: RoutineApi; workspaceId: string; resources: ResourceOption[]; resourcesNextCursor: string | null; resourcesPageBusy: boolean; onLoadMoreResources: () => Promise<void>; onOpenTask?: (task: MaterializedRoutineTask) => void };
+type Props = { api: RoutineApi; workspaceId: string; resources: ResourceOption[]; resourcesNextCursor: string | null; resourcesPageBusy: boolean; onLoadMoreResources: () => Promise<void>; onOpenTask?: (task: MaterializedRoutineTask) => void; automationTemplateFlow?: AutomationTemplateFlow | null; onAutomationTemplateRoutineSaved?: (routineId: string, revision: number) => void; onContinueAutomationTemplate?: () => void; onCancelAutomationTemplate?: () => void };
 type Editor = { routineId: string | null; version: number | null; name: string; objective: string; instructions: string; advanced: string };
 type RoutineMutation =
   | { kind: "CREATE"; name: string; revision: Record<string, unknown> }
@@ -201,7 +202,7 @@ function freshRequestId(): string {
 }
 
 /** Routine editor plus save-only materialization into an ordinary READY Task. */
-export function RoutinesPage({ api, workspaceId, resources, resourcesNextCursor, resourcesPageBusy, onLoadMoreResources, onOpenTask }: Props) {
+export function RoutinesPage({ api, workspaceId, resources, resourcesNextCursor, resourcesPageBusy, onLoadMoreResources, onOpenTask, automationTemplateFlow, onAutomationTemplateRoutineSaved, onContinueAutomationTemplate, onCancelAutomationTemplate }: Props) {
   const [items, setItems] = useState<Routine[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -216,6 +217,8 @@ export function RoutinesPage({ api, workspaceId, resources, resourcesNextCursor,
   const [message, setMessage] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [editor, setEditor] = useState<Editor | null>(null);
+  const [templateDraftId, setTemplateDraftId] = useState<AutomationStarterId | null>(null);
+  const handledTemplateDraft = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [runInputs, setRunInputs] = useState<Record<string, unknown>>({});
@@ -289,8 +292,51 @@ export function RoutinesPage({ api, workspaceId, resources, resourcesNextCursor,
     finally { if (generation === listGeneration.current) setLoadingMore(false); }
   };
 
+  useEffect(() => {
+    const flow = automationTemplateFlow;
+    if (!flow || !workspaceId || flow.workspaceId !== workspaceId) {
+      handledTemplateDraft.current = null;
+      setTemplateDraftId(null);
+      return;
+    }
+    if (flow.routineId) {
+      setTemplateDraftId(null);
+      return;
+    }
+    const starter = getAutomationStarter(flow.starterId);
+    const draft = routineDraftFromStarter(flow.starterId);
+    if (!starter || !draft) {
+      onCancelAutomationTemplate?.();
+      return;
+    }
+    const key = workspaceId + ":" + starter.id;
+    if (handledTemplateDraft.current === key) return;
+    handledTemplateDraft.current = key;
+    setActionError(null);
+    setMessage("Review this editable " + starter.categoryLabel + " Routine draft. Nothing is saved or scheduled until you choose Save Routine.");
+    setTemplateDraftId(starter.id);
+    setEditor({
+      routineId: null,
+      version: null,
+      name: draft.name,
+      objective: draft.objective,
+      instructions: draft.instructions,
+      advanced: JSON.stringify(emptyAdvanced, null, 2),
+    });
+  }, [automationTemplateFlow, onCancelAutomationTemplate, workspaceId]);
+
+  const cancelEditor = () => {
+    setEditor(null);
+    setActionError(null);
+    if (templateDraftId) {
+      setTemplateDraftId(null);
+      handledTemplateDraft.current = null;
+      onCancelAutomationTemplate?.();
+    }
+  };
   const startCreate = () => {
-    setActionError(null); setMessage(null); setEditor({ routineId: null, version: null, name: "", objective: "", instructions: "", advanced: JSON.stringify(emptyAdvanced, null, 2) });
+    setActionError(null); setMessage(null); setTemplateDraftId(null); handledTemplateDraft.current = null;
+    setEditor({ routineId: null, version: null, name: "", objective: "", instructions: "", advanced: JSON.stringify(emptyAdvanced, null, 2) });
   };
   const startEdit = () => {
     if (!selected || !currentRevision || selected.status !== "ACTIVE") return;
@@ -302,6 +348,10 @@ export function RoutinesPage({ api, workspaceId, resources, resourcesNextCursor,
     switch (receipt.kind) {
       case "CREATE":
         setMessage("Routine saved. It has not been run or scheduled.");
+        if (templateDraftId && automationTemplateFlow?.workspaceId === workspaceId && automationTemplateFlow.starterId === templateDraftId) {
+          onAutomationTemplateRoutineSaved?.(receipt.value.routine_id, receipt.value.current_revision);
+          setTemplateDraftId(null);
+        }
         if (entry.payload.kind === "CREATE" && editor && !editor.routineId && editor.name.trim() === entry.payload.name) setEditor(null);
         setReload(value => value + 1); setSelectedId(receipt.value.routine_id); break;
       case "REVISE":
@@ -426,7 +476,7 @@ export function RoutinesPage({ api, workspaceId, resources, resourcesNextCursor,
   return <div className="page-content routines-content">
     <header className="routines-heading">
       <div><div className="eyebrow">WORKSPACE LIBRARY</div><h1>Routines</h1><p>Save reusable work instructions, then create a Task pinned to the exact revision when you are ready.</p></div>
-      <div className="routines-heading-actions"><button className="quiet-button" type="button" onClick={() => setReload(value => value + 1)} disabled={loading}>Refresh</button><button className="primary-button" type="button" onClick={startCreate} disabled={!workspaceId || Boolean(editor)}>New Routine</button></div>
+      <div className="routines-heading-actions"><button className="quiet-button" type="button" onClick={() => setReload(value => value + 1)} disabled={loading}>Refresh</button><button className="primary-button" type="button" onClick={startCreate} disabled={!workspaceId || Boolean(editor) || Boolean(automationTemplateFlow)}>New Routine</button></div>
     </header>
 
     <section className="routine-safety-note" role="note"><strong>Run now saves work for review</strong><span>It creates an ordinary READY Task pinned to this Routine revision. No agent starts until a separate supported planning path is available.</span></section>
@@ -453,20 +503,25 @@ export function RoutinesPage({ api, workspaceId, resources, resourcesNextCursor,
       })}</ul>
     </section>}
     {message && <p className="routine-message" role="status">{message}</p>}
+    {automationTemplateFlow?.workspaceId === workspaceId && automationTemplateFlow.routineId && automationTemplateFlow.routineRevision && <section className="routine-template-continuation" aria-label="Continue Automation template">
+      <div><strong>Routine saved · revision {automationTemplateFlow.routineRevision}</strong><p>The Routine has not been run. Continue to review its schedule and save a paused Automation, or finish later.</p></div>
+      <button className="primary-button" type="button" onClick={onContinueAutomationTemplate}>Continue to Automation</button>
+      <button className="quiet-button" type="button" onClick={onCancelAutomationTemplate}>Finish later</button>
+    </section>}
     {!workspaceId ? <section className="routine-state"><h2>Select a Workspace</h2><p>Choose a Workspace to view its saved Routines.</p></section> : loading ? <section className="routine-state" role="status">Loading saved Routines…</section> : listError ? <section className="routine-state routine-error" role="alert"><h2>Routines could not be loaded</h2><p>{listError}</p><button className="text-button" type="button" onClick={() => setReload(value => value + 1)}>Try again</button></section> : <>
       {items.length === 0 && !editor ? <section className="routine-state"><h2>No saved Routines</h2><p>Create a reusable definition, then save a READY Task from it when needed.</p><button className="primary-button" type="button" onClick={startCreate}>Create a Routine</button></section> : <div className="routines-layout">
         {items.length > 0 && <section className="routines-list" aria-label="Saved Routines"><div className="routines-list-heading"><h2>Saved</h2><span>{items.length}{nextCursor ? "+" : ""}</span></div><ul>{items.map(item => <li key={item.routine_id}><button type="button" className={`routine-row${selectedId === item.routine_id && !editor ? " is-selected" : ""}`} onClick={() => { setEditor(null); setSelectedId(item.routine_id); setActionError(null); }} aria-current={selectedId === item.routine_id && !editor ? "true" : undefined}><span><strong>{item.name}</strong><small>Revision {item.current_revision}</small></span><span className={`routine-status routine-status-${item.status.toLowerCase()}`}>{item.status === "ACTIVE" ? "Active" : "Archived"}</span></button></li>)}</ul>{nextCursor && <button className="quiet-button routine-load-more" type="button" disabled={loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading…" : "Load more"}</button>}</section>}
 
         <section className="routine-detail" aria-label={editor ? "Routine editor" : "Selected Routine"}>
           {editor ? <>
-            <div className="routine-detail-heading"><div><div className="eyebrow">{editor.routineId ? "NEW IMMUTABLE REVISION" : "NEW DEFINITION"}</div><h2>{editor.routineId ? "Revise Routine" : "Create Routine"}</h2></div><button className="text-button" type="button" onClick={() => { setEditor(null); setActionError(null); }}>Cancel</button></div>
+            <div className="routine-detail-heading"><div><div className="eyebrow">{editor.routineId ? "NEW IMMUTABLE REVISION" : "NEW DEFINITION"}</div><h2>{editor.routineId ? "Revise Routine" : "Create Routine"}</h2></div><button className="text-button" type="button" onClick={cancelEditor}>Cancel</button></div>
             <p className="routine-helper">These instructions define reusable work only. They do not grant access or bypass Workspace policy.</p>
             <label className="routine-field">Name<input value={editor.name} maxLength={120} disabled={busy || Boolean(editor.routineId)} onChange={event => setEditor({ ...editor, name: event.target.value })} />{editor.routineId && <small>Routine names stay the same when you create a new definition revision.</small>}</label>
             <label className="routine-field">Objective template<textarea value={editor.objective} maxLength={4000} rows={4} disabled={busy} onChange={event => setEditor({ ...editor, objective: event.target.value })} /></label>
             <label className="routine-field">Instructions <span aria-hidden="true">(required)</span><textarea required value={editor.instructions} maxLength={32000} rows={6} disabled={busy} onChange={event => setEditor({ ...editor, instructions: event.target.value })} /></label>
             <details className="routine-advanced"><summary>Inputs, outputs, placement, budget, and verification</summary><p>Edit the remaining contract fields as JSON. Existing values are copied from the selected immutable revision before editing.</p><label className="routine-field">Routine definition fields<textarea className="routine-json" value={editor.advanced} spellCheck={false} disabled={busy} onChange={event => setEditor({ ...editor, advanced: event.target.value })} /></label></details>
             {actionError && <p className="routine-inline-error" role="alert">{actionError}</p>}
-            <div className="routine-form-actions"><button className="quiet-button" type="button" disabled={busy} onClick={() => setEditor(null)}>Cancel</button><button className="primary-button" type="button" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : editor.routineId ? "Save new revision" : "Save Routine"}</button></div>
+            <div className="routine-form-actions"><button className="quiet-button" type="button" disabled={busy} onClick={cancelEditor}>Cancel</button><button className="primary-button" type="button" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : editor.routineId ? "Save new revision" : "Save Routine"}</button></div>
           </> : detailLoading ? <p role="status">Loading current Routine revision…</p> : detailError ? <div className="routine-state routine-error" role="alert"><p>{detailError}</p><button className="text-button" type="button" onClick={() => setReload(value => value + 1)}>Reload</button></div> : selected && currentRevision ? <>
             <div className="routine-detail-heading"><div><div className="eyebrow">CURRENT REVISION · {currentRevision.revision}</div><h2>{selected.name}</h2></div><span className={`routine-status routine-status-${selected.status.toLowerCase()}`}>{selected.status === "ACTIVE" ? "Active" : "Archived"}</span></div>
             {selected.status === "ACTIVE" && selectedRunContract && <section className="routine-run-form" aria-labelledby="routine-run-heading">

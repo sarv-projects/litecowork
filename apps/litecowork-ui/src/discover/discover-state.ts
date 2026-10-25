@@ -104,13 +104,19 @@ export function discoverCatalogView(
 /**
  * The message a row shows when the owner presses the row's action.
  *
- * The LiteSPM package service owns installation and its wire contract is not
- * published, so the action reports that truthfully instead of pretending the
- * package was installed.
+ * The LiteSPM package service owns package installation and its wire contract is
+ * not published. Local Workspace skills also cannot be opened or run from this
+ * screen, so each disabled action names the actual missing route.
  */
 export function connectActionOutcome(row: DiscoverRowView): { allowed: boolean; message: string } {
   if (row.disabled) {
     return { allowed: false, message: `${row.availabilityLabel} (${row.availabilityReason})` };
+  }
+  if (row.source === "LITECOWORK_LOCAL") {
+    return {
+      allowed: false,
+      message: "Opening or running a Workspace skill is not available from Discover.",
+    };
   }
   return {
     allowed: false,

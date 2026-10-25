@@ -135,3 +135,11 @@
   .agent-catalog__worker-editor-actions { justify-content: flex-start; }
   .agent-catalog__clear-default-confirm { justify-content: flex-start; }
 }
+
+
+.agent-catalog__control-inspection {
+  display: grid;
+  justify-items: start;
+  gap: 0.25rem;
+  margin-top: 0.85rem;
+}

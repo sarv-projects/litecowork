@@ -1,4 +1,8 @@
 .conversations-page { width: min(1320px, 100%); padding-top: 42px; }
+.conversation-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 8px; }
+.conversation-page-heading h1 { margin: 5px 0 0; }
+.conversation-new-chat { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; flex: 0 0 auto; }
+.conversation-new-chat span { font-size: 18px; line-height: 1; }
 .conversation-intro { margin: 0 0 24px; color: var(--color-text-muted); }
 .conversation-layout { display: grid; grid-template-columns: minmax(255px, 320px) minmax(0, 1fr); min-height: min(720px, calc(100vh - 210px)); overflow: hidden; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: var(--shadow-card); }
 .conversation-list { min-width: 0; border-right: 1px solid var(--color-border); background: #fbfcfe; }
@@ -61,6 +65,10 @@
 .conversation-composer button { align-self: end; }
 .conversation-composer small { grid-column: 1 / -1; color: var(--color-text-subtle); font-size: 11px; }
 .conversation-error { margin: 14px 18px 0; padding: 10px 12px; border: 1px solid #e8c6c6; border-radius: 8px; background: #fff7f7; color: #8a2929; font-size: 13px; }
+@media (max-width: 620px) {
+  .conversation-page-heading { align-items: flex-start; flex-direction: column; }
+  .conversation-new-chat { align-self: stretch; justify-content: center; }
+}
 @media (max-width: 900px) {
   .conversations-page { padding: 28px 20px 44px; }
   .conversation-layout { grid-template-columns: minmax(0, 1fr); }

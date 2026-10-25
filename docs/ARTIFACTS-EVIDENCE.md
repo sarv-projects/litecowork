@@ -13,6 +13,8 @@
 
 Providers create bytes/content; LiteCowork owns durable identity, immutable versions, provenance and presentation references.
 
+ArtifactStore validates and publishes interactive-app packages as immutable ArtifactVersions with kind INTERACTIVE_APP only after the selected route's fresh AgentControlDescriptor reports `output.interactive_app=SUPPORTED`; this describes output delivery, not quality or safety. It does not execute package code or treat HTML/JavaScript as a safe file preview. Only the dedicated, OS-qualified [Interactive Artifact Runtime](INTERACTIVE-ARTIFACT-RUNTIME.md) may run the exact authorized version; the runtime session is volatile and does not change ArtifactStore or Task truth.
+
 ## ArtifactStore
 
 ```text

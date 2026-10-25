@@ -8,7 +8,8 @@ Task, Effect, Artifact, Evidence, and Verification contracts remain authoritativ
 
 A Coworker is a user-facing identity and preference bundle within one Workspace. It may
 have a name, optional pinned avatar Resource revision, role description, default lead
-binding, delegation strategy, enabled worker-profile allowlist, lead-failover defaults,
+binding, delegation policy source (Workspace default or Coworker override), delegation
+strategy, enabled worker-profile allowlist, lead-failover defaults,
 interaction defaults, context preferences, and notification preferences. It does not own
 an AgentSession, Runtime, Environment, Task state, grant, Effect, or native memory.
 
@@ -30,6 +31,7 @@ CoworkerRevision {
   avatar_ref?: PinnedResourceRef
   role_description: string
   default_lead_agent_binding_id?: AgentBindingId
+  delegation_policy_source: WORKSPACE_DEFAULT | COWORKER_OVERRIDE
   delegation_strategy: DelegationStrategy
   enabled_delegation_profile_ids: DelegationProfileId[]
   delegation_budget_policy?: DelegationBudgetPolicy
