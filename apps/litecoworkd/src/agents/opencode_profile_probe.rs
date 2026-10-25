@@ -134,16 +134,19 @@ pub(crate) fn probe_opencode_profile(
         return result;
     }
 
-    let Some(version) = read_opencode_version(
+    let version = match read_opencode_version(
         executable,
         environment.path.as_deref(),
         environment.system_root.as_deref(),
-    ) else {
-        result.failure = Some(OpenCodeProbeFailure::UnsupportedVersion);
-        return result;
+    ) {
+        Ok(version) => version,
+        Err(failure) => {
+            result.failure = Some(failure);
+            return result;
+        }
     };
     result.protocol_version = Some(version.clone());
-    let Some(protocol) = qualified_opencode_protocol(&version) else {
+    let Some(protocol) = opencode_probe_protocol(&version) else {
         result.failure = Some(OpenCodeProbeFailure::UnsupportedVersion);
         return result;
     };
@@ -187,7 +190,7 @@ fn read_opencode_version(
     executable: &Path,
     path: Option<&std::ffi::OsStr>,
     system_root: Option<&std::ffi::OsStr>,
-) -> Option<String> {
+) -> Result<String, OpenCodeProbeFailure> {
     #[cfg(not(unix))]
     use std::thread;
     use std::{
@@ -211,30 +214,59 @@ fn read_opencode_version(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let mut child = super::AgentChild::spawn(command).ok()?;
+    let mut child =
+        super::AgentChild::spawn(command).map_err(|_| OpenCodeProbeFailure::HostUnavailable)?;
     let started_at = Instant::now();
-    child.resume().ok()?;
+    if child.resume().is_err() {
+        let _ = child.kill_tree();
+        let _ = child.wait();
+        return Err(OpenCodeProbeFailure::HostUnavailable);
+    }
     let deadline = started_at + Duration::from_secs(2);
-    let mut stdout = child.take_stdout().ok()??;
+    let mut stdout = match child.take_stdout() {
+        Ok(Some(stdout)) => stdout,
+        _ => {
+            let _ = child.kill_tree();
+            let _ = child.wait();
+            return Err(OpenCodeProbeFailure::HostUnavailable);
+        }
+    };
     #[cfg(unix)]
     let mut bytes = {
         use rustix::fs::fcntl_setfl;
 
-        let flags = rustix::fs::fcntl_getfl(&stdout).ok()?;
-        fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).ok()?;
+        let flags = match rustix::fs::fcntl_getfl(&stdout) {
+            Ok(flags) => flags,
+            Err(_) => {
+                let _ = child.kill_tree();
+                let _ = child.wait();
+                return Err(OpenCodeProbeFailure::HostUnavailable);
+            }
+        };
+        if fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).is_err() {
+            let _ = child.kill_tree();
+            let _ = child.wait();
+            return Err(OpenCodeProbeFailure::HostUnavailable);
+        }
         Vec::with_capacity(32)
     };
     #[cfg(unix)]
     let mut read_failed = false;
     #[cfg(not(unix))]
-    let reader = thread::Builder::new()
+    let reader = match thread::Builder::new()
         .name("opencode-version-output".to_owned())
         .spawn(move || {
             let mut bytes = Vec::with_capacity(32);
             let _ = stdout.by_ref().take(129).read_to_end(&mut bytes);
             bytes
-        })
-        .ok()?;
+        }) {
+        Ok(reader) => reader,
+        Err(_) => {
+            let _ = child.kill_tree();
+            let _ = child.wait();
+            return Err(OpenCodeProbeFailure::HostUnavailable);
+        }
+    };
     let status = loop {
         #[cfg(unix)]
         {
@@ -271,20 +303,22 @@ fn read_opencode_version(
     drop(stdout);
     #[cfg(unix)]
     if read_failed {
-        return None;
+        return Err(OpenCodeProbeFailure::HostUnavailable);
     }
     #[cfg(not(unix))]
-    let bytes = reader.join().ok()?;
-    if !status.is_some_and(|status| status.success()) {
-        return None;
+    let bytes = reader
+        .join()
+        .map_err(|_| OpenCodeProbeFailure::HostUnavailable)?;
+    let status = status.ok_or(OpenCodeProbeFailure::HostUnavailable)?;
+    if !status.success() {
+        return Err(OpenCodeProbeFailure::HostUnavailable);
     }
     if bytes.len() > 128 {
-        return None;
+        return Err(OpenCodeProbeFailure::UnsupportedVersion);
     }
-    let text = std::str::from_utf8(&bytes).ok()?;
-    parse_opencode_version_output(text)
+    let text = std::str::from_utf8(&bytes).map_err(|_| OpenCodeProbeFailure::UnsupportedVersion)?;
+    parse_opencode_version_output(text).ok_or(OpenCodeProbeFailure::UnsupportedVersion)
 }
-
 fn parse_opencode_version_output(output: &str) -> Option<String> {
     let trimmed = output.trim();
     let value = trimmed.strip_prefix("opencode ").unwrap_or(trimmed);
@@ -299,19 +333,14 @@ fn parse_opencode_version_output(output: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-fn is_supported_opencode_version(version: &str) -> bool {
-    qualified_opencode_protocol(version).is_some()
+fn has_exact_opencode_transport_profile(version: &str) -> bool {
+    opencode_probe_protocol(version).is_some()
 }
 
-fn qualified_opencode_protocol(version: &str) -> Option<super::OpenCodeServerProtocol> {
-    // Each exact release is admitted only after its V2 route and startup
-    // behavior have been observed. Do not infer compatibility for intervening
-    // or later releases.
-    match version {
-        "2.0.26" => Some(super::OpenCodeServerProtocol::V2_0_26),
-        "2.0.28" => Some(super::OpenCodeServerProtocol::V2_0_28),
-        _ => None,
-    }
+fn opencode_probe_protocol(version: &str) -> Option<super::OpenCodeServerProtocol> {
+    // Exact transport profiles permit only bounded read-only observation.
+    // They do not qualify session dispatch, inference, or provider access.
+    super::OpenCodeServerProtocol::for_cli_version(version)
 }
 
 fn observe_v2_provider_catalog(
@@ -526,7 +555,7 @@ mod tests {
 
         assert_eq!(
             read_opencode_version(&executable, Some(bin.as_os_str()), None),
-            Some("2.0.28".to_owned())
+            Ok("2.0.28".to_owned())
         );
     }
 
@@ -571,7 +600,7 @@ mod tests {
             .arg(pid.to_string())
             .output();
 
-        assert_eq!(version.as_deref(), Some("2.0.28"));
+        assert_eq!(version.as_deref(), Ok("2.0.28"));
         assert!(
             elapsed < Duration::from_millis(1500),
             "escaped descendant extended the version probe to {elapsed:?}"
@@ -631,11 +660,14 @@ mod tests {
     }
 
     #[test]
-    fn exact_version_qualification_rejects_mismatch_without_inference() {
-        assert!(is_supported_opencode_version("2.0.26"));
-        assert!(is_supported_opencode_version("2.0.28"));
-        for unsupported in ["2.0.25", "2.0.27", "2.0.29", "1.1.0", "unknown"] {
-            assert!(!is_supported_opencode_version(unsupported));
+    fn exact_transport_profile_mapping_rejects_mismatch_without_admission() {
+        assert!(has_exact_opencode_transport_profile("2.0.26"));
+        assert!(has_exact_opencode_transport_profile("2.0.28"));
+        assert!(has_exact_opencode_transport_profile("2.0.32"));
+        for unsupported in [
+            "2.0.25", "2.0.27", "2.0.29", "2.0.31", "2.0.33", "1.1.0", "unknown",
+        ] {
+            assert!(!has_exact_opencode_transport_profile(unsupported));
         }
         let result = OpenCodeProfileProbe::initial();
         assert_eq!(result.authentication_observation, "UNKNOWN");
@@ -679,7 +711,7 @@ mod tests {
             },
         );
 
-        assert_eq!(result.protocol_version.as_deref(), Some("2.0.28"));
+        assert_eq!(result.protocol_version.as_deref(), Some("2.0.32"));
         assert_eq!(
             result.probe_readiness,
             OpenCodeProbeReadiness::Complete,
@@ -694,6 +726,17 @@ mod tests {
         assert!(!result.profile_admission_supported);
         let projection = serde_json::to_string(&result).expect("serialize safe profile projection");
         assert!(!projection.contains(temporary.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn missing_version_executable_is_host_unavailable_not_unsupported() {
+        let result = read_opencode_version(
+            Path::new("/definitely/not/a/litecowork-opencode-binary"),
+            Some(std::ffi::OsStr::new("/usr/bin:/bin")),
+            None,
+        );
+        assert_eq!(result, Err(OpenCodeProbeFailure::HostUnavailable));
     }
 
     #[test]

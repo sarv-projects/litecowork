@@ -82,20 +82,32 @@ pub(crate) enum OpenCodeProcessState {
 pub(crate) enum OpenCodeServerProtocol {
     V2_0_26,
     V2_0_28,
+    V2_0_32,
 }
 
 impl OpenCodeServerProtocol {
+    /// Map only exact CLI builds to transport profiles. This mapping is not a
+    /// support qualification; dispatch also requires native conformance evidence.
+    pub(crate) fn for_cli_version(version: &str) -> Option<Self> {
+        match version {
+            "2.0.26" => Some(Self::V2_0_26),
+            "2.0.28" => Some(Self::V2_0_28),
+            "2.0.32" => Some(Self::V2_0_32),
+            _ => None,
+        }
+    }
+
     fn server_username(self) -> &'static str {
         match self {
             Self::V2_0_26 => "litecowork",
-            Self::V2_0_28 => "opencode",
+            Self::V2_0_28 | Self::V2_0_32 => "opencode",
         }
     }
 
     fn readiness_path(self) -> &'static str {
         match self {
             Self::V2_0_26 => "/api/health",
-            Self::V2_0_28 => "/api/info",
+            Self::V2_0_28 | Self::V2_0_32 => "/api/info",
         }
     }
 
@@ -122,6 +134,11 @@ impl OpenCodeServerProtocol {
             }
             Self::V2_0_28 => {
                 value.get("version").and_then(Value::as_str) == Some("2.0.28")
+                    && value.get("pid").and_then(Value::as_u64)
+                        == Some(u64::from(expected_process_id))
+            }
+            Self::V2_0_32 => {
+                value.get("version").and_then(Value::as_str) == Some("2.0.32")
                     && value.get("pid").and_then(Value::as_u64)
                         == Some(u64::from(expected_process_id))
             }
@@ -245,6 +262,11 @@ impl OpenCodeServerConfig {
 
     pub(crate) fn with_environment(mut self, environment: OpenCodeEnvironment) -> Self {
         self.environment = environment;
+        self
+    }
+
+    pub(crate) fn with_protocol(mut self, protocol: OpenCodeServerProtocol) -> Self {
+        self.protocol = protocol;
         self
     }
 
@@ -418,7 +440,9 @@ impl OpenCodeServer {
     /// fields before exposing any observation outside this module.
     pub(super) fn read_provider_status(&mut self) -> Result<Value, OpenCodeError> {
         let path = match self.protocol {
-            OpenCodeServerProtocol::V2_0_26 | OpenCodeServerProtocol::V2_0_28 => "/api/provider",
+            OpenCodeServerProtocol::V2_0_26
+            | OpenCodeServerProtocol::V2_0_28
+            | OpenCodeServerProtocol::V2_0_32 => "/api/provider",
         };
         let response = self.request_with_response_limit(
             "GET",
@@ -434,7 +458,9 @@ impl OpenCodeServer {
     /// a model or changing OpenCode configuration.
     pub(super) fn read_configured_provider_catalog(&mut self) -> Result<Value, OpenCodeError> {
         let path = match self.protocol {
-            OpenCodeServerProtocol::V2_0_26 | OpenCodeServerProtocol::V2_0_28 => "/api/model",
+            OpenCodeServerProtocol::V2_0_26
+            | OpenCodeServerProtocol::V2_0_28
+            | OpenCodeServerProtocol::V2_0_32 => "/api/model",
         };
         let response = self.request_with_response_limit(
             "GET",
@@ -1332,6 +1358,21 @@ mod tests {
             br#"{"data":{"healthy":true}}"#
         ));
 
+        assert_eq!(
+            OpenCodeServerProtocol::for_cli_version("2.0.26"),
+            Some(OpenCodeServerProtocol::V2_0_26)
+        );
+        assert_eq!(
+            OpenCodeServerProtocol::for_cli_version("2.0.28"),
+            Some(OpenCodeServerProtocol::V2_0_28)
+        );
+        assert_eq!(
+            OpenCodeServerProtocol::for_cli_version("2.0.32"),
+            Some(OpenCodeServerProtocol::V2_0_32)
+        );
+        assert_eq!(OpenCodeServerProtocol::for_cli_version("2.0.31"), None);
+        assert_eq!(OpenCodeServerProtocol::for_cli_version("2.1.0"), None);
+
         let current = OpenCodeServerProtocol::V2_0_28;
         assert_eq!(current.server_username(), "opencode");
         assert_eq!(current.readiness_path(), "/api/info");
@@ -1341,6 +1382,19 @@ mod tests {
         assert!(!current.readiness_response_matches(41, 200, br#"{"version":"2.0.29","pid":41}"#));
         assert!(!current.readiness_response_matches(41, 401, server_info));
         assert!(!current.readiness_response_matches(41, 200, b"not json"));
+
+        let installed = OpenCodeServerProtocol::V2_0_32;
+        assert_eq!(installed.server_username(), "opencode");
+        assert_eq!(installed.readiness_path(), "/api/info");
+        let installed_info = br#"{"version":"2.0.32","pid":91,"paths":{"directory":"private"}}"#;
+        assert!(installed.readiness_response_matches(91, 200, installed_info));
+        assert!(!installed.readiness_response_matches(92, 200, installed_info));
+        assert!(!installed.readiness_response_matches(
+            91,
+            200,
+            br#"{"version":"2.0.31","pid":91}"#
+        ));
+        assert!(!installed.readiness_response_matches(91, 401, installed_info));
     }
 
     #[test]
