@@ -407,7 +407,9 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `attempt.status.changed` | `attempt_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `attempt.checkpointed` | `attempt_id`, `resume_packet_ref`, `digest`, `source_spec_revision` |
 | `attempt.failure.recorded` | `attempt_id`, `failure_code`, `failure_signature`, `retryable` |
-| `agent.session.*` | `agent_session_id`, `scope`, `task_spec_revision`, `agent_binding_id`, `endpoint_id`, `runtime_id`, `runtime_incarnation_id`, `session_state`, `reported_at` |
+| `agent.session.starting.v1` | `agent_session_id`, `scope` (CONVERSATION: `conversation_id`, `conversation_turn_id`; TASK_PLANNING: `task_id`, `task_spec_revision`; ATTEMPT_EXECUTION: `task_id`, `task_spec_revision`, `attempt_id`), `agent_binding_id`, `endpoint_id`, `runtime_id`, `runtime_incarnation_id`, `session_state=STARTING`, `reported_at`; no native handle or credential |
+| `agent.session.started.v1` | `agent_session_id`, `scope`, `agent_binding_id`, `endpoint_id`, `runtime_id`, `runtime_incarnation_id`, `task_spec_revision?` (required for Task scopes), `session_state=ACTIVE`, `reported_at`; no native handle |
+| `agent.session.lost.v1` | Same scope and host identity fields as `agent.session.starting.v1`, with `session_state=LOST`; the Conversation LOST transition does not settle its turn |
 | `agent.binding.changed` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `runtime_id?`, `from_enabled`, `to_enabled`, `aggregate_version`, `requested_by` |
 | `runtime.*` | `runtime_id`, `device_id?`, `availability`, `offers_digest?`, `key_version?` |
 | `provider.circuit.changed` | `runtime_id`, `provider_kind`, `provider_ref`, `from`, `to`, `failure_window_started_at?`, `consecutive_failures`, `open_until?`, `aggregate_version` |
@@ -614,8 +616,9 @@ the external provider response.
 | `task.coworker.origin.pinned.v1` | Task / TaskService | Immutable Task origin provenance; Coworker revision is pinned |
 | `agent.binding.lead_eligibility.changed.v1` | AgentBinding / AgentBindingService | Workspace authorization state; no endpoint locator or credentials |
 | `agent.binding.configuration.changed.v1` | AgentBinding / AgentBindingService | Versioned non-secret configuration/default-session-option digests and declared credential slot IDs only; no SecretRefs, secret bytes, native config, or endpoint locators |
-| `agent.session.starting.v1` | AgentSession / AgentSessionStore | Reserves one normalized Conversation-turn, Task-planning, or Attempt-execution session before native startup; includes scope/selection IDs and Runtime incarnation, never a native handle |
-| `agent.session.started.v1` | AgentSession / AgentSessionSupervisor | Adapter readiness and ACTIVE state; first planning also transitions Task to RUNNING atomically |
+| `agent.session.starting.v1` | AgentSession / AgentSessionStore | Conversation storage operation atomically reserves the turn-pinned eligible host, snapshot, event, and principal-scoped receipt as STARTING; no native handle and no readiness claim |
+| `agent.session.started.v1` | AgentSession / AgentSessionSupervisor | Future adapter-readiness and ACTIVE transition; first planning also transitions Task to RUNNING atomically |
+| `agent.session.lost.v1` | AgentSession / AgentSessionStore or supervisor recovery | Expected-version settlement of a stranded STARTING session; Conversation turn state remains unchanged |
 | `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
 | `delegation_profile.*.v1` | DelegationProfile / DelegationProfileService | Profile revisions/status replicate; provider-native option values remain opaque, non-secret adapter-owned values |
 | `delegation.admitted.v1` | Task / TaskService admission transaction | Attempt/profile/revision/grant/reservation identity is durable; candidate digest contains no prompts or secret config |

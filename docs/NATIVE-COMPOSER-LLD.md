@@ -11,26 +11,37 @@ Status: NORMATIVE TARGET, not evidence of implemented Operator endpoints. Owners
 
 ## Current implementation boundary (2026-10-25)
 
-The served Conversation submit route persists the USER message, settles its turn
-FAILED, and returns 503 DEPENDENCY_UNAVAILABLE while no qualified native session
-supervisor is connected. Runtime inventory (ONLINE, incarnation READY, and Workspace
-EXECUTOR) is not a native SESSION_READY handshake. No caller may create a STARTING
-session and mark the turn RUNNING or report 202 from those inventory facts alone. The storage interface does not yet expose a Conversation-scoped STARTING reservation or
-readiness activation operation. The existing SQLite schema already represents a
-Conversation-scoped AgentSession pinned to exactly one turn, enforces one active session per
-turn, and keeps opaque host/session bindings local. The next storage slice adds only the
-durable STARTING reservation and recovery read/settlement contract: it derives the binding
-from the unique turn-created event, rechecks that exact host in the reservation transaction,
-and never changes the turn to RUNNING or persists a native handle. A supervisor must invoke
-the native adapter outside the transaction and activate only after its exact readiness
-handshake and host/incarnation revalidation; until that activation operation and supervisor
-exist, Send remains fail-closed.
-The existing observational host lookup still reads the Conversation's live selector and
-Workspace default; it is not safe for an admitted turn. Replace it with
-resolve_conversation_session_host_for_turn(principal, workspace, conversation, turn),
-which derives the exact binding from that turn's unique creation event and never falls
-back to a later selector/default. Until then, no supervisor may use the current lookup to
-route a committed turn.
+The served Conversation submit route commits the USER message and its OPEN turn, then
+returns 503 DEPENDENCY_UNAVAILABLE while no qualified native session supervisor is
+connected. Runtime inventory (ONLINE, incarnation READY, and Workspace EXECUTOR) is not
+a native SESSION_READY handshake. No caller may create a STARTING session and mark the
+turn RUNNING or report 202 from those inventory facts alone.
+
+The internal AgentSessionStore now exposes typed
+start_conversation_agent_session, list_starting_conversation_agent_sessions, and
+mark_starting_conversation_agent_session_lost operations. Reservation authorizes the
+Principal and active Workspace, verifies the exact OPEN Conversation turn and its unique
+revision-1 conversation.turn.created.v2 authority, and rechecks the event-pinned Binding,
+endpoint offer, Runtime/Workspace EXECUTOR enrollment, and current Runtime incarnation in
+one immediate transaction. It atomically stores the Conversation-scoped STARTING snapshot,
+event, and principal-scoped request receipt. An exact request replay returns its original
+receipt before mutable host eligibility is re-evaluated. Recovery lists Conversation
+STARTING rows in binary `agent_session_id` order, with an exclusive `after_agent_session_id`
+cursor and a 1–100 page bound. The supervisor advances to the last returned ID, repeats until
+an empty page, and starts another sweep at the beginning to discover later reservations whose
+IDs sort before the prior cursor. Expected-version LOST settlement does not alter the turn.
+These operations neither start nor activate an adapter, create a local native-handle
+binding, write an agent response, nor enable the served route.
+
+The SQLite schema represents a Conversation-scoped AgentSession pinned to exactly one
+turn, enforces one active session per turn, and keeps opaque host/session bindings local.
+resolve_conversation_session_host_for_turn(principal, workspace, conversation, turn)
+uses the same immutable turn-created authority and current host eligibility. It never
+consults the later Conversation selector or Workspace default. The reservation transaction
+repeats those checks atomically; a read-only host lookup is not readiness evidence.
+A supervisor must still invoke the native adapter outside the transaction and activate only
+after its exact readiness handshake and host/incarnation revalidation. Until that
+activation operation and qualified supervisor exist, Send remains fail-closed.
 
 The canonical context package builder and SQLite turn-prefix reader now exist and have
 unit/storage tests. The load_conversation_context_for_turn operation derives its target

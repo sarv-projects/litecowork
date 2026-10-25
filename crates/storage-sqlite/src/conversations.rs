@@ -872,63 +872,6 @@ impl ConversationTurnStore for SqliteConversationStore {
             if !allowed {
                 return Err(StoreError::NotFound);
             }
-
-            let user_message_id: String = transaction
-                .query_row(
-                    "SELECT t.user_message_id
-                       FROM conversation_turns t
-                       JOIN conversations c ON c.conversation_id=t.conversation_id
-                      WHERE c.workspace_id=?1 AND t.conversation_id=?2 AND t.turn_id=?3",
-                    params![workspace, conversation, turn],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(map_database_error)?
-                .ok_or(StoreError::NotFound)?;
-
-            let (event_count, event_payload): (i64, Option<String>) = transaction
-                .query_row(
-                    "SELECT COUNT(*),MIN(payload_json)
-                       FROM domain_events
-                      WHERE workspace_id=?1 AND entity_type='ConversationTurn'
-                        AND entity_id=?2 AND type='conversation.turn.created.v2'",
-                    params![workspace, turn],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .map_err(map_database_error)?;
-            if event_count != 1 {
-                return Err(StoreError::Integrity(
-                    "Conversation turn creation event is missing or ambiguous".to_owned(),
-                ));
-            }
-            let event_payload = event_payload.ok_or_else(|| {
-                StoreError::Integrity("Conversation turn creation event is missing".to_owned())
-            })?;
-            let event: Value = serde_json::from_str(&event_payload).map_err(|_| {
-                StoreError::Integrity("Conversation turn creation event is invalid".to_owned())
-            })?;
-            if event.get("turn_id").and_then(Value::as_str) != Some(turn.as_str())
-                || event.get("conversation_id").and_then(Value::as_str)
-                    != Some(conversation.as_str())
-                || event.get("user_message_id").and_then(Value::as_str)
-                    != Some(user_message_id.as_str())
-            {
-                return Err(StoreError::Integrity(
-                    "Conversation turn creation event identity does not match its record"
-                        .to_owned(),
-                ));
-            }
-            let binding = event
-                .get("agent_binding_id")
-                .and_then(Value::as_str)
-                .filter(|binding| !binding.trim().is_empty())
-                .ok_or_else(|| {
-                    StoreError::Integrity(
-                        "Conversation turn creation event has no AgentBinding".to_owned(),
-                    )
-                })?
-                .to_owned();
-
             let now_format = time::format_description::parse_borrowed::<1>(
                 "[year]-[month]-[day]T[hour]:[minute]:[second]Z",
             )
@@ -936,47 +879,140 @@ impl ConversationTurnStore for SqliteConversationStore {
             let now = time::OffsetDateTime::now_utc()
                 .format(&now_format)
                 .map_err(|_| StoreError::Invalid("clock unavailable".to_owned()))?;
-            let resolved: Option<(String, String, String, String)> = transaction
-                .query_row(
-                    "SELECT b.agent_binding_id,e.endpoint_id,eb.runtime_id,eb.runtime_incarnation_id
-                       FROM agent_bindings b
-                       JOIN agent_endpoints e ON e.agent_profile_id=b.agent_profile_id
-                       JOIN agent_endpoint_bindings eb ON eb.endpoint_id=e.endpoint_id
-                       JOIN runtimes r ON r.runtime_id=eb.runtime_id
-                       JOIN runtime_workspace_bindings rwb
-                         ON rwb.runtime_id=r.runtime_id AND rwb.workspace_id=?1
-                        AND rwb.status='ACTIVE' AND rwb.revoked_at IS NULL
-                       JOIN runtime_incarnations ri
-                         ON ri.runtime_id=r.runtime_id
-                        AND ri.runtime_incarnation_id=eb.runtime_incarnation_id
-                      WHERE b.workspace_id=?1 AND b.agent_binding_id=?2
-                        AND b.enabled=1 AND b.lead_eligible=1
-                        AND (json_extract(b.endpoint_selection_policy_json,'$.mode') <> 'PINNED_ENDPOINT'
-                             OR json_extract(b.endpoint_selection_policy_json,'$.endpoint_id')=e.endpoint_id)
-                        AND (eb.expires_at IS NULL OR eb.expires_at>?3)
-                        AND EXISTS(SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value='EXECUTOR')
-                        AND r.availability='ONLINE'
-                        AND r.current_incarnation_id=eb.runtime_incarnation_id
-                        AND ri.recovery_state='READY'
-                      ORDER BY eb.observed_at DESC
-                      LIMIT 1",
-                    params![workspace, binding, now],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )
-                .optional()
-                .map_err(map_database_error)?;
-            let Some((agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id)) = resolved
-            else {
-                return Ok(None);
-            };
-            Ok(Some(ResolvedConversationHost {
-                agent_binding_id,
-                endpoint_id,
-                runtime_id,
-                runtime_incarnation_id,
-            }))
+            resolve_conversation_session_host_in_transaction(
+                &transaction,
+                &workspace,
+                &conversation,
+                &turn,
+                &now,
+            )
         })
     }
+
+}
+
+pub(super) fn resolve_conversation_session_host_in_transaction(
+    connection: &Connection,
+    workspace_id: &str,
+    conversation_id: &str,
+    turn_id: &str,
+    now: &str,
+) -> Result<Option<ResolvedConversationHost>, StoreError> {
+    let user_message_id: String = connection
+        .query_row(
+            "SELECT t.user_message_id
+               FROM conversation_turns t
+               JOIN conversations c ON c.conversation_id=t.conversation_id
+              WHERE c.workspace_id=?1 AND t.conversation_id=?2 AND t.turn_id=?3",
+            params![workspace_id, conversation_id, turn_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(StoreError::NotFound)?;
+
+    let (event_count, event_payload, event_revision, event_schema_version):
+        (i64, Option<String>, Option<i64>, Option<i64>) = connection
+        .query_row(
+            "SELECT COUNT(*),MIN(payload_json),MIN(entity_revision),MIN(schema_version)
+               FROM domain_events
+              WHERE workspace_id=?1 AND entity_type='ConversationTurn'
+                AND entity_id=?2 AND type='conversation.turn.created.v2'",
+            params![workspace_id, turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(map_database_error)?;
+    if event_count != 1 || event_revision != Some(1) || event_schema_version != Some(1) {
+        return Err(StoreError::Integrity(
+            "Conversation turn creation event is missing, ambiguous, or has an invalid revision"
+                .to_owned(),
+        ));
+    }
+    let event_payload = event_payload.ok_or_else(|| {
+        StoreError::Integrity("Conversation turn creation event is missing".to_owned())
+    })?;
+    let event: Value = serde_json::from_str(&event_payload).map_err(|_| {
+        StoreError::Integrity("Conversation turn creation event is invalid".to_owned())
+    })?;
+    if !payload_has_exact_keys(
+        &event,
+        &[
+            "turn_id",
+            "conversation_id",
+            "user_message_id",
+            "agent_binding_id",
+            "aggregate_version",
+            "presentation_preference",
+        ],
+        &[],
+    ) || event.get("turn_id").and_then(Value::as_str) != Some(turn_id)
+        || event.get("conversation_id").and_then(Value::as_str) != Some(conversation_id)
+        || event.get("user_message_id").and_then(Value::as_str) != Some(user_message_id.as_str())
+        || event.get("aggregate_version").and_then(Value::as_u64) != Some(1)
+        || event
+            .get("presentation_preference")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return Err(StoreError::Integrity(
+            "Conversation turn creation event identity does not match its record".to_owned(),
+        ));
+    }
+    let binding = event
+        .get("agent_binding_id")
+        .and_then(Value::as_str)
+        .filter(|binding| !binding.trim().is_empty())
+        .ok_or_else(|| {
+            StoreError::Integrity(
+                "Conversation turn creation event has no AgentBinding".to_owned(),
+            )
+        })?;
+
+    let resolved: Option<(String, String, String, String)> = connection
+        .query_row(
+            "SELECT b.agent_binding_id,e.endpoint_id,eb.runtime_id,eb.runtime_incarnation_id
+               FROM agent_bindings b
+               JOIN agent_endpoints e ON e.agent_profile_id=b.agent_profile_id
+               JOIN agent_endpoint_bindings eb ON eb.endpoint_id=e.endpoint_id
+               JOIN runtimes r ON r.runtime_id=eb.runtime_id
+               JOIN runtime_workspace_bindings rwb
+                 ON rwb.runtime_id=r.runtime_id AND rwb.workspace_id=?1
+                AND rwb.status='ACTIVE' AND rwb.revoked_at IS NULL
+               JOIN runtime_incarnations ri
+                 ON ri.runtime_id=r.runtime_id
+                AND ri.runtime_incarnation_id=eb.runtime_incarnation_id
+               JOIN runtime_offers ro
+                 ON ro.runtime_id=eb.runtime_id
+                AND ro.runtime_incarnation_id=eb.runtime_incarnation_id
+                AND ro.offer_kind='AGENT_ENDPOINT' AND ro.offer_ref=e.endpoint_id
+                AND ro.compatible=1 AND ro.readiness IN ('AVAILABLE','STARTABLE','READY')
+                AND ro.expires_at>?3
+              WHERE b.workspace_id=?1 AND b.agent_binding_id=?2
+                AND b.enabled=1 AND b.lead_eligible=1
+                AND (b.runtime_id IS NULL OR b.runtime_id=eb.runtime_id)
+                AND (COALESCE(json_extract(b.endpoint_selection_policy_json,'$.mode'),'AUTO_COMPATIBLE') <> 'PINNED_ENDPOINT'
+                     OR json_extract(b.endpoint_selection_policy_json,'$.endpoint_id')=e.endpoint_id)
+                AND (eb.expires_at IS NULL OR eb.expires_at>?3)
+                AND EXISTS(SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value='EXECUTOR')
+                AND r.availability='ONLINE'
+                AND r.current_incarnation_id=eb.runtime_incarnation_id
+                AND ri.recovery_state='READY'
+              ORDER BY eb.observed_at DESC,e.endpoint_id,eb.runtime_id,eb.runtime_incarnation_id
+              LIMIT 1",
+            params![workspace_id, binding, now],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id)) = resolved else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedConversationHost {
+        agent_binding_id,
+        endpoint_id,
+        runtime_id,
+        runtime_incarnation_id,
+    }))
 }
 
 fn validate_turn_create(commit: &CreateConversationTurnCommit) -> Result<(), StoreError> {

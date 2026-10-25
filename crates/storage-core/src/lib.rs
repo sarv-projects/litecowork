@@ -1586,6 +1586,24 @@ pub struct TaskPlanningSessionStart {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct ConversationAgentSessionStart {
+    pub request: WorkspaceCreateRequest,
+    pub session: AgentSessionRecord,
+    pub event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MarkStartingConversationAgentSessionLost {
+    pub workspace_id: String,
+    pub agent_session_id: String,
+    pub expected_version: u64,
+    pub occurred_at: String,
+    pub event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommittedAgentSession {
     pub session: AgentSessionRecord,
     pub event: DomainEvent,
@@ -1631,6 +1649,28 @@ pub struct CommittedPlanningActivation {
 /// The current desktop SQLite implementation fails both Task-planning admission methods
 /// closed until Runtime-owned isolation evidence can be revalidated at this boundary.
 pub trait AgentSessionStore: Send + Sync {
+    /// Atomically reserves the host pinned by a Conversation turn as STARTING.
+    /// This does not activate the session or enable Conversation Send.
+    fn start_conversation_agent_session(
+        &self,
+        start: ConversationAgentSessionStart,
+    ) -> Result<CommittedAgentSession, StoreError>;
+
+    /// Settles only a stranded Conversation STARTING reservation as LOST.
+    /// ConversationTurn status and response history remain unchanged.
+    fn mark_starting_conversation_agent_session_lost(
+        &self,
+        transition: MarkStartingConversationAgentSessionLost,
+    ) -> Result<CommittedAgentSession, StoreError>;
+
+    /// Returns only durable Conversation STARTING reservations for daemon recovery.
+    fn list_starting_conversation_agent_sessions(
+        &self,
+        workspace_id: &str,
+        after_agent_session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AgentSessionRecord>, StoreError>;
+
     /// Claims a planner slot only after the implementation's current admission gates pass.
     /// SQLite currently returns `TASK_PLANNING_ISOLATION_UNAVAILABLE` before persistence.
     fn start_task_planning_session(

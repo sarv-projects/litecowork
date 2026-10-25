@@ -14,10 +14,11 @@ use std::{
 use storage_core::{
     ActivateTaskPlanningSession, AgentBindingCreateRequest, AgentBindingDisableRequest,
     AgentBindingEnableRequest, AgentBindingRecord, AgentCatalogStore, AgentEndpointRecord,
-    AgentProfileRecord, AggregateStateRef, BlobPurpose, BlobRef, BlobStore, DeviceIdentityRecord,
-    EventDraft, LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest,
-    PlanAcceptanceCommit, PlanRevisionRecord, PlannedStepRecord,
-    RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+    AgentProfileRecord, AgentSessionRecord, AgentSessionStore, AggregateStateRef, BlobPurpose,
+    BlobRef, BlobStore, ConversationAgentSessionStart, DeviceIdentityRecord, EventDraft,
+    LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest,
+    MarkStartingConversationAgentSessionLost, PlanAcceptanceCommit, PlanRevisionRecord,
+    PlannedStepRecord, RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
     RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeOfferRecord, RuntimeRecord,
     RuntimeWorkspaceBindingStore, StepRecord, WorkspaceCreateRequest,
 };
@@ -1522,6 +1523,79 @@ fn enable_rechecks_offer_after_blob_publication_before_sql_commit() {
 }
 
 #[test]
+fn conversation_starting_session_recovery_uses_exclusive_keyset_pages() {
+    let connection = Connection::open_in_memory().expect("open recovery-page test database");
+    connection
+        .execute_batch(
+            "CREATE TABLE agent_sessions(
+                agent_session_id TEXT, workspace_id TEXT, scope_kind TEXT,
+                conversation_id TEXT, conversation_turn_id TEXT, task_id TEXT,
+                task_spec_revision INTEGER, attempt_id TEXT, agent_binding_id TEXT,
+                endpoint_id TEXT, runtime_id TEXT, runtime_incarnation_id TEXT,
+                configuration_digest TEXT, harness_descriptor_digest TEXT, status TEXT,
+                started_at TEXT, last_event_at TEXT, closed_at TEXT, version INTEGER
+            );",
+        )
+        .expect("create the projected AgentSession table");
+    for (session_id, workspace_id, scope_kind, status) in [
+        ("session-c", "workspace-a", "CONVERSATION", "STARTING"),
+        ("session-a", "workspace-a", "CONVERSATION", "STARTING"),
+        ("session-b", "workspace-a", "CONVERSATION", "STARTING"),
+        ("other-workspace", "workspace-b", "CONVERSATION", "STARTING"),
+        ("settled", "workspace-a", "CONVERSATION", "LOST"),
+        ("task-session", "workspace-a", "TASK_PLANNING", "STARTING"),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO agent_sessions(
+                    agent_session_id,workspace_id,scope_kind,conversation_id,
+                    conversation_turn_id,task_id,task_spec_revision,attempt_id,
+                    agent_binding_id,endpoint_id,runtime_id,runtime_incarnation_id,
+                    configuration_digest,harness_descriptor_digest,status,started_at,
+                    last_event_at,closed_at,version
+                ) VALUES (?1,?2,?3,'conversation','turn',NULL,NULL,NULL,
+                    'binding','endpoint','runtime','incarnation',NULL,NULL,?4,
+                    '2026-10-15T10:02:00Z','2026-10-15T10:02:00Z',NULL,1)",
+                params![session_id, workspace_id, scope_kind, status],
+            )
+            .expect("insert a recovery-page fixture row");
+    }
+
+    let first_page = list_starting_conversation_agent_sessions(&connection, "workspace-a", None, 2)
+        .expect("read the first bounded recovery page");
+    assert_eq!(
+        first_page
+            .iter()
+            .map(|session| session.agent_session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["session-a", "session-b"]
+    );
+
+    let second_page = list_starting_conversation_agent_sessions(
+        &connection,
+        "workspace-a",
+        Some(first_page[1].agent_session_id.as_str()),
+        2,
+    )
+    .expect("continue strictly after the last session ID");
+    assert_eq!(
+        second_page
+            .iter()
+            .map(|session| session.agent_session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["session-c"]
+    );
+    assert!(list_starting_conversation_agent_sessions(
+        &connection,
+        "workspace-a",
+        Some("session-c"),
+        2,
+    )
+    .expect("an exhausted keyset page is empty")
+    .is_empty());
+}
+
+#[test]
 fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes() {
     use storage_core::conversation::{
         CommittedConversationTurn, ConversationMessageRecord, ConversationRecord,
@@ -1767,6 +1841,252 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
         "a committed turn must keep agent A even when the live selector now points to B"
     );
 
+    let start = ConversationAgentSessionStart {
+        request: WorkspaceCreateRequest {
+            principal_id: OWNER_ID.to_owned(),
+            request_id: "request-conversation-session-start".to_owned(),
+            request_payload: serde_json::json!({
+                "operation":"agent-session.start-conversation.v1",
+                "workspace_id":WORKSPACE_ID,
+                "conversation_id":conversation_id,
+                "conversation_turn_id":turn_id,
+                "agent_session_id":"session-host-resolution"
+            }),
+        },
+        session: AgentSessionRecord {
+            agent_session_id: "session-host-resolution".to_owned(),
+            workspace_id: WORKSPACE_ID.to_owned(),
+            scope_kind: "CONVERSATION".to_owned(),
+            conversation_id: Some(conversation_id.to_owned()),
+            conversation_turn_id: Some(turn_id.to_owned()),
+            task_id: None,
+            task_spec_revision: None,
+            attempt_id: None,
+            agent_binding_id: BINDING_ID.to_owned(),
+            endpoint_id: ENDPOINT_ID.to_owned(),
+            runtime_id: RUNTIME_ID.to_owned(),
+            runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            configuration_digest: None,
+            harness_descriptor_digest: None,
+            status: "STARTING".to_owned(),
+            started_at: "2026-10-15T10:02:00.000000000Z".to_owned(),
+            last_event_at: Some("2026-10-15T10:02:00.000000000Z".to_owned()),
+            closed_at: None,
+            version: 1,
+        },
+        event: draft(
+            "event-session-starting-host-resolution",
+            WORKSPACE_ID,
+            "AgentSession",
+            "session-host-resolution",
+            1,
+            "agent.session.starting.v1",
+            serde_json::json!({
+                "agent_session_id":"session-host-resolution",
+                "scope":{
+                    "kind":"CONVERSATION",
+                    "conversation_id":conversation_id,
+                    "conversation_turn_id":turn_id
+                },
+                "agent_binding_id":BINDING_ID,
+                "endpoint_id":ENDPOINT_ID,
+                "runtime_id":RUNTIME_ID,
+                "runtime_incarnation_id":INCARNATION_ID,
+                "session_state":"STARTING",
+                "reported_at":"2026-10-15T10:02:00.000000000Z"
+            }),
+        ),
+    };
+    let candidate_for = |suffix: &str| {
+        let mut candidate = start.clone();
+        let session_id = format!("session-host-resolution-{suffix}");
+        candidate.request.request_id = format!("request-conversation-session-{suffix}");
+        candidate.request.request_payload["agent_session_id"] = serde_json::json!(session_id);
+        candidate.session.agent_session_id = session_id.clone();
+        candidate.event = draft(
+            &format!("event-session-starting-{suffix}"),
+            WORKSPACE_ID,
+            "AgentSession",
+            &session_id,
+            1,
+            "agent.session.starting.v1",
+            serde_json::json!({
+                "agent_session_id":session_id,
+                "scope":{
+                    "kind":"CONVERSATION",
+                    "conversation_id":conversation_id,
+                    "conversation_turn_id":turn_id
+                },
+                "agent_binding_id":BINDING_ID,
+                "endpoint_id":ENDPOINT_ID,
+                "runtime_id":RUNTIME_ID,
+                "runtime_incarnation_id":INCARNATION_ID,
+                "session_state":"STARTING",
+                "reported_at":"2026-10-15T10:02:00.000000000Z"
+            }),
+        );
+        candidate
+    };
+    let reserved = fixture
+        .store
+        .start_conversation_agent_session(start.clone())
+        .expect("the turn-pinned host is reserved after selector changes");
+    assert_eq!(reserved.session, start.session);
+    assert_eq!(reserved.event.event_type, "agent.session.starting.v1");
+    let duplicate_active = candidate_for("duplicate-active");
+    assert!(
+        fixture
+            .store
+            .start_conversation_agent_session(duplicate_active)
+            .is_err(),
+        "the partial unique index must reject a second STARTING session for this turn"
+    );
+    assert!(matches!(
+        fixture
+            .store
+            .list_starting_conversation_agent_sessions(WORKSPACE_ID, None, 0),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        fixture
+            .store
+            .list_starting_conversation_agent_sessions(WORKSPACE_ID, None, 101),
+        Err(StoreError::Invalid(_))
+    ));
+    assert_eq!(
+        fixture
+            .store
+            .start_conversation_agent_session(start.clone())
+            .expect("an exact request replay returns the original reservation"),
+        reserved
+    );
+    let first_recovery_page = fixture
+        .store
+        .list_starting_conversation_agent_sessions(WORKSPACE_ID, None, 1)
+        .expect("the first Conversation recovery page is available");
+    assert_eq!(first_recovery_page, vec![start.session.clone()]);
+    assert!(
+        fixture
+            .store
+            .list_starting_conversation_agent_sessions(
+                WORKSPACE_ID,
+                Some(first_recovery_page[0].agent_session_id.as_str()),
+                1
+            )
+            .expect("the exclusive cursor can continue to the next page")
+            .is_empty()
+    );
+    assert!(matches!(
+        fixture
+            .store
+            .list_starting_conversation_agent_sessions(WORKSPACE_ID, Some(""), 1),
+        Err(StoreError::Invalid(_))
+    ));
+
+    let mut foreign_owner = candidate_for("foreign-owner");
+    foreign_owner.request.principal_id = "different-owner".to_owned();
+    assert!(
+        fixture
+            .store
+            .start_conversation_agent_session(foreign_owner)
+            .is_err(),
+        "a foreign Principal cannot reserve a Conversation session"
+    );
+
+    let mut mismatched_turn = candidate_for("mismatched-turn");
+    mismatched_turn.session.conversation_turn_id = Some("another-turn".to_owned());
+    mismatched_turn.request.request_payload["conversation_turn_id"] =
+        serde_json::json!("another-turn");
+    mismatched_turn.event.payload["scope"]["conversation_turn_id"] =
+        serde_json::json!("another-turn");
+    assert!(matches!(
+        fixture
+            .store
+            .start_conversation_agent_session(mismatched_turn),
+        Err(StoreError::NotFound)
+    ));
+
+    let lost = fixture
+        .store
+        .mark_starting_conversation_agent_session_lost(MarkStartingConversationAgentSessionLost {
+            workspace_id: WORKSPACE_ID.to_owned(),
+            agent_session_id: start.session.agent_session_id.clone(),
+            expected_version: 1,
+            occurred_at: "2026-10-15T10:03:00.000000000Z".to_owned(),
+            event: draft(
+                "event-session-lost-host-resolution",
+                WORKSPACE_ID,
+                "AgentSession",
+                "session-host-resolution",
+                2,
+                "agent.session.lost.v1",
+                serde_json::json!({
+                    "agent_session_id":"session-host-resolution",
+                    "scope":{
+                        "kind":"CONVERSATION",
+                        "conversation_id":conversation_id,
+                        "conversation_turn_id":turn_id
+                    },
+                    "agent_binding_id":BINDING_ID,
+                    "endpoint_id":ENDPOINT_ID,
+                    "runtime_id":RUNTIME_ID,
+                    "runtime_incarnation_id":INCARNATION_ID,
+                    "session_state":"LOST",
+                    "reported_at":"2026-10-15T10:03:00.000000000Z"
+                }),
+            ),
+        })
+        .expect("the stranded STARTING reservation is fenced to LOST");
+    assert_eq!(lost.session.status, "LOST");
+    assert_eq!(lost.session.version, 2);
+    let mut mismatched_host = candidate_for("mismatched-host-after-lost");
+    mismatched_host.session.runtime_id = "runtime-forged".to_owned();
+    mismatched_host.event.payload["runtime_id"] = serde_json::json!("runtime-forged");
+    assert!(matches!(
+        fixture
+            .store
+            .start_conversation_agent_session(mismatched_host),
+        Err(StoreError::Invalid(_))
+    ));
+    let connection = Connection::open(database_path(&fixture.directory))
+        .expect("ConversationTurn remains unchanged by session recovery");
+    let turn_state: (String, Option<String>) = connection
+        .query_row(
+            "SELECT status,agent_session_id FROM conversation_turns WHERE turn_id=?1",
+            [turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("ConversationTurn state is readable");
+    assert_eq!(turn_state, ("OPEN".to_owned(), None));
+    drop(connection);
+    assert!(matches!(
+        fixture.store.mark_starting_conversation_agent_session_lost(
+            MarkStartingConversationAgentSessionLost {
+                workspace_id: WORKSPACE_ID.to_owned(),
+                agent_session_id: start.session.agent_session_id.clone(),
+                expected_version: 1,
+                occurred_at: "2026-10-15T10:04:00.000000000Z".to_owned(),
+                event: draft(
+                    "event-session-lost-stale-host-resolution",
+                    WORKSPACE_ID,
+                    "AgentSession",
+                    "session-host-resolution",
+                    2,
+                    "agent.session.lost.v1",
+                    serde_json::json!({})
+                ),
+            }
+        ),
+        Err(StoreError::Conflict { .. })
+    ));
+    assert!(
+        fixture
+            .store
+            .list_starting_conversation_agent_sessions(WORKSPACE_ID, None, 10)
+            .expect("recovery enumeration excludes settled sessions")
+            .is_empty()
+    );
+
     assert!(matches!(
         conversation_store.resolve_conversation_session_host_for_turn(
             "different-owner",
@@ -1808,6 +2128,14 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
         "an expired endpoint must not be replaced by the newly selected agent B"
     );
 
+    assert!(
+        fixture
+            .store
+            .start_conversation_agent_session(candidate_for("expired-endpoint"))
+            .is_err(),
+        "an expired turn-pinned endpoint cannot be silently replaced"
+    );
+
     let connection =
         Connection::open(database_path(&fixture.directory)).expect("take Runtime offline");
     connection
@@ -1816,6 +2144,39 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
             params![FUTURE, ENDPOINT_ID, INCARNATION_ID],
         )
         .expect("endpoint binding is refreshed");
+    connection
+        .execute(
+            "UPDATE runtime_offers SET expires_at='2000-01-01T00:00:00Z' WHERE runtime_id=?1 AND runtime_incarnation_id=?2 AND offer_kind='AGENT_ENDPOINT' AND offer_ref=?3",
+            params![RUNTIME_ID, INCARNATION_ID, ENDPOINT_ID],
+        )
+        .expect("Runtime offer is expired");
+    drop(connection);
+    assert_eq!(
+        conversation_store
+            .resolve_conversation_session_host_for_turn(
+                OWNER_ID,
+                WORKSPACE_ID,
+                conversation_id,
+                turn_id,
+            )
+            .expect("expired Runtime offer yields no host"),
+        None
+    );
+    assert!(
+        fixture
+            .store
+            .start_conversation_agent_session(candidate_for("expired-runtime-offer"))
+            .is_err(),
+        "an expired Runtime offer cannot authorize Conversation session startup"
+    );
+    let connection = Connection::open(database_path(&fixture.directory))
+        .expect("restore Runtime offer before Runtime-offline case");
+    connection
+        .execute(
+            "UPDATE runtime_offers SET expires_at=?1 WHERE runtime_id=?2 AND runtime_incarnation_id=?3 AND offer_kind='AGENT_ENDPOINT' AND offer_ref=?4",
+            params![FUTURE, RUNTIME_ID, INCARNATION_ID, ENDPOINT_ID],
+        )
+        .expect("Runtime offer is refreshed");
     connection
         .execute(
             "UPDATE runtimes SET availability='OFFLINE' WHERE runtime_id=?1",
@@ -1834,6 +2195,14 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
             .expect("offline Runtime yields no host"),
         None,
         "an offline pinned Runtime must not be replaced by the newly selected agent B"
+    );
+
+    assert!(
+        fixture
+            .store
+            .start_conversation_agent_session(candidate_for("offline-runtime"))
+            .is_err(),
+        "an offline pinned Runtime cannot be silently replaced"
     );
 
     let connection =
@@ -1868,6 +2237,20 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
         "an unavailable pinned agent must not fall back to the newly selected agent B"
     );
 
+    assert!(
+        fixture
+            .store
+            .start_conversation_agent_session(candidate_for("disabled-binding"))
+            .is_err(),
+        "a disabled turn-pinned binding cannot be silently replaced"
+    );
+
+    assert_eq!(
+        fixture.store.start_conversation_agent_session(start.clone())
+            .expect("exact replay returns the original durable receipt even after host eligibility changes"),
+        reserved
+    );
+
     let connection =
         Connection::open(database_path(&fixture.directory)).expect("corrupt turn creation event");
     connection
@@ -1884,6 +2267,12 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
             conversation_id,
             turn_id,
         ),
+        Err(StoreError::Integrity(_))
+    ));
+    assert!(matches!(
+        fixture
+            .store
+            .start_conversation_agent_session(candidate_for("corrupt-creation-event")),
         Err(StoreError::Integrity(_))
     ));
 
@@ -1903,6 +2292,12 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
             conversation_id,
             turn_id,
         ),
+        Err(StoreError::Integrity(_))
+    ));
+    assert!(matches!(
+        fixture
+            .store
+            .start_conversation_agent_session(candidate_for("missing-creation-event")),
         Err(StoreError::Integrity(_))
     ));
 }

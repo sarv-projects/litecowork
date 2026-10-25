@@ -61,12 +61,15 @@ both providers still need qualification through the Conversation route and end t
 
 The SQLite turn-host resolver test commits a turn pinned to A, changes the live selector to B,
 and proves that A remains the only target. It also checks owner/Conversation scoping,
-expired endpoint and offline Runtime rejection, disabled-host no-fallback, and integrity
-failure for malformed or missing turn-creation authority. The Conversation-session
-reservation tests additionally prove owner/turn scope, idempotent replay, exact pinned
-binding after selector change, one-active-session uniqueness, and recovery enumeration/LOST
-settlement without a native handle. A litecoworkd route test resolves the committed turn
-against an eligible host, then verifies submission still fails closed because no native
+expired endpoint and Runtime offers, offline Runtime rejection, disabled-host no-fallback,
+and integrity failure for malformed or missing turn-creation authority. The Conversation
+STARTING reservation and cursor-page test checks owner, exact turn and host pinning, selector-change
+continuity, duplicate active-session rejection, exact replay after eligibility changes,
+bounded scope-filtered recovery, version-fenced LOST settlement without changing the turn,
+and fail-closed behavior for expired offers/endpoints, offline Runtime, disabled Binding,
+forged host identity, and malformed/missing creation authority. The event and committed
+snapshot contain no native session handle. A litecoworkd route test resolves the committed
+turn against an eligible host, then verifies submission still fails closed because no native
 session supervisor is qualified. These checks do not prove native startup or route delivery.
 
 End-to-end acceptance remains blocked until a qualified session supervisor, dispatch path,

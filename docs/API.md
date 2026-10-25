@@ -524,8 +524,13 @@ prose in this subsection describes the accepted target contract, not current ser
 behavior. Today `submitConversationTurn` commits the user message and the OPEN turn and
 then always returns `503 DEPENDENCY_UNAVAILABLE`, because no qualified native session
 supervisor is integrated with the route. The route does not reserve or activate a
-Conversation-scoped session, return an admission receipt, or reach an agent. The storage
-reservation primitive is internal and does not by itself enable Send.
+Conversation-scoped session, return an admission receipt, or reach an agent. The internal
+AgentSessionStore now supports turn-pinned Conversation STARTING reservation,
+keyset-paginated recovery enumeration (exclusive `agent_session_id` cursor, pages of 1–100),
+and expected-version LOST settlement. Recovery orders by binary `agent_session_id`; callers
+continue after the last returned ID and restart a sweep from the beginning to discover rows
+inserted behind an existing cursor. The HTTP route does not call these operations; STARTING
+remains non-ready and does not by itself enable Send.
 `retryConversationTurn` and `cancelConversationTurn` are mounted but both always
 return `503 DEPENDENCY_UNAVAILABLE`. The whole turn state machine below —
 `OPEN → RUNNING → WAITING_USER/WAITING_DEPENDENCY → COMPLETED/FAILED/CANCELLED` — is

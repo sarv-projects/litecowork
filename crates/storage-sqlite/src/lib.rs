@@ -142,13 +142,15 @@ use storage_core::{
     CommittedAgentSession, CommittedContextDocumentStatus, CommittedPlanningActivation,
     CommittedResource, CommittedResourceUpload, CommittedTaskLeadHandoff,
     CommittedTaskSpecRevision, CommittedWorkspace, CommittedWorkspaceInstructionRevision,
+    ConversationAgentSessionStart,
     CommittedWorkspaceRoot, CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus,
     ContextDocumentOwnerStatus, ContextDocumentStatusCommand, ContextDocumentStatusStore,
     DeviceIdentityRecord, DomainEvent, EventDraft, EventStore, IdempotentWorkspaceStore,
     LocalAgentEndpointBindingRecord, LocalRuntimeLifecycleSnapshot,
     LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest,
     MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE, MAX_WORKSPACE_ROOT_SCAN_ENTRIES,
-    MarkStartingAgentSessionLost, PinnedResourceRef, PlanAcceptance, PlanAcceptanceCommit,
+    MarkStartingAgentSessionLost, MarkStartingConversationAgentSessionLost, PinnedResourceRef,
+    PlanAcceptance, PlanAcceptanceCommit,
     PlanRevisionRecord, PreparedResourceTextIndex, ReplicationPolicy,
     ResourceDependencyPageRequest, ResourceDependencyViewRecord, ResourceLocationRecord,
     ResourceLocationViewRecord, ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord,
@@ -2490,6 +2492,212 @@ impl AgentCatalogStore for SqliteWorkspaceStore {
 }
 
 impl AgentSessionStore for SqliteWorkspaceStore {
+    fn start_conversation_agent_session(
+        &self,
+        mut start: ConversationAgentSessionStart,
+    ) -> Result<CommittedAgentSession, StoreError> {
+        start.session.started_at = canonicalize_utc_timestamp(&start.session.started_at)?;
+        let session = &start.session;
+        if start.request.principal_id.trim().is_empty()
+            || !valid_shared_idempotency_key(&start.request.request_id)
+            || !start.request.request_payload.is_object()
+            || session.workspace_id.trim().is_empty()
+            || session.agent_session_id.trim().is_empty()
+            || session.scope_kind != "CONVERSATION"
+            || session.conversation_id.as_deref().is_none_or(str::is_empty)
+            || session.conversation_turn_id.as_deref().is_none_or(str::is_empty)
+            || session.task_id.is_some()
+            || session.task_spec_revision.is_some()
+            || session.attempt_id.is_some()
+            || session.agent_binding_id.trim().is_empty()
+            || session.endpoint_id.trim().is_empty()
+            || session.runtime_id.trim().is_empty()
+            || session.runtime_incarnation_id.trim().is_empty()
+            || session.status != "STARTING"
+            || session.version != 1
+            || session.last_event_at.as_deref() != Some(session.started_at.as_str())
+            || session.closed_at.is_some()
+            || start.event.workspace_id != session.workspace_id
+            || start.event.entity_type != "AgentSession"
+            || start.event.entity_id != session.agent_session_id
+            || start.event.event_type != "agent.session.starting.v1"
+            || start.event.schema_version != 1
+            || start.event.entity_revision != 1
+            || start.event.payload
+                != json!({
+                    "agent_session_id": session.agent_session_id,
+                    "scope": {
+                        "kind":"CONVERSATION",
+                        "conversation_id":session.conversation_id,
+                        "conversation_turn_id":session.conversation_turn_id
+                    },
+                    "agent_binding_id":session.agent_binding_id,
+                    "endpoint_id":session.endpoint_id,
+                    "runtime_id":session.runtime_id,
+                    "runtime_incarnation_id":session.runtime_incarnation_id,
+                    "session_state":"STARTING",
+                    "reported_at":session.started_at
+                })
+        {
+            return Err(StoreError::Invalid(
+                "Conversation AgentSession start identity or event is inconsistent".to_owned(),
+            ));
+        }
+        let blobs = Arc::clone(&self.inner.blobs);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::Operation {
+                operation: Box::new(move |connection| {
+                    let _ = reply_sender.send(start_conversation_agent_session_transaction(
+                        connection,
+                        blobs.as_ref(),
+                        start,
+                    ));
+                }),
+            },
+            reply_receiver,
+        )
+    }
+
+    fn mark_starting_conversation_agent_session_lost(
+        &self,
+        mut transition: MarkStartingConversationAgentSessionLost,
+    ) -> Result<CommittedAgentSession, StoreError> {
+        transition.occurred_at = canonicalize_utc_timestamp(&transition.occurred_at)?;
+        if transition.workspace_id.trim().is_empty()
+            || transition.agent_session_id.trim().is_empty()
+            || transition.expected_version == 0
+        {
+            return Err(StoreError::Invalid(
+                "Conversation AgentSession lost identity is invalid".to_owned(),
+            ));
+        }
+        let current = self
+            .get_agent_session(&transition.workspace_id, &transition.agent_session_id)?
+            .ok_or(StoreError::NotFound)?;
+        if current.scope_kind != "CONVERSATION"
+            || current.status != "STARTING"
+            || current.version != transition.expected_version
+        {
+            return Err(StoreError::Conflict {
+                expected: Some(transition.expected_version),
+                actual: Some(current.version),
+            });
+        }
+        let next_version = current
+            .version
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Integrity("AgentSession version exhausted".to_owned()))?;
+        let mut next = current;
+        next.status = "LOST".to_owned();
+        next.last_event_at = Some(transition.occurred_at.clone());
+        next.closed_at = Some(transition.occurred_at.clone());
+        next.version = next_version;
+        if transition.event.workspace_id != next.workspace_id
+            || transition.event.entity_type != "AgentSession"
+            || transition.event.entity_id != next.agent_session_id
+            || transition.event.event_type != "agent.session.lost.v1"
+            || transition.event.schema_version != 1
+            || transition.event.entity_revision != next.version
+            || transition.event.payload
+                != json!({
+                    "agent_session_id":next.agent_session_id,
+                    "scope":{
+                        "kind":"CONVERSATION",
+                        "conversation_id":next.conversation_id,
+                        "conversation_turn_id":next.conversation_turn_id
+                    },
+                    "agent_binding_id":next.agent_binding_id,
+                    "endpoint_id":next.endpoint_id,
+                    "runtime_id":next.runtime_id,
+                    "runtime_incarnation_id":next.runtime_incarnation_id,
+                    "session_state":"LOST",
+                    "reported_at":transition.occurred_at
+                })
+        {
+            return Err(StoreError::Invalid(
+                "Conversation AgentSession lost event is inconsistent".to_owned(),
+            ));
+        }
+        let bytes = canonical_json(&next)?;
+        let blob = self.inner.blobs.put(
+            &next.workspace_id,
+            BlobPurpose::AggregateState,
+            &bytes,
+            "application/vnd.litecowork.agent-session+json",
+        )?;
+        if blob.size_bytes != bytes.len() as u64
+            || self
+                .inner
+                .blobs
+                .get(&next.workspace_id, BlobPurpose::AggregateState, &blob)?
+                != bytes
+        {
+            return Err(StoreError::Integrity(
+                "AgentSession lost state failed blob verification".to_owned(),
+            ));
+        }
+        let state_ref = AggregateStateRef {
+            blob,
+            entity_revision: next.version,
+            record_schema_version: 1,
+        };
+        let generic_transition = MarkStartingAgentSessionLost {
+            workspace_id: transition.workspace_id,
+            agent_session_id: transition.agent_session_id,
+            expected_version: transition.expected_version,
+            occurred_at: transition.occurred_at,
+            event: transition.event,
+        };
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::Operation {
+                operation: Box::new(move |connection| {
+                    let _ = reply_sender.send(mark_starting_agent_session_lost_transaction(
+                        connection,
+                        generic_transition,
+                        next,
+                        state_ref,
+                        "CONVERSATION",
+                    ));
+                }),
+            },
+            reply_receiver,
+        )
+    }
+
+    fn list_starting_conversation_agent_sessions(
+        &self,
+        workspace_id: &str,
+        after_agent_session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AgentSessionRecord>, StoreError> {
+        if workspace_id.trim().is_empty()
+            || after_agent_session_id.is_some_and(|cursor| cursor.trim().is_empty())
+            || !(1..=100).contains(&limit)
+        {
+            return Err(StoreError::Invalid(
+                "Conversation AgentSession recovery page is invalid".to_owned(),
+            ));
+        }
+        let workspace = workspace_id.to_owned();
+        let cursor = after_agent_session_id.map(str::to_owned);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::Operation {
+                operation: Box::new(move |connection| {
+                    let _ = reply_sender.send(list_starting_conversation_agent_sessions(
+                        connection,
+                        &workspace,
+                        cursor.as_deref(),
+                        limit,
+                    ));
+                }),
+            },
+            reply_receiver,
+        )
+    }
+
     fn start_task_planning_session(
         &self,
         mut start: TaskPlanningSessionStart,
@@ -12652,6 +12860,213 @@ fn validate_task_request_mapping(
     Ok(())
 }
 
+fn start_conversation_agent_session_transaction(
+    connection: &mut Connection,
+    blobs: &dyn BlobStore,
+    start: ConversationAgentSessionStart,
+) -> Result<CommittedAgentSession, StoreError> {
+    let session = &start.session;
+    let conversation_id = session.conversation_id.as_deref().ok_or_else(|| {
+        StoreError::Invalid("Conversation AgentSession is missing its Conversation".to_owned())
+    })?;
+    let turn_id = session.conversation_turn_id.as_deref().ok_or_else(|| {
+        StoreError::Invalid("Conversation AgentSession is missing its turn".to_owned())
+    })?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let request_digest = digest(&canonical_json(&json!({
+        "operation":"agent-session.start-conversation.v1",
+        "request":&start.request.request_payload,
+        "workspace_id":session.workspace_id,
+        "conversation_id":conversation_id,
+        "conversation_turn_id":turn_id,
+        "agent_session_id":session.agent_session_id,
+        "configuration_digest":session.configuration_digest,
+        "harness_descriptor_digest":session.harness_descriptor_digest,
+    }))?);
+    let prior: Option<(String, Option<String>, Option<String>)> = tx.query_row(
+        "SELECT request_digest,response_json,response_digest FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+        params![start.request.principal_id,start.request.request_id],
+        |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+    ).optional().map_err(map_database_error)?;
+    if let Some((prior_digest, response_json, response_digest)) = prior {
+        if prior_digest != request_digest {
+            return Err(StoreError::Conflict {
+                expected: None,
+                actual: None,
+            });
+        }
+        let response_json = response_json.ok_or_else(|| {
+            StoreError::Integrity("Conversation AgentSession receipt is incomplete".to_owned())
+        })?;
+        if response_digest.as_deref() != Some(digest(response_json.as_bytes()).as_str()) {
+            return Err(StoreError::Integrity(
+                "Conversation AgentSession response digest does not match".to_owned(),
+            ));
+        }
+        return serde_json::from_str(&response_json)
+            .map_err(|error| StoreError::Integrity(error.to_string()));
+    }
+
+    let workspace: Option<(String, String)> = tx
+        .query_row(
+            "SELECT owner_principal_id,status FROM workspaces WHERE workspace_id=?1",
+            [&session.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((owner, status)) = workspace else {
+        return Err(StoreError::NotFound);
+    };
+    if owner != start.request.principal_id {
+        return Err(StoreError::Invalid(
+            "authenticated Principal does not own this Workspace".to_owned(),
+        ));
+    }
+    if status != "ACTIVE" {
+        return Err(StoreError::Invalid("Workspace is not active".to_owned()));
+    }
+
+    let turn: Option<(String, String, Option<String>)> = tx
+        .query_row(
+            "SELECT t.user_message_id,t.status,t.agent_session_id
+               FROM conversation_turns t
+               JOIN conversations c ON c.conversation_id=t.conversation_id
+              WHERE c.workspace_id=?1 AND c.conversation_id=?2 AND t.turn_id=?3",
+            params![session.workspace_id, conversation_id, turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((_user_message_id, turn_status, turn_session_id)) = turn else {
+        return Err(StoreError::NotFound);
+    };
+    if turn_status != "OPEN" || turn_session_id.is_some() {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    let active_session_exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM agent_sessions
+                WHERE conversation_turn_id=?1 AND scope_kind='CONVERSATION'
+                  AND status IN ('STARTING','ACTIVE','INTERRUPTING','CLOSING')
+             )",
+            [turn_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let session_id_exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE agent_session_id=?1)",
+            [&session.agent_session_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let event_id_exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM domain_events WHERE event_id=?1)",
+            [&start.event.event_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if active_session_exists || session_id_exists || event_id_exists {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+
+    let now_format = time::format_description::parse_borrowed::<1>(
+        "[year]-[month]-[day]T[hour]:[minute]:[second]Z",
+    )
+    .map_err(|_| StoreError::Invalid("timestamp format unavailable".to_owned()))?;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&now_format)
+        .map_err(|_| StoreError::Invalid("clock unavailable".to_owned()))?;
+    let host = conversations::resolve_conversation_session_host_in_transaction(
+        &tx,
+        &session.workspace_id,
+        conversation_id,
+        turn_id,
+        &now,
+    )?
+    .ok_or_else(|| StoreError::Invalid("CONVERSATION_SESSION_HOST_UNAVAILABLE".to_owned()))?;
+    if session.agent_binding_id != host.agent_binding_id
+        || session.endpoint_id != host.endpoint_id
+        || session.runtime_id != host.runtime_id
+        || session.runtime_incarnation_id != host.runtime_incarnation_id
+    {
+        return Err(StoreError::Invalid(
+            "Conversation AgentSession host does not match the turn-pinned eligible host"
+                .to_owned(),
+        ));
+    }
+
+    let bytes = canonical_json(&start.session)?;
+    let blob = blobs.put(
+        &session.workspace_id,
+        BlobPurpose::AggregateState,
+        &bytes,
+        "application/vnd.litecowork.agent-session+json",
+    )?;
+    if blob.size_bytes != bytes.len() as u64
+        || blobs.get(&session.workspace_id, BlobPurpose::AggregateState, &blob)? != bytes
+    {
+        return Err(StoreError::Integrity(
+            "AgentSession aggregate state failed blob verification".to_owned(),
+        ));
+    }
+    let state_ref = AggregateStateRef {
+        blob,
+        entity_revision: session.version,
+        record_schema_version: 1,
+    };
+    tx.execute(
+        "INSERT INTO agent_sessions(agent_session_id,workspace_id,scope_kind,conversation_id,
+          conversation_turn_id,task_id,task_spec_revision,attempt_id,agent_binding_id,endpoint_id,
+          runtime_id,runtime_incarnation_id,configuration_digest,harness_descriptor_digest,
+          status,started_at,last_event_at,closed_at,version)
+         VALUES (?1,?2,'CONVERSATION',?3,?4,NULL,NULL,NULL,?5,?6,?7,?8,?9,?10,
+          'STARTING',?11,?11,NULL,1)",
+        params![
+            session.agent_session_id,
+            session.workspace_id,
+            conversation_id,
+            turn_id,
+            session.agent_binding_id,
+            session.endpoint_id,
+            session.runtime_id,
+            session.runtime_incarnation_id,
+            session.configuration_digest,
+            session.harness_descriptor_digest,
+            session.started_at
+        ],
+    )
+    .map_err(map_database_error)?;
+    let event = insert_domain_event(&tx, start.event, state_ref)?;
+    let committed = CommittedAgentSession {
+        session: start.session,
+        event,
+    };
+    let response_json = String::from_utf8(canonical_json(&committed)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    tx.execute(
+        "INSERT INTO request_dedup(principal_id,request_id,request_digest,response_json,response_digest,created_at,expires_at)
+         VALUES (?1,?2,?3,?4,?5,?6,NULL)",
+        params![
+            start.request.principal_id,start.request.request_id,request_digest,response_json,
+            digest(response_json.as_bytes()),committed.event.recorded_at
+        ],
+    ).map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+    Ok(committed)
+}
+
 fn start_task_planning_session_transaction(
     connection: &mut Connection,
     start: TaskPlanningSessionStart,
@@ -12848,14 +13263,18 @@ fn mark_starting_agent_session_lost_transaction(
     transition: MarkStartingAgentSessionLost,
     next: AgentSessionRecord,
     state_ref: AggregateStateRef,
+    expected_scope_kind: &str,
 ) -> Result<CommittedAgentSession, StoreError> {
     if transition.workspace_id != next.workspace_id
         || transition.agent_session_id != next.agent_session_id
         || transition.expected_version.checked_add(1) != Some(next.version)
-        || next.scope_kind != "TASK_PLANNING"
+        || next.scope_kind != expected_scope_kind
         || next.status != "LOST"
         || next.version != state_ref.entity_revision
         || state_ref.record_schema_version != 1
+        || transition.event.workspace_id != next.workspace_id
+        || transition.event.entity_type != "AgentSession"
+        || transition.event.entity_id != next.agent_session_id
         || transition.event.schema_version != 1
         || transition.event.entity_revision != next.version
         || transition.event.event_type != "agent.session.lost.v1"
@@ -12868,8 +13287,8 @@ fn mark_starting_agent_session_lost_transaction(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;
     let current: Option<(String, i64)> = tx.query_row(
-        "SELECT status, version FROM agent_sessions WHERE workspace_id = ?1 AND agent_session_id = ?2 AND scope_kind = 'TASK_PLANNING'",
-        params![transition.workspace_id, transition.agent_session_id],
+        "SELECT status, version FROM agent_sessions WHERE workspace_id = ?1 AND agent_session_id = ?2 AND scope_kind = ?3",
+        params![transition.workspace_id, transition.agent_session_id, expected_scope_kind],
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).optional().map_err(map_database_error)?;
     let Some((status, version)) = current else {
@@ -12884,9 +13303,10 @@ fn mark_starting_agent_session_lost_transaction(
     }
     let changed = tx.execute(
         "UPDATE agent_sessions SET status = 'LOST', last_event_at = ?1, closed_at = ?1, version = ?2
-         WHERE workspace_id = ?3 AND agent_session_id = ?4 AND status = 'STARTING' AND version = ?5",
+         WHERE workspace_id = ?3 AND agent_session_id = ?4 AND scope_kind = ?5
+           AND status = 'STARTING' AND version = ?6",
         params![transition.occurred_at, to_sql_i64(next.version, "AgentSession version")?,
-            transition.workspace_id, transition.agent_session_id,
+            transition.workspace_id, transition.agent_session_id, expected_scope_kind,
             to_sql_i64(transition.expected_version, "AgentSession version")?],
     ).map_err(map_database_error)?;
     if changed != 1 {
@@ -15235,6 +15655,38 @@ fn list_starting_task_planning_sessions(
         .query_map(
             params![
                 workspace_id,
+                to_sql_i64(limit as u64, "AgentSession recovery page size")?
+            ],
+            agent_session_from_row,
+        )
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)
+}
+
+fn list_starting_conversation_agent_sessions(
+    connection: &Connection,
+    workspace_id: &str,
+    after_agent_session_id: Option<&str>,
+    limit: usize,
+) -> Result<Vec<AgentSessionRecord>, StoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT agent_session_id,workspace_id,scope_kind,conversation_id,conversation_turn_id,
+                    task_id,task_spec_revision,attempt_id,agent_binding_id,endpoint_id,runtime_id,
+                    runtime_incarnation_id,configuration_digest,harness_descriptor_digest,status,
+                    started_at,last_event_at,closed_at,version
+             FROM agent_sessions
+             WHERE scope_kind='CONVERSATION' AND status='STARTING' AND workspace_id=?1
+               AND (?2 IS NULL OR agent_session_id COLLATE BINARY > ?2 COLLATE BINARY)
+             ORDER BY agent_session_id COLLATE BINARY LIMIT ?3",
+        )
+        .map_err(map_database_error)?;
+    statement
+        .query_map(
+            params![
+                workspace_id,
+                after_agent_session_id,
                 to_sql_i64(limit as u64, "AgentSession recovery page size")?
             ],
             agent_session_from_row,
@@ -19441,6 +19893,7 @@ fn writer_loop(
                             transition,
                             next,
                             state_ref,
+                            "TASK_PLANNING",
                         ));
                     }
                     Command::ActivateTaskPlanningSession {

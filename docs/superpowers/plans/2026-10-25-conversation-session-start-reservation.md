@@ -33,30 +33,30 @@
 
 **Files:** crates/storage-sqlite/src/agent_binding_tests.rs or a dedicated Conversation-session test module; crates/storage-core/src/lib.rs only for the new public input type.
 
-- [ ] Assert valid owner/Workspace/turn reserves the binding from the turn-created event even after selector change.
-- [ ] Assert foreign owner, mismatched turn, malformed/missing authority, disabled binding, expired endpoint, offline/stale Runtime, and duplicate active session fail closed.
-- [ ] Assert exact reservation request replay returns the original committed session/event.
-- [ ] Assert scoped STARTING enumeration returns Conversation sessions only, is bounded, and excludes closed records.
-- [ ] Assert LOST settlement requires matching Workspace/session/scope/version and commits one event.
-- [ ] Observe expected compile/test failure before implementation.
+- [x] Assert valid owner/Workspace/turn reserves the binding from the turn-created event even after selector change.
+- [x] Assert foreign owner, mismatched turn, malformed/missing authority, disabled binding, expired endpoint/offer, offline Runtime, forged host, and duplicate active session fail closed.
+- [x] Assert exact reservation request replay returns the original committed session/event, including after host eligibility changes.
+- [x] Assert scoped STARTING enumeration is bounded and excludes LOST records; the storage query filters to Conversation scope.
+- [x] Assert LOST settlement checks Workspace/session/scope/version and commits one event without changing the ConversationTurn.
+- [x] Observe expected compile failure before implementation (the public input types were absent).
 
 ## Task 3: Implement durable reservation and recovery operations
 
 **Files:** crates/storage-core/src/lib.rs; crates/storage-sqlite/src/lib.rs; focused storage tests.
 
-- [ ] Add typed Conversation start and lost-transition inputs to AgentSessionStore.
-- [ ] Validate exact scope identity and event payload before writes.
-- [ ] Resolve the immutable turn event and current exact-host eligibility in one immediate transaction; do not fall back.
-- [ ] Atomically insert AgentSession STARTING, aggregate snapshot, starting event, and owner-scoped request receipt.
-- [ ] Add bounded Conversation STARTING listing and version-fenced LOST settlement without changing ConversationTurn state.
-- [ ] Preserve Task-planning admission guards and the existing route fail-closed behavior.
+- [x] Add typed Conversation start and lost-transition inputs to AgentSessionStore.
+- [x] Validate exact scope identity and event payload before writes.
+- [x] Resolve the immutable turn event and current exact-host eligibility in one immediate transaction; do not fall back.
+- [x] Atomically insert AgentSession STARTING, aggregate snapshot, starting event, and principal-scoped request receipt.
+- [x] Add 1–100 keyset-paginated Conversation STARTING listing and version-fenced LOST settlement without changing ConversationTurn state.
+- [x] Preserve Task-planning admission guards and the existing route fail-closed behavior.
 
 ## Task 4: Verify and checkpoint
 
-- [ ] Run the focused Conversation-session reservation/recovery tests, storage-core tests, and relevant storage-sqlite tests.
-- [ ] Run implementation coverage, plan validation, V1 contract audit, rustfmt check on changed test code, and git diff --check.
-- [ ] Review that reservation cannot start/activate a process and all unrelated working-tree changes remain unstaged.
-- [ ] Commit and push the slice.
+- [x] Run the focused Conversation-session reservation/recovery tests, storage-core tests, and relevant storage-sqlite tests.
+- [x] Run implementation coverage, plan validation, V1 contract audit, rustfmt check on changed test code, and git diff --check.
+- [x] Review that reservation cannot start/activate a process and all unrelated working-tree changes remain unstaged.
+- [x] Commit and push the slice.
 
 ## Boundary
 
