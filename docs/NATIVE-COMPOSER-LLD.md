@@ -9,6 +9,17 @@
 
 Status: NORMATIVE TARGET, not evidence of implemented Operator endpoints. Owners: E03-S01/S02/S06–S11, E08-S01/S04/S06 and E04-S06. Authority: AGENT-CONTROL, AGENT-FABRIC, TASK-RUNTIME, API, SCHEMAS, STATE-MACHINES, TRUST, EXPERIENCE. This document defines UI/local orchestration algorithms; machine endpoints/events must be promoted atomically to API/OpenAPI/Events/schema/storage and tested before serving.
 
+## Current implementation boundary (2026-10-25)
+
+The served Conversation submit route persists the USER message, settles its turn
+FAILED, and returns 503 DEPENDENCY_UNAVAILABLE while no qualified native session
+supervisor is connected. Runtime inventory (ONLINE, incarnation READY, and Workspace
+EXECUTOR) is not a native SESSION_READY handshake. No caller may create a STARTING
+session and mark the turn RUNNING or report 202 from those inventory facts alone. The
+low-level SQLite admission transaction remains a test/storage primitive and must be split
+into reservation and post-readiness activation or otherwise gated before a production
+caller is introduced.
+
 ## Outcome and non-negotiable invariants
 
 1. Every supported harness keeps its qualified native experience: slash commands, custom commands, @-file/@-agent references, model/provider selection, reasoning/effort/mode, images, files, session operations, approval/permission prompts, diffs, output events, cancellation and resume where upstream exposes them.

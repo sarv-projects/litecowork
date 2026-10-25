@@ -1,9 +1,9 @@
 use super::*;
 use axum::{
-    Router,
-    body::{Body, to_bytes},
+    body::{to_bytes, Body},
     http::{Request, StatusCode},
     response::Response,
+    Router,
 };
 use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
 use serde::Deserialize;
@@ -11,8 +11,9 @@ use serde::Deserialize;
 use std::os::unix::fs::PermissionsExt;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use storage_core::{
-    BlobPurpose, ConversationRecord, ConversationStore, CreateConversationCommit, EventDraft,
-    StoreError, WorkspaceCreateRequest, conversation::request_payload_value,
+    conversation::request_payload_value, BlobPurpose, ConversationRecord, ConversationStore,
+    ConversationTurnStore, CreateConversationCommit, EventDraft, StoreError,
+    WorkspaceCreateRequest,
 };
 use storage_sqlite::{
     FileBlobStore, SqliteConfig, SqliteConversationStore, SqliteWorkspaceStore, WorkspaceBlobKey,
@@ -295,6 +296,52 @@ fn seed_agent_binding(
             ],
         )
         .expect("seed AgentBinding");
+}
+
+/// Seeds an online, READY, EXECUTOR-entitled Runtime for the Conversation's endpoint.
+/// This deliberately proves that inventory readiness alone cannot authorize a turn.
+fn seed_ready_runtime_for_conversation(
+    database: &std::path::Path,
+    workspace_id: &str,
+    binding_id: &str,
+) {
+    let runtime_id = format!("{binding_id}-runtime");
+    let incarnation_id = format!("{binding_id}-incarnation");
+    let endpoint_id = format!("{binding_id}-endpoint");
+    let timestamp = "2026-10-15T12:00:00.000000000Z";
+    let mut connection = rusqlite::Connection::open(database).expect("seed ready Runtime");
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .expect("enable ready Runtime fixture foreign keys");
+    let tx = connection
+        .transaction()
+        .expect("begin ready Runtime fixture");
+    tx.execute(
+        "INSERT INTO runtimes(runtime_id,device_identity_json,runtime_version,platform,architecture,roles_json,trust_zone,availability,startup_policy,current_incarnation_id,resource_capacity_json,last_seen,version) VALUES(?1,'{}','0.1.0','linux','x86_64','[]','LOCAL','ONLINE','MANUAL',?2,'{}',?3,1)",
+        rusqlite::params![runtime_id, incarnation_id, timestamp],
+    )
+    .expect("seed online Runtime inventory");
+    tx.execute(
+        "INSERT INTO runtime_incarnations(runtime_incarnation_id,runtime_id,process_started_at,litecowork_version,recovered_from_unclean_shutdown,recovery_state,ready_at,stopped_at,version) VALUES(?1,?2,?3,'0.1.0',0,'READY',?3,NULL,1)",
+        rusqlite::params![incarnation_id, runtime_id, timestamp],
+    )
+    .expect("seed ready Runtime incarnation");
+    tx.execute(
+        "INSERT INTO runtime_workspace_bindings(runtime_workspace_binding_id,runtime_id,workspace_id,enrollment_mode,status,roles_json,created_at,activated_at,revoked_at,version) VALUES(?1,?2,?3,'LOCAL_ENROLLMENT','ACTIVE','[\"EXECUTOR\"]',?4,?4,NULL,1)",
+        rusqlite::params![format!("{binding_id}-workspace-binding"), runtime_id, workspace_id, timestamp],
+    )
+    .expect("seed Runtime executor enrollment");
+    tx.execute(
+        "UPDATE agent_bindings SET endpoint_selection_policy_json=json_object('mode','AUTO_COMPATIBLE') WHERE agent_binding_id=?1",
+        [binding_id],
+    )
+    .expect("set explicit endpoint policy");
+    tx.execute(
+        "INSERT INTO agent_endpoint_bindings(endpoint_id,runtime_id,runtime_incarnation_id,endpoint_ref,observed_at,expires_at) VALUES(?1,?2,?3,'local://codex',?4,NULL)",
+        rusqlite::params![endpoint_id, runtime_id, incarnation_id, timestamp],
+    )
+    .expect("bind endpoint to ready Runtime");
+    tx.commit().expect("commit ready Runtime fixture");
 }
 
 /// Configures the Workspace default AgentBinding through the same guarded column
@@ -732,6 +779,86 @@ async fn conversation_turn_route_requires_a_pinned_eligible_agent_before_persist
         )
         .expect("read durable turn counts");
     assert_eq!((messages, turns, receipts), (0, 0, 0));
+    assert_no_execution_state(&connection, WORKSPACE_A);
+}
+
+#[tokio::test]
+async fn conversation_turn_submit_stays_fail_closed_when_runtime_is_ready_without_session_supervisor(
+) {
+    let directory = tempfile::tempdir().expect("temporary Conversation turn directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation turn directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-ready-runtime-workspace");
+    let conversation_id = "a06-conversation-turn-ready-runtime";
+    let binding_id = "turn-ready-runtime-binding";
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        conversation_id,
+        "Ready Runtime without native session",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    bind_conversation_agent(&database, WORKSPACE_A, conversation_id, binding_id);
+    seed_ready_runtime_for_conversation(&database, WORKSPACE_A, binding_id);
+
+    let resolved_host = SqliteConversationStore::new(store.clone())
+        .resolve_conversation_session_host(WORKSPACE_A, conversation_id)
+        .expect("Runtime inventory resolution succeeds");
+    assert!(
+        resolved_host.is_some(),
+        "the fixture must satisfy the database inventory checks"
+    );
+
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let response = submit_turn_body(
+        &router,
+        WORKSPACE_A,
+        conversation_id,
+        r#"{"content":[{"kind":"TEXT","text":"Send only after a native session is ready."}],"resource_refs":[],"agent_binding_id":null,"presentation_preference":"AUTO"}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let (_, error) = read_operator_error(response).await;
+    assert_eq!(error["code"], "DEPENDENCY_UNAVAILABLE");
+    assert!(error["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("not sent"));
+
+    let connection = rusqlite::Connection::open(&database)
+        .expect("inspect storage after unqualified Runtime submit");
+    let (status, session_id): (String, Option<String>) = connection
+        .query_row(
+            "SELECT status,agent_session_id FROM conversation_turns WHERE conversation_id=?1",
+            [conversation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("durable turn is present");
+    assert_eq!(status, "FAILED");
+    assert_eq!(session_id, None);
+    let starting_events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id=?1 AND type='agent.session.starting.v1'",
+            [WORKSPACE_A],
+            |row| row.get(0),
+        )
+        .expect("inspect session-starting events");
+    assert_eq!(starting_events, 0);
     assert_no_execution_state(&connection, WORKSPACE_A);
 }
 

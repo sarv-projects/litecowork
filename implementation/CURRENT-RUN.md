@@ -1,3 +1,11 @@
+## 2026-10-25 — Conversation session admission safety boundary
+
+- Re-audited the Conversation turn submit route with an online, READY Runtime, an active Workspace EXECUTOR binding, and a live endpoint binding. The storage resolver confirms that inventory is eligible, but the Operator has no native Conversation session supervisor or adapter readiness signal.
+- Found two interacting defects in the former route: turn creation wrote a request receipt under the public Idempotency-Key, then admission reused that key with a different payload digest (so admission always conflicted); if that collision were bypassed, the route persisted a STARTING session, marked the turn RUNNING, and returned 202 without starting an agent or observing readiness.
+- Removed the inventory-only admission/202 branch and the unused receipt/transport helpers. The route now durably saves the user message, settles the turn FAILED, and returns 503 DEPENDENCY_UNAVAILABLE until a qualified native supervisor is wired.
+- Added a route regression with a real eligible-host fixture. A red step using a distinct internal admission key reproduced the false 202; the final test passes and verifies 503, FAILED, no session ID, no agent.session.starting.v1, and no Task/Attempt/lease/Environment state.
+- Verification: the focused daemon regression passed 1/1 and the broader Conversation submit route filter passed 3/3 (durable failure/replay, authentication/ownership, and the ready-Runtime fail-closed case). Existing unrelated Rust warnings remain. This closes the false-success boundary only; provider-backed admission, SESSION_READY, text dispatch, output persistence/streaming, reconnect, cancel/retry, native permission mediation, and packaged USER acceptance remain open.
+
 ## 2026-10-25 — Conversation AgentBinding selection
 
 - Added `PATCH /v1/conversations/{conversation_id}/agent-binding`, scoped to the selected Workspace and owner. The route requires `If-Match` and `Idempotency-Key`; storage atomically validates same-Workspace enabled/lead-eligible bindings, advances the Conversation version, updates its aggregate-state blob, emits `conversation.agent_binding.changed.v1`, and records the request receipt.
