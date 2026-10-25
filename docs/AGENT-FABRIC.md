@@ -144,14 +144,9 @@ inventory. The selected Workspace must already authorize the exact current local
 incarnation through an ACTIVE `LOCAL_ENROLLMENT` RuntimeWorkspaceBinding carrying
 `EXECUTOR` and `OPERATOR_ENDPOINT`; serving the authenticated Operator does not imply this
 enrollment. The Codex probe performs bounded App Server initialization, account-state
-read without refresh, and one bounded model-catalog page. The OpenCode probe runs a
-bounded `--version` check and accepts only the specifically qualified `opencode 2.0.26`
-and `2.0.28` Server protocols. Both read `/api/provider` and `/api/model`; these V2 routes
+read without refresh, and one bounded model-catalog page. The OpenCode probe runs a bounded `--version` check and accepts only exact read-only transport profiles 2.0.26, 2.0.28, and 2.0.32. This permits profile observation only; it does not qualify session dispatch. All three exact profiles read `/api/provider` and `/api/model`; these V2 routes
 return location-bearing `data` envelopes, so the adapter projects only bounded
-provider/model IDs and safe display names. Readiness is version specific: 2.0.26 requires
-`/api/health` to report `healthy: true` and uses its qualified `litecowork` server
-username; 2.0.28 requires `/api/info` to report the exact version and the PID of the owned
-child process, and uses the qualified `opencode` username. Provider IDs from
+provider/model IDs and safe display names. Readiness is version specific: 2.0.26 requires `/api/health` to report `healthy: true` and uses its qualified `litecowork` server username; 2.0.28 and 2.0.32 require `/api/info` to report the exact version and the PID of the owned child process, and use the qualified `opencode` username. Provider IDs from
 `/api/provider` are labeled as catalog IDs, never as connected/authenticated providers.
 Native provider/model objects, location paths, options, headers, keys, URLs, and raw
 responses are discarded. A mismatched or unsupported CLI version fails closed without
@@ -165,7 +160,13 @@ and model catalog projections, then observe the direct child exit. A complete
 profile probe is not a provider-authentication, entitlement, inference, model
 selection, session-dispatch, process-tree, or recovery qualification. Keep its
 RuntimeOffer incompatible and Conversation Send unavailable until those
-separate native-session gates are proven.
+separate native-session gates are proven. The local Windows-only direct CLI smoke on
+2026-10-25 observed the exact 2.0.32 version/PID handshake, HTTP 200 from both
+catalog routes, and direct child exit under an isolated profile. This is server
+contract evidence only. The WSL-discovered command is a Windows executable shim;
+a Linux Runtime probe that cannot spawn or observe it must report HOST_UNAVAILABLE,
+not mislabel it as an unsupported release. Native Windows and WSL are separate
+qualification targets.
 For Codex, `RuntimeOffer.compatible` currently means only that the bounded App Server
 `initialize` handshake returned a structurally valid response. Authentication, complete
 catalog observation, direct-process stop, and Conversation safety remain separate facts.

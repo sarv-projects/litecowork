@@ -133,6 +133,8 @@ sees the honest settled state.
 enable/disable/default, and a settings surface that is explicitly display-only
 (`App.tsx:818`).
 
+**Device observation (2026-10-25).** OpenCode 2.0.32 is installed on the connected Windows desktop and appears in WSL through a POSIX shim to the Windows executable. A direct native-Windows smoke with an isolated profile observed /api/info version 2.0.32 and exact child-PID match, HTTP 200 from /api/provider and /api/model (0 providers, 9 model entries), and direct child exit. This was the CLI itself, not the LiteCowork adapter. The Linux daemon smoke through the WSL shim returned no version before server startup; WSL could not reach that Windows server on its own 127.0.0.1. It is not evidence of native dispatch. Provider authentication and inference were not tested. Codex is absent on both command paths. Send remains disabled.
+
 **Remains.** Per-agent qualification stories E03-S06 through E03-S11 and E04-S06 (exact
 agent version × OS × provider), native configuration preservation, credential path per
 harness without LiteCowork copying secrets, `AgentInstallationState`/`AgentAuthState`
