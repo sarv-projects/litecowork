@@ -228,3 +228,7 @@ This selector only stores the binding for future turns and preserves the Convers
 draft. It does not supply per-harness model/session options, qualify native readiness,
 or enable Send. Native session admission, dispatch, streaming, settlement, cancel/retry,
 and recovery remain blockers in the Chat acceptance journey.
+
+## Intelligent UI, images, and response rendering status (2026-10-25)
+
+The Conversation UI can hydrate an optional validated RichPresentation, but that renderer is static and accepts only text, layout, card, callout, and table blocks. Conversation content currently parses only TEXT and RESOURCE. Native image input/output and generated interactive response documents are not wired to a selected agent route. The stream bridge and reconnecting client have no native turn producer, so they do not constitute live rendering. See [Intelligent UI and Image Content](INTELLIGENT-UI-AND-IMAGE-CONTENT.md) for the target contract and acceptance evidence.

@@ -54,7 +54,7 @@ These are product-level release verdicts, not a claim that their underlying isol
 | P1 | Fix docs claiming LIVE for unserved operation/events | `API.md`, `EVENTS.md`, `STORAGE.md`, generated route inventory |
 | P2 | Consistent packaging/free local core and true format capability labels | PRODUCT, SCOPE, ARTIFACTS, E13 |
 
-## Per-journey remaining work — explicit, 2026-10-22
+## Per-journey remaining work — explicit, 2026-10-25
 
 Each area states, without abbreviation: what exists today (with source evidence), exactly
 what must still be built (named files/routes), and the evidence that flips the verdict.
@@ -110,6 +110,14 @@ bridge and the local Operator emits no `turn.delta`/`turn.settled`/`rich.draft`.
 9. `codex_profile_probe.rs`: a path to conversation eligibility (today
    `current_conversation_safety_assessment` hard-sets every control to `Unknown` →
    `NOT_ELIGIBLE`, so dispatch would refuse even after 1-8).
+
+10. Output rendering: native image inputs/outputs and Intelligent UI are not end-to-end.
+    Conversation content currently accepts TEXT/RESOURCE, RichResponseView is static,
+    stream drafts have no producer or visible renderer, and the Interactive Artifact
+    Runtime remains target-only. Add a versioned, safe inline-interaction contract and
+    exact-route capability gates; use the isolated Artifact Runtime for full app bundles.
+    The product contract and acceptance gates are in
+    [Intelligent UI and Image Content](../docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md).
 
 **Evidence to flip.** CODE: storage admission + orchestrator + operator tests. SYSTEM: one
 real Codex or OpenCode turn on an exact pinned version, proving the committed AGENT

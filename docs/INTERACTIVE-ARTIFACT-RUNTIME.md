@@ -124,3 +124,7 @@ First useful frame, time-to-interactive, cold/warm startup, CPU, peak memory, fr
 E08-S09 owns this runtime target; E08-S07 owns general Artifact history/view/edit and Workbench foundations. Release requires CODE, SYSTEM and owner USER evidence for the same packaged desktop build, exact Runtime profile, WebView/process version and OS build. Required hostile cases include cross-Workspace references, archive bombs/traversal, path/case collisions, XSS/CSP bypass attempts, remote-code fetches, compromised/replayed IPC, broker-handle reuse, revoked authority during display, concurrent Artifact edit, process descendants, OS lock/sleep, crash during stop, storage deletion, high zoom, keyboard/screen-reader navigation and reduced motion.
 
 No generated artifact can report its own safety, completion or verification. A runtime qualification does not qualify the user’s native agent, delegated worker, provider, package, model or Task verification route.
+
+## Implementation status and Conversation rendering boundary (2026-10-25)
+
+This file is a normative target, not proof of a packaged implementation or OS qualification. The current Conversation surface does not create or launch an interactive Artifact from a native response. RichPresentation v1 remains display-only. The separate response and image contract is [Intelligent UI and Image Content](INTELLIGENT-UI-AND-IMAGE-CONTENT.md).

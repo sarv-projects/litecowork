@@ -169,3 +169,7 @@ do not redefine.
 ## V1 detailed design integration — 2026-10-12
 
 The implementation-oriented owner crosswalk now also includes V1-DESIGN-INDEX.md, NATIVE-COMPOSER-LLD.md, CHROME-BROWSER-LLD.md, DESKTOP-SHELL-LLD.md, RENDERING-CONFORMANCE-LLD.md, V1-WORKFLOW-EVENT-LLD.md and V1-FUNCTION-FILE-CATALOG.md. Their types and function labels are not alternative domain/wire authority. Existing domain owning rows above remain canonical. See ../implementation/V1-DESIGN-COVERAGE.md for evidence IDs.
+
+## Intelligent UI and image content
+
+The response-format and generated-image parity contract, current implementation gaps, and desktop acceptance evidence are maintained in [INTELLIGENT-UI-AND-IMAGE-CONTENT.md](INTELLIGENT-UI-AND-IMAGE-CONTENT.md).

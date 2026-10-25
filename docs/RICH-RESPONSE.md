@@ -306,3 +306,7 @@ or imply native-session continuity when the adapter used a durable cold rebuild.
 ## V1 detailed design integration — 2026-10-12
 
 RENDERING-CONFORMANCE-LLD.md defines native output fallback and conformance golden corpus. RichPresentation is optional; never treat generated React/HTML/JS controls as authorized Core actions. The main semantic message stays available, accessible and complete. Unsupported vendor-specific native output must render safe diagnostic detail rather than silently disappear.
+
+## Intelligent UI and image content audit
+
+RichPresentation v1 is a static, display-only subset. It does not include generated images or interactive controls, and its existing block list must remain closed. The product contract for interactive response views, generated image references, and the current implementation gap is [Intelligent UI and Image Content](INTELLIGENT-UI-AND-IMAGE-CONTENT.md).

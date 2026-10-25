@@ -527,3 +527,7 @@ ordinary trusted host UI plus semantic conversation content.
 ## V1 detailed design integration — 2026-10-12
 
 Renderer-type coverage, source event normalization, semantic answer authority, markdown/terminal/diff/native fallback and Workbench media constraints are expanded in RENDERING-CONFORMANCE-LLD.md. Native provider output unknown to the registry must remain accessible as bounded safe fallback; renderer failure cannot hide committed message, verify Task or authorize an Effect. Browser view only reports live when provider delivers a qualified actual interactive surface.
+
+## Intelligent UI and image content contract
+
+Do not use RichPresentation v1 as an executable UI container. The versioned declarative interaction target, generated-image reference policy, and evidence required for live chat rendering are defined in [Intelligent UI and Image Content](INTELLIGENT-UI-AND-IMAGE-CONTENT.md). Static presentation, image Artifacts, and isolated interactive apps remain separate output routes.
