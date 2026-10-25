@@ -797,3 +797,62 @@ fn unavailable_admission_settles_the_durable_turn_and_exact_replay_writes_nothin
         "a durable ordinary Conversation turn creates no Task, Attempt, session, lease, or Environment"
     );
 }
+
+
+#[test]
+fn conversation_turn_creation_serializes_appends_from_the_same_stale_snapshot() {
+    let (directory, store, first) = fixture();
+    let adapter = SqliteConversationStore::new(store);
+    adapter
+        .create_conversation_turn(first.clone())
+        .expect("first turn commits from Conversation revision 1");
+
+    // A second request was prepared from the same revision-1 snapshot before the first
+    // append committed. Its event therefore also carries revision 2; the serialized
+    // storage transaction must assign the actual next Conversation revision.
+    let mut second = first;
+    second.request.request_id = "second-conversation-turn-request".into();
+    second.request.request_payload["turn_id"] = serde_json::json!("turn-two");
+    second.request.request_payload["message_id"] = serde_json::json!("message-two");
+    second.message.message_id = "message-two".into();
+    second.message.turn_id = Some("turn-two".into());
+    second.turn.turn_id = "turn-two".into();
+    second.turn.user_message_id = "message-two".into();
+
+    let message_context = context("event-user-message-two", 10);
+    second.message_event.event_id = message_context.event_id;
+    second.message_event.origin_runtime_id = message_context.origin_runtime_id;
+    second.message_event.hlc_timestamp = message_context.hlc_timestamp;
+    second.message_event.correlation_id = message_context.correlation_id;
+    second.message_event.recorded_at = message_context.recorded_at;
+    second.message_event.payload["message_id"] = serde_json::json!("message-two");
+
+    let turn_context = context("event-turn-created-two", 11);
+    second.turn_event.event_id = turn_context.event_id;
+    second.turn_event.entity_id = "turn-two".into();
+    second.turn_event.origin_runtime_id = turn_context.origin_runtime_id;
+    second.turn_event.hlc_timestamp = turn_context.hlc_timestamp;
+    second.turn_event.correlation_id = turn_context.correlation_id;
+    second.turn_event.recorded_at = turn_context.recorded_at;
+    second.turn_event.payload["turn_id"] = serde_json::json!("turn-two");
+    second.turn_event.payload["user_message_id"] = serde_json::json!("message-two");
+
+    assert_eq!(second.message_event.entity_revision, 2);
+    adapter
+        .create_conversation_turn(second)
+        .expect("a concurrent append must be serialized at the current revision");
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect serialized turns");
+    let (conversation_version, message_revision, messages, turns): (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT version FROM conversations WHERE conversation_id='conversation-turn'),
+               (SELECT entity_revision FROM domain_events WHERE event_id='event-user-message-two'),
+               (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id='conversation-turn'),
+               (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id='conversation-turn')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read serialized Conversation and event revisions");
+    assert_eq!((conversation_version, message_revision, messages, turns), (3, 3, 2, 2));
+}

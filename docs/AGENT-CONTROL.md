@@ -868,6 +868,8 @@ function submit_conversation_turn(draft, surface_selection, idempotency_key):
       Trust/Workspace read scope
 
     persist semantic user message + durable ConversationTurn in OPEN
+    inside the serialized transaction, stamp the message event with the actual next
+      Conversation entity revision from durable state (not the route's earlier snapshot)
     reserve fresh AgentSession as STARTING with:
       binding id, endpoint id, Runtime/incarnation
       descriptor digest

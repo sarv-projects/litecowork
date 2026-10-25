@@ -400,6 +400,7 @@ impl ConversationTurnStore for SqliteConversationStore {
         let request_digest = digest(&canonical_json(&commit.request.request_payload)?);
         let message = commit.message.clone();
         let turn = commit.turn.clone();
+        let mut message_event = commit.message_event.clone();
         let turn_state = canonical_json(&turn)?;
         let blobs = Arc::clone(&self.store.inner.blobs);
         let principal = commit.request.principal_id.clone();
@@ -467,11 +468,16 @@ impl ConversationTurnStore for SqliteConversationStore {
             let next_conversation_version = version
                 .checked_add(1)
                 .ok_or_else(|| StoreError::Invalid("Conversation version exhausted".to_owned()))?;
-            if i64::try_from(commit.message_event.entity_revision).ok() != Some(next_conversation_version)
-                || commit.turn_event.payload.get("aggregate_version").and_then(Value::as_u64) != Some(commit.turn.version)
+            if commit.turn_event.payload.get("aggregate_version").and_then(Value::as_u64)
+                != Some(commit.turn.version)
             {
                 return Err(StoreError::Invalid(CONVERSATION_TURN_EVENT_REVISION_MISMATCH.to_owned()));
             }
+            // Turn submission has no client If-Match precondition. The immediate
+            // transaction serializes valid appends and assigns the event the actual next
+            // Conversation revision, even if its request was prepared from an older read.
+            message_event.entity_revision = u64::try_from(next_conversation_version)
+                .map_err(|_| StoreError::Invalid("Conversation version is invalid".to_owned()))?;
             tx.execute(
                 "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,agent_session_id,agent_binding_id,turn_id,content_json,resource_refs_json,source_channel_ref_json,created_at) VALUES(?1,?2,?3,'USER',NULL,NULL,?4,?5,?6,NULL,?7)",
                 params![
@@ -533,7 +539,7 @@ impl ConversationTurnStore for SqliteConversationStore {
                 entity_revision: next_conversation_version as u64,
                 record_schema_version: 1,
             };
-            let message_event = insert_domain_event(&tx, &commit.message_event, &conversation_state_ref)?;
+            let message_event = insert_domain_event(&tx, &message_event, &conversation_state_ref)?;
             // The turn aggregate blob is written only after the receipt lookup. An exact
             // replay therefore performs no BlobStore write and cannot leave an
             // unreferenced snapshot of a fresh candidate timestamp.

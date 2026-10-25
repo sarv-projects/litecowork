@@ -1,3 +1,11 @@
+## 2026-10-25 — Serialize concurrent Conversation submits from stale snapshots
+
+- Root cause: the route stamped each message event with the Conversation revision observed before entering SQLite. The SQLite writer serialized correctly, but the second distinct submit from the same snapshot failed its event-revision check with `CONVERSATION_TURN_EVENT_REVISION_MISMATCH`/400.
+- The transaction now stamps `conversation.message.added.v1` from the current durable Conversation version and serializes distinct request IDs as separate appends.
+- Added a storage regression that prepares two unique messages/turns from one revision-1 snapshot, then verifies both commit and the second event/Conversation revision is 3.
+- Red/green: before the change, the second create failed with `Invalid("ConversationTurn event revision mismatch")`; after, the focused test passed. The full storage-sqlite package suite was not completed in this pass; the 9-test Conversation-turn module is verified.
+- This does not start native sessions or enable Conversation Send; unavailable admission remains FAILED/503.
+
 ## 2026-10-25 — Conversation submit replay survives AgentBinding drift
 
 - Fixed idempotent Conversation submit replay ordering: validate and normalize the request, check the principal-scoped payload-digest receipt, and only resolve the current AgentBinding on a receipt miss.

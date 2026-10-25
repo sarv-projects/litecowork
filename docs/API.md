@@ -353,6 +353,16 @@ uses `conversation.turn.created.v2`; earlier v1 turns migrate/read as `AUTO`. Pr
 controls optional response layout only and cannot suppress trusted UserRequest, Task, or
 Artifact controls.
 
+Each submit requires a principal-scoped `Idempotency-Key`. The durable writer serializes
+distinct requests against the current Conversation version and stamps
+`conversation.message.added.v1` with the actual next entity revision at commit time.
+Two distinct submits prepared from the same earlier snapshot therefore append in commit
+order instead of failing because the second carried a stale event revision. Exact replay
+returns the existing receipt before mutable AgentBinding selection is read; changed
+payload under the same key conflicts. This persists the USER message and OPEN turn only:
+while native session supervision/readiness is unavailable, the route settles that turn
+FAILED and returns `503 DEPENDENCY_UNAVAILABLE`; it does not claim that a message was sent.
+
 The Conversation presentation route returns a bounded authenticated snapshot of committed
 messages, linked trusted items, active-turn state, optional immutable RichPresentation refs,
 and the snapshot cursor. Rich documents are fetched separately and returned `no-store`

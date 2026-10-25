@@ -30,6 +30,13 @@ OPEN turn but was interrupted before failure settlement, replay can continue tha
 settlement; it cannot create another message or turn. A different payload under the same
 key remains a conflict. This receipt path is implemented and does not enable native Send.
 
+Distinct submits with different idempotency keys are append operations, not compare-and-swap
+updates from a client snapshot. The serialized storage transaction assigns each
+`conversation.message.added.v1` event the current next Conversation entity revision.
+Requests prepared from one older read can therefore commit in order without dropping a
+message or surfacing a revision-mismatch error. Same-key exact retries remain receipt
+replays; changed payload under the same key remains a conflict.
+
 ## Outcome and non-negotiable invariants
 
 1. Every supported harness keeps its qualified native experience: slash commands, custom commands, @-file/@-agent references, model/provider selection, reasoning/effort/mode, images, files, session operations, approval/permission prompts, diffs, output events, cancellation and resume where upstream exposes them.
