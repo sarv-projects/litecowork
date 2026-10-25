@@ -66,14 +66,17 @@ When connected, qualify this flow with two different native adapters:
 1. Send a request to agent A and persist its committed response in Conversation C.
 2. Change the selected agent to B without creating a new Conversation; assert the ID,
    transcript, unsent draft, attachments, and pinned ResourceRefs remain unchanged.
-3. Submit a second turn. Verify B receives the canonical committed transcript prefix
+3. After committing a turn pinned to A and before resolving its host, change the
+   Conversation selector to B. Verify host resolution still uses A from the unique
+   turn-created event; if A is unavailable, the turn fails without falling back to B.
+4. Submit a second turn. Verify B receives the canonical committed transcript prefix
    through that turn's user message, including A's answer and source-binding attribution.
    Verify A's AgentSession handle, auth, cookies, and private history are absent.
-4. While a turn is running, change the selector; verify that turn remains pinned to A and
+5. While a turn is running, change the selector; verify that turn remains pinned to A and
    only the next turn can use B. Reconnect/restart and verify committed history survives.
-5. Exceed the context message/byte limit and verify a visible retryable limit result;
+6. Exceed the context message/byte limit and verify a visible retryable limit result;
    never dispatch a silently truncated prefix.
-6. Read the Conversation usage view after both agents report usage. Verify distinct leaf
+7. Read the Conversation usage view after both agents report usage. Verify distinct leaf
    inference costs accumulate across A and B, adapter/gateway duplicates count once only
    after identity reconciliation, agent attribution remains drillable, currencies stay
    separate, billed and estimated values stay separate, and opaque/unknown usage is not

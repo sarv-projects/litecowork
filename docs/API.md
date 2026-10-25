@@ -340,8 +340,11 @@ event, and request receipt together. Exact receipt replay returns the original c
 checking current Workspace activity; reusing the key with a different request conflicts.
 Clearing the override restores Workspace-default resolution for future turns. A chosen
 binding is authoritative: if it later becomes unavailable, turn admission fails visibly and
-does not silently fall back. A running turn/session remains pinned to its admitted binding;
-changing the selector affects future turns only. In the target flow, the next turn uses the
+does not silently fall back. A turn remains pinned to its admitted binding from turn creation through native session
+startup and execution; changing the selector affects future turns only. Host resolution
+must use the binding in that turn's unique creation event, never the current Conversation
+selector or Workspace default. If the pinned host is unavailable, fail that turn visibly
+without fallback. In the target flow, the next turn uses the
 same Conversation ID and the selected binding receives its committed transcript prefix.
 Its new provider session is internal and does not create a new chat. Prior agent messages
 remain in the transcript with provenance, while private session state never crosses

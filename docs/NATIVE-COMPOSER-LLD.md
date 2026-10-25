@@ -21,6 +21,12 @@ no Conversation STARTING-session reservation or readiness activation operation y
 future supervisor must reserve durably, invoke the native adapter outside the transaction,
 then atomically activate the exact session and move the turn to RUNNING only after its
 readiness handshake is observed and the host/incarnation is revalidated.
+The existing observational host lookup still reads the Conversation's live selector and
+Workspace default; it is not safe for an admitted turn. Replace it with
+resolve_conversation_session_host_for_turn(principal, workspace, conversation, turn),
+which derives the exact binding from that turn's unique creation event and never falls
+back to a later selector/default. Until then, no supervisor may use the current lookup to
+route a committed turn.
 
 The canonical context package builder and SQLite turn-prefix reader now exist and have
 unit/storage tests. The load_conversation_context_for_turn operation derives its target
@@ -166,7 +172,7 @@ selectAgent(nextBinding):
 
 The user-visible Conversation is the continuity boundary: changing its selected AgentBinding keeps the same Conversation ID, saved transcript, draft, attachments, and pinned Resources. The change applies to the next turn. A turn already admitted remains pinned to its original binding and AgentSession; an agent change never reroutes an active turn.
 
-At admission, the immutable turn-created event pins the selected AgentBinding. The supervisor loads a ConversationContextPackage through the current user message and supplies that canonical prefix to the selected agent's own adapter. The package includes committed USER, AGENT, and CHANNEL messages with source-binding provenance; it excludes product SYSTEM_NOTICE messages and all provider-private session handles. ResourceRefs are references only and must be reauthorized/materialized through the normal same-Workspace path. Native auth, cookies, session IDs, tool state, and hidden provider history never cross bindings.
+At admission, the immutable turn-created event pins the selected AgentBinding. Before native startup, host resolution takes the authenticated principal, Workspace, Conversation, and turn IDs, reads the unique turn-created event, and resolves only that exact binding against current endpoint and Runtime-incarnation eligibility. It never rereads the live Conversation selector or Workspace default. If the pinned binding or host is disabled, expired, offline, or otherwise ineligible, the turn fails visibly without fallback; a selector change applies only to later turns. The supervisor loads a ConversationContextPackage through the current user message and supplies that canonical prefix to the selected agent's own adapter. The package includes committed USER, AGENT, and CHANNEL messages with source-binding provenance; it excludes product SYSTEM_NOTICE messages and all provider-private session handles. ResourceRefs are references only and must be reauthorized/materialized through the normal same-Workspace path. Native auth, cookies, session IDs, tool state, and hidden provider history never cross bindings.
 
 The context package is capped at 1,024 messages and 4 MiB. Exceeding either bound returns CONVERSATION_CONTEXT_LIMIT_EXCEEDED; the system must not silently truncate history. If the selected native model has a smaller context window, show a reviewable compaction/context selection that preserves the complete saved transcript and identifies any summary/range used. Count any additional agent call for compaction in the same Conversation usage ledger. A provider may start a new opaque AgentSession internally; this does not create a new user-visible chat.
 

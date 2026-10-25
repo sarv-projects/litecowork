@@ -383,7 +383,10 @@ session handles are optional same-incarnation optimizations and never the contin
 of truth. Switching the selected AgentBinding keeps the same user-visible Conversation and
 uses the immutable committed transcript as the next binding's context source. The target
 turn pins its binding in the turn-created event; the context package is a bounded transcript
-prefix through that turn's user message. Native session IDs, auth, and private agent state
+prefix through that turn's user message. Host resolution is turn-scoped: read that event's
+exact binding and resolve only its eligible endpoint and current Runtime incarnation. Never
+consult a later Conversation selector or Workspace default to reroute a committed turn; an
+ineligible pinned host fails visibly without fallback. Native session IDs, auth, and private agent state
 remain local to their original binding. A new provider AgentSession is an internal adapter
 boundary and does not create another Conversation. The provider-neutral package must be
 translated by an explicit adapter wire projection; it is not a license to import native
