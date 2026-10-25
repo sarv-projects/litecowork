@@ -22,6 +22,14 @@ future supervisor must reserve durably, invoke the native adapter outside the tr
 then atomically activate the exact session and move the turn to RUNNING only after its
 readiness handshake is observed and the host/incarnation is revalidated.
 
+For an exact idempotent submit replay, the route checks the authenticated principal's
+payload-digest receipt before consulting the current AgentBinding selection. It reuses the
+binding recorded in the committed turn-created event, so a later disable/change cannot
+turn a lost-response retry into `AGENT_UNAVAILABLE`. If the original request persisted an
+OPEN turn but was interrupted before failure settlement, replay can continue that same
+settlement; it cannot create another message or turn. A different payload under the same
+key remains a conflict. This receipt path is implemented and does not enable native Send.
+
 ## Outcome and non-negotiable invariants
 
 1. Every supported harness keeps its qualified native experience: slash commands, custom commands, @-file/@-agent references, model/provider selection, reasoning/effort/mode, images, files, session operations, approval/permission prompts, diffs, output events, cancellation and resume where upstream exposes them.

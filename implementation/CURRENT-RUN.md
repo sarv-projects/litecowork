@@ -1,3 +1,11 @@
+## 2026-10-25 — Conversation submit replay survives AgentBinding drift
+
+- Fixed idempotent Conversation submit replay ordering: validate and normalize the request, check the principal-scoped payload-digest receipt, and only resolve the current AgentBinding on a receipt miss.
+- Exact replay takes its binding from the committed `conversation.turn.created.v2` event. A selection cleared or disabled after commit no longer changes the retry outcome; an unsettled OPEN turn may continue only its existing safe settlement.
+- Added a regression that clears the Conversation override after the first committed submit and verifies the exact retry preserves the original 503 result without duplicate writes.
+- Verification: focused `litecoworkd` submit tests passed 3/3; SQLite Conversation storage tests passed 8/8. Red/green evidence: the regression failed before the route change (422 vs expected 503), then passed after.
+- Native Conversation Send remains fail-closed without a qualified session supervisor and observed readiness. This fix does not enable agent dispatch.
+
 ## 2026-10-25 - Remove Conversation inventory-only admission API
 
 - Removed the unused ConversationTurnStore::admit_conversation_turn transaction. It could create a durable STARTING session and mark the turn RUNNING from Runtime inventory without an observed native session-ready handshake.

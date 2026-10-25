@@ -840,7 +840,20 @@ visibly distinguishes the two namespaces.
 ### 9.7 Conversation admission
 
 ```text
-function submit_conversation_turn(draft, surface_selection):
+function submit_conversation_turn(draft, surface_selection, idempotency_key):
+    principal = authenticate_and_authorize_conversation_access()
+    request = validate_and_normalize_semantic_input(draft, surface_selection)
+    request_payload = canonical_payload(
+      operation, workspace, conversation, deterministic message/turn ids,
+      author, normalized content, resource refs, presentation preference
+    )
+
+    receipt = lookup_request_receipt(principal, idempotency_key, digest(request_payload))
+    if receipt exists:
+      binding = require_binding_recorded_in_committed_turn_event(receipt)
+      return replay_committed_result_or_continue_only_that_turns_safe_settlement(receipt)
+
+    # Mutable admission state is consulted only for a new idempotency key.
     binding = resolve_selected_binding(surface_selection.agent)
     descriptor = require_fresh_control_descriptor(binding)
 
@@ -871,6 +884,11 @@ function submit_conversation_turn(draft, surface_selection):
       preserve the user's draft and committed message
     do not dispatch the prompt before activation commits
 ```
+
+A caller-supplied `agent_binding_id` is an identity assertion: it never changes the
+Conversation selection. On a receipt replay it is checked against the binding recorded
+with the original committed turn; a mismatch is rejected without writing. On a new request
+it is checked against the freshly resolved selection.
 
 Disabling an AgentBinding blocks new Conversation sessions and new Task planning or
 Attempt sessions from using it. Existing Conversation and Task sessions remain pinned

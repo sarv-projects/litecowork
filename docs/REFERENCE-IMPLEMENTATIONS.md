@@ -445,6 +445,37 @@ repositories must record:
 Architecture inspiration without copied source still cites this file in the implementation
 review so future maintainers can distinguish deliberate borrowing from accidental similarity.
 
+## Competitive execution-locus recheck — 2026-10-25
+
+The current [product research ledger](COMPETITIVE-RESEARCH.md) rechecks first-party
+documentation for OpenAI Dots and ChatGPT Work/Codex, Claude/Cowork, Meta Muse,
+Microsoft Copilot Cowork, and Grok Bot. The engineering comparison must keep these
+boundaries explicit:
+
+- ChatGPT Work and Codex are distinct routes/surfaces even when presented in one desktop
+  shell. Local Work execution, cloud Work, and Codex history/availability have different
+  placement and continuation behavior.
+- Claude is moving toward one conversation that can answer or do Cowork work, while local
+  file access still depends on a desktop bridge and cloud work has a separate lifecycle.
+  Rollout, account plan and platform determine which path is available.
+- Muse documents both a local Mac surface and a separate persistent hosted Secure VM.
+  Sentinel-mediated connector egress and credential handling are separate from local OS
+  consent.
+- Grok Bot's shared persistent cloud computer and optional local-computer access are
+  distinct security scopes. Microsoft Cowork's local Edge path similarly inherits the
+  exact signed-in browser profile and tenant policy.
+- Product-native subagents and LiteCowork-hosted heterogeneous child Tasks are separate
+  delegation mechanisms. No reviewed vendor source documents a user selecting a different
+  installed native harness for each child agent; this remains a LiteCowork design claim
+  requiring its own route qualification, identity, budgets, fencing, cancellation and
+  recovery.
+- These are capability/UX references, not proof of reliability, universal availability,
+  or permission to proxy vendor credentials or subscriptions. Use exact-harness auth and
+  supported integration terms; never infer one provider's entitlement from another route.
+
+The linked ledger records exact primary sources and account/rollout caveats. A separate
+repository audit records commit/file-level findings and license boundaries.
+
 ## Competitive product landscape — verified 2026-10-22
 
 **Purpose.** This section records what the directly competing "AI coworker" products

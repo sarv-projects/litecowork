@@ -368,6 +368,30 @@ impl ConversationStore for SqliteConversationStore {
 }
 
 impl ConversationTurnStore for SqliteConversationStore {
+    fn replay_conversation_turn(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedConversationTurn>, StoreError> {
+        if principal_id.trim().is_empty() || !super::valid_shared_idempotency_key(request_id) {
+            return Err(StoreError::Invalid(
+                "Conversation turn receipt lookup identity is invalid".to_owned(),
+            ));
+        }
+        let principal = principal_id.to_owned();
+        let request_id = request_id.to_owned();
+        let request_digest = digest(&canonical_json(request_payload)?);
+        self.run(move |connection| {
+            verify_request_receipt::<CommittedConversationTurn>(
+                connection,
+                &principal,
+                &request_id,
+                &request_digest,
+            )
+        })
+    }
+
     fn create_conversation_turn(
         &self,
         commit: CreateConversationTurnCommit,

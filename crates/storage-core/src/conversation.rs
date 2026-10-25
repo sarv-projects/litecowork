@@ -127,6 +127,16 @@ pub struct CommittedConversationTurn {
 }
 
 pub trait ConversationTurnStore: Send + Sync {
+    /// Reads an exact committed Conversation-turn request receipt before mutable admission
+    /// state (such as the currently selected AgentBinding) is consulted. This preserves
+    /// idempotent replay when configuration changes after the original commit.
+    fn replay_conversation_turn(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedConversationTurn>, StoreError>;
+
     fn create_conversation_turn(
         &self,
         commit: CreateConversationTurnCommit,

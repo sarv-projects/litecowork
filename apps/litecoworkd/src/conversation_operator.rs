@@ -350,21 +350,6 @@ async fn submit_conversation_turn(
     validate_turn_request(&body, &workspace_id)?;
     let conversation =
         load_authorized_conversation(&state, &workspace_id, &conversation_id).await?;
-    // The Conversation's admitted AgentBinding selection is resolved before any
-    // write: the explicit Conversation override first, then the Workspace default.
-    // The first configured selection is authoritative; a missing or ineligible
-    // selection is refused with `AGENT_UNAVAILABLE` and an unchanged draft rather
-    // than silently falling through to a lower-precedence binding.
-    let agent_binding_id = resolve_turn_agent_binding(&state, &workspace_id, &conversation)?;
-    // A caller-supplied AgentBinding is compared for identity only; it never
-    // rewrites the Conversation and never overrides the resolved selection.
-    if body
-        .agent_binding_id
-        .as_deref()
-        .is_some_and(|requested| requested != agent_binding_id)
-    {
-        return Err(agent_unavailable());
-    }
     let presentation_preference =
         parse_presentation_preference(body.presentation_preference.as_deref())?;
     let content = serde_json::to_value(&body.content).map_err(|_| invalid_turn_request())?;
@@ -382,6 +367,53 @@ async fn submit_conversation_turn(
         "conversation-turn-message",
     );
     let turn_id = idempotent_id("turn", &principal_id, &request_id, "conversation-turn");
+    let request_payload = json!({
+        "operation": "conversation.turn.create.v1",
+        "workspace_id": workspace_id,
+        "conversation_id": conversation_id,
+        "turn_id": turn_id,
+        "message_id": message_id,
+        "author": author,
+        "content": content,
+        "resource_refs": resource_refs,
+        "presentation_preference": serde_json::to_value(presentation_preference)
+            .map_err(|_| invalid_turn_request())?,
+    });
+    let replay_store = state.store.clone();
+    let replay_principal_id = principal_id.clone();
+    let replay_request_id = request_id.clone();
+    let replay_payload = request_payload.clone();
+    let replayed = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(replay_store).replay_conversation_turn(
+            &replay_principal_id,
+            &replay_request_id,
+            &replay_payload,
+        )
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?;
+    let agent_binding_id = match replayed {
+        Some(receipt) => receipt
+            .events
+            .iter()
+            .find(|event| event.event_type == "conversation.turn.created.v2")
+            .and_then(|event| event.payload.get("agent_binding_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(internal)?,
+        None => resolve_turn_agent_binding(&state, &workspace_id, &conversation)?,
+    };
+    // A caller-supplied AgentBinding is compared for identity only; it never
+    // rewrites the Conversation and never overrides the resolved selection. An exact
+    // receipt replay uses the originally admitted selection above.
+    if body
+        .agent_binding_id
+        .as_deref()
+        .is_some_and(|requested| requested != agent_binding_id)
+    {
+        return Err(agent_unavailable());
+    }
     let correlation_id = idempotent_id("cor", &principal_id, &request_id, "conversation-turn");
     let created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
     let turn_created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
@@ -415,18 +447,7 @@ async fn submit_conversation_turn(
         request: WorkspaceCreateRequest {
             principal_id: principal_id.clone(),
             request_id: request_id.clone(),
-            request_payload: json!({
-                "operation": "conversation.turn.create.v1",
-                "workspace_id": workspace_id,
-                "conversation_id": conversation_id,
-                "turn_id": turn_id,
-                "message_id": message_id,
-                "author": author,
-                "content": content,
-                "resource_refs": resource_refs,
-                "presentation_preference": serde_json::to_value(presentation_preference)
-                    .map_err(|_| invalid_turn_request())?,
-            }),
+            request_payload: request_payload.clone(),
         },
         principal_id: principal_id.clone(),
         workspace_id: workspace_id.clone(),

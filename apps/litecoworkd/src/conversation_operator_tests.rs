@@ -1014,6 +1014,19 @@ async fn conversation_turn_submit_commits_durably_then_settles_unavailable_and_r
     assert_eq!(receipts, 1);
     assert_no_execution_state(&connection, WORKSPACE_A);
 
+    // Clear the current selection after the first commit. Exact replay belongs to the
+    // original request and must return its receipt without revalidating mutable binding
+    // state; otherwise a lost response becomes unrecoverable when the agent is disabled.
+    let connection =
+        rusqlite::Connection::open(&database).expect("open Conversation for binding drift");
+    connection
+        .execute(
+            "UPDATE conversations SET active_agent_binding_id=NULL WHERE conversation_id=?1",
+            [conversation_id],
+        )
+        .expect("remove current Conversation binding after the original commit");
+    drop(connection);
+
     // Exact replay resolves the committed receipt, writes nothing, and reports the same
     // unavailable outcome.
     let replay =
