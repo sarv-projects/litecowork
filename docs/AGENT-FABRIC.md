@@ -157,6 +157,15 @@ Native provider/model objects, location paths, options, headers, keys, URLs, and
 responses are discarded. A mismatched or unsupported CLI version fails closed without
 probing legacy routes. Neither catalog route proves authentication, entitlement, or
 inference success.
+
+The connected WSL device has OpenCode CLI 2.0.32. Add an exact 2.0.32
+read-only profile observation: start the owned server, require /api/info to
+match both exact CLI version and owned child PID, read only bounded provider
+and model catalog projections, then observe the direct child exit. A complete
+profile probe is not a provider-authentication, entitlement, inference, model
+selection, session-dispatch, process-tree, or recovery qualification. Keep its
+RuntimeOffer incompatible and Conversation Send unavailable until those
+separate native-session gates are proven.
 For Codex, `RuntimeOffer.compatible` currently means only that the bounded App Server
 `initialize` handshake returned a structurally valid response. Authentication, complete
 catalog observation, direct-process stop, and Conversation safety remain separate facts.
