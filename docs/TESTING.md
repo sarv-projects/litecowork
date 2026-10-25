@@ -54,8 +54,8 @@ Resources and over-limit text without truncation, and the Codex JSONL transport 
 the projected transcript is present in a `turn/start` request. The immutable turn binding
 selects the target adapter, the snapshot stops at the current turn's user message, private
 native session IDs are omitted, and oversized history is rejected. These tests do not prove
-that a native agent receives the package; the OpenCode request wrapper and Conversation
-route still need transport and end-to-end qualification.
+that a native agent receives the package; add an HTTP-capture test for OpenCode's request
+wrapper, then qualify both providers through the Conversation route and end to end.
 
 End-to-end acceptance remains blocked until a qualified session supervisor, dispatch path,
 agent-response writer, stream producer, and Conversation usage ingestion/read route exist.
