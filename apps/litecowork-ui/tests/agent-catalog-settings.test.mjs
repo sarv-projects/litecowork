@@ -247,3 +247,12 @@ test("Codex Conversation safety blockers are visible without opening probe detai
   assert.match(safetyNote, /Native app tools are not proven disabled or mediated\./);
   assert.match(safetyNote, /Native plugins and hooks are not proven disabled or mediated\./);
 });
+
+
+test("agent profile exposes native-control inspection on demand without probing during initial render", () => {
+  const html = renderCodexCatalog();
+
+  assert.match(html, /Inspect native controls/, "profile offers an explicit read-only inspection action");
+  assert.match(html, /aria-expanded=\"false\"/, "the inspector starts collapsed");
+  assert.doesNotMatch(html, /Checking the local agent adapter/, "initial profile rendering does not issue or display a descriptor read");
+});

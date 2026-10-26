@@ -123,11 +123,11 @@ test("an incompatible entry is disabled and says why", () => {
 test("the provider status reports that the package service is not qualified", () => {
   const status = decodeDiscoverProviderStatus({
     package_service_qualified: false,
-    reason_code: "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED",
+    reason_code: "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED",
     message: "Package discovery is unavailable until the LiteSPM package contract is published and qualified.",
   });
   assert.equal(status.package_service_qualified, false);
-  assert.equal(status.reason_code, "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED");
+  assert.equal(status.reason_code, "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED");
 });
 
 test("a catalog page keeps the provider status and the host observations apart", () => {
@@ -136,7 +136,7 @@ test("a catalog page keeps the provider status and the host observations apart",
     next_cursor: null,
     provider_status: {
       package_service_qualified: false,
-      reason_code: "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED",
+      reason_code: "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED",
       message: "Package discovery is unavailable.",
     },
     runtime_capabilities: [
@@ -162,7 +162,7 @@ test("an empty catalog is reported as empty rather than as an error", () => {
     next_cursor: null,
     provider_status: {
       package_service_qualified: false,
-      reason_code: "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED",
+      reason_code: "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED",
       message: "Package discovery is unavailable.",
     },
     runtime_capabilities: [],

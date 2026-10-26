@@ -842,7 +842,7 @@ async fn capability_commands_require_an_idempotency_key_and_stay_truthful() {
     assert_eq!(payload["code"], "DEPENDENCY_UNAVAILABLE");
     assert_eq!(
         payload["details"]["reason"],
-        "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED"
+        "LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED"
     );
 
     let mut request = Request::post("/v1/capabilities/cap-1/test")
