@@ -22,6 +22,7 @@ __pycache__/
 
 # Build and local environments
 target/
+.worktrees/
 .venv/
 node_modules/
 dist/
