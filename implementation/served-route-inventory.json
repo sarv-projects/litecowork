@@ -1085,6 +1085,11 @@
     },
     {
       "method": "GET",
+      "path": "/conversations/{conversationId}/usage",
+      "operation_id": "getConversationUsage"
+    },
+    {
+      "method": "GET",
       "path": "/runtime-lifecycle/stop-preview",
       "operation_id": "previewLocalRuntimeStop"
     },

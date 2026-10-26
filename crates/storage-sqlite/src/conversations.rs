@@ -949,10 +949,10 @@ pub(super) fn resolve_conversation_session_host_in_transaction(
         || event.get("conversation_id").and_then(Value::as_str) != Some(conversation_id)
         || event.get("user_message_id").and_then(Value::as_str) != Some(user_message_id.as_str())
         || event.get("aggregate_version").and_then(Value::as_u64) != Some(1)
-        || event
-            .get("presentation_preference")
-            .and_then(Value::as_str)
-            .is_none_or(str::is_empty)
+        || !matches!(
+            event.get("presentation_preference").and_then(Value::as_str),
+            Some("AUTO" | "SIMPLE" | "RICH")
+        )
     {
         return Err(StoreError::Integrity(
             "Conversation turn creation event identity does not match its record".to_owned(),

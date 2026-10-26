@@ -521,22 +521,26 @@ SecretLease, native session handle, or active Attempt.
 
 **Implementation status (2026-10-22) — read before using the three turn routes.** The
 prose in this subsection describes the accepted target contract, not current served
-behavior. Today `submitConversationTurn` commits the user message and the OPEN turn and
-then always returns `503 DEPENDENCY_UNAVAILABLE`, because no qualified native session
-supervisor is integrated with the route. The route does not reserve or activate a
-Conversation-scoped session, return an admission receipt, or reach an agent. The internal
-AgentSessionStore now supports turn-pinned Conversation STARTING reservation,
+behavior. Today `submitConversationTurn` first commits the user message and OPEN turn in
+one transaction. Without a qualified native session supervisor, a second transaction then
+settles that turn `OPEN → FAILED` with reason
+`CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`; after that settlement the route returns
+`503 DEPENDENCY_UNAVAILABLE`. If settlement cannot be confirmed, the handler reports its
+typed settlement error and never reports successful admission. The route does not reserve
+or activate a Conversation-scoped session, return an admission receipt, or reach an agent.
+The internal AgentSessionStore now supports turn-pinned Conversation STARTING reservation,
 keyset-paginated recovery enumeration (exclusive `agent_session_id` cursor, pages of 1–100),
 and expected-version LOST settlement. Recovery orders by binary `agent_session_id`; callers
 continue after the last returned ID and restart a sweep from the beginning to discover rows
 inserted behind an existing cursor. The HTTP route does not call these operations; STARTING
 remains non-ready and does not by itself enable Send.
 `retryConversationTurn` and `cancelConversationTurn` are mounted but both always
-return `503 DEPENDENCY_UNAVAILABLE`. The whole turn state machine below —
-`OPEN → RUNNING → WAITING_USER/WAITING_DEPENDENCY → COMPLETED/FAILED/CANCELLED` — is
-unreachable in this build, and the desktop composer therefore renders Send disabled with a
-truthful draft-only note. E03-S01/S02 own the repair; OpenAPI already advertises the `202`
-response that the implementation must honor.
+return `503 DEPENDENCY_UNAVAILABLE`. The normal agent-run path
+`OPEN → RUNNING → WAITING_USER/WAITING_DEPENDENCY → COMPLETED/FAILED/CANCELLED` is
+unreachable in this build; the fail-closed `OPEN → FAILED` settlement above is live. The
+desktop composer therefore renders Send disabled with a truthful draft-only note.
+E03-S01/S02 own the repair; OpenAPI already advertises the `202` response that the
+implementation must honor.
 
 `POST /v1/conversations/{id}/turns` first resolves and checks the Conversation override or
 Workspace default AgentBinding/endpoint. If none is eligible, it returns

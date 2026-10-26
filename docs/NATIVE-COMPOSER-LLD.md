@@ -11,11 +11,14 @@ Status: NORMATIVE TARGET, not evidence of implemented Operator endpoints. Owners
 
 ## Current implementation boundary (2026-10-25)
 
-The served Conversation submit route commits the USER message and its OPEN turn, then
-returns 503 DEPENDENCY_UNAVAILABLE while no qualified native session supervisor is
-connected. Runtime inventory (ONLINE, incarnation READY, and Workspace EXECUTOR) is not
-a native SESSION_READY handshake. No caller may create a STARTING session and mark the
-turn RUNNING or report 202 from those inventory facts alone.
+The served Conversation submit route first commits the USER message and OPEN turn in
+one transaction. While no qualified native session supervisor is connected, a second
+transaction settles that turn `OPEN → FAILED` with reason
+`CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`, then the route returns
+`503 DEPENDENCY_UNAVAILABLE`. A settlement error is returned as a typed failure; the
+handler never reports successful admission. Runtime inventory (ONLINE, incarnation READY,
+and Workspace EXECUTOR) is not a native SESSION_READY handshake. No caller may create a
+STARTING session and mark the turn RUNNING or report 202 from those inventory facts alone.
 
 The internal AgentSessionStore now exposes typed
 start_conversation_agent_session, list_starting_conversation_agent_sessions, and

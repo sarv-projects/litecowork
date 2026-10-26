@@ -11,7 +11,7 @@ No problems detected by these checks.
 ## Source observations
 
 - ConversationsPage explicitly states native message submission is unavailable.
-- OpenAPI operations specified (not served-route count): 228
+- OpenAPI operations specified (not served-route count): 229
 - Supplemental UIV1 explicit acceptance definitions: 158
 - Actual backlog stories: 68
 

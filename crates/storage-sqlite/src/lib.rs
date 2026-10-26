@@ -2531,6 +2531,7 @@ impl AgentSessionStore for SqliteWorkspaceStore {
                         "conversation_id":session.conversation_id,
                         "conversation_turn_id":session.conversation_turn_id
                     },
+                    "task_spec_revision":null,
                     "agent_binding_id":session.agent_binding_id,
                     "endpoint_id":session.endpoint_id,
                     "runtime_id":session.runtime_id,
@@ -2607,6 +2608,7 @@ impl AgentSessionStore for SqliteWorkspaceStore {
                         "conversation_id":next.conversation_id,
                         "conversation_turn_id":next.conversation_turn_id
                     },
+                    "task_spec_revision":null,
                     "agent_binding_id":next.agent_binding_id,
                     "endpoint_id":next.endpoint_id,
                     "runtime_id":next.runtime_id,

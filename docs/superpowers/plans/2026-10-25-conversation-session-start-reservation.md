@@ -58,6 +58,18 @@
 - [x] Review that reservation cannot start/activate a process and all unrelated working-tree changes remain unstaged.
 - [x] Commit and push the slice.
 
+## Review remediation before push
+
+The independent review found that the canonical event schema requires `task_spec_revision` as a top-level property on AgentSession STARTING and LOST payloads. Conversation payloads must set it to `null`; the scope object contains only its scope identifiers. The review also found that current submit behavior durably settles OPEN turns as FAILED before returning 503, and that authority validation/recovery regression coverage needs tightening.
+
+- [x] Add the required top-level nullable task revision to Conversation STARTING/LOST validators and event drafts; test missing and null values against the canonical schema.
+- [x] Reject turn-created authority whose presentation preference is outside AUTO, SIMPLE, or RICH.
+- [x] Cover foreign Workspace/scope LOST attempts, same-key changed-payload replay, exact one-event settlement, and event-write rollback.
+- [x] Keep API, Events, and Native Composer docs accurate to route settlement and event schema.
+- [x] Re-run focused reservation tests and full `storage-sqlite`; rerun docs validators and `git diff --check`.
+- [x] Align the new Rust lines with the formatter output.
+- [ ] Run repo-wide rustfmt cleanly; the check reports existing formatting drift in unrelated and previously existing code.
+
 ## Boundary
 
 A qualified supervisor still needs to own AgentHost lifecycle, native adapter startup/readiness, atomic readiness activation with the ConversationTurn, context delivery, output projection/stream persistence, usage aggregation, stop/cancel, retry, and crash reconciliation. No part of this plan enables user-facing Send.
