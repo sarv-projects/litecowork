@@ -31,7 +31,7 @@ The user-facing Conversation pipeline does not yet deliver Intelligent UI:
 - Conversation submit persists the user message and turn, then fails admission with 503 because no qualified native-session supervisor is connected. Retry and cancel are unavailable. The composer Send button is disabled.
 - INTERACTIVE-ARTIFACT-RUNTIME.md defines an isolated Artifact Runtime target and explicitly does not claim code or operating-system qualification. Its contract must not be described as a current Conversation renderer.
 
-Therefore current source contains a safe static rich-response foundation, not ChatGPT-style Intelligent UI. The exact evidence and turn-lifecycle blockers are tracked in NATIVE-COMPOSER-LLD.md and implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md.
+Therefore current source contains a safe static rich-response foundation, not ChatGPT-style Intelligent UI. The exact evidence and turn-lifecycle blockers are tracked in NATIVE-COMPOSER-LLD.md and archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md.
 
 ## V1 response contract
 

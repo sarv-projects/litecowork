@@ -1,6 +1,8 @@
 # V1 Desktop — Final Screen and Interaction Contract
 
-**Status:** normative UX TARGET, not evidence of installed build; subordinate to [Product](V1-PRODUCT-RELEASE-CONTRACT.md), [Experience](EXPERIENCE.md), [Desktop Shell](DESKTOP-SHELL-LLD.md), [Native Composer](NATIVE-COMPOSER-LLD.md), [Design System](DESIGN-SYSTEM.md), [Accessibility cases](../implementation/UI.md). The owner-approved screenshot layout (2026-10-24) supersedes prior closed-by-default wording; the right Workbench is visible by default on desktop.
+**Reset provenance (2026-10-31):** the dated source-correction notes below describe the pre-reset source snapshot at the stated dates. The executable UI tree is no longer present in the active docs-first checkout; do not read those historical source observations as a current build claim. Use [CURRENT-RUN](../CURRENT-RUN.md) and [Repository Documentation Audit](REPOSITORY-DOCUMENTATION-AUDIT.md) for the reset boundary and current evidence.
+
+**Status:** normative UX TARGET, not evidence of installed build; subordinate to [Product](V1-PRODUCT-RELEASE-CONTRACT.md), [Experience](EXPERIENCE.md), [Desktop Shell](DESKTOP-SHELL-LLD.md), [Native Composer](NATIVE-COMPOSER-LLD.md), [Design System](DESIGN-SYSTEM.md), [Accessibility cases](archive/legacy-implementation-c7e9c05/UI.md). The owner-approved screenshot layout (2026-10-24) supersedes prior closed-by-default wording; the right Workbench is visible by default on desktop.
 
 **Current implementation correction (2026-10-25).** The shared shell now mounts a compact Start Workbench by default on desktop. Files switches the Workbench to loaded Workspace resources, cursor paging and an exact-revision text preview; a secondary action opens the full Library. Work and Runtime & settings route to existing screens. Browser, Terminal and Computer are visibly unavailable because no qualified providers are connected. Desktop collapse preference is stored per Workspace; narrow widths use a modal drawer with focus trapping and restoration. Returning installs now open the Chats route by default; first-run Workspace setup remains available through Settings. The task composer remains accessible as **New task**. New chat creates a blank local Conversation and may carry an existing first-use draft into its window-only composer; live chat send/session admission is not implemented. This note supersedes the older Workbench source-gap statement below; the screen contract remains the target.
 
@@ -10,7 +12,7 @@
 
 **Implementation status snapshot (2026-10-22; historical).** Every row below is binding target; the per-surface
 file-cited delta lives in the UI implementation audit in
-[`implementation/UI.md`](../implementation/UI.md). Rows that are wholly unmet today, with
+[`archive/legacy-implementation-c7e9c05/UI.md`](archive/legacy-implementation-c7e9c05/UI.md). Rows that are wholly unmet today, with
 the exact reason: **New Chat send** — the turn route always returns 503 and the composer
 renders a disabled Send; **Recent Chats rename/pin/archive/delete** — no conversation
 mutate route exists; **Coworker scoped memories** — the memory routes are explicitly not

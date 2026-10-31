@@ -19,7 +19,7 @@
 > Still release-blocking: trigger-host cursor retirement on disable, real OS
 > notification settlement (delivery attempts, `notification.delivery.changed.v1`, the
 > local OS bridge), and owner USER evidence for the whole journey.
-> See [release matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+> See [release matrix](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
 
 An Automation defines when or why a pinned Routine should create ordinary Tasks. It is
 not a workflow engine, agent, or worker process. Trigger hosting and Task execution are

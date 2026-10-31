@@ -29,8 +29,8 @@ is specified but **not yet production qualified**; an installation is not an
 invocation grant. The requirement is **free core local LiteCowork functionality
 without a mandatory LiteCowork subscription or hosted account**; external
 agent/API/provider costs remain separate. Cloud LiteCowork Runtime, multi-device
-continuation and teamwork are V2. Current release blockers:
-[acceptance matrix](implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+continuation and teamwork are V2. Historical baseline acceptance snapshot (not current
+release status): [c7e9c05 acceptance matrix](docs/archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
 
 ## What LiteCowork is for
 
@@ -107,8 +107,8 @@ native features.
 
 ## Desktop-first delivery
 
-V1 is a complete, production-qualified desktop/local product for the finalized local
-feature set, not a demo that substitutes mock workers for real provider integrations.
+V1 targets a complete, production-qualified desktop/local product for the finalized
+local feature set, not a demo that substitutes mock workers for real provider integrations.
 Cloud continuation and remote Runtime are post-V1 releases.
 
 The intended use is broad desktop cowork: ask questions, work with files and documents,
@@ -122,12 +122,15 @@ tested versions.
 ## Architecture and development
 
 - [Product architecture](ARCHITECTURE.md)
-- [Implementation plan and release gates](implementation/README.md)
+- [Specification Standard](docs/SPECIFICATION-STANDARD.md) and [feature SDD index](specs/README.md)
+- [Current run / engineering handoff](CURRENT-RUN.md)
+- [Implementation master plan](docs/IMPLEMENTATION-MASTER-PLAN.md)
+- [Repository documentation audit](docs/REPOSITORY-DOCUMENTATION-AUDIT.md)
 - [Contract map](docs/COVERAGE-MATRIX.md)
 - [Product contract](docs/PRODUCT.md)
 - [User experience](docs/EXPERIENCE.md)
 - [Testing contract](docs/TESTING.md)
-- [Research sources and workflow comparisons](implementation/SOURCES.md)
+- [Historical research sources](docs/archive/legacy-implementation-c7e9c05/SOURCES.md)
 - [Decision records](docs/adr/)
 
 LiteSPM is the selected external package/capability ecosystem. It owns package discovery
@@ -138,7 +141,7 @@ or authentication behavior is assumed before its service contract is available.
 
 ## Coworkers target evolution
 
-The accepted desktop Coworker design is described in [docs/COWORKERS-TARGET.md](docs/COWORKERS-TARGET.md): optional chat-first persistent assistants, no connector ceiling on configured integrations, natural-language approved responsibilities, quiet scoped memory learning and honest background execution. This is a target design, NOT a claim that UI, memory, trigger or native agent execution are already complete. Current implementation status and gates remain in [implementation/CURRENT-RUN.md](implementation/CURRENT-RUN.md).
+The accepted desktop Coworker design is described in [docs/COWORKERS-TARGET.md](docs/COWORKERS-TARGET.md): optional chat-first persistent assistants, no connector ceiling on configured integrations, natural-language approved responsibilities, quiet scoped memory learning and honest background execution. This is a target design, NOT a claim that UI, memory, trigger or native agent execution are already complete. The previous c7e9c05 implementation status is historical; re-establish current truth using docs/ACCEPTANCE-AND-E2E-PLAN.md and fresh runtime evidence.
 
 
 ### Native agent philosophy
@@ -167,9 +170,8 @@ Read:
 [Connectors & Workflows](docs/CONNECTORS-WORKFLOWS.md),
 [Learning](docs/LEARNING.md), and
 [Reference Implementations](docs/REFERENCE-IMPLEMENTATIONS.md).
-These are accepted target contracts; current implementation status remains governed by the
-epics/roadmap and CODE/SYSTEM/USER evidence.
+These are accepted target contracts; the old epics/roadmap is preserved as historical material under docs/archive/legacy-implementation-c7e9c05/. The current checkout status and preservation boundary are recorded in CURRENT-RUN.md and docs/REPOSITORY-DOCUMENTATION-AUDIT.md; release claims require fresh CODE/SYSTEM/USER evidence under docs/ACCEPTANCE-AND-E2E-PLAN.md.
 
 ## V1 detailed design integration — 2026-10-12
 
-Implementation detail and acceptance crosswalk: docs/V1-DESIGN-INDEX.md and implementation/V1-DESIGN-COVERAGE.md. Native agent / and @ parity, browser profile security, right Workbench and event rendering are design targets pending actual end-to-end qualification; do not advertise a disabled composer, a browser screenshot or an agent registry probe as shipped features.
+Implementation detail and acceptance crosswalk: docs/V1-DESIGN-INDEX.md and the historical coverage snapshot at docs/archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md. Native agent / and @ parity, browser profile security, right Workbench and event rendering are design targets pending actual end-to-end qualification; do not advertise a disabled composer, a browser screenshot or an agent registry probe as shipped features.

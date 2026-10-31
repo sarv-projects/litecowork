@@ -1,0 +1,37 @@
+feature_id: NNN
+status: DRAFT
+nodes:
+  - id: ui
+    owner: UI
+    kind: component
+    inputs: []
+    outputs: []
+  - id: operator
+    owner: authenticated Operator
+    kind: service
+    inputs: [ui]
+    outputs: []
+edges:
+  - from: ui
+    to: operator
+    kind: request
+    contract: canonical-request-schema
+  - from: operator
+    to: storage
+    kind: transaction
+    contract: owning-storage-port
+transactions:
+  - id: transaction-1
+    owner: single-transaction-owner
+    atomic_records: []
+    external_calls_inside: false
+external_boundaries:
+  - id: adapter-1
+    owner: qualified-adapter
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
+recovery:
+  owner: lifecycle-owner
+  source_of_truth: durable-session-and-turn
+  restart_action: reconcile-or-settle-lost

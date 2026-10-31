@@ -5,7 +5,7 @@
 Use the actual `domain-responsibility`, `domain-rag`,
 `storage-core`/`storage-sqlite`, `apps/litecoworkd` and UI
 owners, and require separately reviewed boundaries for any new crates.
-Current release state: [acceptance matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+Current release state: [acceptance matrix](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
 
 **Status:** accepted target architecture. This document defines how a Coworker can improve
 from corrections and successful work without allowing the model to silently widen authority

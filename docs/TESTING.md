@@ -509,4 +509,9 @@ Mocks may validate contracts but cannot close provider/OS acceptance cells.
 
 ## V1 detailed design integration — 2026-10-12
 
-Use implementation/V1-DESIGN-COVERAGE.md for explicit UAT cases and docs/RENDERING-CONFORMANCE-LLD.md for upstream-native golden corpus. Tests must verify real harness and Chrome OS version qualification, high-DPI browser coordinates, takeover races, idempotent Send, unknown native events, rich fallback, keyboard access and reduced motion. Pure UI snapshot tests are not SYSTEM evidence. Use focused tests per module and full release gates, not full-suite reruns for every CSS tweak.
+Use archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md for explicit UAT cases and docs/RENDERING-CONFORMANCE-LLD.md for upstream-native golden corpus. Tests must verify real harness and Chrome OS version qualification, high-DPI browser coordinates, takeover races, idempotent Send, unknown native events, rich fallback, keyboard access and reduced motion. Pure UI snapshot tests are not SYSTEM evidence. Use focused tests per module and full release gates, not full-suite reruns for every CSS tweak.
+
+
+## External desktop test-corpus reference - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) inventories relevant ZCode conversation/permission regression tests and DeepSeek Harness IPC/preload/Host/update/quit/runtime tests. Use them to discover missing negative, stale-owner, timeout, cancellation and recovery scenarios, then express those scenarios using LiteCowork's canonical records and owners. The upstream suites were not run in this review; their existence is not CODE, SYSTEM, USER or QUALIFIED evidence for LiteCowork.

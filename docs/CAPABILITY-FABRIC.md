@@ -420,3 +420,8 @@ boundaries. The catalog must remain useful when none is configured.
 ## V1 detailed design integration — 2026-10-12
 
 Native agent / commands and @ references are not the same as LiteSPM host commands. NATIVE-COMPOSER-LLD.md and V1-FUNCTION-FILE-CATALOG.md require precise namespaces and conformance. A package install, Connection health or adapter probe is insufficient authority for an Effect. Browser/terminal/computer grants stay scoped and revocable.
+
+
+## External desktop plugin lifecycle comparison - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) reviews DeepSeek Harness's profile-owned plugin management and ZCode's Main-owned guest sandbox. These are comparisons only: LiteSPM remains the single package ecosystem and provider-process lifecycle owner, while this contract owns LiteCowork capability identity, scoped Grants, Activations, Invocation and Effect mediation. DSH's same-Node-process Host/plugin execution is not a sufficient isolation model for untrusted community packages. Do not add a parallel registry, installer, plugin database or process manager to LiteCowork.

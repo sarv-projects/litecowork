@@ -1,7 +1,7 @@
 # HorizonCode as a Native LiteCowork Agent — V1 Integration LLD
 
 **Status:** target integration; no claim that HorizonCode is detected, installed or qualified in current LiteCowork builds.  
-**Canonical owners:** [Agent Control](AGENT-CONTROL.md), [Agent Fabric](AGENT-FABRIC.md), [Delegation](DELEGATION.md), [Task Runtime](TASK-RUNTIME.md), [Trust](TRUST.md), [Agent Portfolio](../implementation/AGENT-PORTFOLIO-2026-10-21.md).
+**Canonical owners:** [Agent Control](AGENT-CONTROL.md), [Agent Fabric](AGENT-FABRIC.md), [Delegation](DELEGATION.md), [Task Runtime](TASK-RUNTIME.md), [Trust](TRUST.md), [Agent Portfolio](archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md).
 
 ## Intent
 
@@ -48,6 +48,6 @@ Missing executable, unsupported protocol version, expired auth, provider quota, 
 5. One bounded child Attempt as worker under another eligible chief; test budget, root, cancellation, refusal and result integration.
 6. Native internal worker does not get false Core Attempt or Grant claim.
 7. Kill/restart, late outputs, unknown effect, native config drift and owner-driven chief replacement.
-8. Actual host OS/version and CODE + SYSTEM + USER proof in `implementation/QUALIFICATION-MATRIX.md`.
+8. Actual host OS/version and CODE + SYSTEM + USER proof in `archive/legacy-implementation-c7e9c05/QUALIFICATION-MATRIX.md`.
 
 Until those tests pass, HorizonCode is **rostered target / unqualified**, even if separately developed and available on disk.

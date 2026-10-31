@@ -29,3 +29,10 @@ dist/
 apps/litecowork-ui/src-tauri/gen/
 apps/litecowork-ui/src-tauri/binaries/
 .superdesign
+
+# Historical documentation stays versionable; bulky local code archive stays ignored.
+!docs/archive/
+!docs/archive/**
+
+# Local upstream reference checkouts (never stage or ship)
+repo_take/

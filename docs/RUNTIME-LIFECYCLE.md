@@ -587,3 +587,8 @@ Agent/browser Runtime restart recovery and UI state projection are detailed in V
 ## Multi-agent telemetry, discovery and terminal runtime ownership — V1
 
 The [Usage/Health LLD](V1-TELEMETRY-USAGE-RESILIENCE-LLD.md), [Agent Discovery LLD](V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md), and [Integrated Terminal LLD](V1-INTEGRATED-TERMINAL-LLD.md) add target diagnostics, bounded nonblocking native agent probes, shell/profile discovery and scoped PTY supervision. Observer availability is not Runtime execution readiness. Idle-cache observation must not spawn native inference; closing terminal UI does not terminate unrelated Task work; provider session failure must preserve Task/Attempt/Effect reconciliation.
+
+
+## Non-normative desktop implementation comparison - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) records DeepSeek Harness's admission-lock, request-drain, task-reinspection, positive Host-shutdown acknowledgement and fail-closed update sequence. This is a comparison checklist only. It does not promote the current LiteCowork signal/Operator-handler drain into a domain-complete Runtime stop: Task/Attempt drain, Effect reconciliation, lease fencing/release and local service-reference settlement remain the explicit integration gap in this document. A future stop/update contract must be composed and accepted by the owner domains; do not copy upstream timeout values or treat process exit as quiescence evidence.

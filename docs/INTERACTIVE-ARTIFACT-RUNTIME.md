@@ -128,3 +128,8 @@ No generated artifact can report its own safety, completion or verification. A r
 ## Implementation status and Conversation rendering boundary (2026-10-25)
 
 This file is a normative target, not proof of a packaged implementation or OS qualification. The current Conversation surface does not create or launch an interactive Artifact from a native response. RichPresentation v1 remains display-only. The separate response and image contract is [Intelligent UI and Image Content](INTELLIGENT-UI-AND-IMAGE-CONTENT.md).
+
+
+## External guest-sandbox comparison - 2026-10-31
+
+See the [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) for ZCode's Main-owned guest sandbox and the difference between browser-origin/partition isolation and an OS-enforced process boundary. The ZCode pattern is a useful host/guest owner check and CSP reference, but this contract remains stricter where it requires a dedicated unprivileged renderer, no ambient app/OS access, an explicit versioned protocol, brokered exact Resource handles, process-tree quiescence and preview-only fallback on unqualified OS profiles. Do not promote a Chromium guest sandbox to the required OS isolation profile without per-platform evidence.

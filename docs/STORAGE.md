@@ -754,17 +754,20 @@ AgentSessionHostBinding must match the AgentSession Runtime/incarnation, selecte
 AgentSession.endpoint_id is an immutable historical identity and has no FK to expiring Runtime-local agent_endpoints
 AgentSessionHostBinding deletion is allowed only after AgentSession is CLOSED or LOST
 AgentHostStore persists only Runtime-local AgentHostInstance lifecycle state; create requires the current READY incarnation and matching endpoint/profile, and transitions use expected-state compare-and-set without domain events
+CONVERSATION activation commits the AgentSession ACTIVE snapshot/event, ConversationTurn RUNNING snapshot/event, and local AgentSessionHostBinding in one immediate transaction after rechecking owner, exact session/turn versions, the immutable turn-pinned binding, current endpoint offer, Runtime incarnation, Workspace EXECUTOR enrollment, and eligible READY/BUSY host
+The opaque native session handle is stored only in agent_session_host_bindings; it is excluded from aggregate snapshots, domain events, and committed activation results
 TASK_PLANNING admission commits a version-1 STARTING AgentSession, its complete aggregate-state blob reference, `agent.session.starting.v1`, and RequestId receipt in one transaction after rechecking Task/spec/lead, owner, enabled binding, endpoint binding, and current READY Runtime incarnation
 STARTING claims the unique planner slot but is not ready and cannot authorize planning tools; recovery enumeration includes stranded STARTING sessions across Runtime incarnations
-adapter startup occurs outside SQLite; activation must atomically commit AgentSession ACTIVE and first-planning Task RUNNING only after readiness
+Task-planning adapter startup occurs outside SQLite; activation must atomically commit AgentSession ACTIVE and first-planning Task RUNNING only after readiness
 
-The concrete desktop SQLite adapter currently fails closed before either operation. Both
-`start_task_planning_session` and `activate_task_planning_session` return
+The concrete desktop SQLite adapter currently fails closed before either Task-planning
+operation. Both `start_task_planning_session` and `activate_task_planning_session` return
 `TASK_PLANNING_ISOLATION_UNAVAILABLE` until Runtime-owned isolation admission evidence is
 produced and rechecked at the storage boundary. Start rejection occurs before aggregate
 blob writes, session/event insertion, or RequestId receipt creation; activation rejection
-occurs before session lookup or Task mutation. The rows above describe the eventual storage
-contract and must not be read as evidence that planner admission is enabled.
+occurs before session lookup or Task mutation. This fail-closed statement applies to
+TASK_PLANNING only. Conversation session activation is implemented, but no native
+supervisor calls it yet; the served Conversation route remains fail-closed.
 FOREIGN KEY capability_activations(runtime_id,runtime_incarnation_id) -> runtime_incarnations
 CapabilityActivation scope tuple must satisfy its tagged-union CHECK and point to the same Workspace as its scope entity
 CapabilityActivation scope, Runtime/incarnation, and CapabilityRef must match the session/invocation at admission

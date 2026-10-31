@@ -202,3 +202,8 @@ Display package availability, Connection authenticated status, Coworker assignme
 **LiteCowork:** `apps/litecoworkd/src/discover_operator.rs` should call a qualified interface through a bounded adapter (e.g. `LiteSpmClient` in an integration module); `apps/litecowork-ui/src/discover/` renders inventory/plans/results. Capability assignment remains in the existing Capability/Trust stores. Do not write LiteSPM tables from LiteCowork. Add typed service/operation schemas to existing `docs/schemas/` after upstream negotiation.
 
 **Current blocker:** source currently says package service not qualified; there is no production-qualified end-to-end host interface. This LLD resolves ownership and required behaviors, **not the upstream protocol nor an integration acceptance gate**.
+
+
+## External desktop plugin-manager comparison - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) reviews DeepSeek Harness's profile-owned plugin management and its Electron Desktop command path. Treat it as a comparison, not a new LiteCowork package owner. LiteSPM remains authoritative for catalog, inventory, install/update/remove, host registration and provider process lifecycle; LiteCowork Core remains authoritative for scoped invocation grants and Effects. In particular, do not copy the DSH same-Node-process plugin execution model for untrusted community packages, and do not introduce a second package database or package writer.

@@ -222,7 +222,7 @@ The Agent Registry is the single setup surface:
 **discover -> install/update -> sign in/configure -> probe -> bind -> optionally set default**
 
 None of those steps silently authorizes work. See AGENT-CONTROL.md and
-implementation/UI.md.
+archive/legacy-implementation-c7e9c05/UI.md.
 
 
 ## Connector breadth, learning, and unified-mode product contract
@@ -246,4 +246,4 @@ native agent controls when task type changes.
 
 ## V1 detailed design integration — 2026-10-12
 
-The V1 user-facing promised experience and precise gaps are indexed in V1-DESIGN-INDEX.md and implementation/V1-DESIGN-COVERAGE.md. Native agent controls, functional Chrome side browser, reliable takeover, rich result rendering and end-to-end automation must be qualified before marketed as supported. A simple Conversation never requires Coworker creation.
+The V1 user-facing promised experience and precise gaps are indexed in V1-DESIGN-INDEX.md and archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md. Native agent controls, functional Chrome side browser, reliable takeover, rich result rendering and end-to-end automation must be qualified before marketed as supported. A simple Conversation never requires Coworker creation.

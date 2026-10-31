@@ -1,6 +1,6 @@
 # Coworker target interaction flows, failure paths and acceptance
 
-**Status:** accepted design target, not implemented API. **Implementation guardian:** E09-S02 (cross-cutting E08-S01/S03, E04 and E10). Complements [FLOWS](FLOWS.md), [AUTOMATION](AUTOMATION.md), [RESPONSIBILITIES](RESPONSIBILITIES.md) and [UI](../implementation/UI.md). Existing numbered F18, F19, F40, F41, F55 and F72 remain authoritative for canonical Trigger/Task/Effect transitions; the C-series adds Coworker relationship and UX requirements without replacing them.
+**Status:** accepted design target, not implemented API. **Implementation guardian:** E09-S02 (cross-cutting E08-S01/S03, E04 and E10). Complements [FLOWS](FLOWS.md), [AUTOMATION](AUTOMATION.md), [RESPONSIBILITIES](RESPONSIBILITIES.md) and [UI](archive/legacy-implementation-c7e9c05/UI.md). Existing numbered F18, F19, F40, F41, F55 and F72 remain authoritative for canonical Trigger/Task/Effect transitions; the C-series adds Coworker relationship and UX requirements without replacing them.
 
 ## CF01 — Quick Create to chat
 
@@ -76,7 +76,7 @@ Global Stop unattended work first lists active schedules/monitors, currently adm
 
 ## Cross-flow invariants and tests
 
-Test every control with: empty/loading/success/stale revision/offline/partial provider result/missing consent/cancel/failure/duplicate RequestId/late response. Verify same-Workspace ownership and pinned revisions, no leaking private Coworker memory, no automatic permission gain from Skills, and truthful Unknown/Blocked states. UI tests cover keyboard, screen reader, focus return, dirty editor, reduced motion, 200% zoom, large inventories, contextual Connect repair and no ghost chat. System tests cover real close/restart/locked/sleep states, duplicate webhook, DST and ambiguous sent Effect on each qualified OS/provider. See [UI](../implementation/UI.md) and [target data model](COWORKERS-TARGET.md).
+Test every control with: empty/loading/success/stale revision/offline/partial provider result/missing consent/cancel/failure/duplicate RequestId/late response. Verify same-Workspace ownership and pinned revisions, no leaking private Coworker memory, no automatic permission gain from Skills, and truthful Unknown/Blocked states. UI tests cover keyboard, screen reader, focus return, dirty editor, reduced motion, 200% zoom, large inventories, contextual Connect repair and no ghost chat. System tests cover real close/restart/locked/sleep states, duplicate webhook, DST and ambiguous sent Effect on each qualified OS/provider. See [UI](archive/legacy-implementation-c7e9c05/UI.md) and [target data model](COWORKERS-TARGET.md).
 
 
 ## CF19 — Coworker switches chief agent without losing native functionality

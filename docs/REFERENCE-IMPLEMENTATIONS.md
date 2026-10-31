@@ -49,7 +49,7 @@ Reviewed at commit [`4d1729af836732b46840080920912dac7d5a2935`](https://github.c
 | `.protocol-matrix/latest.md` | [Pinned matrix snapshot](https://github.com/agentclientprotocol/registry/blob/4d1729af836732b46840080920912dac7d5a2935/.protocol-matrix/latest.md) | Versioned initialize/session method observations for registry candidates | Research evidence only. The snapshot was generated 2026-10-15, does not test standard `session/cancel`, and is not LiteCowork provider or lifecycle qualification |
 | `LICENSE` | [Pinned license](https://github.com/agentclientprotocol/registry/blob/4d1729af836732b46840080920912dac7d5a2935/LICENSE) | Registry repository license | Research reference; no registry source or dependency is copied |
 
-The remote Registry is untrusted descriptive input. It cannot add or remove curated portfolio candidates, create an AgentBinding, authenticate an account, launch an executable, select a capability, or create a Conversation or Task. Treat registry redirects, origins, cache age, schema drift, duplicate identifiers, malformed records, and oversized responses as explicit validation cases. Registry observations and protocol handshakes remain distinct from module implementation and qualified support. See [E03-S06](../implementation/epics/E03.md) for the planned implementation and acceptance contract.
+The remote Registry is untrusted descriptive input. It cannot add or remove curated portfolio candidates, create an AgentBinding, authenticate an account, launch an executable, select a capability, or create a Conversation or Task. Treat registry redirects, origins, cache age, schema drift, duplicate identifiers, malformed records, and oversized responses as explicit validation cases. Registry observations and protocol handshakes remain distinct from module implementation and qualified support. See [E03-S06](archive/legacy-implementation-c7e9c05/epics/E03.md) for the planned implementation and acceptance contract.
 
 ## OpenIntelligentUI exact files
 
@@ -108,7 +108,7 @@ viability constraint and compare only the measurements that remain equivalent.
 [OpenIntelligentUI repository](https://github.com/CopilotKit/OpenIntelligentUI/tree/f6e4388b26a64b9a0714943b08a1ce622b924eec)
 and the matched renderer comparison above where both systems can run under equivalent
 conditions. Record commands, versions, raw measurements, failures, and limitations in the
-E08-S08 review packet and `implementation/CURRENT-RUN.md`; update this note with the
+E08-S08 review packet and `archive/legacy-implementation-c7e9c05/CURRENT-RUN.md`; update this note with the
 measured conclusion then. Until that evidence exists, the speed assessment above remains
 a hypothesis and the reference remains a UX/test input rather than an implementation
 dependency.
@@ -119,7 +119,7 @@ at the pinned [reviewed commit](https://github.com/CopilotKit/OpenIntelligentUI/
 and run the scenarios and metrics above against LiteCowork under matched conditions where
 possible. Finalize this comparison only after recording the measured results, commands,
 versions, failures, and limitations in the E08-S08 review packet and
-`implementation/CURRENT-RUN.md`. Until then, the assessment remains a planning hypothesis:
+`archive/legacy-implementation-c7e9c05/CURRENT-RUN.md`. Until then, the assessment remains a planning hypothesis:
 OpenIntelligentUI is likely quicker for a standalone generated-UI prototype, while
 LiteCowork's native bounded renderer is likely quicker to ship inside the existing product.
 
@@ -488,7 +488,7 @@ product below becomes a dependency or a copied implementation.
 **Standard.** Every row below was loaded from the vendor's own page on 2026-10-22 unless it
 is marked 3P (third-party) or could-not-verify. Comparison is against LiteCowork's **final**
 intended capability set (the ten V1 areas plus the cross-cutting invariants), **not**
-against current code — see the [acceptance matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
+against current code — see the [acceptance matrix](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
 for what is actually built today.
 
 ### Named-product profiles
@@ -662,3 +662,10 @@ target-only or V2. These are the real competitive risks.
 ## V1 detailed design integration — 2026-10-12
 
 The official upstream references and implementation constraints for native OpenCode commands/server/permissions and Chrome DevTools/Playwright/Chrome security are listed in V1-DESIGN-INDEX.md. Pin vendor source commit/version before relying on exact behavior. Source listing is evidence of capability to research, not that LiteCowork adapter has passed conformance.
+
+
+## ZCode and DeepSeek desktop source audit - pinned 2026-10-31
+
+A targeted source-level review of the actual desktop clients is now recorded in [DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md). Pins: ZCode `a60ba6a7e5a06742270ca605f5d2cc2766afa7e1` (`packages/desktop`, Apache-2.0 plus root NOTICE) and DeepSeek Harness `ce7073d51254c26cd63b22a60835b8f948deb447` (`apps/desktop`, MIT at root). The review distinguishes their process models, narrow native API boundaries, plugin isolation, update/quit handoff, resource transfer and test-corpus patterns from LiteCowork's Tauri + durable daemon + Core/LiteSPM ownership.
+
+The clones are local ignored research material under `litecowork/repo_take/`; neither upstream was built or tested, and no source was copied. The active LiteCowork checkout has no root LICENSE. That absence does not automatically prohibit private/internal adaptation, but exact-file provenance, dependency licenses and required notices must be reviewed and the intended redistribution posture confirmed before shipping adapted code. Do not treat this research entry as implementation approval or product qualification.

@@ -299,7 +299,7 @@ Do not override currently documented concrete API paths, IDL or contracts; exact
 8. `docs/RUNTIME-LIFECYCLE.md`, `docs/FAILURE-RECOVERY.md`, `docs/TASK-RUNTIME.md`, `docs/ENVIRONMENTS.md` — background-startup, sleep/lock/wake, checkpoint, true effect settlement.
 9. `docs/DATA-MODEL.md`, `docs/SCHEMAS.md`, `docs/EVENTS.md`, `docs/API.md`, `docs/schemas/operator-api.openapi.yaml` — typed records/commands/events and implementation conformance.
 10. `docs/FLOWS.md` — new F-C01..F-C14 with detailed actor calls and failure paths; keep existing F18/F19/F40/F41/F55/F72 and reconcile conflicts.
-11. `implementation/UI.md`, `implementation/SCOPE.md`, relevant platform/trigger/capability test plans — staged delivery and explicit proof of running code vs desired contracts.
+11. `archive/legacy-implementation-c7e9c05/UI.md`, `archive/legacy-implementation-c7e9c05/SCOPE.md`, relevant platform/trigger/capability test plans — staged delivery and explicit proof of running code vs desired contracts.
 
 **Priority sequence, without artificially shrinking the final design:**
 - **Foundation:** Conversation ownership/persistent recency, Create UX, chief/worker selection, connected-capability assignment, low-friction native auth, read-only memory retrieval, clean Workbench/chat.
@@ -377,7 +377,7 @@ Users need global `What is running?` and `Stop unattended work` controls with an
 
 The right-side Workbench is **not always open by default**. New chats start with maximum conversational width. The shell restores a prior explicit user pane preference, or opens because the user directly chose File/Artifact/Browser/Computer/Terminal/MCP App. Background tool completion alone cannot steal focus or open it.
 
-When open with no active object, Workbench uses a calm Start launcher modeled on the reviewed desktop reference: Workspace files, Browser, qualified Computer, conditional advanced Terminal, and optional Recent outputs. The panel is resizable, maximizable, closable, and becomes a full-screen sheet on narrow layouts. It is one common shell for rich outputs and interactive tools, while each surface retains its own authority, lease, freshness, and dirty-state semantics. See implementation/UI.md for the control-level contract.
+When open with no active object, Workbench uses a calm Start launcher modeled on the reviewed desktop reference: Workspace files, Browser, qualified Computer, conditional advanced Terminal, and optional Recent outputs. The panel is resizable, maximizable, closable, and becomes a full-screen sheet on narrow layouts. It is one common shell for rich outputs and interactive tools, while each surface retains its own authority, lease, freshness, and dirty-state semantics. See archive/legacy-implementation-c7e9c05/UI.md for the control-level contract.
 
 
 ## Coworker chief-agent configuration and native surface

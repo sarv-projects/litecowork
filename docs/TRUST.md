@@ -315,3 +315,8 @@ Automatic learning is allowed only for the narrow private-memory path in
 ## V1 detailed design integration — 2026-10-12
 
 CHROME-BROWSER-LLD.md clarifies consent, high-trust attach to signed-in Chrome, user/agent exclusive control epochs, site/origin grants, no cookie extraction and ambiguous external submits. Input control, observation permission and actual website action authority are three distinct checks. Browser page/model output cannot grant new scopes. Native harness parity does not excuse bypassing LiteCowork-mediated Effect/Grant policy.
+
+
+## Non-normative plugin-sandbox reference - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) identifies ZCode's Main-owned guest sandbox, application-scoped partition, strict origin/owner binding, restrictive CSP and MessagePort bridge as relevant implementation patterns for interactive content. They are not a replacement for TrustService, Grant/Approval, Environment isolation or Effect mediation. A browser partition or renderer prompt alone is not an OS sandbox or authorization proof; existing TRUST and INTERACTIVE-ARTIFACT-RUNTIME owner semantics remain unchanged.

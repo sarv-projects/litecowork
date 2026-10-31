@@ -309,7 +309,7 @@ GET  /v1/rich-presentations/{presentation_id}
 GET  /v1/conversations/{id}/usage
 GET  /v1/conversations/{id}/tasks?cursor=
 
-Implementation status (2026-10-25). Message append/list and Conversation usage
+Implementation status (reconciled 2026-10-31). Message append/list and Conversation usage
 operations are **target-only**: they are declared in OpenAPI but no handler is mounted.
 The mounted Conversation routes include create/list/get, AgentBinding mutation,
 presentation/rich-presentation/tasks, and the three turn routes below.
@@ -320,8 +320,14 @@ creation event and snapshot the same Conversation through the submitted user mes
 However, the turn route does not call this reader: the native session supervisor/dispatcher,
 agent response writer, stream producer, and Conversation usage writer are not connected.
 The package is not yet delivered to a running agent, and no live cross-agent cost total is
-available. Send remains disabled; this is a tested storage foundation, not end-to-end
-continuity.
+available. A dedicated atomic Conversation session activation storage operation now exists
+in the preserved dirty feature worktree: after exact adapter readiness, it commits ACTIVE
+AgentSession, RUNNING ConversationTurn, snapshots/events and the Runtime-local opaque
+handle binding together. Its focused storage test passed on 2026-10-31. No qualified
+supervisor calls it, no adapter prompt is dispatched, and no final AGENT response/terminal
+turn writer is connected. The full storage package suite passed before the last
+handle-redaction assertions and was not rerun afterward. Send remains fail-closed; this is
+storage-only CODE evidence, not a served or integrated Conversation path.
 ```
 
 Conversation creation requires the selected Workspace, a bounded optional title, and an

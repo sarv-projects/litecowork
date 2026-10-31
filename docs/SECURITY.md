@@ -184,3 +184,8 @@ adapter may bypass those layers.
 ## V1 detailed design integration — 2026-10-12
 
 V1 Browser/Composer/Renderer threat model: untrusted native commands, prompt-injection metadata, unsafe terminal escapes/HTML, external Chrome privileged attach, profile data and cross-Workspace Workbench leakage. See NATIVE-COMPOSER-LLD.md, CHROME-BROWSER-LLD.md and RENDERING-CONFORMANCE-LLD.md. No secret in domain event/UI; every browser/agent action checked at provider boundary; human takeover fences stale agent actions.
+
+
+## Non-normative desktop sandbox reference - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) reviews ZCode's Main-owned plugin guest sandbox and its origin/owner binding, CSP, guest permission restrictions and mediated MessagePort bridge. These are implementation patterns for defense in depth, not a replacement for this threat model or the OS-specific Environment qualification. Renderer isolation, CSP and a separate Chromium partition do not alone prove filesystem/process/network confinement; preserve the existing deny-by-default and fail-closed requirements.

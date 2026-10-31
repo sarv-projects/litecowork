@@ -2,7 +2,7 @@
 
 > **V1 artifacts are format-qualified, not uniformly editable.**
 > [Final UI contract](V1-UI-SCREEN-CONTRACT.md) and
-> [release acceptance matrix](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
+> [release acceptance matrix](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
 > require independently proved preview, edit, version, compare, export and
 > reopening per actual media/format. PDF viewer ≠ full editor; a static image,
 > markdown renderer or generated file ≠ verified office suite round-trip.

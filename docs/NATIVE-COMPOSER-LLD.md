@@ -9,7 +9,7 @@
 
 Status: NORMATIVE TARGET, not evidence of implemented Operator endpoints. Owners: E03-S01/S02/S06–S11, E08-S01/S04/S06 and E04-S06. Authority: AGENT-CONTROL, AGENT-FABRIC, TASK-RUNTIME, API, SCHEMAS, STATE-MACHINES, TRUST, EXPERIENCE. This document defines UI/local orchestration algorithms; machine endpoints/events must be promoted atomically to API/OpenAPI/Events/schema/storage and tested before serving.
 
-## Current implementation boundary (2026-10-25)
+## Current implementation boundary (reconciled 2026-10-31; source evidence dated 2026-10-31)
 
 The served Conversation submit route first commits the USER message and OPEN turn in
 one transaction. While no qualified native session supervisor is connected, a second
@@ -33,8 +33,23 @@ STARTING rows in binary `agent_session_id` order, with an exclusive `after_agent
 cursor and a 1–100 page bound. The supervisor advances to the last returned ID, repeats until
 an empty page, and starts another sweep at the beginning to discover later reservations whose
 IDs sort before the prior cursor. Expected-version LOST settlement does not alter the turn.
-These operations neither start nor activate an adapter, create a local native-handle
-binding, write an agent response, nor enable the served route.
+
+The preserved feature worktree now also contains a dedicated
+`activate_conversation_agent_session` storage operation. After the exact native adapter
+readiness handshake is observed outside SQLite, it rechecks the principal/Workspace, pinned
+turn binding, session and turn versions, endpoint offer, current Runtime incarnation,
+Workspace EXECUTOR enrollment, and eligible host. One immediate transaction commits the
+AgentSession ACTIVE state, ConversationTurn RUNNING state, corresponding snapshots/events,
+and the Runtime-local AgentSessionHostBinding. The opaque native handle is skipped by
+Serde, redacted from Debug to a presence boolean, and excluded from committed response,
+events and snapshots. Generic OPEN-to-RUNNING transition remains forbidden.
+
+This activation operation has no qualified supervisor caller. It does not launch an
+adapter, dispatch a prompt, append a final AGENT message, settle a terminal Conversation
+turn, or enable the served route. The focused storage activation test passed on 2026-10-31;
+the broader storage package suite passed before the final handle-redaction-only changes and
+was not rerun afterward. These are storage-only CODE evidence, not served/integrated/
+qualified native Send.
 
 The SQLite schema represents a Conversation-scoped AgentSession pinned to exactly one
 turn, enforces one active session per turn, and keeps opaque host/session bindings local.
@@ -254,7 +269,7 @@ These are target file responsibilities, not evidence that these files exist. No 
 - OpenCode rules/config: https://docs.opencode.ai/docs/rules/
 - Codex documentation entry: https://developers.openai.com/codex/
 - ACP protocol: https://agentclientprotocol.com/
-Version pin exact upstream API/CLI source snapshots in implementation/SOURCES.md for conformance; docs URLs are references, not guarantees across future versions.
+Version pin exact upstream API/CLI source snapshots in archive/legacy-implementation-c7e9c05/SOURCES.md for conformance; docs URLs are references, not guarantees across future versions.
 
 ## Canonical mutation transport clarification (2026-10-12 audit)
 

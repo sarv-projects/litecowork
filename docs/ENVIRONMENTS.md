@@ -131,7 +131,7 @@ process-tree fencing.
 
 Before an AgentSession or Attempt can start, the selected provider must return a
 Runtime-local, non-secret `IsolationAttestation` bound to the Environment ID, Task ID,
-Attempt/session admission, current Runtime incarnation, provider implementation/version,
+Attempt/session admission, current Runtime incarnation, provider archive/legacy-implementation-c7e9c05/version,
 OS build, and normalized isolation policy digest. It records observed enforcement for:
 
 ```text
@@ -428,3 +428,8 @@ The qualified Chrome/browser provider HLD/LLD is CHROME-BROWSER-LLD.md. Tauri We
 ## Shell/PTY Environment specialization — V1 target
 
 [Integrated Terminal LLD](V1-INTEGRATED-TERMINAL-LLD.md) refines EnvironmentProvider behavior for local PTY and Windows ConPTY, Linux/macOS PTY, WSL, controlled cwd, session incarnation, viewport stream, manual-vs-Agent Attempt ownership and control epoch. A WebView terminal cannot spawn a process directly. A stopped Runtime/PTY is LOST, not magically resumed; the existing Environment/Task/Effect Trust authority stays intact. New command routes/services are unpromoted proposals until schema and native OS qualification.
+
+
+## Non-normative desktop sandbox comparison - 2026-10-31
+
+See [DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) for the ZCode plugin guest boundary comparison. Its Chromium partition/CSP/owner checks are useful defense-in-depth for rendered interactive content, but do not prove LiteCowork's process/filesystem/network isolation. Preserve the Environment contract: exact readable/writable roots, process-tree containment, egress policy, stale-fence rejection and provider attestation must be enforced by the selected provider; a WebView, origin allowlist or Git worktree is not sufficient.

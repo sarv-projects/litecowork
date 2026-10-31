@@ -293,7 +293,7 @@ For each target function that requires a server call, assign canonical service o
 
 ## Story readiness
 
-E03 native chat/agent parity; E08 shell/render/Workbench; E07 browser/desktop; E05 delegation; E04 trust/connector; E09 automation; E10 package experience; E13 release. Each story in implementation/epics retains owner-specific acceptance. Exact class names here are recommended function ownership and intentionally do not override existing implemented names.
+E03 native chat/agent parity; E08 shell/render/Workbench; E07 browser/desktop; E05 delegation; E04 trust/connector; E09 automation; E10 package experience; E13 release. Each story in archive/legacy-implementation-c7e9c05/epics retains owner-specific acceptance. Exact class names here are recommended function ownership and intentionally do not override existing implemented names.
 
 
 ## Proposed wire promotion ledger — reviewed contract choices before code

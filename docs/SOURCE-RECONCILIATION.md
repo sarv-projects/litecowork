@@ -168,7 +168,7 @@ owner reviewed and adopted the following changes to this repository's authority 
   LiteSPM daemon contract that this repository previously had to assume. Both remain
   TARGET until their integration stories land.
 - **Changed.** The Task-first Home dashboard was archived to
-  `implementation/archive/HOME-LEGACY-UX-20261022.md` and the New Chat landing became the
+  `archive/legacy-implementation-c7e9c05/archive/HOME-LEGACY-UX-20261022.md` and the New Chat landing became the
   default first screen. The `task.created` event now treats the Coworker origin pair as
   optional both-or-neither so chat-first Tasks can be created with no Coworker at all.
 - **Deferred / post-V1.** Cloud continuation (E11) and the remote Runtime (E12) stay

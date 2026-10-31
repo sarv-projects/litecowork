@@ -523,3 +523,8 @@ remain observations until materialized with provenance.
 Disconnect/revoke fences future provider reads. Existing imported Resources retain their
 own provenance/retention/deletion policy; the World Index never treats a Connection as a
 wildcard grant to scan all mail, drives, calendars or chats.
+
+
+## External file-transfer implementation reference - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) identifies DeepSeek Harness's session-scoped file-drag path as a candidate pattern: resolve an owned resource handle, validate the local mapping and digest, enforce bounded transfer, support cancellation, clean temporary data and preserve the borrowed original. Any LiteCowork adaptation must use the exact pinned Workspace/Resource/ResourceRevision identity and the current Environment/Trust boundary; it must not pass ambient absolute paths or native file handles to an Agent. This note does not add a new file-transfer API or weaken the existing Resource ownership rules.

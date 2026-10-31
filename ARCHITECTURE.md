@@ -3,8 +3,10 @@
 **Status:** vNext target architecture. This file is the current system authority.
 Supporting documents may add detail but must not contradict it. Decision records in
 `docs/adr/` explain why a boundary exists; they do not silently amend this contract.
-The former `ARCH/` corpus is preserved locally under the ignored `archives_docs/` tree
-for historical reference only.
+
+> Implementation status note (2026-10-31): this architecture remains the normative target. Embedded source/status observations describe the historical c7e9c05 baseline before the 2026-10-30 docs-first reset. The executable snapshot is in the ignored local archive, not this checkout. Those observations do not prove code is currently present, served or qualified. Re-establish CODE/SERVED/INTEGRATED/QUALIFIED status from a recovered build.
+
+The former ARCH corpus is not present in the active docs-first checkout. The old archives_docs path does not exist. The previous source/build snapshot is locally archived under archives/legacy-codebase-c7e9c05/, and historical implementation evidence is preserved under docs/archive/legacy-implementation-c7e9c05/.
 
 ## 1. Product definition
 
@@ -113,61 +115,61 @@ user's Task.
     binding role required for that operation. SQLite's v4 schema removes the historical
     Runtime-to-Workspace column and guards Workspace-scoped Runtime tables through active
     bindings; this does not itself register or enroll a Runtime.
-15. **Host delegation is a Core-owned Attempt.** A delegated child targets a Step in an
+16. **Host delegation is a Core-owned Attempt.** A delegated child targets a Step in an
     already accepted immutable PlanRevision. Every child receives a new AgentSession,
     lease, child-scoped grant evaluation, budget admission, and verification path, plus an
     Environment attachment admitted under its sharing and isolation policy.
-16. **Worker eligibility is explicit.** Discovery, binding authorization, lead eligibility,
+17. **Worker eligibility is explicit.** Discovery, binding authorization, lead eligibility,
     and enabled DelegationProfiles are separate. No installed agent is silently exposed
     to a lead or selected as a fallback.
-17. **Authority does not flow down the delegation tree.** A child receives newly checked
+18. **Authority does not flow down the delegation tree.** A child receives newly checked
     Attempt-scoped grants. Parent grants, approvals, SecretLeases, and native tool access
     are never inherited.
-18. **Warmth is operational only.** Warm processes, sessions, Environments, browsers,
+19. **Warmth is operational only.** Warm processes, sessions, Environments, browsers,
     capabilities, and local model backends have separate owners and lifetimes. Warmth
     never stands in for Task state, authorization, fencing, or provider cache guarantees.
-19. **Coworker identity and Goals organize work.** They may supply defaults and context,
+20. **Coworker identity and Goals organize work.** They may supply defaults and context,
     but they do not own execution or issue authority. Suggestions require an explicit
     user action before they create work or reusable definitions. TASK acceptance commits
     the READY Task and terminal Suggestion together and returns a bounded receipt proving
     their Workspace-scoped link; idempotent replay returns the original commit receipt.
-20. **Unknown remains unknown.** Unknown cost, quota, progress, or provider readiness is
+21. **Unknown remains unknown.** Unknown cost, quota, progress, or provider readiness is
     never displayed or ranked as zero, exhausted, complete, or ready without evidence.
-21. **Lead failover is versioned Task policy.** A Coworker may supply a default, but each
+22. **Lead failover is versioned Task policy.** A Coworker may supply a default, but each
     TaskSpecRevision pins the effective policy. A lead change rechecks eligibility and
     creates a fresh session/handoff; it never transfers authority or rewrites Attempts.
-22. **Coworker-owned schedules pin Coworker revisions.** AutomationRevision may identify
+23. **Coworker-owned schedules pin Coworker revisions.** AutomationRevision may identify
     the Coworker defaults used to materialize an occurrence Task. Current Coworker status
     still fences new scheduled admission.
-23. **Execution provenance is Core-recorded.** A consequential Effect links one exact
+24. **Execution provenance is Core-recorded.** A consequential Effect links one exact
     CapabilityInvocation and the method used. Unknown method remains explicit; ActionBatch
     groups member Invocations but never makes their Effects transactional.
-24. **Personal context remains Resource-backed and revocable.** Core controls retrieval
+25. **Personal context remains Resource-backed and revocable.** Core controls retrieval
     eligibility and deletion of owned replicas. The accepted target is quiet,
     automatic, scoped learning with versioned candidate provenance and eligibility
     policy, not an independent model runtime. The current implementation remains
     owner-authored-only until candidate extraction/admission is qualified.
-25. **Presentation is a projection, not product truth.** Typed Operator items and transient
+26. **Presentation is a projection, not product truth.** Typed Operator items and transient
     stream frames are derived from authorized domain projections and bounded Agent output.
     They cannot create or settle domain state, carry authority, or replace persisted
     ConversationMessages, Task records, Artifacts, Approvals, Effects, or Evidence.
-26. **Conversation messages remain semantic truth.** An optional immutable `RichPresentation`
+27. **Conversation messages remain semantic truth.** An optional immutable `RichPresentation`
     may improve how a committed ConversationMessage is rendered, but no fact, citation,
     warning, deliverable, action, or system state may exist only in that presentation.
     Semantic content is committed and usable without waiting for compilation or rendering.
-27. **Presentation guidance has no authority.** Built-in `HostSkill` guidance is
+28. **Presentation guidance has no authority.** Built-in `HostSkill` guidance is
     versioned, optional, zero-authority context. It is not a LiteSPM package,
     `CapabilityRef`, grant, activation, or execution policy. Agents may propose bounded
     presentation intent; Core binds real Artifacts, Resources, citations, and system
     projections and rejects forged host-owned state.
-28. **Native Task execution requires qualified OS containment.** A working directory or
+29. **Native Task execution requires qualified OS containment.** A working directory or
     Git worktree is not a sandbox. The selected Environment provider must enforce exact
     readable/writable roots, the requested network policy, and process-tree fencing on
     the current OS/Runtime incarnation. Unknown or unsupported containment blocks native
     Agent dispatch and replacement writers; prompt rules, harness permissions, and parent
     process exit are not containment or quiescence evidence.
 
-29. **Agent distribution and configuration are modular observations, not Core branches.**
+30. **Agent distribution and configuration are modular observations, not Core branches.**
     ACP Registry metadata is discovery input only. Every supported agent is implemented by
     a versioned AgentModule whose lifecycle adapter owns install/update/auth/config
     projection and whose runtime adapter owns sessions/input/events. A time-bounded
@@ -175,7 +177,7 @@ user's Task.
     surface. Registry listing, installation, authentication, binding authorization and
     session readiness remain separate facts. Upstream agent changes update that module and
     its conformance fixtures rather than introducing brand-specific Core logic.
-30. **LiteSPM is the cross-agent package-system authority.** Connector, MCP, plugin, skill
+31. **LiteSPM is the cross-agent package-system authority.** Connector, MCP, plugin, skill
     and related capability package discovery/install/update/supervision belong to LiteSPM.
     LiteCowork owns scoped CapabilityRefs, Grants, Activations, Invocations, Effects and
     Evidence for actual use. AgentModules provide qualified bridges so one LiteSPM-managed
@@ -298,10 +300,7 @@ durability or runtime coordination.
 LiteSPM owns package ecosystem truth and lifecycle. LiteCowork owns only session-scoped
 references, grants, activations, and offers (with Task capability locks for durable
 Tasks). A listing is not trusted code, an installed
-package, an account connection, or an authorization grant. The selected LiteSPM service
-base URL is `https://litepsm.sarveshbh-2022.workers.dev/`. Its API, authentication,
-manifest, package taxonomy, and install/activation contract remain owned by LiteSPM and
-are deliberately not specified here.
+package, an account connection, or an authorization grant. The endpoint distinction is owned by [CAPABILITY-FABRIC](docs/CAPABILITY-FABRIC.md): the previously selected machine-service candidate hostname is unqualified and differs from the verified public catalog hostname. Do not treat them as aliases or claim a contracted LiteCowork API. LiteSPM owns its API, authentication, manifest, package taxonomy and install/activation contract; LiteCowork integrates only through a published and qualified local protocol.
 
 ## 5. LiteCowork Capability Gateway
 
@@ -693,10 +692,10 @@ requires the full finalized local feature coverage and production qualification.
    revocation and continuation against cloud fencing.
 
 Each numbered release gate is decomposed into one-owner-reviewable stories in
-[`implementation/ROADMAP.md`](implementation/ROADMAP.md) and
-[`implementation/backlog.json`](implementation/backlog.json). Plan assignments and test
+[archived roadmap](docs/archive/legacy-implementation-c7e9c05/ROADMAP.md) and
+[archived backlog](docs/archive/legacy-implementation-c7e9c05/backlog.json). Plan assignments and test
 IDs are not implementation evidence. Existing Flow/Benchmark IDs and machine-contract
-inventories are linked from [`implementation/COVERAGE.md`](implementation/COVERAGE.md).
+inventories are linked from [archived coverage inventory](docs/archive/legacy-implementation-c7e9c05/COVERAGE.md).
 A release gate remains open while a required provider/capability lacks real qualification;
 a fixture proves Core coordination only.
 
@@ -722,7 +721,7 @@ spikes; recommendations and decisions are distinguished in the implementation pl
 
 See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for dependency direction and
 module ownership, [`docs/TESTING.md`](docs/TESTING.md) for evidence levels, and
-[`implementation/STACK.md`](implementation/STACK.md) for stack qualification.
+[historical stack qualification record](docs/archive/legacy-implementation-c7e9c05/STACK.md) for stack qualification.
 
 ## 15. Contract map and authority
 
@@ -740,7 +739,7 @@ The source reconciliation and dispositions are recorded in
 
 This is a candidate module layout, not a set of day-one crates or an additional stack
 decision. The desktop-first Runtime/UI stack and qualification rules are specified in
-section 14 and `implementation/STACK.md`. Ship two distinct local executables: the
+section 14 and the historical stack qualification record. Ship two distinct local executables: the
 headless `litecoworkd` Runtime and the LiteCowork Operator desktop application. The Operator may launch/connect to the daemon,
 but it is not the service process. Start as one modular Runtime plus the Operator and a
 small set of domain modules. A candidate source layout is:

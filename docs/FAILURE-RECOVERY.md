@@ -206,3 +206,8 @@ Connection/auth recovery follows [Connectors & Workflows](CONNECTORS-WORKFLOWS.m
 ## V1 detailed design integration — 2026-10-12
 
 See V1-WORKFLOW-EVENT-LLD.md for cross-module retry/ambiguity table and CHROME-BROWSER-LLD.md for manual takeover epoch, form-edit invalidation and browser reconnect. Replaying agent/DOM actions blindly after uncertain external effect is forbidden. UI must retain saved draft and request identity; semantic results reproject without stream duplication.
+
+
+## Desktop Host/update recovery comparison - 2026-10-31
+
+The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) records DeepSeek Harness's admission-lock, bounded drain, post-drain task reinspection and positive Host-shutdown acknowledgement as a reference sequence. Apply the existing recovery rule here: unknown/ambiguous Effects remain unresolved, process exit is not proof of external settlement, and retry is allowed only after owner-specific reconciliation. LiteCowork's Runtime stop still lacks integrated Task/Attempt, Effect, lease and capability-host settlement; this reference does not mark that gap closed or authorize an update API.

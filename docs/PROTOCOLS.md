@@ -180,3 +180,8 @@ semantics and unknowns.
 ## V1 detailed design integration — 2026-10-12
 
 Browser/CDP and harness-native protocols must be handled through versioned adapters with faithful upstream conformance; do not force every feature through ACP if it loses native semantics. V1-DESIGN-INDEX.md catalogs official documentation URLs and qualification owners. Chrome control/session handles remain Runtime-private; App WebView never receives privileged CDP tokens.
+
+
+## External desktop IPC and guest bridge comparison - 2026-10-31
+
+See the [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) for DeepSeek's typed preload command allowlist and sender-frame checks and ZCode's host-mediated plugin MessagePort protocol. These patterns support narrow, versioned messages and explicit caller/guest ownership. They are not replacements for the Operator protocol's OS-principal authentication, capability Grant/Invocation checks, or the interactive Artifact protocol's exact run/version/sequence binding. No raw IPC, shell, filesystem or native bridge is exposed to untrusted content.

@@ -210,7 +210,7 @@ attempt.checkpointed.v1
 attempt.failure.recorded.v1
 
 agent.session.starting.v1 — claims a bounded durable STARTING reservation; it is not adapter readiness and grants no Task authority.
-agent.session.started.v1 — records adapter readiness after an atomic transition to ACTIVE; its payload/state must not include native handles.
+agent.session.started.v1 — records adapter readiness after an atomic transition to ACTIVE; for Conversation scope the same transaction moves the exact OPEN turn to RUNNING and binds the local host; payload/state must not include native handles.
 agent.session.lost.v1
 agent.session.closed.v1
 agent.binding.changed.v1
@@ -618,7 +618,7 @@ the external provider response.
 | `agent.binding.lead_eligibility.changed.v1` | AgentBinding / AgentBindingService | Workspace authorization state; no endpoint locator or credentials |
 | `agent.binding.configuration.changed.v1` | AgentBinding / AgentBindingService | Versioned non-secret configuration/default-session-option digests and declared credential slot IDs only; no SecretRefs, secret bytes, native config, or endpoint locators |
 | `agent.session.starting.v1` | AgentSession / AgentSessionStore | Conversation storage operation atomically reserves the turn-pinned eligible host, snapshot, event, and principal-scoped receipt as STARTING; no native handle and no readiness claim |
-| `agent.session.started.v1` | AgentSession / AgentSessionSupervisor | Future adapter-readiness and ACTIVE transition; first planning also transitions Task to RUNNING atomically |
+| `agent.session.started.v1` | AgentSession / AgentSessionStore (Conversation) or AgentSessionSupervisor (Task planning) | Conversation activation atomically commits ACTIVE session, RUNNING turn, both aggregate snapshots/events, and the local host binding; Task first-planning activation also transitions Task to RUNNING. Payload excludes native handles. |
 | `agent.session.lost.v1` | AgentSession / AgentSessionStore or supervisor recovery | Expected-version settlement of a stranded STARTING session; Conversation turn state remains unchanged |
 | `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
 | `delegation_profile.*.v1` | DelegationProfile / DelegationProfileService | Profile revisions/status replicate; provider-native option values remain opaque, non-secret adapter-owned values |

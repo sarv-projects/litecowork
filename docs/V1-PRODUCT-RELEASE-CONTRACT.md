@@ -3,7 +3,7 @@
 **Status:** accepted V1 TARGET; **not a claim of implementation or release qualification**.  
 **Authority:** subordinate to [Architecture](../ARCHITECTURE.md) for Core safety/ownership, and the companion to [Product Contract](PRODUCT.md) for complete desktop scope.  
 **Supersedes:** ambiguous Task-first product framing and transitional Home as the *default* UX; no Task identity, safety, evidence, or accepted ADR is revoked.  
-**Implementation truth:** [Release scope](../implementation/SCOPE.md), [qualification matrix](../implementation/QUALIFICATION-MATRIX.md), [served-route inventory](../implementation/V1-SERVED-CAPABILITY-INVENTORY.md), actual source, and CODE/SYSTEM/USER evidence.
+**Implementation truth:** [Release scope](archive/legacy-implementation-c7e9c05/SCOPE.md), [qualification matrix](archive/legacy-implementation-c7e9c05/QUALIFICATION-MATRIX.md), [served-route inventory](archive/legacy-implementation-c7e9c05/V1-SERVED-CAPABILITY-INVENTORY.md), actual source, and CODE/SYSTEM/USER evidence.
 
 ## 1. Single product promise
 
@@ -84,4 +84,4 @@ Use **TARGET_ONLY**, **CODE_IMPLEMENTED**, **SERVED**, **INTEGRATION_PROVEN**, *
 
 Gate order inside V1: (A) real native Conversation; (B) one verified durable Task; (C) LiteSPM observe/adopt/install + scoped use; (D) Coworker/Workbench/files/artifacts; (E) heterogeneous delegation and learning; (F) local automation and recovery; (G) platform/security/performance/backup and real-user release matrix. Independent qualifying tracks may overlap; no later gate makes an unproven earlier operation true.
 
-**No amount of documentation or compile-only tests replaces production proof.** See [acceptance crosswalk](../implementation/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+**No amount of documentation or compile-only tests replaces production proof.** See [acceptance crosswalk](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md).

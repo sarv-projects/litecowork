@@ -1,4 +1,5 @@
 # Implementation Architecture
+**Status after the 2026-10-30 docs-first reset:** this document is a TARGET architecture and proposed source-layout map, not a claim that these directories/files exist in the active checkout. The executable source snapshot is preserved in the ignored local `archives/legacy-codebase-c7e9c05/` tree. Recover a selected slice into a clean worktree and revalidate its exact revision/state before implementation. Current repository status is in [CURRENT-RUN](../CURRENT-RUN.md) and the [Repository Documentation Audit](REPOSITORY-DOCUMENTATION-AUDIT.md).
 
 ## Repository shape
 
@@ -118,7 +119,7 @@ hardware/workload baselines; do not guess them.
 The contract-level release order is **desktop/local V1 first; cloud continuation and
 remote Runtime post-V1**. The detailed Agile stories, stack qualification, provider research,
 RAG, UI acceptance, real-work tests and release gates are in
-[`../implementation/README.md`](../implementation/README.md). The current authority is
+[`archive/legacy-implementation-c7e9c05/README.md`](archive/legacy-implementation-c7e9c05/README.md). The current authority is
 still this document plus `ARCHITECTURE.md` and each domain contract; a backlog summary
 never overrides them.
 

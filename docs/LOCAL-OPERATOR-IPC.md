@@ -423,3 +423,8 @@ adapter-declared native flow instead.
 
 Windows named-pipe support must demonstrate the same no-fallback peer-authentication and
 secret-buffer behavior before this path is enabled there.
+
+
+## Non-normative desktop IPC comparison - 2026-10-31
+
+[DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) records DeepSeek Harness's typed, narrow desktop API and sender-frame ownership checks as a reference pattern. Its Electron `assertDesktopSender` implementation is not a substitute for this document's Tauri/OS-principal peer authentication. Reuse only the principle of explicit command allowlists, request schemas, caller ownership and secret-free WebView APIs. This document and `API.md` remain the transport and operation authorities.

@@ -881,9 +881,10 @@ function submit_conversation_turn(draft, surface_selection, idempotency_key):
       input/resource refs
     invoke native adapter outside the SQLite transaction
     after the supervisor observes exact SESSION_READY:
-      revalidate host, Runtime incarnation, binding, and turn version
+      revalidate host, Runtime incarnation, pinned binding, and turn version
       atomically set session ACTIVE and turn RUNNING
       attach the current session id and append readiness/status events
+      store the opaque native handle only in the Runtime-local host binding
     on setup drift or startup failure:
       settle the turn with a typed failure
       preserve the user's draft and committed message
@@ -898,11 +899,14 @@ it is checked against the freshly resolved selection.
 Disabling an AgentBinding blocks new Conversation sessions and new Task planning or
 Attempt sessions from using it. Existing Conversation and Task sessions remain pinned
 to their admitted binding and continue under their normal lifecycle, lease, and Effect
-rules. A committed `STARTING` Task-planning reservation is already admitted; a later
-disable or lead-eligibility change does not prevent that exact pinned session from
+rules. A committed `STARTING` Conversation reservation is already admitted; a later
+disable or selector change does not reroute that turn or prevent activation of its exact
+pinned session while its endpoint, Runtime incarnation, Workspace enrollment, and host
+readiness checks still pass. Task-planning reservations follow the same admission rule:
+a later disable or lead-eligibility change does not prevent that exact pinned session from
 activating if its Task state, active Runtime enrollment for the Task's Workspace, host,
 endpoint, and incarnation checks still pass. The activation transaction verifies the
-Task's Workspace identity and active Runtime enrollment. Workspace archival is serialized
+Workspace identity and active Runtime enrollment. Workspace archival is serialized
 against admission and blocked while the Task or AgentSession remains unsettled. Disabling
 is an admission control; it does not cancel or stop work already in progress. A later Task
 step that needs a new session may be unable to proceed until the Task's agent setup is
@@ -1156,7 +1160,7 @@ These are named gates, not assumptions:
    launch-critical agent require a version matrix of install, update, auth, model/session
    options, `/`, `@`, native resources, extensions, stop/quiescence, and config drift. The
    agent roster and each entry's proposed adapter path are recorded in
-   [`implementation/AGENT-PORTFOLIO-2026-10-21.md`](../implementation/AGENT-PORTFOLIO-2026-10-21.md).
+   [`archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md`](archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md).
 4. **SecretStore UX:** OS keychain behavior on Windows/Linux, zeroization boundary,
    crash/log leakage tests, and migration/backup behavior of SecretRefs.
 5. **Native command discovery:** determine which agents expose a machine-readable command
@@ -1268,7 +1272,7 @@ The agent surface has **two axes**, and a Task may use either.
 - **Axis A — local harness module.** LiteCowork launches a versioned local binary
   (`AgentModule` + `AgentControlDescriptor`), owns the session, and owns the workspace. The
   roster in
-  [`implementation/AGENT-PORTFOLIO-2026-10-21.md`](../implementation/AGENT-PORTFOLIO-2026-10-21.md)
+  [`archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md`](archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md)
   covers this axis.
 - **Axis B — hosted agent provider.** The owner connects a provider account, and the
   provider runs the agent **in the provider's own environment**. LiteCowork never launches

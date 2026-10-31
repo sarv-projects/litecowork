@@ -233,7 +233,7 @@ Normative targets:
 
 ## V1 detailed design integration — 2026-10-12
 
-Use V1-DESIGN-INDEX.md and implementation/V1-DESIGN-COVERAGE.md to distinguish current code gaps from target competitor parity: native / @ and session/model semantics; managed Chrome and optional explicit existing-session attach; verified work/cowork and rendering. Claims require an exact-date vendor source and own real feature tests; do not infer account availability or planned V1 parity from a marketing screenshot.
+Use V1-DESIGN-INDEX.md and archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md to distinguish current code gaps from target competitor parity: native / @ and session/model semantics; managed Chrome and optional explicit existing-session attach; verified work/cowork and rendering. Claims require an exact-date vendor source and own real feature tests; do not infer account availability or planned V1 parity from a marketing screenshot.
 
 ## 2026-10-14 Manus 2.0 and local UI comparison
 
@@ -274,7 +274,7 @@ that a Task is running. Automation definitions can include schedules, but the de
 Runtime does not yet host or execute recurring schedules. The UI uses a light color scheme
 and its navigation is mostly ungrouped, although Settings is grouped under Manage; the
 browser harness shows card surfaces, so “flat” would overstate the visual evidence. These
-screenshots are not packaged Tauri acceptance evidence. See `implementation/UI.md` and
+screenshots are not packaged Tauri acceptance evidence. See `archive/legacy-implementation-c7e9c05/UI.md` and
 `docs/EXPERIENCE.md` for the product target.
 
 Priority from this comparison: first complete native Conversation/Task execution and
@@ -318,7 +318,7 @@ projects, and schedule/event-triggered Automations with run review ([Manus Deskt
    action. The same composer should support quick questions and requests for larger work;
    selecting a Coworker should remain optional. This requires a real, qualified native
    Conversation turn and must not be faked with a saved Task or simulated response
-   ([E03-S02](../implementation/epics/E03.md), [Native Composer LLD](NATIVE-COMPOSER-LLD.md)).
+   ([E03-S02](archive/legacy-implementation-c7e9c05/epics/E03.md), [Native Composer LLD](NATIVE-COMPOSER-LLD.md)).
 2. **Visible progress and steerable work.** A user should see what was accepted, what is
    running, where it is waiting for them, and what failed, then resume from durable state.
    Task/Attempt, approval, stop, retry, and recovery states must come from Core and the
