@@ -1,0 +1,62 @@
+feature_id: "002"
+status: "DRAFT"
+nodes:
+  - id: "ui"
+    owner: Desktop UI
+    kind: component
+  - id: "operator"
+    owner: authenticated Operator
+    kind: service
+  - id: "owner"
+    owner: domain owner service
+    kind: service
+  - id: "storage"
+    owner: Storage
+    kind: store
+  - id: "native"
+    owner: native AgentLifecycleAdapter
+    kind: external
+edges:
+  - id: "e-ui-op"
+    from: "ui"
+    to: "operator"
+    kind: command
+  - id: "e-op-owner"
+    from: "operator"
+    to: "owner"
+    kind: request
+  - id: "e-owner-storage"
+    from: "owner"
+    to: "storage"
+    kind: transaction
+  - id: "e-storage-ui"
+    from: "storage"
+    to: "ui"
+    kind: projection
+  - id: "e-owner-native"
+    from: "owner"
+    to: "native"
+    kind: probe
+  - id: "e-native-owner"
+    from: "native"
+    to: "owner"
+    kind: observation
+transactions:
+  - id: "tx-observation"
+    owner: Agent Runtime
+    atomic_records: ["installation_observation"]
+    external_calls_inside: false
+  - id: "tx-binding"
+    owner: AgentBindingService
+    atomic_records: ["agent_binding"]
+    external_calls_inside: false
+external_boundaries:
+  - id: "outside-sqlite"
+    owner: domain owner
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
+recovery:
+  owner: domain owner
+  source_of_truth: durable-owner-records
+  restart_action: reload-last-commit-and-reconcile

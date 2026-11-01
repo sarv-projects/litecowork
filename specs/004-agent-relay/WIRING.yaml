@@ -1,0 +1,65 @@
+feature_id: "004"
+status: "DRAFT"
+nodes:
+  - id: "ui"
+    owner: Desktop UI
+    kind: component
+  - id: "operator"
+    owner: authenticated Operator
+    kind: service
+  - id: "owner"
+    owner: domain owner service
+    kind: service
+  - id: "storage"
+    owner: Storage
+    kind: store
+  - id: "harness_a"
+    owner: Agent A adapter
+    kind: external
+  - id: "harness_b"
+    owner: Agent B adapter
+    kind: external
+edges:
+  - id: "e-ui-op"
+    from: "ui"
+    to: "operator"
+    kind: command
+  - id: "e-op-owner"
+    from: "operator"
+    to: "owner"
+    kind: request
+  - id: "e-owner-storage"
+    from: "owner"
+    to: "storage"
+    kind: transaction
+  - id: "e-storage-ui"
+    from: "storage"
+    to: "ui"
+    kind: projection
+  - id: "e-owner-a"
+    from: "owner"
+    to: "harness_a"
+    kind: turn
+  - id: "e-owner-b"
+    from: "owner"
+    to: "harness_b"
+    kind: turn
+transactions:
+  - id: "tx-export"
+    owner: Conversation
+    atomic_records: ["portable_context_package"]
+    external_calls_inside: false
+  - id: "tx-turn"
+    owner: Conversation
+    atomic_records: ["conversation_turn"]
+    external_calls_inside: false
+external_boundaries:
+  - id: "outside-sqlite"
+    owner: domain owner
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
+recovery:
+  owner: domain owner
+  source_of_truth: durable-owner-records
+  restart_action: reload-last-commit-and-reconcile

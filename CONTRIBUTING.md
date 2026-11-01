@@ -17,7 +17,9 @@ vertical workflow before adding broad providers or additional runtime roles.
 For every material feature or cross-domain change, follow
 [docs/SPECIFICATION-STANDARD.md](docs/SPECIFICATION-STANDARD.md) and its package
 templates under .specify/. Create or update a complete package under specs/ with
-SPEC, PLAN, TASKS, DATA-MODEL, RESEARCH, WIRING and feature contract links.
+SPEC, PLAN, TASKS, DATA-MODEL, RESEARCH, WIRING, `contracts/ui-behavior.md`, and feature contract links.
+
+Navigate the full active corpus (every indexed file, line counts): [docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md](docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md). Master delivery tasks: [docs/LITECOWORK-BUILD-TASKS.md](docs/LITECOWORK-BUILD-TASKS.md). Crosswalk: [docs/SPEC-TASK-TRACEABILITY.md](docs/SPEC-TASK-TRACEABILITY.md).
 
 1. Identify the owner from the coverage matrix and read the complete authority chain:
    architecture, product/release, domain owner, accepted ADR, machine schema and

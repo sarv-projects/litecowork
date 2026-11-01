@@ -1,0 +1,62 @@
+feature_id: "005"
+status: "DRAFT"
+nodes:
+  - id: "ui"
+    owner: Desktop UI
+    kind: component
+  - id: "operator"
+    owner: authenticated Operator
+    kind: service
+  - id: "owner"
+    owner: domain owner service
+    kind: service
+  - id: "storage"
+    owner: Storage
+    kind: store
+  - id: "env"
+    owner: Environment provider
+    kind: external
+edges:
+  - id: "e-ui-op"
+    from: "ui"
+    to: "operator"
+    kind: command
+  - id: "e-op-owner"
+    from: "operator"
+    to: "owner"
+    kind: request
+  - id: "e-owner-storage"
+    from: "owner"
+    to: "storage"
+    kind: transaction
+  - id: "e-storage-ui"
+    from: "storage"
+    to: "ui"
+    kind: projection
+  - id: "e-owner-env"
+    from: "owner"
+    to: "env"
+    kind: effect
+  - id: "e-env-owner"
+    from: "env"
+    to: "owner"
+    kind: result
+transactions:
+  - id: "tx-task"
+    owner: TaskService
+    atomic_records: ["task","task_spec_revision"]
+    external_calls_inside: false
+  - id: "tx-attempt"
+    owner: Task Runtime
+    atomic_records: ["attempt","lease","grant","idempotency_receipt"]
+    external_calls_inside: false
+external_boundaries:
+  - id: "outside-sqlite"
+    owner: domain owner
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
+recovery:
+  owner: domain owner
+  source_of_truth: durable-owner-records
+  restart_action: reload-last-commit-and-reconcile

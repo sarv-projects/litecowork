@@ -91,7 +91,7 @@ The preserved storage-sqlite package suite previously passed 593 unit tests plus
 | B-03 | Exact readiness handshake that proves session identity and prompt-send ability? | Agent Runtime | Supervisor |
 | B-04 | Exact atomic storage operation to append final AGENT message and settle terminal turn? | Storage/Conversation | Response persistence |
 | B-05 | Does first adapter support resumable event sequence or must gaps discard transient output? | Agent Runtime | Streaming |
-| B-07 | What user-reviewable context reduction is approved when the 4 MiB context package exceeds 256 KiB adapter request bound? | Product/Agent Runtime | Context dispatch |
+| B-07 | What user-reviewable reduction is approved when a pinned harness budget is smaller than the 4 MiB / 1,024-message ConversationContextPackage? | Product/Agent Runtime | Context dispatch |
 | B-08 | Exact attachment/resource materialization for first adapter? | Resource/Agent Runtime | Attachments |
 | B-09 | Process ownership, lifecycle and idle shutdown for first harness? | Agent Runtime/OS | Host supervisor |
 | B-10 | Usage/cost attribution when leaf provider usage is opaque or absent? | Usage/Conversation | Usage claims |
@@ -238,7 +238,7 @@ Use the existing ConversationContextPackage builder:
 - max 1,024 messages / 4 MiB before materialization;
 - ResourceRefs only; every reference reauthorized at dispatch.
 
-Observed Codex/OpenCode transports bound a single prompt/context request to 256 KiB. The 4 MiB storage package is not the adapter request budget. The first provider must fail clearly or use an explicitly user-reviewed reduction; silent truncation is forbidden.
+SCHEMAS.md caps ConversationContextPackage at 1,024 messages and 4 MiB. API.md caps a UserRequest detail prompt at 256 KiB. That 256 KiB figure is not the adapter request budget. CONVERSATION_CONTEXT_LIMIT_EXCEEDED is named in SCHEMAS.md and is absent from the 131-code error registry, so it is not a promotable error until the schema and SCHEMAS.md change together. Silent truncation is forbidden. Any smaller harness budget is a pinned provider observation, not this package inventing 256 KiB as the product limit.
 
 ### 7.6 Presentation
 
@@ -267,7 +267,7 @@ See [errors-recovery.md](contracts/errors-recovery.md). Global rules: external u
 - No hidden global router or silent fallback.
 - Qualification is pinned to OS/build/harness/version/adapter/auth mode and exact capability descriptor.
 - Readiness, process shutdown, event frame, buffer, queue, concurrency and retry deadlines must be finite; exact initial values are blocking.
-- Product context limit is 1,024 messages / 4 MiB; observed harness prompt transport max is 256 KiB. Change limits only through owner contracts and tests.
+- Product context limit is 1,024 messages / 4 MiB. The 256 KiB figure is the UserRequest detail prompt cap in API.md, not the adapter budget. Change limits only through owner contracts and tests.
 - Model, reasoning effort and native command catalog remain harness-owned; Core keeps only approved non-secret selections/digests.
 - UI/API eligibility stays false until complete route qualification.
 - Existing activation feature does not automatically require a schema migration; final-result persistence may. Add a forward-only migration only when approved.
@@ -295,7 +295,7 @@ Record safe correlation IDs for request, Workspace, Conversation, turn, retry, s
 - AC-015 IF pinned adapter is missing, expired, unauthenticated or fails startup, THEN THE SYSTEM SHALL preserve the USER message, report typed failure and SHALL NOT fall back. Verify: failure matrix.
 - AC-016 WHILE supervisor/result writer/route qualification is incomplete, THE SYSTEM SHALL keep Send fail-closed and SHALL NOT claim end-to-end support. Verify: route/UI negative.
 - AC-017 WHEN an authenticated owner answers a valid Conversation-scoped UserRequest for the exact turn in WAITING_USER, THE SYSTEM SHALL atomically persist the immutable UserRequestResponse and move that turn to WAITING_DEPENDENCY before enqueueing continuation, without creating Task, Attempt, PlanRevision or Coworker authority. Verify: response transaction and stale/replay tests.
-- AC-018 WHEN a Conversation-scoped UserRequest represents provider INPUT_REQUIRED, THE SYSTEM SHALL correlate the response to the exact Runtime-local provider input key; an update acknowledgement alone SHALL NOT count as acceptance, and for MCP the Runtime SHALL poll the same provider task until that exact key resolves or the provider reaches a terminal state. THE SYSTEM SHALL NOT create a fresh AgentSession or restore RUNNING until provider acceptance and fresh session readiness are confirmed. Verify: exact-key provider fixture, replay and timeout integration tests.
+- AC-018 WHEN a Conversation-scoped UserRequest represents provider INPUT_REQUIRED, THE SYSTEM SHALL correlate the response to the exact Runtime-local provider input key; an update acknowledgement alone SHALL NOT count as acceptance, and for MCP the Runtime SHALL poll the same provider task until that exact key resolves or the provider reaches a terminal state. Acceptance of that response SHALL allow a new Conversation-scoped AgentSession reserved STARTING. THE SYSTEM SHALL commit RUNNING only after readiness, in the same agent.session.started.v1 transition that moves the turn from OPEN to RUNNING. THE SYSTEM SHALL NOT treat readiness as a precondition for creating the STARTING reservation that the handshake proves. Verify: exact-key provider fixture, replay and timeout integration tests.
 - AC-019 IF the provider rejects the input but remains INPUT_REQUIRED, THE SYSTEM SHALL close the old UserRequest, create a new request for the current provider key and return the exact turn to WAITING_USER; IF acceptance is ambiguous, THE SYSTEM SHALL keep the turn WAITING_DEPENDENCY and prohibit a new AgentSession until reconciliation. Verify: reject, ambiguity and recovery tests.
 
 ## 13. Executable acceptance command
@@ -326,7 +326,7 @@ Do not execute native prompts, install/update/remove software, access/change use
 | O-02 | Handshake can correlate stable session ID, host and incarnation. | Not specified in current adapter API. | Agent Runtime | B-03 |
 | O-03 | A single-flight policy exists per Conversation. | Confirm reject versus bounded queue. | Conversation/Product | B-01 |
 | O-04 | Final message and terminal turn can share one transaction. | Current write port missing. | Storage | B-04 |
-| O-05 | 4 MiB product context exceeds 256 KiB transport bound. | Existing observed transport constants. | Product/Agent Runtime | B-07 |
+| O-05 | A pinned harness may accept less than the 4 MiB / 1,024-message package. | 256 KiB in API.md is the UserRequest detail prompt cap, not the adapter budget. | Product/Agent Runtime | B-07 |
 | O-06 | First adapter can report ordered bounded output/final/stop events. | Need pinned provider fixture. | Agent Runtime | B-05 |
 | O-07 | Attachment/resource transfer is provider-specific. | Package exposes ResourceRefs only. | Resource/Agent Runtime | B-08 |
 | O-08 | Native usage may be opaque/unknown. | No fabricated cost. | Usage | B-10 |

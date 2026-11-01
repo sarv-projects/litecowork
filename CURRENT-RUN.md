@@ -184,3 +184,128 @@ All commands were run from /mnt/c/Users/Sonali/Desktop/projectwork/business_Dev/
 - Final main checkout: `main` at `c7e9c05ab09563a554515bdd7e0e7d86c99fffa0`; 860 status entries (796 deletions, 48 modifications, 16 untracked), **zero staged**. No commit/push.
 - Feature worktree remains `feature/conversation-session-supervisor` at `3052341473e964bececf7f34c9d45923848e5218`, with 19 pre-existing dirty entries; it was not edited or reset. `git worktree list --porcelain` shows exactly two valid, non-prunable worktrees.
 - ZCode and DeepSeek Harness clones remain at their pinned commits, clean and ignored under `repo_take/`. Upstream tests, LiteCowork builds and product E2E remain unrun; this is documentation/research validation only.
+
+## 17. Competitor viability, build TASKS, settings audit, and reference index — 2026-11-01
+
+- Added master delivery checklist [docs/LITECOWORK-BUILD-TASKS.md](docs/LITECOWORK-BUILD-TASKS.md) (BT-0.1 through BT-12.3) linked to SDD register, IMPLEMENTATION-MASTER-PLAN phases, and USER test catalog.
+- Added [docs/COMPETITOR-PROMOTED-USE-CASES.md](docs/COMPETITOR-PROMOTED-USE-CASES.md) (UC-* IDs) from Grok, Dots, Claude, ChatGPT Work/Plus, Kimi, Muse, OpenWork, OpenCowork, OpenDot, AionUi, and reference-desktop themes.
+- Added [docs/VIABILITY-VS-COMPETITORS.md](docs/VIABILITY-VS-COMPETITORS.md) with TARGET/PARTIAL/DEFER-V2/RESEARCH/NO verdicts and RV-* research gates; cloud-while-laptop-off explicitly out of local V1 parity.
+- Added [docs/SETTINGS-AND-SHELL-SURFACE-AUDIT.md](docs/SETTINGS-AND-SHELL-SURFACE-AUDIT.md): confirms **187** settings controls + shell surfaces documented; handlers mostly TARGET until source recovery.
+- Added [docs/SEMANTIC-SERVED-UI-MAP.md](docs/SEMANTIC-SERVED-UI-MAP.md) (IN PROGRESS) to close semantic served-handler ↔ UI alignment; exit criteria BT-0.4.
+- Added [docs/REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md](docs/REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md) for ZCode, DSH, AionUi, OpenDot core paths; complements DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.
+- Extended [docs/COMPETITIVE-RESEARCH.md](docs/COMPETITIVE-RESEARCH.md) primary rivals index, OpenDot (`athulsreekumar/opendot` @ `ec75891…`), ChatGPT Plus vs Work boundary, name-collision table.
+- Updated [docs/README.md](docs/README.md) navigation for all new indexes.
+- `python3 .specify/scripts/validate_feature_package.py` — PASS (11 packages as of §19).
+- Superseded by §19: SDD 002–011 are now DRAFT packages; settings/shell rows exist as TARGET/LOCAL_ONLY/NATIVE.
+
+## 18. Complete active corpus inventory and traceability — 2026-11-01 (continuation)
+
+- Added [docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md](docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md): **187 active files / 80,357 lines** (root, docs excl. archive, docs/schemas, specs, `.specify`); §4 records honest read posture (not claiming line-by-line reread of archive or every upstream blob).
+- Added [docs/SPEC-TASK-TRACEABILITY.md](docs/SPEC-TASK-TRACEABILITY.md): BT-* ↔ 001-T* ↔ UC-* ↔ AC-* plus full 001 file manifest.
+- Extended `.specify/scripts/validate_feature_package.py` **REQUIRED** list to include `contracts/ui-behavior.md` (matches SPECIFICATION-STANDARD and `.specify/README.md`).
+- Updated [docs/README.md](docs/README.md), [specs/README.md](specs/README.md), [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) navigation to the inventory and traceability docs.
+- `python3 .specify/scripts/validate_feature_package.py specs/001-conversation-session-supervisor` — run in this continuation (see §7 update below).
+- Superseded by §19 for SDD packages, semantic rows and the contradiction register. Archive line-by-line reread and owner lock remain open.
+
+## 19. Real SDD packages 002–011, semantic baseline, contradiction register — 2026-11-01
+
+- Authored full DRAFT packages `specs/002` through `specs/011` (README, SPEC, PLAN, TASKS, DATA-MODEL, RESEARCH, WIRING.yaml, contracts/api-events.md, errors-recovery.md, ui-behavior.md). Each SPEC keeps **Status: DRAFT**, names blockers B-11–B-29, and inherits owner invariants (no model router, root overlap and private locators, relay is not Task delegation, worktree is not a sandbox, tokens stay in SecretStore, WebView is not Chrome, Coworkers optional, exactly-one occurrence, unserved settings stay disabled).
+- `python3 .specify/scripts/validate_feature_package.py` — **PASS: 11 feature packages.** Structural only. Not owner acceptance.
+- [docs/V1-FEATURE-SDD-REGISTER.md](docs/V1-FEATURE-SDD-REGISTER.md), [specs/README.md](specs/README.md), [docs/SPEC-TASK-TRACEABILITY.md](docs/SPEC-TASK-TRACEABILITY.md) updated.
+- [docs/SEMANTIC-SERVED-UI-MAP.md](docs/SEMANTIC-SERVED-UI-MAP.md): **187** settings rows and **36** shell rows. LOCAL_ONLY 8, NATIVE 26, TARGET 153 for settings; shell rows TARGET. No operationId marked SERVED.
+- [docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md](docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md): resolved items from the reset plus open blockers. Does **not** claim a line-by-line reread of the ~120k active+archive lines.
+- **Still open:** owner lock of every DRAFT; GA choices B-11–B-29; served operationIds after source recovery; archive line-by-line reread; implementation remains frozen.
+
+## 20. Owner-doc line reads applied to the specs — 2026-11-01
+
+Full reads completed and applied (line counts are the files' lengths):
+
+- AGENT-CONTROL 1313, AGENT-FABRIC 496, AGENT-ACCOUNT-ROUTE-MATRIX 105, V1-AGENT-DISCOVERY-AND-CATALOG-LLD 114, NATIVE-COMPOSER-LLD 297
+- WORLD-RESOURCES 530, CONTEXT 247, TASK-RUNTIME 760, ENVIRONMENTS 435, DELEGATION 882
+- CONNECTORS-WORKFLOWS 907, CAPABILITY-FABRIC 427, CAPABILITY-INVOCATIONS 467, NETWORK-SECURITY 312, ARTIFACTS-EVIDENCE 366, PRESENTATION-RUNTIME 533, INTERACTIVE-ARTIFACT-RUNTIME 135, CHROME-BROWSER-LLD 181, V1-INTEGRATED-TERMINAL-LLD 131, RUNTIME-LIFECYCLE 594, LOCAL-OPERATOR-IPC 430, AUTOMATION 668, ROUTINES 224, COWORKERS-TARGET 444, LEARNING 770, RESPONSIBILITIES 488
+- API 2388, EVENTS 926, STATE-MACHINES 1427, FAILURE-RECOVERY 213, FLOWS 4495, SCHEMAS 1627
+
+Corrections landed in specs 001–011 and in [docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md](docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md). `python3 .specify/scripts/validate_feature_package.py` — PASS, 11 packages. The remaining docs outside that list are covered by §21.
+
+## 21. Full non-archive docs read — 2026-11-01
+
+Every file under `docs/` except `docs/archive/` was read: **163 files, 77,629 lines**, including markdown, JSON schemas, OpenAPI, and `sqlite-v1.sql` through `sqlite-v28.sql`.
+
+Cross-check results applied:
+
+- Spec 001 §10 no longer calls 256 KiB the harness transport maximum.
+- Spec 010 cites `runAutomationNow` and `settleAutomationTriggers`.
+- Spec 003 marks both `addWorkspaceRoot` and `updateWorkspaceRoot` target-only.
+- Spec 006 keeps owner `Connection.status` `REVOKED` and records that OpenAPI omits it.
+- Spec 011 separates incarnation `recovery_state`, lifecycle-view availability, and the narrower `runtime.availability.changed.v1` enum.
+- `WORLD-RESOURCES.md` and `STORAGE.md` startup identity failure now follow STATE-MACHINES: ACTIVE becomes UNAVAILABLE, PAUSED stays PAUSED, REVOKED is not reopened.
+- Coverage, viability RV-02, and the semantic-map inventory row were brought in line with packages 001–011.
+
+Verified again: 229 operationIds, 148 event types, 131 error codes. `CONVERSATION_CONTEXT_LIMIT_EXCEEDED` is still named in SCHEMAS.md and absent from the 131-code registry. `python3 .specify/scripts/validate_feature_package.py` remains the structural check for the packages.
+
+## 22. V1 first-release agent matrix and UI render gate — 2026-11-01
+
+**Status:** planning only. Nothing in this section is QUALIFIED, SERVED, or owner-locked. No adapter code exists in the active docs-first checkout.
+
+### Target agent set (14)
+
+Removed from an earlier draft list: **Gemini Code Assist**, **JetBrains AI** (not in this first-release set).
+
+| # | Agent | Role in LiteCowork |
+|---:|---|---|
+| 1 | Claude Code | Native harness (primary worldwide usage) |
+| 2 | GitHub Copilot | **Copilot CLI / agent session** only — not IDE inline ghost completions as chat |
+| 3 | OpenAI Codex | Native harness |
+| 4 | Cursor | **`agent` CLI** (`stream-json` or ACP) — not embedding the Cursor IDE |
+| 5 | Google Antigravity | Native harness when a structured transcript exists |
+| 6 | OpenCode | Native harness |
+| 7 | Windsurf | Only if a structured transcript exists — not scraping the Windsurf IDE |
+| 8 | Cline | **ACP** (`cline --acp`) or equivalent — not embedding the VS Code panel |
+| 9 | Kimi Code | CLI (`stream-json` for integration; not the `•` plain transcript as canonical wire) |
+| 10 | Pi | CLI JSON mode |
+| 11 | omp.sh (Oh My Pi) | Pi-family harness; same rules as Pi |
+| 12 | Zcode | Reference desktop only until a **session stream adapter** is qualified — do not redraw Zcode’s window inside LiteCowork chat |
+| 13 | Command Code | Gateway agent — **no UI until NDJSON event schema is pinned** |
+| 14 | Mistral Vibe CLI | CLI JSON / streaming / ACP |
+
+**Suggested qualification order (product, not locked):** (1) Claude Code, (2) GitHub Copilot CLI, (3) Codex — then OpenCode for BYOA breadth; any two of the first three suffice for A→B→A relay (SDD 004).
+
+**Usage basis (external, not LiteCowork evidence):** [Stack Overflow Developer Survey 2026 — coding agents](https://survey.stackoverflow.co/2026/ai/data/ai-code-agent) (fieldwork Jun–Aug 2026); [JetBrains Developer Ecosystem 2026 — AI coding agents at work](https://blog.jetbrains.com/research/2026/08/ai-coding-agent-adoption-2026/) (May–Jul 2026).
+
+### UI output rule (must not be faked)
+
+LiteCowork chat shows **committed semantic markdown** plus **separate activity rows** for tools, approvals, and errors. Diffs and terminals belong in the Workbench, not as raw ANSI or another product’s TUI pasted into bubbles.
+
+Authoritative render contract: [PRESENTATION-RUNTIME.md](docs/PRESENTATION-RUNTIME.md), [RICH-RESPONSE.md](docs/RICH-RESPONSE.md) (desktop currently renders **TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE** only; other block kinds fall back to semantic text — not nonsense rich widgets).
+
+| Render posture | Agents |
+|---|---|
+| **Ready to design** (known structured wire: text + tool events) | Claude Code, Copilot CLI, Codex, Cursor CLI, OpenCode, Cline (ACP), Kimi Code (`stream-json`), Pi, Mistral Vibe CLI |
+| **Not ready — honest unavailable / no chat transcript** | Google Antigravity, Windsurf (no confirmed headless transcript in this plan), Command Code (unpinned gateway protocol), omp.sh (confirm JSON mode before claiming ready), Zcode (adapter + mapping not qualified) |
+| **Never fake** | Capturing Antigravity/Windsurf/Cursor **IDE windows**, omp **fullscreen TUI**, Command Code **guessed** parsers, or Zcode **composer UI** as if it were LiteCowork semantic history |
+
+Route/auth rules still apply per [AGENT-ACCOUNT-ROUTE-MATRIX.md](docs/AGENT-ACCOUNT-ROUTE-MATRIX.md) (no subscription cookie pooling, separate Claude Code binary vs SDK routes, SIWC terms, etc.).
+
+### Done (documentation)
+
+- [x] First-release **14-agent** list agreed in planning (this section).
+- [x] Per-agent **render vs fake** classification (table above).
+- [x] Cross-link to presentation and route owner docs.
+- [x] SDD **002** DRAFT covers install/auth/binding generically; **001** covers Conversation send/stream once a harness is qualified.
+
+### Not done (implementation and owner gates)
+
+- [ ] Owner lock on **B-02 / B-11** (first GA harness(es) and matrix scope).
+- [ ] **AgentModule + AgentAdapter** per agent with pinned stream schema and conformance fixtures.
+- [ ] **QUALIFIED** evidence (CODE + SYSTEM + USER) for any agent on a native desktop OS — WSL2 is not proof.
+- [ ] Per-agent **presentation normalization tests** (semantic answer survives; tool rows; no TUI leakage).
+- [ ] Promoted machine contracts where needed (e.g. Connection `REVOKED` in OpenAPI vs CONNECTORS-WORKFLOWS — see [CONTRADICTION-AND-ALIGNMENT-REGISTER.md](docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md)).
+- [ ] **Command Code** and **omp.sh** event contracts in `specs/002` or adapter contracts — not authored.
+
+### Explicitly not claimed
+
+- No agent is “working in LiteCowork” on the active tree.
+- Listing an agent here does **not** add it to the historical 25-entry archive roster in [AGENT-FABRIC.md](docs/AGENT-FABRIC.md); that archive list is unchanged.
+- Popularity surveys do **not** override route qualification or legal/auth constraints.
+
+**Paths touched this handoff:** `CURRENT-RUN.md` (this section); `docs/AGENT-FABRIC.md` (pointer to §22; archive roster text unchanged except fixing line break in “Oh My Pi”).

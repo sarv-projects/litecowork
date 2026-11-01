@@ -19,12 +19,11 @@ Core local functionality requires **no mandatory LiteCowork subscription or host
 |---|---|---|
 | **LiteCowork** | Desktop workspace; user conversations; Task/Attempt/Effect/Evidence truth; Coworkers; context/memory; assignments and Trust grants; work and artifact history; automations; notifications; Workbench and OS activity admission | Duplicate cross-agent package-manager lifecycle; native agent's private reasoning, account, model-router or subagent internals |
 | **LiteSPM** | Cross-agent capability catalog, inventory and provenance; package resolution, imports, installation, adoption, updates, unmanage and uninstall; per-host adapters; package health and lifecycle operation receipts | Coworker and Task decisions; approval to execute a consequential action in LiteCowork; native agent credentials unless the explicitly qualified custody contract permits it |
-| **HorizonCode** | Specialized long-horizon coding agent with native session, tools and worker execution features | LiteCowork Core scheduler, authoritative Effect/Trust grants, universal package-manager database or privileged bypass |
 | **Other native agents** | Their actual native sessions, authentication, models/options, native features, extensions and internal worker implementations | LiteCowork's durable Task truth or another harness's private configuration |
 
 LiteSPM may **observe** external capabilities without modifying them, **adopt** only eligible existing entries with explicit user authorization, or **install** new ones. These are not synonyms. A supported package installed in three agents may represent three host registrations rather than three globally equivalent independent package identities. See [LiteSPM interop LLD](LITESPM-LITECOWORK-INTEROP-LLD.md).
 
-HorizonCode is an AgentModule/qualified worker candidate, not the default invisible task planner or prerequisite for conversations. Native agent and provider support is qualified by exact agent build, transport, feature and operating system. An agent appearing in a catalog is never a supported claim.
+Native agent and provider support is qualified by exact agent build, transport, feature and operating system. An agent appearing in a catalog is never a supported claim.
 
 ## 3. Ten required V1 desktop product areas
 

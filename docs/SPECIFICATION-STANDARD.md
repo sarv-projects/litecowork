@@ -27,7 +27,7 @@ litecowork/
     NNN-feature-name/
       README.md SPEC.md PLAN.md TASKS.md DATA-MODEL.md RESEARCH.md WIRING.yaml
       contracts/
-        README.md api-events.md errors-recovery.md
+        README.md api-events.md errors-recovery.md ui-behavior.md
   apps/ crates/ capabilities/
 ```
 
@@ -46,7 +46,7 @@ Every material feature MUST have these artefacts. "Not applicable" requires a re
 | `DATA-MODEL.md` | Records, identity, keys, relations, scope, fields, invariants, lifecycle, persistence, events, projections, retention and migration |
 | `RESEARCH.md` | Version-pinned sources, observation dates, findings, alternatives, rationale, limitations and unresolved questions |
 | `WIRING.yaml` | Components, owners, inputs/outputs, calls, events, transactions, side effects and recovery |
-| `contracts/` | Feature request/response/event/error details or explicit links to canonical owner contracts |
+| `contracts/` | Feature request/response/event/error details or explicit links to canonical owner contracts; include `ui-behavior.md` (flows, UI states, validation, command and stream mapping) or cite equivalent [V1-UI-ACTION-STATE-LEDGER.md](../docs/V1-UI-ACTION-STATE-LEDGER.md) rows |
 
 The package does not duplicate global definitions. A feature links to canonical owner files; any new promoted API/event/enum/schema is changed in its actual canonical owner and machine schema in the same reviewed change.
 

@@ -4,8 +4,7 @@
 
 LiteCowork is a **local-first, chat-first AI workspace** for everyday conversation,
 files, websites, office documents, research, automation and coding. Select a qualified
-native agent such as Codex, Claude Code, OpenCode or (after qualification)
-HorizonCode. Keep the agent's account, subscription, models and native behavior.
+native agent such as Codex, Claude Code or OpenCode. Keep the agent's account, subscription, models and native behavior.
 Start with a normal conversation—no mandatory Coworker or Task. Durable Tasks
 preserve managed execution, activity, evidence and results when required.
 
@@ -18,9 +17,7 @@ preserve managed execution, activity, evidence and results when required.
 **LiteCowork** is the product people open: Chat, Workbench, Coworkers, Tasks,
 Memory, Library and local Automations. **LiteSPM** is the independent manager
 for eligible *existing and new* cross-agent skills, MCP, plugins and capability
-packages, with truthful observed/adopted/managed ownership. **HorizonCode**
-is your separately developed, version-qualified long-horizon native coding
-agent, selectable as chief or worker, never a hidden Core planner.
+packages, with truthful observed/adopted/managed ownership.
 
 **V1 covers all ten local desktop areas** in [Product Release Contract](docs/V1-PRODUCT-RELEASE-CONTRACT.md)
 and [Final Screen Contract](docs/V1-UI-SCREEN-CONTRACT.md).

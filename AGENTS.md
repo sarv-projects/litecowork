@@ -41,7 +41,7 @@ Every new material feature has a folder under `specs/` containing:
 - `DATA-MODEL.md`: identities, records, relations, lifecycle, persistence, events, retention and migration.
 - `RESEARCH.md`: dated/versioned sources, findings, alternatives, assumptions and unresolved questions.
 - `WIRING.yaml`: components, owners, calls, data/events, transactions and recovery.
-- `contracts/`: feature-specific API/event/error/schema details or precise links to canonical owner definitions.
+- `contracts/`: feature-specific API/event/error/schema details or precise links to canonical owner definitions; **`contracts/ui-behavior.md`** is required (flows, states, typed UI commands — not pixels).
 
 Follow `docs/SPECIFICATION-STANDARD.md` and `.specify/templates/`. Reuse global contracts via links; do not duplicate them. Promote a global API/event/schema in its actual owner and machine schema in the same reviewed change. Mark exact observed signatures CURRENT and unimplemented designs PROPOSED.
 

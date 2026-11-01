@@ -52,6 +52,22 @@ The table above is a quick-start map, not an exhaustive list of all current docu
 - [Reset and archive record](RESET-AND-ARCHIVE-RECORD.md) — exact baseline and preserved history.
 - [Repository documentation audit](REPOSITORY-DOCUMENTATION-AUDIT.md) — inventory, stale-reference remediation and remaining limitations.
 
+## Feature engineering and UI–core contracts
+
+- [Feature and UI–core contract coverage](FEATURE-AND-UI-CONTRACT-COVERAGE.md) — engineering checklist map and gaps.
+- [UI and Core typed contracts](UI-CORE-TYPED-CONTRACTS.md) — commands, stream frames, errors.
+- [V1 Feature SDD register](V1-FEATURE-SDD-REGISTER.md) — planned packages 001–011.
+- [LiteCowork build TASKS](LITECOWORK-BUILD-TASKS.md) — master path from recovery to qualified V1.
+- [Competitor promoted use cases](COMPETITOR-PROMOTED-USE-CASES.md) — UC-* USER test catalog.
+- [Viability vs competitors](VIABILITY-VS-COMPETITORS.md) — local desktop parity and RV-* research gates.
+- [Settings and shell surface audit](SETTINGS-AND-SHELL-SURFACE-AUDIT.md) — 187 controls + shell crosswalk.
+- [Semantic served-handler ↔ UI map](SEMANTIC-SERVED-UI-MAP.md) — TARGET baseline for 187 settings and shell controls; SERVED operationIds still open.
+- [Contradiction and alignment register](CONTRADICTION-AND-ALIGNMENT-REGISTER.md) — known resolutions and remaining owner conflicts.
+- [Reference repos core architecture index](REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md) — what to read in ZCode, DSH, AionUi, OpenDot.
+- [Complete active corpus inventory](COMPLETE-ACTIVE-CORPUS-INVENTORY.md) — **every** active root/docs/specs/.specify file with line counts; nothing omitted from the index.
+- [Spec / build TASK / USER test traceability](SPEC-TASK-TRACEABILITY.md) — BT-* ↔ 001-T* ↔ UC-* ↔ AC-*.
+- [Desktop reference implementation audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) — ZCode + DeepSeek Harness.
+
 ## Feature specification workflow
 
 - [Specification Standard](SPECIFICATION-STANDARD.md) is the normative SDD process for material features and cross-domain changes.

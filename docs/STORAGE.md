@@ -655,8 +655,7 @@ existing rows and dependent foreign keys; v1-v5 SQL sources and checksums remain
 At Runtime startup, bounded root-revalidation candidates are read and each result is committed
 in an immediate transaction with its WorkspaceRoot transition, ResourceLocation observation,
 safe events/snapshots, idempotency receipt, and current-incarnation private locator/raw identity
-bindings. A failed identity check atomically removes any partial current-incarnation pair and
-marks the root and location unavailable. Private binding rows are never included in events,
+bindings. A failed identity check atomically removes any partial current-incarnation pair, marks an ACTIVE root and its location unavailable, and leaves a PAUSED root PAUSED with its location unavailable. A REVOKED root is not reopened. Private binding rows are never included in events,
 snapshots, API results, or receipts. The local-only
 `workspace_origin_sequences` table
 persists the last committed event sequence for each `(workspace_id, origin_runtime_id)`;

@@ -1,0 +1,62 @@
+feature_id: "011"
+status: "DRAFT"
+nodes:
+  - id: "ui"
+    owner: Desktop UI
+    kind: component
+  - id: "operator"
+    owner: authenticated Operator
+    kind: service
+  - id: "owner"
+    owner: domain owner service
+    kind: service
+  - id: "storage"
+    owner: Storage
+    kind: store
+  - id: "ipc"
+    owner: local IPC peer check
+    kind: external
+edges:
+  - id: "e-ui-op"
+    from: "ui"
+    to: "operator"
+    kind: command
+  - id: "e-op-owner"
+    from: "operator"
+    to: "owner"
+    kind: request
+  - id: "e-owner-storage"
+    from: "owner"
+    to: "storage"
+    kind: transaction
+  - id: "e-storage-ui"
+    from: "storage"
+    to: "ui"
+    kind: projection
+  - id: "e-ui-ipc"
+    from: "ui"
+    to: "ipc"
+    kind: frame
+  - id: "e-ipc-operator"
+    from: "ipc"
+    to: "operator"
+    kind: authenticated-request
+transactions:
+  - id: "tx-health"
+    owner: Runtime
+    atomic_records: ["runtime_incarnation"]
+    external_calls_inside: false
+  - id: "tx-pref"
+    owner: Desktop UI local store
+    atomic_records: ["local_preference"]
+    external_calls_inside: false
+external_boundaries:
+  - id: "outside-sqlite"
+    owner: domain owner
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
+recovery:
+  owner: domain owner
+  source_of_truth: durable-owner-records
+  restart_action: reload-last-commit-and-reconcile

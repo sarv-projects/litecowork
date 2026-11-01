@@ -163,10 +163,9 @@ owner reviewed and adopted the following changes to this repository's authority 
   qualified native AgentSession without requiring a Task or a Coworker, and a durable Task
   stays central only to managed execution.
 - **Adopted as design targets, not served behavior.**
-  `V1-HORIZONCODE-NATIVE-AGENT-LLD.md` names HorizonCode as the first-party native
-  AgentModule candidate; `LITESPM-LITECOWORK-INTEROP-LLD.md` captures the real local
-  LiteSPM daemon contract that this repository previously had to assume. Both remain
-  TARGET until their integration stories land.
+  `LITESPM-LITECOWORK-INTEROP-LLD.md` captures the real local
+  LiteSPM daemon contract that this repository previously had to assume. It remains
+  TARGET until its integration story lands.
 - **Changed.** The Task-first Home dashboard was archived to
   `archive/legacy-implementation-c7e9c05/archive/HOME-LEGACY-UX-20261022.md` and the New Chat landing became the
   default first screen. The `task.created` event now treats the Coworker origin pair as

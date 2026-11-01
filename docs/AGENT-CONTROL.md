@@ -8,16 +8,6 @@
 [Experience](EXPERIENCE.md), [Agent/account route matrix](AGENT-ACCOUNT-ROUTE-MATRIX.md),
 [LiteSPM capability boundary](CAPABILITY-FABRIC.md).
 
-## HorizonCode as a native AgentModule candidate
-
-HorizonCode is our separately developed long-horizon coding harness,
-to be integrated and qualified like any other native agent. It may act
-as selected chief or bounded delegated worker through ordinary
-AgentBinding/AgentSession/Task/Attempt/Trust contracts. Its internal
-workers or checkpoints are native state, not automatic Core receipts,
-and it must not bypass permissions or own Task truth. Exact module
-and qualification details:
-[HorizonCode Native Agent LLD](V1-HORIZONCODE-NATIVE-AGENT-LLD.md).
 The existing 25-entry external candidate roster is not an assertion of
 25 operational native session adapters.
 

@@ -22,6 +22,7 @@ REQUIRED = (
     "RESEARCH.md",
     "WIRING.yaml",
     "contracts/README.md",
+    "contracts/ui-behavior.md",
 )
 
 SECTIONS = {

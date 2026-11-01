@@ -8,6 +8,25 @@ Supporting documents may add detail but must not contradict it. Decision records
 
 The former ARCH corpus is not present in the active docs-first checkout. The old archives_docs path does not exist. The previous source/build snapshot is locally archived under archives/legacy-codebase-c7e9c05/, and historical implementation evidence is preserved under docs/archive/legacy-implementation-c7e9c05/.
 
+<!-- SHELVED: HorizonCode (2026-10-31)
+HorizonCode was the separately developed first-party long-horizon coding agent in the
+LiteCowork family, intended to be selectable as a native chief or bounded delegated worker
+through the same AgentModule/AgentBinding/DelegationProfile contracts as any external agent.
+It was explicitly NOT privileged Core software — no special orchestration engine, no bypass
+of Trust/Effect/Task authority.
+
+Decision: HorizonCode has been shelved as of 2026-10-31. It will not be developed,
+integrated, or qualified as part of V1 or the near-term roadmap. All active documentation
+references have been removed. The dedicated integration LLD
+(docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md) has been deleted. Historical references remain
+in docs/archive/legacy-implementation-c7e9c05/ as provenance only.
+
+If HorizonCode development resumes in future, it must be treated as an ordinary
+AgentModule candidate — no Core privileges, same qualification bar as Codex/Claude
+Code/OpenCode — and a fresh SDD package under specs/ is required before any
+implementation begins.
+-->
+
 ## 1. Product definition
 
 LiteCowork is a **local-first, chat-first AI workspace** around qualified native
@@ -32,8 +51,7 @@ The complete desktop V1 product definition and post‑V1 cloud/mobile boundary a
 Workbench. [Agent/account route matrix](docs/AGENT-ACCOUNT-ROUTE-MATRIX.md) owns route
 qualification; [Interactive Artifact Runtime](docs/INTERACTIVE-ARTIFACT-RUNTIME.md) owns
 safe generated app execution. [LiteSPM integration LLD](docs/LITESPM-LITECOWORK-INTEROP-LLD.md)
-owns package lifecycle interop. [HorizonCode](docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
-is a native chief/worker candidate, not privileged Core software.
+owns package lifecycle interop.
 
 A compatible agent can be a worker; capabilities can be discovered and activated as
 needed; any LiteCowork Runtime can host an Attempt; compatible environments can be

@@ -25,7 +25,7 @@ capability evidence and display installability per package/host/scope.
 
 ## 1. Problem and ownership
 
-Without LiteSPM, a user repeats package setup across Codex, Claude Code, OpenCode, HorizonCode and other compatible agents. LiteSPM shall manage both eligible **existing native capabilities** and new installs without forcing reinstallation or flattening incompatible host semantics. Its inventory is the source of **observed package state**, not a substitute for agent-native runtime discovery.
+Without LiteSPM, a user repeats package setup across Codex, Claude Code, OpenCode and other compatible agents. LiteSPM shall manage both eligible **existing native capabilities** and new installs without forcing reinstallation or flattening incompatible host semantics. Its inventory is the source of **observed package state**, not a substitute for agent-native runtime discovery.
 
 LiteCowork must not duplicate LiteSPM's install database, writer, package resolver or version lifecycle. It may store stable external package refs, the approved operation receipt, and its **separate** CapabilityAssignments, ConnectionRefs, Grants, Activations and Invocations. One installed package is not proof of Coworker access or Task-time tool authority. LiteCowork does not assume all native actions go through its Gateway.
 

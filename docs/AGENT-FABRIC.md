@@ -123,9 +123,10 @@ command invocation with inherited daemon environment cleared. The row is
 not an `AgentProfile`, `AgentEndpoint`, or `AgentBinding` and does not prove auth,
 provider/model access, session support, or lead/delegation eligibility. The curated
 roster inventory is the 25-entry owner-directed list in
-[`archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md`](archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md):
-Codex, OpenCode (v2), Cline, Claude Code, Antigravity CLI, Command Code, Aider, Pi, Oh My
-Pi, Muse Code, Grok Build, MiMo Code, Devin CLI, Qwen Code, Kiro CLI, Goose, Mistral Vibe,
+[`archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md`](archive/legacy-implementation-c7e9c05/AGENT-PORTFOLIO-2026-10-21.md)
+(historical archive). **V1 first-release target agents (14, planning):** see [CURRENT-RUN.md](../CURRENT-RUN.md) §22 — distinct from the archive roster and not implementation-qualified.
+The archived roster names include
+Codex, OpenCode (v2), Cline, Claude Code, Antigravity CLI, Command Code, Aider, Pi, Oh My Pi, Muse Code, Grok Build, MiMo Code, Devin CLI, Qwen Code, Kiro CLI, Goose, Mistral Vibe,
 Cursor CLI, Kimi Code CLI, JetBrains Junie CLI, Factory Droid, Auggie CLI, MiniMax Code, Amp,
 and GitHub Copilot CLI. Gemini CLI is not a roster entry. CLI-specific version flags/output formats remain
 version-only observations. Copilot has a ten-second cold-start bound; the other native

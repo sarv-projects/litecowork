@@ -4,6 +4,10 @@ This directory contains the feature-SDD process, templates and documentation-onl
 
 Read [the Specification Standard](../docs/SPECIFICATION-STANDARD.md). Create packages under `specs/`; do not put product code or runtime services here.
 
+Required contract files include `contracts/ui-behavior.md` (flows, UI states, validation, typed command/stream mapping — not pixels). Template: [templates/contracts/ui-behavior.md](templates/contracts/ui-behavior.md).
+
+Planning register for V1 slices: [V1 Feature SDD register](../docs/V1-FEATURE-SDD-REGISTER.md). Active corpus manifest: [COMPLETE-ACTIVE-CORPUS-INVENTORY.md](../docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md).
+
 1. Read the [feature package index](../specs/README.md), create a stable feature folder and copy every required template.
 2. Read architecture, product, owner-domain, accepted ADR and machine contracts.
 3. Complete SPEC, DATA-MODEL, RESEARCH and WIRING before sequencing implementation.

@@ -78,8 +78,52 @@ workflow execution engines remain external integrations.
 
 The accepted consumer and open-source feature comparison is in [Coworker target](COWORKERS-TARGET.md), section 12, with source links and the distinction between claimed experience and qualified behavior. The engineering decisions are optional chat-first assistants, reviewed standing responsibilities, bounded proactive observation, provider-native agent reasoning, secure reuse of app/MCP connections, and local daemon/background limitations without cloud equivalence claims. Do not treat marketing descriptions of Dots, Grok Bot, Muse, Claude Cowork, Kimi Work, OpenClaw, Eigent or OpenWork as independent reliability test evidence.
 
+## Primary rivals index — documentation pass 2026-11-01
 
-## Desktop competitor deep benchmark — 2026-10-10
+Use this table before locking any UX-heavy SDD. Vendor pages and repos are **evidence**, not LiteCowork requirements.
+
+| Name | What it is | Doc / repo evidence in this repository | Distinguish from |
+|---|---|---|---|
+| Grok Bot | xAI persistent Bots, routines, cloud computer + separate local permission | § Grok Bot (desktop benchmark) | LiteCowork Coworkers optional; local Environment scopes |
+| Claude Cowork / Claude chat | Anthropic unified chat+Cowork direction; desktop VM roots | § Claude Cowork; Oct 2026 recheck | LiteCowork native harness BYOA, not one vendor |
+| ChatGPT Plus | Consumer Plus subscription tier (models/features in ChatGPT app) | **This pass:** product boundary note below | Not the same as **Work** or **Codex** SKUs |
+| ChatGPT Work / Codex | Work mode, local sync, team tasks, scheduled work | § ChatGPT Work; dots section for Codex/local | LiteCowork Task/Effect truth separate from provider cloud |
+| Kimi Work | Moonshot local-agent / dashboard beta | Kimi Work overview link in Oct recheck; Kimi Code CLI in archive portfolio | Registry vs active `kimi-code` project |
+| Muse assistant | Meta Mac app + secure VM | § Meta Muse | LiteCowork Goals/Suggestions non-authoritative |
+| OpenAI dots | OpenAI named persistent agents (cloud computer + optional local bridge) | § OpenAI dots | Not **OpenDot** (opendot.live) |
+| **OpenDot** | MIT desktop Dots on **Pi** harness; `~/.opendot`; SuperDot organisation | **§ OpenDot (opendot.live)** below; REF-OPENDOT | Not OpenAI dots; not `itsperini/opendot` voice platform |
+| OpenWork | OpenCode-based local-first cowork | § OpenWork | LiteCowork Task verification stronger |
+| OpenCowork / opencowork | Several similarly named repos | § Open Cowork; REFERENCE matrix | Compare exact repo, not name |
+| Eigent | CAMEL workforce desktop | REF-EIGENT | LiteCowork Plan/Attempt authority |
+| AionUi | Electron Cowork + typed bridge | § AionUi 2026-11-01; REF-AIONUI | LiteCowork daemon/Core boundary |
+| CopilotKit/OpenDots | MIT template; AG-UI + optional computers | External: github.com/CopilotKit/OpenDots | Template, not Pi-native OpenDot app |
+| composio-community/open-dot | Electron Mac Dots clone (Composio) | External README architecture | Third-party Dots-like; not opendot.live |
+
+### ChatGPT Plus vs Work vs Claude chat (boundary note)
+
+- **ChatGPT Plus** is a **subscription/product tier** inside the ChatGPT consumer app (model access and features per OpenAI’s current plan pages). LiteCowork does not replicate Plus billing or model entitlements; it qualifies **native agent routes** per [AGENT-ACCOUNT-ROUTE-MATRIX.md](AGENT-ACCOUNT-ROUTE-MATRIX.md).
+- **ChatGPT Work** is a **separate work mode** with projects, progress, approvals, schedules and optional local work sync ([Help Center articles cited in Oct recheck](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex)). Competitive UX targets: one history, explicit local/cloud split, approval pauses — mapped to LiteCowork Conversation vs Task and local-first daemon availability.
+- **Claude chat vs Cowork** is converging for Pro/Max per Anthropic’s 2026 articles cited above; Team/Enterprise may still differ. LiteCowork keeps **ordinary Conversation** without Task while supporting delegated durable work when admitted.
+
+### OpenDot (opendot.live) — `athulsreekumar/opendot` (2026-11-01 repo pass)
+
+**Product (vendor):** [opendot.live](https://opendot.live/) — local `~/.opendot` JSON/sessions, PII masking before cloud models, approval for risky tools, watchers (email/calendar/files/webhooks), Dot Links inter-Dot messaging with rate limits, SuperDot fan-out Q&A and **Organisation** multi-department projects with plan approval before run.
+
+**Repository:** https://github.com/athulsreekumar/opendot (MIT, homepage opendot.live). Shallow clone 2026-11-01 at `ec75891b819713acf29cb659bd9c72d1ed34f76a`: Electron app under `desktop/` (electron-vite, React, Playwright tests); built on **earendil-works/pi** per README architecture diagram.
+
+**Do not confuse:**
+
+| Repo | Purpose |
+|---|---|
+| `athulsreekumar/opendot` | opendot.live desktop Dots (this section) |
+| `itsperini/opendot` | Voice agents on devices (AGPL, docs.opendot.ai) |
+| `CopilotKit/OpenDots` | Self-hosted coworker **template** (AG-UI) |
+| `composio-community/open-dot` | Third-party Dots-like Mac app |
+
+**Take for LiteCowork:** Organisation plan → approve → parallel department work with review rounds is a useful **Coworker/responsibility UX** reference, but LiteCowork must keep **Task/Effect/Evidence** identity, Trust approvals, and native harness boundaries — not Pi session files as Core truth. Borrow: urgent/update/quiet notification levels, explicit wake/sleep honesty, audit log, per-Dot budgets. See [REFERENCE-IMPLEMENTATIONS.md](REFERENCE-IMPLEMENTATIONS.md) REF-OPENDOT.
+
+Sources: [opendot.live](https://opendot.live/), [athulsreekumar/opendot README](https://github.com/athulsreekumar/opendot), [always-on feature page](https://opendot.live/features/always-on).
+
 
 This pass intentionally compares the DESKTOP PRODUCT EXPERIENCE and user-visible capabilities. Cloud-only scale is noted only when it changes what a desktop control means; LiteCowork must not claim cloud-like availability for an offline local machine. Marketing claims are separated from verified repository/product documentation.
 
@@ -121,6 +165,22 @@ Sources: [OpenWork repository](https://github.com/different-ai/openwork), [OpenW
 **Take for LiteCowork:** Keep VM/process isolation, document skills, drag/drop rich input and visible real tool execution. Move raw trace into optional Inspector/Technical details rather than the default. Do not require API-provider configuration for Coworker users when an existing native agent subscription/harness is already configured.
 
 Sources: [Open Cowork repository](https://github.com/OpenCoworkAI/open-cowork), [README/component layout](https://github.com/OpenCoworkAI/open-cowork/blob/main/readme.md).
+
+### AionUi (iOfficeAI/AionUi) — open-source Cowork desktop (2026-11-01 repo pass)
+
+**Repository:** https://github.com/iOfficeAI/AionUi  
+**Pinned for this pass:** `11cd2a9a20d1e033157636efc570b41384c66d85` (shallow clone, ~2373 files)  
+**License at root:** Apache-2.0 (re-check before any code reuse)
+
+**Low level / runtime:** Multi-package Electron monorepo (`packages/desktop`, `web-host`, mobile). Main process under `src/process/` with `bridge/`, `services/`, `database/` (SQLite), `task/`, `agent/` (per-platform adapters: ACP, Codex, Gemini, etc.), `channels/`, `extensions/`, optional `webserver/` and forked `worker/`. Renderer is React without Node APIs; cross-process typing lives in `common/`.
+
+**Mid level / product:** Positions as a free Cowork app: built-in agent, multi-provider API keys, multi-agent, remote access, and automation. Marketing compares itself to Claude Cowork; ships Kimi and other provider integrations. Treat shipped claims as **vendor/repo description**, not LiteCowork qualification.
+
+**UI / IPC pattern (study, do not adopt blindly):** `packages/desktop/src/common/platform/bridge.ts` defines a typed **provider/emitter** bridge: `invoke` for request/response, `emit`/`on` for push events, optional interceptors, adapter hook for Electron IPC. Unit tests cover bridge contention and handler registration (`tests/unit/common-platform/bridge.test.ts`, skill IPC tests). This validates the **“UI calls typed commands; main pushes typed events”** pattern LiteCowork already targets via Tauri + Operator IPC + OpenAPI — but LiteCowork must keep **Core/daemon authority**, Workspace scoping, and Trust receipts; AionUi’s orchestration is not a substitute for LiteCowork Task/Effect truth.
+
+**Take for LiteCowork:** Useful reference for Electron Cowork layout (sidebar sessions, agent platforms, channel integrations), bridge test patterns, and multi-agent desktop packaging. **Do not** collapse LiteCowork’s Runtime/daemon boundary into a single Electron main process; **do not** treat API-key-in-UI configuration as equivalent to qualified native harness routes. Prefer borrowing **test shapes** and **explicit bridge contracts** over UI chrome. Full file map: [REFERENCE-IMPLEMENTATIONS.md](REFERENCE-IMPLEMENTATIONS.md) REF-AIONUI.
+
+Sources: [AionUi repository](https://github.com/iOfficeAI/AionUi), [file structure guide](https://github.com/iOfficeAI/AionUi/blob/main/docs/contributing/file-structure.md) at pinned commit.
 
 ### Claude Cowork — desktop-first delegated knowledge work
 

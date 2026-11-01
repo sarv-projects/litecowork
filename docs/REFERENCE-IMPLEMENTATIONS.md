@@ -21,6 +21,8 @@ control plane.
 |---|---|---|---|---|
 | REF-AGENTA | https://github.com/Agenta-AI/agenta | `4bc51903a1597d3ef8f1ac17f2d6f472ba7c8137` | MIT outside separately licensed enterprise paths | Learn configuration revision, automation/run UX, per-agent durable files, trigger/session continuity. Do not adopt its whole platform model. |
 | REF-EIGENT | https://github.com/eigent-ai/eigent | `2ffa2e4ef19356e87479845f2aa1600bc2fde671` | Apache-2.0 | Learn visual cowork UX, CAMEL Workforce decomposition/retry/replan, browser/terminal toolkit assembly and activity timeline. Do not make CAMEL LiteCowork's orchestration authority. |
+| REF-AIONUI | https://github.com/iOfficeAI/AionUi | `11cd2a9a20d1e033157636efc570b41384c66d85` | Apache-2.0 at checked root LICENSE | Learn Electron Cowork shell, multi-agent/platform adapters, typed main↔renderer bridge (`common/platform/bridge.ts`) and IPC unit tests. Do not adopt as Core/daemon authority or bypass Trust/Task contracts. |
+| REF-OPENDOT | https://github.com/athulsreekumar/opendot | `ec75891b819713acf29cb659bd9c72d1ed34f76a` | MIT at checked root LICENSE | Learn Pi-based Dot sessions, watchers, Dot Links, SuperDot/Organisation plan UX, `~/.opendot` audit/masking. Do not use Pi sessions as LiteCowork durable Task truth; not the same as OpenAI dots or `itsperini/opendot`. |
 | REF-ACTIVEPIECES | https://github.com/activepieces/activepieces | `65bfba72b855ed6c8c3b4c24ad5d12a8960b1aa7` | MIT outside enterprise paths listed in its LICENSE | Strong candidate for a compatibility/provider spike around community Pieces, OAuth/action/trigger descriptors, and connection lifecycle. Do not import enterprise paths. |
 | REF-N8N | https://github.com/n8n-io/n8n | `7424f0ca0452f9dc9fe4cf6627ecbf0b315ed1e3` | Sustainable Use License; enterprise files separately licensed | External/user-owned WorkflowBackend only by default. Study run/trigger semantics; do not vendor or hide n8n as LiteCowork's engine. |
 | REF-NANGO | https://github.com/NangoHQ/nango | `b309bc1716f9a868e7cf3af0a403a7b0da093df2` | Elastic License 2.0 | Architecture reference and optional external auth backend. Study token refresh/encryption/connection state; no unreviewed source reuse. |
@@ -295,6 +297,36 @@ Checked at `24fde60ad739b4be8f8f533fea9ba54256fbc4a2`.
 coherent cross-agent activity timelines. They do not replace LiteCowork's immutable
 PlanRevision, Step, Attempt, lease, Effect, Evidence, verifier, and native AgentBinding
 contracts.
+
+## AionUi exact files
+
+Repository: https://github.com/iOfficeAI/AionUi
+
+Checked at `11cd2a9a20d1e033157636efc570b41384c66d85` (2026-11-01 shallow clone).
+
+| File | Exact link | What to study | LiteCowork decision |
+|---|---|---|---|
+| `docs/contributing/file-structure.md` | https://github.com/iOfficeAI/AionUi/blob/11cd2a9a20d1e033157636efc570b41384c66d85/docs/contributing/file-structure.md | Renderer vs `src/process/` vs `common/` split; bridge and SQLite ownership | Align with LiteCowork Tauri + `litecoworkd` separation, not single-process collapse |
+| `packages/desktop/src/common/platform/bridge.ts` | https://github.com/iOfficeAI/AionUi/blob/11cd2a9a20d1e033157636efc570b41384c66d85/packages/desktop/src/common/platform/bridge.ts | Typed invoke/emit bridge, interceptors, adapter hook | Test and API-shape reference for narrow preload/IPC; map to OpenAPI operationIds at Core |
+| `tests/unit/common-platform/bridge.test.ts` | https://github.com/iOfficeAI/AionUi/blob/11cd2a9a20d1e033157636efc570b41384c66d85/tests/unit/common-platform/bridge.test.ts | Handler registration and invoke behavior | Candidate unit-test patterns for UI transport |
+| `src/process/bridge/` (handlers) | tree at pinned commit | IPC surface area by domain | Inventory only; do not mirror handler names as LiteCowork API |
+| `src/process/task/` | tree at pinned commit | Task/agent scheduling in main process | Reference for activity UX; LiteCowork Task truth stays in Core storage |
+
+**Decision:** AionUi is a useful **Cowork desktop + typed bridge** reference. LiteCowork keeps daemon-backed Workspace truth, Trust, and qualified native harness routes; do not treat AionUi's main-process agent loop as orchestration authority.
+
+## OpenDot (opendot.live) exact files
+
+Repository: https://github.com/athulsreekumar/opendot
+
+Checked at `ec75891b819713acf29cb659bd9c72d1ed34f76a` (2026-11-01 shallow clone).
+
+| File / path | What to study | LiteCowork decision |
+|---|---|---|
+| `desktop/README.md`, root README architecture | Watchers, Dot Links, SuperDot, Organisation, `~/.opendot` | UX and honesty patterns for Coworkers/automation; Core owns Task/Effect |
+| `desktop/` Electron + React app | WhatsApp-style shell, streaming replies | Layout reference only; map actions to OpenAPI + IPC |
+| Pi harness dependency | Per-Dot sessions | Native AgentSession + LiteCowork storage, not Pi files as truth |
+
+**Decision:** OpenDot validates local Dots, masking, approvals, and multi-Dot organisation flows. LiteCowork separates provider-native harness from Core coordination and does not adopt Pi as the durable product kernel.
 
 ## Activepieces exact files
 

@@ -5,6 +5,8 @@
 
 ## 1. Delivery rule
 
+**Master task list:** [LITECOWORK-BUILD-TASKS.md](LITECOWORK-BUILD-TASKS.md). **USER parity tests:** [COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md). **Viability:** [VIABILITY-VS-COMPETITORS.md](VIABILITY-VS-COMPETITORS.md).
+
 Build complete vertical user journeys, not isolated capability count. Freeze load-bearing invariants now; promote only the contracts needed by the next slice. Do not invent missing contract edges locally. A design, schema, stub, mock, unit test, catalog entry or mounted route is not a qualified user journey.
 
 Every slice names its user outcome, owner contracts, request/response/event schemas, state preconditions, authority, transaction owner, durable event, projection, UI, failure/recovery path, fixtures and exact OS/provider qualification.

@@ -156,7 +156,6 @@ claims served behavior.
 |---|---|---|
 | Ten-area V1 product scope, chat-first release intent, free-core-without-subscription boundary | [V1-PRODUCT-RELEASE-CONTRACT](V1-PRODUCT-RELEASE-CONTRACT.md) | E13-S03 |
 | Desktop screen/interaction contract (shell, universal composer, Workbench, per-screen acceptance) | [V1-UI-SCREEN-CONTRACT](V1-UI-SCREEN-CONTRACT.md) | E02-S01 |
-| HorizonCode as the first-party native AgentModule candidate (manifest, chief/worker paths, tool boundary) | [V1-HORIZONCODE-NATIVE-AGENT-LLD](V1-HORIZONCODE-NATIVE-AGENT-LLD.md) | E03-S06 |
 | LiteSPM local package discovery/adoption/plan-apply interoperability contract | [LITESPM-LITECOWORK-INTEROP-LLD](LITESPM-LITECOWORK-INTEROP-LLD.md) | E10-S01 |
 | Archived Task-first Home (historical only; explains removed rows above) | [archive/legacy-implementation-c7e9c05/archive/HOME-LEGACY-UX-20261022.md](archive/legacy-implementation-c7e9c05/archive/HOME-LEGACY-UX-20261022.md) | non-normative |
 

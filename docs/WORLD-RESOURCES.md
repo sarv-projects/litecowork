@@ -160,8 +160,7 @@ directory-handle traversal, compares the prior raw operating-system identity, an
 Resource's stable keyed identity digest and identity projection. Only an exact match binds
 fresh private locator and raw-identity rows to the current Runtime incarnation; the root
 never falls back to a new path or broader scope. A missing/mismatched binding, unsupported
-platform, invalid locator, or changed/unopenable directory commits the root and location as
-`UNAVAILABLE` and removes partial current-incarnation bindings. Root status, location
+platform, invalid locator, or changed/unopenable directory removes partial current-incarnation bindings. An ACTIVE root and its location become `UNAVAILABLE`. A PAUSED root stays `PAUSED` while its location becomes `UNAVAILABLE`. A REVOKED root is not reopened. This matches STATE-MACHINES.md startup revalidation. Root status, location
 availability, safe events/snapshots, and private binding writes are one SQLite transaction.
 Root-specific failures do not prevent unrelated Runtime service startup. Revoked roots are
 excluded and cannot be reactivated. `PAUSED` is an explicit user/service lifecycle state,

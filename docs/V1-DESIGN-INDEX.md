@@ -7,7 +7,6 @@ Design baseline: 2026-10-22. These are normative TARGET design and implementatio
 - [Ten-area V1 product/release contract](V1-PRODUCT-RELEASE-CONTRACT.md)
 - [Chat-first shell and every V1 screen](V1-UI-SCREEN-CONTRACT.md)
 - [LiteSPM inventory/adoption/plan/apply integration](LITESPM-LITECOWORK-INTEROP-LLD.md)
-- [HorizonCode native chief/worker integration](V1-HORIZONCODE-NATIVE-AGENT-LLD.md)
 - [Real product acceptance crosswalk](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
 
 These are **TARGET** contracts. They do not supersede durable Task,
