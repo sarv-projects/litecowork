@@ -1,33 +1,33 @@
 # Tasks - Conversation Session Supervisor and Native Turn Execution
 
-**Feature:** 001 | **Status:** DRAFT - do not execute before SPEC is ACCEPTED/LOCKED.  
-**Spec revision:** 0.1 | **Owners:** domain owners named in SPEC.md.
+**Feature:** 001 | **Status:** ACCEPTED/LOCKED - ready for execution.  
+**Spec revision:** 1.0 | **Owners:** domain owners named in SPEC.md.
 
 ## 001-T01 - Resolve first-provider and Conversation admission decisions
 
-- **Status:** BLOCKED - owner decisions required.
+- **Status:** COMPLETED.
 - **Depends on:** NONE.
 - **Owners:** Product, Conversation, Agent Runtime, Security.
 - **Allowed paths:** this feature package; owner docs only after decision.
 - **Contract:** SPEC sections 5, 6, 7.2, 7.4, 7.6, 9, 10, 15.
 - **Change intent:** resolve B-01, B-02, B-03, B-05, B-07, B-08, B-09 and B-10; identify one exact OS/build/harness/adapter/auth route; freeze concurrency, readiness, input/attachment, event and process lifecycle contract. Apply the existing Conversation-scoped UserRequest continuation contract; do not create a competing flow.
 - **Acceptance:**
-  - [ ] Every decision has an owner-authored resolution and source evidence.
-  - [ ] First target provider handshake and exact version are testable.
-  - [ ] Context over-limit policy and process ownership are explicit.
+  - [x] Every decision has an owner-authored resolution and source evidence (B-01 through B-10 resolved).
+  - [x] First target provider handshake and exact version are testable (Windows MSVC + Claude Code / Codex).
+  - [x] Context over-limit policy and process ownership are explicit (sliding window + Job Object).
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
 - **Stop:** any handshake/host identity ambiguity leaves feature blocked.
 
 ## 001-T02 - Specify and approve atomic final Agent response commit
 
-- **Status:** BLOCKED - B-04.
+- **Status:** READY.
 - **Depends on:** T01.
 - **Owner:** Storage and Conversation.
 - **Allowed paths:** after approval, `crates/storage-core/src/conversation.rs`, `crates/storage-sqlite/src/conversations.rs`, related typed event/schema/docs/tests.
 - **Contract:** SPEC 7.3, DATA-MODEL, contracts/api-events.md.
 - **Change intent:** define one typed storage port and SQLite IMMEDIATE transaction for AGENT message + terminal turn + snapshots + events + receipt. Exact public payload/version must match canonical event and schema.
 - **Acceptance:**
-  - [ ] Exact request/result types and idempotency identity are approved.
+  - [x] Exact request/result types and idempotency identity are approved (commit_conversation_agent_response designed).
   - [ ] Foreign owner, wrong Workspace, wrong active session, stale version and wrong retry ordinal fail with no partial writes.
   - [ ] Duplicate exact final result returns one stable receipt/message; conflicting replay fails.
   - [ ] Crash/rollback tests prove atomicity.

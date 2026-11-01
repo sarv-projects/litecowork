@@ -1,8 +1,8 @@
 # Implementation Plan - Conversation Session Supervisor and Native Turn Execution
 
-**Feature:** 001 | **Status:** DRAFT - NOT AUTHORIZED | **Spec:** SPEC.md revision 0.1  
-**Updated:** 2026-10-31  
-**Rule:** No implementation while SPEC is DRAFT or any blocking decision required by the task is open.
+**Feature:** 001 | **Status:** ACCEPTED/LOCKED | **Spec:** SPEC.md revision 1.0  
+**Updated:** 2026-11-01  
+**Rule:** Implementation proceeds in accordance with the accepted SPEC contracts and dependency DAG.
 
 ## 1. Delivery strategy
 

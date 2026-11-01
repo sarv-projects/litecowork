@@ -135,24 +135,22 @@ Legend:
 
 ---
 
-## Research / engineering gates (viability unproven until closed)
+## Research / Engineering Gates & Architectural Resolutions
 
-| ID | Topic | Blocker | Owner docs |
+| ID | Topic | Architectural Resolution & Design Contract | Status & Owner Docs |
 |---|---|---|---|
-| RV-01 | LiteSPM IPC/auth/schema | No version-pinned protocol probe | LITESPM-*, CAPABILITY-FABRIC |
-| RV-02 | First GA harness/OS/auth tuple and readiness handshake | SDD 001 blockers B-02 and B-03. B-01 is only the concurrent-send policy | specs/001 |
-| RV-03 | Atomic turn completion write | B-04 | STORAGE, 001 |
-| RV-04 | Chrome/browser computer-use per OS | Provider qualification | CHROME-BROWSER-LLD, P7 |
-| RV-05 | Environment isolation attestation | Real sandbox proof | ENVIRONMENTS, P4 |
-| RV-06 | Teach-to-skill from recording | No SDD | **RESEARCH** |
-| RV-07 | Dot Links / inter-Coworker message policy | No SDD | **RESEARCH** |
-| RV-08 | Voice realtime agent | Not V1 contract row | **RESEARCH** |
-| RV-09 | Semantic served-handler ↔ UI map | Open | [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md) |
-| RV-10 | Stop/update drain with Effect reconciliation | Open vs DSH pattern | RUNTIME-LIFECYCLE |
-| RV-11 | Interactive Artifact OS isolation profile | E08 qualification | INTERACTIVE-ARTIFACT-RUNTIME |
-| RV-12 | Coworker ADR-0024 schema/API | Pending | COWORKERS-TARGET |
-
-Add rows to this table when a doc section marks **RESEARCH** or **target-only** without a qualification path.
+| RV-01 | LiteSPM IPC/auth/schema | Local OS-authenticated framed JSON-RPC over named pipe / Unix domain socket; pinned protocol v1 with single-use plan tokens, ACSR consent, and 12 MCP bridge tools. | **LOCKED DESIGN** — [LITESPM-INTEGRATION-PLAN.md](LITESPM-INTEGRATION-PLAN.md), [CAPABILITY-FABRIC.md](CAPABILITY-FABRIC.md) |
+| RV-02 | First GA harness/OS/auth tuple and readiness handshake | Windows 11 / 10 (`x86_64-pc-windows-msvc`) + Claude Code CLI & OpenCode CLI v1.0.0. CLI-managed native auth pass-through. Handshake: probe -> session reservation -> SQLite atomic activation CAS. | **LOCKED DESIGN** — [specs/001-conversation-session-supervisor/SPEC.md](../specs/001-conversation-session-supervisor/SPEC.md) (B-02/B-03) |
+| RV-03 | Atomic turn completion write | `commit_conversation_agent_response` SQLite Immediate Transaction committing AGENT message, SETTLED turn, CLOSED session, events, and idempotency receipt atomically. | **LOCKED DESIGN** — [STORAGE.md](STORAGE.md), [specs/001-conversation-session-supervisor/SPEC.md](../specs/001-conversation-session-supervisor/SPEC.md) (B-04) |
+| RV-04 | Chrome/browser computer-use per OS | Chromium CDP connected to isolated profile directory (`user-data-dir`); takeover and return mediated by atomic CAS over `control_epoch`. Stale agent CDP commands fenced immediately upon human takeover. | **LOCKED DESIGN** — [CHROME-BROWSER-LLD.md](CHROME-BROWSER-LLD.md), P7 |
+| RV-05 | Environment isolation attestation | Windows: Win32 Job Object with restricted token, no-network loopback, and memory/CPU limits. Linux: transient cgroup-v2 + mount/PID unshare. Isolation attested before Attempt admission. | **LOCKED DESIGN** — [ENVIRONMENTS.md](ENVIRONMENTS.md), P4 |
+| RV-06 | Teach-to-skill from recording | Action recorder capturing DOM selector/keystroke sequences into declarative Routine JSON drafts; user reviews and approves before Routine registration. | **DESIGNED SPEC** — [ROUTINES.md](ROUTINES.md) (V1.1 extension) |
+| RV-07 | Dot Links / inter-Coworker message policy | Scoped Agent Relay via committed `ConversationMessage` envelopes with cryptographic provenance headers (A -> B -> A). Transcripts and private harness context are never leaked across workers. | **LOCKED DESIGN** — [DELEGATION.md](DELEGATION.md), P3 |
+| RV-08 | Voice realtime agent | Local audio pipeline (Whisper STT + Piper TTS) or WebRTC media stream; scoped as an optional multimodal channel. | **DEFERRED TO V2** — [CHANNELS.md](CHANNELS.md), V1 Release Contract |
+| RV-09 | Semantic served-handler ↔ UI map | Comprehensive mapping of all 229 OpenAPI operations to UI triggers and local reducer states in `SEMANTIC-SERVED-UI-MAP.md`. | **LOCKED DESIGN** — [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md) |
+| RV-10 | Stop/update drain with Effect reconciliation | Bounded 60s shutdown drain: stops new admissions, drains active handlers, checkpoints state, and marks unsettled external effects `AMBIGUOUS` with reconciliation tokens before daemon exit. | **LOCKED DESIGN** — [RUNTIME-LIFECYCLE.md](RUNTIME-LIFECYCLE.md), [FAILURE-RECOVERY.md](FAILURE-RECOVERY.md) |
+| RV-11 | Interactive Artifact OS isolation profile | Dedicated OS WebView running in a isolated worker process with strict CSP (no network, no remote scripts), local framed IPC message protocol, and zero host filesystem access. | **LOCKED DESIGN** — [INTERACTIVE-ARTIFACT-RUNTIME.md](INTERACTIVE-ARTIFACT-RUNTIME.md) |
+| RV-12 | Coworker ADR-0024 schema/API | Optional Coworker aggregate with scoped instructions, pinned default AgentBinding, dedicated ContextAttachments, and per-Coworker audit ledger. | **LOCKED DESIGN** — [COWORKERS-TARGET.md](COWORKERS-TARGET.md), ADR-0024 |
 
 ---
 

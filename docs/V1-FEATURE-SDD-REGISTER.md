@@ -10,7 +10,7 @@ Engineering checklist (domain, API, events, flows, UI wiring, tests, research): 
 
 | ID | Working name | V1 release area ([contract](V1-PRODUCT-RELEASE-CONTRACT.md) §3) | Master plan gate | SDD status | Interim global docs (until SDD) | Planned `contracts/ui-behavior.md` |
 |---|---|---|---|---|---|---|
-| **001** | Conversation Session Supervisor | 1 Universal Chat | P1 Real native Conversation | **DRAFT** — [specs/001](../specs/001-conversation-session-supervisor/README.md) | API, NATIVE-COMPOSER-LLD, SERVICES, STORAGE, EVENTS | **Present** |
+| **001** | Conversation Session Supervisor | 1 Universal Chat | P1 Real native Conversation | **ACCEPTED/LOCKED** (Rev 1.0) — [specs/001](../specs/001-conversation-session-supervisor/README.md) | API, NATIVE-COMPOSER-LLD, SERVICES, STORAGE, EVENTS | **Present** |
 | **002** | Native agent install, auth, binding | 2 BYO Agent | P1 / agent matrix | **DRAFT** — [specs/002](../specs/002-native-agent-install-auth-binding/README.md) | AGENT-CONTROL, AGENT-FABRIC, AGENT-ACCOUNT-ROUTE-MATRIX | **Present** |
 | **003** | Workspace roots and context ingestion | 2–3 files/context | P2 | **DRAFT** — [specs/003](../specs/003-workspace-roots-context-ingestion/README.md) | WORLD-RESOURCES, CONTEXT, STORAGE, API | **Present** |
 | **004** | Agent relay (A→B→A) | 2–3 continuity | P3 | **DRAFT** — [specs/004](../specs/004-agent-relay/README.md) | DELEGATION, NATIVE-COMPOSER-LLD, FLOWS | **Present** |

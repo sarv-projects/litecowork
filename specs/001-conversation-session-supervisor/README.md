@@ -1,8 +1,8 @@
 # 001 - Conversation Session Supervisor and Native Turn Execution
 
-**Status:** DRAFT - review required; does not authorize implementation.  
-**Revision:** 0.1 | **Updated:** 2026-10-31  
-**Owners to approve:** Conversation, Agent Runtime, Storage, Operator/API, Desktop UI, Security/Trust and Product.
+**Status:** ACCEPTED/LOCKED — normative specification locked and ready for execution.  
+**Revision:** 1.0 | **Updated:** 2026-11-01  
+**Owners:** Conversation, Agent Runtime, Storage, Operator/API, Desktop UI, Security/Trust and Product.
 
 ## User outcome
 

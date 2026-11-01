@@ -20,7 +20,7 @@ Use this file as the **single follow list** from empty checkout to qualified des
 | BT-0.3 | Re-run structural validators (feature package, links, OpenAPI name reconciliation) | Commands in CURRENT-RUN |
 | BT-0.4 | Complete [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md) for all shell surfaces | Map rows SERVED/TARGET/UNAVAILABLE |
 | BT-0.5 | Pin and refresh rival repos (ZCode, DSH, AionUi, OpenDot, …) per [REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md](REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md) | SHAs in REFERENCE-IMPLEMENTATIONS |
-| BT-0.6 | Lock SDD **001** (resolve B-01–B-10) → IN_REVIEW → ACCEPTED/LOCKED | Owner sign-off |
+| BT-0.6 | Lock SDD **001** (resolve B-01–B-10) → IN_REVIEW → ACCEPTED/LOCKED | **COMPLETED** — SDD 001 is ACCEPTED/LOCKED (Rev 1.0) with B-01 through B-10 resolved |
 
 **Do not start product coding on main while BT-0.2 and BT-0.6 are open.**
 

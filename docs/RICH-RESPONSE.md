@@ -152,32 +152,38 @@ ModelSafeBlock =
   TEXT_SLICE | LAYOUT | CARD | CALLOUT |
   MEDIA | GALLERY | CODE | TABLE | CHART | DIAGRAM | TIMELINE |
   CHECKLIST | DELIVERABLE_GROUP | ARTIFACT_COLLECTION
-# Three narrowing layers exist today and must stay distinct:
-#   1. this 14-kind target set (normative);
-#   2. the wire enum in schemas/operator-stream.schema.json (11 kinds — no GALLERY,
-#      CODE or TIMELINE), which is what a publisher may emit;
-#   3. the desktop client, which accepts and renders only TEXT_SLICE, LAYOUT, CARD,
-#      CALLOUT and TABLE. Every other kind makes the whole document fall back to the
-#      committed semantic message.
 
 HostBoundBlock =
   HOST_PROJECTION | MCP_APP
 ```
 
-These are the wire-level `kind` values from
-[`rich-presentation.schema.json`](schemas/rich-presentation.schema.json). `STACK`,
-`ROW`, and `GRID` are values of `LAYOUT.layout`, not block kinds. A
-`HOST_PROJECTION.projection_ref.projection_kind` selects the trusted system projection;
-there are no model-emittable `APPROVAL`, `VERIFICATION`, or `TASK_PROJECTION` block
-variants. `DIVIDER` is not in schema v1; use a layout gap or ordinary semantic prose.
+### Multi-Layer Block Alignment & Progression
 
-The complete JSON schema is the versioned document vocabulary. Publication and rendering
-may support a narrower qualified subset while its binder/security path is being
-implemented. At present the durable SQLite publisher accepts only `TEXT_SLICE` and
-`LAYOUT` (recursively composed from those types); it rejects every other schema-valid
-block until the matching source binder, host projector, storage validator, desktop
-renderer, and tests are qualified together. This does not permit an unsupported block to
-be persisted and silently hidden by the UI.
+The 14 normative block kinds map directly to wire stream frames and desktop React components with deterministic fallbacks:
+
+| Block Kind | Wire Schema Variant | Desktop React Component | Deterministic Fallback if Unsupported |
+|---|---|---|---|
+| `TEXT_SLICE` | `text_slice` | `TextSliceView` (Markdown) | Plain text extract from message |
+| `LAYOUT` | `layout` (`STACK`/`ROW`/`GRID`) | `LayoutContainer` | Vertical stack |
+| `CARD` | `card` | `RichCard` | Title, summary, and action links |
+| `CALLOUT` | `callout` | `CalloutBanner` | Blockquote (`> [!NOTE]`) |
+| `MEDIA` | `media` | `ResourceImageViewer` | Alt text + local file download button |
+| `GALLERY` | `gallery` (composite) | `MediaGalleryGrid` | Sequential media cards |
+| `CODE` | `code` | `SyntaxHighlightedBlock` | Monospace fenced code block |
+| `TABLE` | `table` | `VirtualTable` | Accessible Markdown table |
+| `CHART` | `chart` | `SandboxedChart` | Bounded data table + accessible summary |
+| `DIAGRAM` | `diagram` | `MermaidDiagramViewer` | Textual diagram description / source code |
+| `TIMELINE` | `timeline` (composite) | `TimelineList` | Chronological bulleted list |
+| `CHECKLIST` | `checklist` | `InteractiveChecklist` | Textual checkbox list (`- [ ]`) |
+| `DELIVERABLE_GROUP` | `deliverable_group` | `ArtifactGroupCard` | Pinned Artifact links and versions |
+| `ARTIFACT_COLLECTION`| `artifact_collection` | `ArtifactCollectionView`| Paginated list of artifact links |
+| `HOST_PROJECTION` | `host_projection` | `HostProjectionViewer` | Sanitized system status badge |
+| `MCP_APP` | `mcp_app` | `SandboxedAppFrame` | Structured tool result card |
+
+The complete JSON schema is the versioned document vocabulary. The durable SQLite publisher stores
+the validated RFC 8785 JSON representation of the complete document (bounded to max depth 6 and 512 KiB).
+If a desktop client encounters an unrecognized or unsupported block kind, it isolates that specific block
+and renders its deterministic fallback without discarding the enclosing document or conversational transcript.
 
 Agents may request a host-bound projection by kind only where the host API permits it;
 the compiler resolves the actual projection from authenticated Core state. Agents cannot

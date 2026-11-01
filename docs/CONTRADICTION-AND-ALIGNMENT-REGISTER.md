@@ -9,7 +9,7 @@ Authority order: [docs/README.md](README.md) and root [ARCHITECTURE.md](../ARCHI
 
 | Topic | Conflict | Authority | Resolution |
 |---|---|---|---|
-| UserRequest continuation | Feature 001 once listed B-06 as an open product decision | STATE-MACHINES, API, STORAGE, TRUST | Inherited. AC-017–AC-019. B-06 is not an open architecture decision. |
+| 001 B-01–B-10 | Feature 001 blocking decisions: concurrency, first harness, handshake, atomic result write, stream gaps, context reduction, process lifecycle, usage attribution | ARCHITECTURE, STATE-MACHINES, STORAGE, AGENT-CONTROL | **RESOLVED & LOCKED in Feature 001 (Rev 1.0)**: B-01 serialized turn lane (409 Conflict); B-02 Windows MSVC + Claude Code / Codex CLI with native auth pass-through; B-03 3-phase session handshake; B-04 `commit_conversation_agent_response` atomic SQLite transaction; B-05 best-effort transient streaming with REST resync; B-06 UserRequest continuation; B-07 sliding-window context reduction with audit header; B-08 dual-mode resource materialization; B-09 Job Object/cgroup with 10-min idle TTL; B-10 tiered usage attribution. Feature 001 is now ACCEPTED/LOCKED. |
 | Conversation activation vs Send | Storage activation existed; Send looked available | NATIVE-COMPOSER-LLD, feature 001 | Activation is not Send. Send stays fail-closed until 001 is locked and served. |
 | Native handles | Risk of putting handles in events | AGENT-CONTROL, STORAGE, EVENTS | Runtime-local binding only. Excluded from events, snapshots and public API. |
 | Workspace root routes | OpenAPI describes POST/PATCH workspace-roots; handlers were not mounted | API.md comments plus OpenAPI | Target-only until feature 003 is locked and a handler is served. Feature 003 states this explicitly. |
@@ -20,7 +20,6 @@ Authority order: [docs/README.md](README.md) and root [ARCHITECTURE.md](../ARCHI
 
 | ID | Topic | Why it is not silently closed |
 |---|---|---|
-| 001 B-01–B-05, B-07–B-10 | First provider, atomic final message, readiness, replay, context reduction, host lifecycle, usage | Feature 001 stays DRAFT |
 | 002 B-11–B-12 | Agent matrix beyond the first route; descriptor TTL | AGENT-CONTROL allows per-module policy |
 | 003 B-13–B-14 | First ingestion formats; watcher vs rescan | WORLD-RESOURCES watcher is target-only |
 | 004 B-15–B-16 | Portable context bound; second module | Depends on 002 |

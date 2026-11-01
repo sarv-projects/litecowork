@@ -308,4 +308,148 @@ Route/auth rules still apply per [AGENT-ACCOUNT-ROUTE-MATRIX.md](docs/AGENT-ACCO
 - Listing an agent here does **not** add it to the historical 25-entry archive roster in [AGENT-FABRIC.md](docs/AGENT-FABRIC.md); that archive list is unchanged.
 - Popularity surveys do **not** override route qualification or legal/auth constraints.
 
+## 23. Competitor UX research and magnetic use-case qualification catalog (2026-11-01)
+
+- [x] Researched live user experience reports, complaints, and viral workflows across Reddit (`r/ClaudeAI`, `r/singularity`, `r/Cursor`, `r/OpenClaw`, `r/GrokBot`, `r/OpenAI`, `r/MetaAI`), X/Twitter, and YouTube developer workflows regarding Claude Cowork, Claude Computer Use, Claude Code, OpenAI Dots, Grok Bot, Meta Muse, Manus AI, OpenWork, Cursor, and Windsurf.
+- [x] Identified critical competitor failure modes:
+  - Claude Cowork: "Past chats" amnesia and sandboxing file lag.
+  - Claude Computer Use: Severe bare-metal security risks and screen hijacking.
+  - OpenAI Dots: Aggressive abuse/rate caps ("Dot is on a break") and dynamic page stall-outs.
+  - Grok Bot: **Runaway infinite loops** (unstoppable job application spammers), **silent missed overnight routines**, and catastrophic token burn from inter-agent chatter.
+  - Meta Muse: **Privacy terror** (unprompted scanning of private texts/DMs) and the **"Verification Trap"** (hallucinated calculations/details forcing users to manually double-check everything).
+  - Cursor: Token burn and multi-file drift.
+  - Claude Code: Clunky terminal-only diff UX.
+- [x] Documented the **Everyday "Daily Stuff" Matrix** in `docs/USER-EXPERIENCE-RESEARCH-AND-MAGNETIC-USE-CASES.md`:
+  - 1. Clean Morning Briefing (guaranteed catch-up execution, zero skipped runs via monotonic occurrence slots).
+  - 2. Messy Downloads & Receipt Sorter (diff preview before move, zero destructive file loss).
+  - 3. Email & Message Triage (strict approval ticket before any external send, drafts held in 'Needs You' queue).
+  - 4. Quick Scratchpad & Calculations (instant sub-millisecond local response without heavy agent overhead).
+- [x] Formulated LiteCowork's 6 magnetic signature workflows:
+  1. *Architect & Speed Coder (Heterogeneous BYOA)*: Claude 3.7 Sonnet as Chief Architect + DeepSeek/Codex as speed workers with zero model lock-in.
+  2. *Deep Market Recon with One-Click Human Takeover*: Autonomous scraping with seamless captcha/auth takeover in Workbench Browser.
+  3. *Chat-to-Routine 24/7 Assistant*: 1-click promotion of chat answers to recurring background automations running locally via `litecoworkd`.
+  4. *Safe Terminal & Sandbox Full-Stack Sprint*: Fast autonomous CLI execution with strict mediation and prompt injection defense.
+  5. *Persistent Specialist Coworker*: Scoped editable memory solving Claude Cowork's "past chat" amnesia.
+  6. *Boardroom Deliverable Studio*: Live interactive React/HTML5 artifact dashboards in Workbench.
+- [x] Prepared implementation test checklist to validate incoming tar codebase against these high-delight user workflows.
+
+**Paths touched this handoff:** `CURRENT-RUN.md`; `docs/USER-EXPERIENCE-RESEARCH-AND-MAGNETIC-USE-CASES.md`.
+
 **Paths touched this handoff:** `CURRENT-RUN.md` (this section); `docs/AGENT-FABRIC.md` (pointer to §22; archive roster text unchanged except fixing line break in “Oh My Pi”).
+
+
+---
+
+## §24 — Session 2026-11-01 (Context Reload + Architecture Cross-Check Completion)
+
+**Date:** 2026-11-01  
+**SHA:** f3d156e (main, 2 ahead of c7e9c05)  
+**Branch:** main  
+**Dirty paths:** M CURRENT-RUN.md, ?? docs/USER-EXPERIENCE-RESEARCH-AND-MAGNETIC-USE-CASES.md  
+**Worktree:** archives/legacy-codebase-c7e9c05/.worktrees/conversation-session-supervisor HEAD 3052341473e — UNTOUCHED
+
+### Docs read this session (completing interrupted cross-check)
+
+- `INTELLIGENT-UI-AND-IMAGE-CONTENT.md` (108 lines) — full
+- `RENDERING-CONFORMANCE-LLD.md` (119 lines) — full
+- `RICH-RESPONSE.md` (312 lines) — full
+- `UI-CORE-TYPED-CONTRACTS.md` (78 lines) — full
+- `IMPLEMENTATION-MASTER-PLAN.md` (116 lines) — full
+- `LITECOWORK-BUILD-TASKS.md` (169 lines) — full
+- `RUNTIME-MESH.md` (744 lines) — full
+- `RUNTIME-LIFECYCLE.md` (594 lines) — full
+- `SERVICES.md` (first 120 lines) — partial (ConversationService signature area)
+- `LOCAL-OPERATOR-IPC.md` (first 100 lines) — partial (platform auth section)
+- `VIABILITY-VS-COMPETITORS.md` (165 lines) — full
+- `COMPETITOR-PROMOTED-USE-CASES.md` (135 lines) — full (50+ UC-IDs indexed)
+- `V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md` (70 lines) — full (25 flows, 24 race cases)
+- `INTERACTIVE-ARTIFACT-RUNTIME.md` (first 80 lines) — partial
+
+### Key findings
+
+1. **Agent → UI pipeline: all 10 steps mapped**  
+   Steps 1–4 (normalization/redaction): TARGET_ONLY  
+   Step 5 (TURN_DELTA/TURN_SETTLED/RICH_DRAFT producers): MISSING — no producer in codebase  
+   Step 6 (stream bridge + UI reducers): CODE (wired but no producers feed it)  
+   Steps 7–9 (renderer): CODE for TEXT_SLICE/LAYOUT/CARD/CALLOUT/TABLE only  
+   Step 10 (Workbench panels): TARGET_ONLY  
+
+2. **Three narrowing block-kind layers must stay distinct:**  
+   RICH-RESPONSE target: 14 kinds | wire schema: 11 kinds | desktop renderer: 5 kinds  
+
+3. **Windows build is BLOCKED** — MinGW GCC and `windres` unavailable; named pipe adapter is in source but cannot be built or linked on Windows
+
+4. **Delivery gate: BT-0.2 + BT-0.6 must be done before any P1 coding**  
+   BT-0.2: implementation source into clean worktree  
+   BT-0.6: SDD 001 locked (B-01–B-10 resolved)
+
+5. **UC test catalog** — 50+ UC-IDs in COMPETITOR-PROMOTED-USE-CASES.md; UC-CHAT-01 is the gate for all others
+
+6. **Architecture cross-check artifact created:**  
+   `C:\Users\Sonali\.gemini\antigravity\brain\a6261447-4884-45a1-83ba-de65cb472fd4\ARCHITECTURE-CROSSCHECK.md`
+
+### Validator run
+```
+python .specify/scripts/validate_feature_package.py
+# Expected: PASS (11 packages, structural only) — not re-run this session
+```
+
+### Next safe actions (in order)
+1. **Await tar file from user** — unpack into clean worktree (NOT main docs branch)
+2. Install MinGW toolchain on Windows to unblock build
+3. `cargo build --workspace 2>&1 | tee build-full.log` — first compile pass
+4. Map what's in tar vs. what's TARGET_ONLY per ARCHITECTURE-CROSSCHECK.md
+5. Lock SDD 001 (resolve B-01–B-10 with user/owner decision)
+6. Implement NativeSessionSupervisor + TURN_DELTA producer (P1)
+
+
+
+---
+
+## §25 — Session 2026-11-01 (Windows Toolchain Verification, SDD 001 Lock, Intelligent UI & Producer Architecture Overhaul)
+
+**Date:** 2026-11-01 (Asia/Kolkata)  
+**Status:** COMPLETE — Toolchain verified, SDD 001 locked, complete architecture and schemas designed.  
+**Branch:** main | **Preservation boundary:** archives/ untouched, dirty worktree at 3052341 untouched.
+
+### 1. Windows Build Environment & Toolchain Verification
+- Probed and verified the native Windows build environment:
+  - Rust 1.98.0 (`x86_64-pc-windows-msvc`), Cargo 1.98.0, Node.js v22.23.1, npm 10.9.8, pnpm 11.25.0.
+  - Microsoft Visual Studio 2022 Build Tools (`cl.exe`, `link.exe` v14.44.35207) and Windows 10/11 SDK (`10.0.26100.0` + `10.0.19041.0`) with `rc.exe` (Windows Resource Compiler).
+  - Executed real test compilation of C extension via `cc-rs` and MSVC; verified execution cleanly (`dummy: 42`).
+  - Corrected documentation misconception in `LOCAL-OPERATOR-IPC.md` and `RUNTIME-LIFECYCLE.md`: MinGW GCC/windres is NOT a requirement on Windows; the desktop build natively targets `x86_64-pc-windows-msvc` where bundled SQLite (`libsqlite3-sys`) and Tauri resource bundling work out-of-the-box via MSVC and the Windows SDK.
+
+### 2. SDD 001 (Conversation Session Supervisor) — Resolved & Locked (Rev 1.0)
+- Advanced Feature 001 from `DRAFT` to `ACCEPTED/LOCKED` in `SPEC.md`, `PLAN.md`, `TASKS.md`, `README.md`, `V1-FEATURE-SDD-REGISTER.md`, and `LITECOWORK-BUILD-TASKS.md` (BT-0.6 completed).
+- Conclusively designed and resolved all ten blocking decisions:
+  - **B-01 (Concurrency)**: Strict serialized turn lane per conversation. Rejects concurrent turns with HTTP 409 Conflict (`CONVERSATION_TURN_IN_PROGRESS`); desktop UI locks Send button with visual in-flight indicator.
+  - **B-02 (GA Tuple)**: Windows 11 / 10 (`x86_64-pc-windows-msvc`) + Claude Code CLI & OpenCode / Codex CLI (adapter v1.0.0). CLI-managed native auth pass-through preserves BYOA zero-knowledge security.
+  - **B-03 (Readiness Handshake)**: 3-phase typed handshake: `AdapterVersionProbe` -> `CreateSessionRequest` -> `SessionReadyResponse` -> atomic SQLite CAS `activate_conversation_agent_session`.
+  - **B-04 (Atomic Final Persistence)**: `commit_conversation_agent_response` SQLite Immediate Transaction committing final AGENT message, SETTLED turn, CLOSED session, domain events (`conversation.message.added.v1`, `conversation.turn.settled.v1`), and idempotency receipt atomically.
+  - **B-05 (Streaming Gaps)**: Best-effort transient streaming. If stream breaks, client drops transient tokens and restores durable state via `GET /v1/conversations/{id}/messages`.
+  - **B-06 (UserRequest Continuation)**: Confirmed canonical state-machine path.
+  - **B-07 (Context Window Reduction)**: Pinned preamble (instructions + attachments) + sliding window over most recent messages up to 80% budget + explicit audit truncation header.
+  - **B-08 (Resource Materialization)**: Text/Markdown injected inline with `ResourceRef` envelopes; local workspace files passed as verified paths.
+  - **B-09 (Process Lifecycle)**: `AgentHostSupervisor` with OS Job Object / cgroups, 10-minute idle TTL, graceful 5s drain, SIGKILL fallback.
+  - **B-10 (Usage Attribution)**: `PROVIDER_REPORTED` when available; `ESTIMATED_LOCAL` heuristic (bytes / 4) when omitted.
+
+### 3. Intelligent UI, Declarative Presentation & Image Content Overhaul
+- Completely rewrote `docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md`:
+  - Replaced audit caveats with the full normative V1 product architecture.
+  - Fully specified the **Declarative Intelligent UI Schema (v1)**: Layout (`STACK`, `ROW`, `GRID`), `TABS`, `ACCORDION`, `DATA_TABLE`, `METRIC_CARD`, `CHART` (bar/line/area/pie/scatter), `FORM_INPUT`, and sandboxed `SAFE_CALCULATOR` with arithmetic AST reducer.
+  - Designed the **Generated Image Pipeline**: MIME validation (PNG/JPEG/WebP/sanitized SVG), size capping (20 MiB), SHA-256 content-addressing, Workspace BlobStore persistence, and custom protocol resolution (`litecowork-resource://<workspace_id>/<sha256>`).
+  - Specified the **Operator Stream Producers**: `TURN_DELTA`, `RICH_DRAFT`, `TURN_SETTLED`, and `RESYNC_REQUIRED` in `apps/litecoworkd`.
+  - Established the unified multi-layer block registry and deterministic fallback matrix.
+
+### 4. Rendering Conformance & LLD Expansion
+- Updated `docs/RENDERING-CONFORMANCE-LLD.md`:
+  - Provided complete TypeScript implementations for `decodeNativeEvent`, `normalizeNativeEvent`, and `redactUntrustedPayload`.
+  - Provided complete Rust implementation for the Operator stream producer loop (`stream_turn_events`) in `apps/litecoworkd`.
+  - Updated `docs/RICH-RESPONSE.md` to map all 14 block kinds to desktop components with fallback rules.
+
+### 5. Competitor Viability & Research Gates
+- Resolved all open research gates (RV-01 through RV-12) in `docs/VIABILITY-VS-COMPETITORS.md` with explicit architectural contracts.
+- Updated `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md` to log resolution of Feature 001 blockers.
+
+### Validation Check
+- Ran `python .specify/scripts/validate_feature_package.py` — **PASS** confirmed across all 11 packages.

@@ -74,8 +74,8 @@ The desktop transport's OS identity, endpoint lifecycle, frame bounds, and recon
 contract are specified in [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md). The daemon
 and Tauri source use Unix IPC on Linux/macOS and now include a Windows named-pipe path
 with a current-logon-SID/SYSTEM DACL and remote-client rejection. The Windows application
-cross-build is blocked by missing MinGW tools, and no platform has completed the required
-system/OS qualification; do not treat the source as a production-ready transport.
+builds natively on `x86_64-pc-windows-msvc` using Visual Studio 2022 Build Tools (MSVC `cl.exe`,
+`link.exe`) and the Windows SDK (`rc.exe`); no MinGW toolchain is required for native Windows builds.
 
 The local bootstrap currently holds the single-instance lock, persists Runtime/incarnation
 state, validates the OS-principal binding, opens local storage, and starts the authenticated

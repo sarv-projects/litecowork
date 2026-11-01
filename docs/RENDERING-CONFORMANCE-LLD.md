@@ -62,7 +62,159 @@ type RendererRegistration = {
 };
 ~~~
 
-Named type aliases are candidate client-level projections over existing canonical PresentationItem/OperatorStream; do not fork their schemas. New durable variants require EVENT/OpenAPI/storage migrations and feature-qualified tests.
+## Concrete Normalization and Redaction Implementations
+
+### TypeScript Event Decoder and Normalizer
+
+~~~ts
+export interface NativeRawEnvelope {
+  harness: "claude-code" | "codex-cli" | "opencode" | "generic";
+  harnessVersion: string;
+  adapterVersion: string;
+  sessionId: string;
+  observedAt: string;
+  kind: string;
+  payload: Record<string, unknown>;
+}
+
+export function decodeNativeEvent(rawBytes: Uint8Array, maxBytes = 1048576): NativeRawEnvelope {
+  if (rawBytes.length > maxBytes) {
+    throw new Error(`EVENT_SIZE_EXCEEDED: Raw payload ${rawBytes.length} exceeds limit ${maxBytes}`);
+  }
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || !parsed.harness || !parsed.kind) {
+    throw new Error("MALFORMED_NATIVE_ENVELOPE: Missing mandatory fields");
+  }
+  return parsed as NativeRawEnvelope;
+}
+
+export function redactUntrustedPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const sensitiveKeys = /token|secret|key|authorization|cookie|password|credential|bearer/i;
+  const result: Record<string, unknown> = {};
+
+  for (const [k, v] of Object.entries(payload)) {
+    if (sensitiveKeys.test(k)) {
+      result[k] = "[REDACTED]";
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      result[k] = redactUntrustedPayload(v as Record<string, unknown>);
+    } else if (Array.isArray(v)) {
+      result[k] = v.map((item) =>
+        item && typeof item === "object" ? redactUntrustedPayload(item as Record<string, unknown>) : item
+      );
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+
+export function normalizeNativeEvent(
+  raw: NativeRawEnvelope,
+  workspaceId: string,
+  conversationId: string,
+  turnId: string,
+  sequence: number
+): NormalizedPresentation {
+  const safePayload = redactUntrustedPayload(raw.payload);
+  let itemKind = "UNKNOWN_NATIVE";
+
+  switch (raw.kind) {
+    case "text_delta":
+    case "assistant_chunk":
+      itemKind = "AGENT_TEXT";
+      break;
+    case "thought_summary":
+    case "reasoning":
+      itemKind = "THINKING_SUMMARY";
+      break;
+    case "tool_call_started":
+    case "tool_execution":
+      itemKind = "TOOL_CALL";
+      break;
+    case "tool_result":
+      itemKind = "TOOL_RESULT";
+      break;
+    case "file_diff":
+    case "patch_applied":
+      itemKind = "FILE_EDIT";
+      break;
+    case "error":
+      itemKind = "ERROR";
+      break;
+    default:
+      itemKind = "UNKNOWN_NATIVE";
+  }
+
+  return {
+    key: `${conversationId}:${turnId}:${sequence}`,
+    workspaceId,
+    conversationId,
+    turnId,
+    itemKind,
+    source: {
+      provider: raw.harness,
+      sessionId: raw.sessionId,
+      eventRef: `${raw.observedAt}#${sequence}`,
+    },
+    revision: 1,
+    phase: "TRANSIENT",
+    payload: safePayload,
+    createdAt: raw.observedAt,
+  };
+}
+~~~
+
+### Rust Operator Stream Producer Loop (in `litecoworkd`)
+
+~~~rust
+pub async fn stream_turn_events<R, S>(
+    turn_id: &str,
+    mut adapter_receiver: R,
+    stream_broadcaster: S,
+) -> Result<String, SupervisorError>
+where
+    R: tokio::sync::mpsc::Receiver<NativeAdapterEvent> + Unpin,
+    S: tokio::sync::broadcast::Sender<OperatorStreamFrame>,
+{
+    let mut accumulated_text = String::with_capacity(4096);
+    let mut sequence: u64 = 0;
+
+    while let Some(event) = adapter_receiver.recv().await {
+        sequence += 1;
+        match event {
+            NativeAdapterEvent::TextDelta(chunk) => {
+                accumulated_text.push_str(&chunk);
+                let frame = OperatorStreamFrame::TurnDelta {
+                    turn_id: turn_id.to_string(),
+                    sequence,
+                    delta: chunk,
+                    observed_at: chrono::Utc::now().to_rfc3339(),
+                };
+                let _ = stream_broadcaster.send(frame);
+            }
+            NativeAdapterEvent::RichBlockHint(hint) => {
+                if let Ok(doc) = validate_declarative_intent(&hint) {
+                    let frame = OperatorStreamFrame::RichDraft {
+                        turn_id: turn_id.to_string(),
+                        sequence,
+                        document_draft: doc,
+                    };
+                    let _ = stream_broadcaster.send(frame);
+                }
+            }
+            NativeAdapterEvent::Completed => {
+                break;
+            }
+            NativeAdapterEvent::Error(err) => {
+                return Err(SupervisorError::AdapterFailure(err));
+            }
+        }
+    }
+
+    Ok(accumulated_text)
+}
+~~~
 
 ## Required functions, constraints and edge cases
 

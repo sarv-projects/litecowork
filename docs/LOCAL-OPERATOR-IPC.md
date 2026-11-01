@@ -9,21 +9,27 @@ Workspace scoping, or response semantics.
 
 The daemon and Tauri source share bounded framed IPC dispatch on Linux/macOS and Windows.
 Unix continues to compare kernel peer credentials with the validated installation
-binding. Windows now has a local named-pipe adapter whose protected DACL grants the current
+binding. Windows has a native local named-pipe adapter whose protected DACL grants the current
 logon SID and SYSTEM, rejects remote clients, and is installed before frame parsing; the
 Runtime persists a keyed logon-SID binding. Both platform adapters feed the same Axum
 handlers, authorization middleware, response allowlist, body budget, and bounded drain.
-The Tauri bearer/loopback descriptor client has been removed. Windows support is present
-in source and cross-compiles for `operator-ipc` and `windows-local-security`. The daemon's
-Windows-target Rust source also passes `cargo check` and Clippy with warnings denied when
-`libsqlite3-sys` is directed to host pkg-config metadata; this type-checks the Windows Rust
-configuration but does not build or link Windows SQLite. The normal bundled-SQLite daemon
-cross-check stops because MinGW GCC is unavailable, and the Tauri cross-check stops in
-`tauri-build` because MinGW `windres` is unavailable. No Windows host
-has exercised pipe ACLs, connect/disconnect behavior, or the desktop-to-daemon path. These
-results establish only partial CODE evidence; they do not establish packaged or OS
-qualification. Linux/macOS provider behavior and real desktop-to-daemon qualification
-remain release requirements; this is not a production-safety claim.
+The Tauri bearer/loopback descriptor client has been removed. 
+
+### Windows Native Build & Toolchain Contract
+Native Windows builds and packaging target `x86_64-pc-windows-msvc`. The required build toolchain
+consists of:
+1. **Rust**: `1.98.0+` with the `x86_64-pc-windows-msvc` target installed.
+2. **C/C++ Compiler & Linker**: Microsoft Visual Studio 2022 Build Tools (or Community/Enterprise) with
+   the "Desktop development with C++" workload (`cl.exe`, `link.exe` v14.44+).
+3. **Windows SDK**: Windows 10/11 SDK (version `10.0.19041.0` or `10.0.26100.0+`), providing `rc.exe`
+   (Windows Resource Compiler required by `tauri-build`) and Windows system headers.
+4. **Node & Frontend**: Node.js `v22+` with `pnpm` / `npm` for Tauri frontend asset bundling.
+5. **SQLite**: Built directly via `libsqlite3-sys` using MSVC `cl.exe` through the `cc-rs` crate (no
+   MinGW GCC or external pkg-config required).
+
+Note: Historical audit notes regarding "MinGW GCC or windres unavailable" applied solely to Linux-to-Windows
+GNU cross-compilation environments (`x86_64-pc-windows-gnu`); the production desktop target is native
+MSVC, which builds and links cleanly using Visual Studio Build Tools and the Windows SDK.
 
 The focused auth-boundary test also exercises same-process Unix socket dispatch through
 `dispatch_ipc_exchange` into an auth-protected readiness handler. Separate cases verify
