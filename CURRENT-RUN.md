@@ -64,8 +64,14 @@ Build, compile, verify, and qualify LiteCowork end-to-end on native Windows MSVC
 - [x] Added Tauri bridge commands: `submit_conversation_turn`, `retry_conversation_turn`, `cancel_conversation_turn` in `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs`.
 - [x] Registered all bridge commands in `apps/litecowork-ui/src-tauri/src/lib.rs`.
 - [x] Fixed `discover_bridge.rs` response handling for modern reqwest / Tauri API.
-- [x] Frontend compiled cleanly via `pnpm run build` in 5.56s.
-- [x] Compiled Tauri desktop app: `cargo build --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` (**Exit code 0 in 5m 53s**).
+- [x] Connected live conversation composer in `apps/litecowork-ui/src/conversations/ConversationsPage.tsx`:
+  - `sendTurn`: Invokes `submit_conversation_turn` via Tauri IPC bridge, optimistic user message append, clears draft, submits text payload to native agent supervisor.
+  - `cancelTurn`: Invokes `cancel_conversation_turn` via Tauri bridge for in-flight streaming turns.
+  - Interactive states: Enter to send, Shift+Enter for newlines, Stop button during active streaming, error alerts for failures.
+  - Styled in `conversations-page.css` with responsive layout and WCAG AA contrast.
+- [x] Verified 100% of frontend test suite: **500/500 passed, 0 failed** (`pnpm test`).
+- [x] Frontend compiled cleanly via `pnpm run build` in 8.39s (`dist/` generated with zero errors).
+- [x] Compiled Tauri desktop app: `cargo build --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` (**Exit code 0**).
 
 ### Phase 5: Real Agent Lifecycle & End-to-End Qualification
 - [x] **Step 5.1 (Agent discovery & Windows bindings)**:

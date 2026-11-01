@@ -6,7 +6,6 @@ import { parseRichPresentationResponse, type ValidatedRichPresentation } from ".
 import type { PresentationStreamState, TransientTurn } from "../presentation/presentation-stream";
 import { appendConversationListPage, appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
-import { deriveConversationAgentSurface } from "./conversation-agent-surface";
 import { buildConversationAgentChoices, type ConversationAgentBindingOption, type ConversationAgentProfileOption } from "./conversation-agent-selection";
 import { firstUseConversationGuidance } from "./first-use-guidance";
 import "./conversations-page.css";
@@ -218,19 +217,6 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   const selectionKey = workspaceId && selectedId ? conversationDraftScope(workspaceId, selectedId) : null;
   const composerDraftKey = selectionKey;
   const composerDraft = composerDraftKey ? conversationDrafts[composerDraftKey] ?? "" : draft;
-  const composerSurface = deriveConversationAgentSurface({
-    workspaceId,
-    conversationId: selectedId ?? "",
-    agentBindingId: "",
-    descriptor: null,
-    descriptorObservedAt: "",
-    enabled: true,
-    leadEligible: true,
-    draft: composerDraft,
-    attachments: [],
-    nativeTokens: [],
-    selectedOptions: {},
-  }, Date.now());
 
   useLayoutEffect(() => {
     conversationWorkspaceSelections.select(workspaceId);
@@ -651,6 +637,74 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
     .sort((a, b) => a.turnId.localeCompare(b.turnId) || a.retryOrdinal - b.retryOrdinal);
   const automaticRichIds = new Set((currentSnapshot?.messages ?? []).filter(message => message.role === "AGENT" && message.rich_presentation?.availability === "AVAILABLE").slice(-6).map(message => message.message_id));
   const activeStatus = currentSnapshot?.active_turn?.status;
+  const [sendingTurn, setSendingTurn] = useState(false);
+  const [turnError, setTurnError] = useState<string | null>(null);
+
+  const isTurnRunning = transientTurns.some(t => t.state === "STREAMING" || t.state === "RECONNECTING") || activeStatus === "RUNNING";
+
+  const sendTurn = async () => {
+    const text = composerDraft.trim();
+    if (!text || !selectedId || !workspaceId || !operatorReady || sendingTurn || isTurnRunning) return;
+
+    setSendingTurn(true);
+    setTurnError(null);
+    const draftKey = composerDraftKey;
+    const reqId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `turn-req-${Date.now()}`;
+
+    if (draftKey) {
+      setConversationDrafts(current => ({ ...current, [draftKey]: "" }));
+    }
+
+    const optimisticMessage: ConversationMessageView = {
+      message_id: `user-msg-${Date.now()}`,
+      role: "USER",
+      content: [{ kind: "TEXT", text }],
+      created_at: new Date().toISOString(),
+      rich_presentation: null,
+    };
+    setSnapshot(current => current && current.conversation_id === selectedId ? {
+      ...current,
+      messages: [...current.messages, optimisticMessage],
+    } : current);
+
+    try {
+      await invoke<unknown>("submit_conversation_turn", {
+        workspaceId,
+        conversationId: selectedId,
+        requestId: reqId,
+        content: [{ kind: "TEXT", text }],
+        resourceRefs: [],
+        agentBindingId: selected?.active_agent_binding_id || null,
+        presentationPreference: "RICH",
+      });
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : String(cause);
+      setTurnError(msg);
+      if (draftKey) {
+        setConversationDrafts(current => ({ ...current, [draftKey]: text }));
+      }
+    } finally {
+      setSendingTurn(false);
+    }
+  };
+
+  const cancelTurn = async () => {
+    if (!selectedId || !workspaceId || !operatorReady) return;
+    const turn = transientTurns.find(t => t.state === "STREAMING" || t.state === "RECONNECTING");
+    if (!turn) return;
+    const reqId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `cancel-req-${Date.now()}`;
+    try {
+      await invoke<unknown>("cancel_conversation_turn", {
+        workspaceId,
+        conversationId: selectedId,
+        turnId: turn.turnId,
+        expectedVersion: 1,
+        requestId: reqId,
+      });
+    } catch (cause) {
+      setTurnError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
   const statusLabel = activeStatus === "RUNNING" ? "A conversation turn is running"
     : activeStatus === "WAITING_USER" ? "Waiting for your response"
       : activeStatus === "WAITING_DEPENDENCY" ? "Waiting for a service"
@@ -750,7 +804,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
                 {turn.state === "INCOMPLETE" && <p className="conversation-rich-status" role="note">This response did not finish and is not part of saved history. Its partial text is shown above.</p>}
               </article>)}
             </div>
-              : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Conversation records and messages are durable. Sending messages is not available yet because native agent turn execution is not connected.</p></div>}
+              : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Start a conversation by typing a message below. Your selected native agent will stream its response live and save durable aggregate records.</p></div>}
         {selected && <div className="conversation-composer">
           <div className="conversation-agent-control">
             <label htmlFor={`conversation-agent-${selected.conversation_id}`}>Agent for this conversation</label>
@@ -772,19 +826,54 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
           </div>
           <textarea
             aria-label="Message draft"
-            placeholder="Write a message to keep as a draft…"
+            placeholder={isTurnRunning ? "Assistant is responding…" : "Write a message… (Press Enter to send, Shift+Enter for new line)"}
             value={composerDraft}
+            disabled={isTurnRunning}
             onChange={event => {
               if (!composerDraftKey) return;
               setConversationDrafts(current => ({ ...current, [composerDraftKey]: event.target.value }));
             }}
+            onKeyDown={event => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendTurn();
+              }
+            }}
             rows={4}
           />
-          <button className="primary-button" type="button" disabled>Send</button>
+          <div className="conversation-composer-actions">
+            {isTurnRunning ? (
+              <button
+                className="secondary-button stop-turn-button"
+                type="button"
+                onClick={() => void cancelTurn()}
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                className="primary-button send-turn-button"
+                type="button"
+                disabled={!composerDraft.trim() || !operatorReady || sendingTurn}
+                onClick={() => void sendTurn()}
+              >
+                {sendingTurn ? "Sending…" : "Send"}
+              </button>
+            )}
+          </div>
+          {turnError && (
+            <p className="conversation-turn-error" role="alert">
+              {turnError}
+            </p>
+          )}
           <small role="status" aria-live="polite">
-            {composerDraft.trim()
-              ? `Draft only. ${composerSurface.blockers[0] ?? "An admitted native session is required before sending."}`
-              : `Sending is unavailable until a native session is admitted safely. ${composerSurface.blockers[0] ?? ""}`}
+            {isTurnRunning
+              ? "Assistant is streaming a response. Click Stop to cancel."
+              : sendingTurn
+                ? "Submitting turn to native agent…"
+                : !operatorReady
+                  ? "Reconnect the local Runtime before sending."
+                  : "Press Enter to send. Your native agent response streams live and saves atomically."}
           </small>
         </div>}
       </section>

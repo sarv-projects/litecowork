@@ -70,8 +70,13 @@
 .conversation-agent-control .conversation-agent-error { color: #8a2929; }
 .conversation-agent-control .conversation-agent-notice.saved { color: #286343; }
 .conversation-agent-control .conversation-agent-notice.failed { color: #8a2929; }
-.conversation-composer textarea { min-height: 66px; padding: 10px; resize: vertical; border: 1px solid var(--color-border); border-radius: 9px; background: #fbfcfe; color: var(--color-text-subtle); font-size: 13px; }
-.conversation-composer button { align-self: end; }
+.conversation-composer textarea { min-height: 66px; padding: 10px; resize: vertical; border: 1px solid var(--color-border); border-radius: 9px; background: #fff; color: var(--color-text); font: inherit; font-size: 13px; }
+.conversation-composer textarea:disabled { background: #f5f6f8; opacity: 0.75; cursor: not-allowed; }
+.conversation-composer-actions { display: flex; gap: 8px; align-self: end; }
+.conversation-composer .send-turn-button { min-height: 38px; padding: 0 18px; }
+.conversation-composer .stop-turn-button { min-height: 38px; padding: 0 16px; background: #c53030; color: #fff; border: 0; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; }
+.conversation-composer .stop-turn-button:hover { background: #9b2c2c; }
+.conversation-turn-error { grid-column: 1 / -1; margin: 4px 0 0; color: #8a2929; font-size: 12px; }
 .conversation-composer small { grid-column: 1 / -1; color: var(--color-text-subtle); font-size: 11px; }
 .conversation-error { margin: 14px 18px 0; padding: 10px 12px; border: 1px solid #e8c6c6; border-radius: 8px; background: #fff7f7; color: #8a2929; font-size: 13px; }
 @media (max-width: 620px) {
