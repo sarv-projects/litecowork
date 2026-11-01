@@ -1,0 +1,48 @@
+# LiteCowork local Runtime — systemd user/service unit.
+#
+# This unit is the Linux service-manager artifact for the desktop/local V1
+# release. It is validated by `scripts/v1_packaging_check.py` with
+# `systemd-analyze verify`. It is never installed by this repository: the
+# installer copies it to /etc/systemd/system (or ~/.config/systemd/user) and
+# the owner enables it explicitly.
+#
+# The Runtime owns no credentials in this unit. The OS credential store entry
+# is created by the daemon on first start for the owning OS user, so the unit
+# must run as that user and must not run as a different account.
+
+[Unit]
+Description=LiteCowork local Runtime
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/litecoworkd run --data-dir %S/litecowork
+StateDirectory=litecowork
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+# Hardening. ProtectSystem=full (not strict) is deliberate: Workspace roots
+# live under the owner's home directory and the Runtime must be able to write
+# to the Workspace it was pointed at. ProtectHome is therefore not enabled.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

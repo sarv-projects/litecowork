@@ -1,0 +1,58 @@
+[package]
+name = "storage-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = ["sqlite-bundled", "sqlite-rusqlite-defaults"]
+sqlite-bundled = ["rusqlite/bundled"]
+sqlite-rusqlite-defaults = ["rusqlite/cache", "rusqlite/ffi-sqlite-wasm-rs"]
+# Enables synthetic identity helpers for debug-build integration tests only.
+test-support = []
+
+[dependencies]
+base64 = "0.22.1"
+domain-responsibility = { path = "../domain-responsibility" }
+domain-effects = { path = "../domain-effects" }
+domain-invocations = { path = "../domain-invocations" }
+domain-environment = { path = "../domain-environment" }
+domain-conversation = { path = "../domain-conversation" }
+chacha20poly1305 = "0.10.1"
+ed25519-dalek = { version = "2.1", features = ["zeroize"] }
+fs2 = "0.4"
+getrandom = "0.3"
+hex = "0.4"
+hkdf = "0.12.4"
+hmac = "0.12.1"
+rusqlite = { version = "0.40.2", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_json_canonicalizer = "0.3.2"
+sha2 = "0.10"
+storage-core = { path = "../storage-core" }
+tempfile = "3.20"
+time = { version = "0.3", default-features = false, features = ["std", "parsing", "formatting"] }
+zeroize = "1.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6.3", features = ["linux-native-sync-persistent", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+windows-local-security = { path = "../windows-local-security" }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs", "process"] }
+
+[dev-dependencies]
+domain-workspace = { path = "../domain-workspace" }
+local-environment-staging = { path = "../local-environment-staging" }
+tempfile = "3.20"
+
+[lints]
+workspace = true

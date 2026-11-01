@@ -1,0 +1,17 @@
+.artifact-line-diff { min-width: 0; margin-block: .75rem; }
+.artifact-line-diff-summary { margin: .25rem 0 .6rem; color: var(--color-text-subtle, #687385); font-size: .8rem; }
+.artifact-line-diff-scroll { max-width: 100%; max-height: 60vh; overflow: auto; border: 1px solid var(--border, #d9d7d2); border-radius: 8px; }
+.artifact-line-diff table { width: 100%; border-collapse: collapse; table-layout: fixed; font: .78rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.artifact-line-diff caption { padding: .55rem .7rem; color: var(--color-text-subtle, #687385); text-align: left; font: .75rem/1.4 system-ui, sans-serif; }
+.artifact-line-diff th { position: sticky; top: 0; z-index: 1; padding: .5rem; background: var(--surface-muted, #f4f3ef); text-align: left; font: 600 .75rem/1.4 system-ui, sans-serif; }
+.artifact-line-diff th span, .artifact-line-diff th small { display: block; overflow-wrap: anywhere; }
+.artifact-line-diff th small { margin-top: .2rem; color: var(--color-text-subtle, #687385); font: 400 .65rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.artifact-line-diff td { border-top: 1px solid var(--border, #d9d7d2); vertical-align: top; }
+.artifact-line-diff-number { width: 3.5rem; padding: .25rem .45rem; color: var(--color-text-subtle, #687385); text-align: right; user-select: none; }
+.artifact-line-diff-text { padding: .25rem .55rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-line-diff-row.is-removed .artifact-line-diff-text:nth-child(2) { background: var(--color-danger-soft, #fce8e6); }
+.artifact-line-diff-row.is-added .artifact-line-diff-text:nth-child(4) { background: var(--color-success-soft, #e8f4ec); }
+.artifact-line-diff-row.is-removed .artifact-line-diff-number:nth-child(1) { background: var(--color-danger-soft, #fce8e6); }
+.artifact-line-diff-row.is-added .artifact-line-diff-number:nth-child(3) { background: var(--color-success-soft, #e8f4ec); }
+.artifact-line-diff-fallback { margin-block: .75rem; padding: .7rem .85rem; border-left: 3px solid var(--color-warning, #a16b15); background: var(--surface-muted, #f4f3ef); }
+.artifact-line-diff-fallback p { margin: 0; font-size: .8rem; }

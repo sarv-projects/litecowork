@@ -1,0 +1,33 @@
+.task-spec-history {
+  margin-top: 18px;
+  border-top: 1px solid var(--color-border, #dce2ea);
+}
+
+.task-spec-history > summary {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+  color: var(--color-text, #202938);
+  list-style-position: outside;
+}
+
+.task-spec-history > summary span { font-size: 13px; font-weight: 600; }
+.task-spec-history > summary small,
+.task-spec-history-note,
+.task-spec-history-status,
+.task-spec-history-list time,
+.task-spec-history-list small { color: var(--color-text-subtle, #667085); font-size: 11px; }
+.task-spec-history > summary:focus-visible { outline: 2px solid var(--color-primary, #2457d6); outline-offset: 3px; border-radius: 4px; }
+.task-spec-history-note { margin: 0 0 10px; line-height: 1.5; }
+.task-spec-history-status { margin: 8px 0; }
+.task-spec-history-error { margin: 8px 0; color: var(--color-danger, #a12727); font-size: 12px; }
+.task-spec-history-list { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.task-spec-history-list li { display: grid; gap: 5px; padding: 11px 12px; border: 1px solid var(--color-border, #dce2ea); border-radius: 8px; }
+.task-spec-history-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+.task-spec-history-heading strong { font-size: 12px; }
+.task-spec-history-list p { margin: 0; overflow-wrap: anywhere; color: var(--color-text, #202938); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.task-spec-history-list small { overflow-wrap: anywhere; }
+.task-spec-history-refresh { margin-top: 10px; }

@@ -1,0 +1,1622 @@
+//! Bounded local OpenCode Server transport.
+//!
+//! This keeps OpenCode's native harness and configuration intact. LiteCowork
+//! launches `opencode serve` on IPv4 loopback with a generated Basic-auth
+//! password, then speaks only the version-qualified V2 HTTP API.
+//! It is transport only: it does not admit a Task/Attempt, authorize tools,
+//! mediate Effects, or establish Environment writer quiescence.
+//!
+//! API reference: https://dev.opencode.ai/v2/docs/api/ . Server routes and request
+//! shapes are taken from the OpenCode Server/SDK documentation. This adapter
+//! deliberately does not expose arbitrary URLs, headers, methods, or JSON-RPC.
+#![allow(dead_code)] // The bounded transport is staged until Task/Attempt admission and lifecycle settlement are integrated.
+
+use std::{
+    ffi::OsString,
+    io::{BufRead, BufReader, Read, Write},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::mpsc::{self, Receiver, SyncSender},
+    thread,
+    time::{Duration, Instant},
+};
+
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use serde_json::{Value, json};
+
+use super::AgentChild;
+use super::conversation_prompt::{ConversationPromptError, encode_conversation_context_prompt};
+use storage_core::conversation::ConversationContextPackage;
+
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_HEALTH_RESPONSE_BYTES: usize = 64 * 1024;
+const MAX_PROFILE_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_STARTUP_HEALTH_CHECKS: usize = 16;
+const MAX_STARTUP_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_STARTUP_LINE_BYTES: usize = 8 * 1024;
+const MAX_REQUEST_BYTES: usize = 512 * 1024;
+const MAX_HEADER_BYTES: usize = 32 * 1024;
+const MAX_SSE_LINE_BYTES: usize = 64 * 1024;
+const MAX_SSE_EVENT_BYTES: usize = 256 * 1024;
+const MAX_SESSION_ID_BYTES: usize = 128;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenCodeError {
+    InvalidConfiguration,
+    RandomUnavailable,
+    PortUnavailable,
+    SpawnFailed,
+    ProcessExited,
+    ProcessObservationFailed,
+    StartupOutputClosed,
+    StartupOutputTooLarge,
+    StartupTimeout,
+    ConnectFailed,
+    Io,
+    InvalidResponse,
+    InvalidHttpFraming,
+    ResponseTooLarge,
+    RequestTooLarge,
+    Unauthorized,
+    HttpStatus(u16),
+    InvalidSessionId,
+    InvalidMessageId,
+    Timeout,
+    StreamClosed,
+}
+
+impl std::fmt::Display for OpenCodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OpenCode Server: {self:?}")
+    }
+}
+impl std::error::Error for OpenCodeError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenCodeProcessState {
+    Running,
+    Exited,
+    ObservationFailed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenCodeServerProtocol {
+    V2_0_26,
+    V2_0_28,
+    V2_0_32,
+}
+
+impl OpenCodeServerProtocol {
+    /// Map only exact CLI builds to transport profiles. This mapping is not a
+    /// support qualification; dispatch also requires native conformance evidence.
+    pub(crate) fn for_cli_version(version: &str) -> Option<Self> {
+        match version {
+            "2.0.26" => Some(Self::V2_0_26),
+            "2.0.28" => Some(Self::V2_0_28),
+            "2.0.32" => Some(Self::V2_0_32),
+            _ => None,
+        }
+    }
+
+    fn server_username(self) -> &'static str {
+        match self {
+            Self::V2_0_26 => "litecowork",
+            Self::V2_0_28 | Self::V2_0_32 => "opencode",
+        }
+    }
+
+    fn readiness_path(self) -> &'static str {
+        match self {
+            Self::V2_0_26 => "/api/health",
+            Self::V2_0_28 | Self::V2_0_32 => "/api/info",
+        }
+    }
+
+    fn readiness_response_matches(
+        self,
+        expected_process_id: u32,
+        status: u16,
+        body: &[u8],
+    ) -> bool {
+        if status != 200 {
+            return false;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(body) else {
+            return false;
+        };
+        match self {
+            Self::V2_0_26 => {
+                value
+                    .get("data")
+                    .unwrap_or(&value)
+                    .get("healthy")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            }
+            Self::V2_0_28 => {
+                value.get("version").and_then(Value::as_str) == Some("2.0.28")
+                    && value.get("pid").and_then(Value::as_u64)
+                        == Some(u64::from(expected_process_id))
+            }
+            Self::V2_0_32 => {
+                value.get("version").and_then(Value::as_str) == Some("2.0.32")
+                    && value.get("pid").and_then(Value::as_u64)
+                        == Some(u64::from(expected_process_id))
+            }
+        }
+    }
+}
+
+/// Safe transport configuration. The executable and working directory must be
+/// selected by an admitted Runtime-local endpoint binding.
+pub(crate) struct OpenCodeServerConfig {
+    pub executable: PathBuf,
+    pub working_directory: PathBuf,
+    /// Explicit native-user environment. The daemon environment is never inherited.
+    pub environment: OpenCodeEnvironment,
+    pub startup_timeout: Duration,
+    pub request_timeout: Duration,
+    pub protocol: OpenCodeServerProtocol,
+}
+
+/// Non-secret process settings required to let OpenCode find its native
+/// configuration and helper tools. Credential bytes must not be placed here;
+/// OpenCode reads its own user-owned credential store.
+#[derive(Default)]
+pub(crate) struct OpenCodeEnvironment {
+    pub home: Option<OsString>,
+    pub user_profile: Option<OsString>,
+    pub app_data: Option<OsString>,
+    pub local_app_data: Option<OsString>,
+    pub xdg_config_home: Option<OsString>,
+    pub xdg_data_home: Option<OsString>,
+    pub xdg_cache_home: Option<OsString>,
+    pub xdg_state_home: Option<OsString>,
+    pub path: Option<OsString>,
+    pub shell: Option<OsString>,
+    pub comspec: Option<OsString>,
+    pub pathext: Option<OsString>,
+    pub windir: Option<OsString>,
+    pub system_root: Option<OsString>,
+    pub temporary_directory: Option<OsString>,
+    pub lang: Option<OsString>,
+    pub lc_all: Option<OsString>,
+    pub term: Option<OsString>,
+}
+
+impl OpenCodeEnvironment {
+    fn is_valid(&self) -> bool {
+        const MAX_VALUE_BYTES: usize = 32 * 1024;
+        [
+            &self.home,
+            &self.user_profile,
+            &self.app_data,
+            &self.local_app_data,
+            &self.xdg_config_home,
+            &self.xdg_data_home,
+            &self.xdg_cache_home,
+            &self.xdg_state_home,
+            &self.path,
+            &self.shell,
+            &self.comspec,
+            &self.pathext,
+            &self.windir,
+            &self.system_root,
+            &self.temporary_directory,
+            &self.lang,
+            &self.lc_all,
+            &self.term,
+        ]
+        .into_iter()
+        .flatten()
+        .all(|value| {
+            let value = value.to_string_lossy();
+            value.len() <= MAX_VALUE_BYTES && !value.contains('\0')
+        })
+    }
+
+    fn apply(self, command: &mut Command) {
+        command.env_clear();
+        for (key, value) in [
+            ("HOME", self.home),
+            ("USERPROFILE", self.user_profile),
+            ("APPDATA", self.app_data),
+            ("LOCALAPPDATA", self.local_app_data),
+            ("XDG_CONFIG_HOME", self.xdg_config_home),
+            ("XDG_DATA_HOME", self.xdg_data_home),
+            ("XDG_CACHE_HOME", self.xdg_cache_home),
+            ("XDG_STATE_HOME", self.xdg_state_home),
+            ("PATH", self.path),
+            ("SHELL", self.shell),
+            ("COMSPEC", self.comspec),
+            ("PATHEXT", self.pathext),
+            ("WINDIR", self.windir),
+            ("SYSTEMROOT", self.system_root),
+            ("TMPDIR", self.temporary_directory.clone()),
+            ("TEMP", self.temporary_directory.clone()),
+            ("TMP", self.temporary_directory),
+            ("LANG", self.lang),
+            ("LC_ALL", self.lc_all),
+            ("TERM", self.term),
+        ] {
+            if let Some(value) = value {
+                command.env(key, value);
+            }
+        }
+    }
+}
+
+impl OpenCodeServerConfig {
+    pub(crate) fn bounded(
+        executable: impl Into<PathBuf>,
+        working_directory: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            executable: executable.into(),
+            working_directory: working_directory.into(),
+            environment: OpenCodeEnvironment::default(),
+            startup_timeout: Duration::from_secs(15),
+            request_timeout: Duration::from_secs(30),
+            protocol: OpenCodeServerProtocol::V2_0_26,
+        }
+    }
+
+    pub(crate) fn with_environment(mut self, environment: OpenCodeEnvironment) -> Self {
+        self.environment = environment;
+        self
+    }
+
+    pub(crate) fn with_protocol(mut self, protocol: OpenCodeServerProtocol) -> Self {
+        self.protocol = protocol;
+        self
+    }
+
+    fn is_valid(&self) -> bool {
+        self.executable.is_absolute()
+            && self.working_directory.is_absolute()
+            && self.environment.is_valid()
+            && !self.startup_timeout.is_zero()
+            && self.startup_timeout <= Duration::from_secs(60)
+            && !self.request_timeout.is_zero()
+            && self.request_timeout <= Duration::from_secs(60)
+    }
+}
+
+/// Owns the `opencode serve` launch scope. Windows Job Objects terminate the
+/// assigned process tree; Unix process-group cleanup cannot prevent an
+/// adversarial child from escaping. This still does not prove arbitrary
+/// Environment writers stopped; a future Task supervisor must fence the
+/// Environment independently before replacing an Attempt.
+pub(crate) struct OpenCodeServer {
+    child: AgentChild,
+    address: SocketAddr,
+    password: Vec<u8>,
+    request_timeout: Duration,
+    stopped: bool,
+    protocol: OpenCodeServerProtocol,
+    working_directory: PathBuf,
+}
+
+impl OpenCodeServer {
+    /// Launch OpenCode bound strictly to 127.0.0.1. The native OpenCode
+    /// configuration/auth state is read by OpenCode itself and never copied.
+    pub(crate) fn spawn(config: OpenCodeServerConfig) -> Result<Self, OpenCodeError> {
+        if !config.is_valid() {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+
+        // OpenCode's CLI does not expose socket activation or an inherited
+        // listener. Reserve an OS-selected loopback port, then close it before
+        // `serve` binds. Before sending the generated credential, require the
+        // owned child to emit its native "server listening" line after its
+        // bind succeeds. If another local process wins the port race, OpenCode
+        // cannot bind and no credential is sent to that process. Unknown CLI
+        // startup formats fail closed; this remains a transport qualification
+        // requirement, not Task execution or process-tree containment.
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .map_err(|_| OpenCodeError::PortUnavailable)?;
+        let port = listener
+            .local_addr()
+            .map_err(|_| OpenCodeError::PortUnavailable)?
+            .port();
+        drop(listener);
+
+        // 256 bits of generated entropy. The bytes stay in process memory and
+        // are used only to authenticate to this loopback server instance.
+        let mut password = vec![0_u8; 32];
+        getrandom::fill(&mut password).map_err(|_| OpenCodeError::RandomUnavailable)?;
+        let password = hex::encode(password).into_bytes();
+
+        let mut command = Command::new(&config.executable);
+        config.environment.apply(&mut command);
+        command
+            .args(["serve", "--hostname", "127.0.0.1", "--port"])
+            .arg(port.to_string())
+            .current_dir(&config.working_directory)
+            .env(
+                "OPENCODE_SERVER_USERNAME",
+                config.protocol.server_username(),
+            )
+            .env(
+                "OPENCODE_SERVER_PASSWORD",
+                std::str::from_utf8(&password).expect("hex is UTF-8"),
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).map_err(|_| OpenCodeError::SpawnFailed)?;
+        let started_at = Instant::now();
+        child.resume().map_err(|_| OpenCodeError::SpawnFailed)?;
+        // Install the RAII owner immediately. Every readiness/HTTP early return
+        // below drops this value, which kills and waits for the direct child.
+        let mut server = Self {
+            child,
+            address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
+            password,
+            request_timeout: config.request_timeout,
+            stopped: false,
+            protocol: config.protocol,
+            working_directory: config.working_directory.clone(),
+        };
+
+        let stdout = server
+            .child
+            .take_stdout()
+            .ok()
+            .flatten()
+            .ok_or(OpenCodeError::SpawnFailed)?;
+        let (startup_tx, startup_rx) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("litecowork-opencode-startup".to_owned())
+            .spawn(move || drain_startup_output(stdout, startup_tx))
+            .map_err(|_| OpenCodeError::SpawnFailed)?;
+
+        let deadline = started_at + config.startup_timeout;
+        wait_for_bound_server(&mut server, &startup_rx, deadline)?;
+
+        let mut health_checks = 0_usize;
+        loop {
+            match server.process_state()? {
+                OpenCodeProcessState::Running => {}
+                OpenCodeProcessState::Exited => return Err(OpenCodeError::ProcessExited),
+                OpenCodeProcessState::ObservationFailed => {
+                    return Err(OpenCodeError::ProcessObservationFailed);
+                }
+            }
+            // Routes are selected from the exact CLI version qualification.
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(OpenCodeError::StartupTimeout);
+            }
+            if health_checks >= MAX_STARTUP_HEALTH_CHECKS {
+                return Err(OpenCodeError::StartupTimeout);
+            }
+            health_checks += 1;
+            server.request_timeout = config.request_timeout.min(remaining);
+            match server.request_with_response_limit(
+                "GET",
+                server.protocol.readiness_path(),
+                None,
+                "application/json",
+                MAX_HEALTH_RESPONSE_BYTES,
+            ) {
+                Ok(response)
+                    if server.protocol.readiness_response_matches(
+                        server.child.id(),
+                        response.status,
+                        &response.body,
+                    ) =>
+                {
+                    server.request_timeout = config.request_timeout;
+                    return Ok(server);
+                }
+                Ok(response) if response.status == 401 || response.status == 403 => {
+                    return Err(OpenCodeError::Unauthorized);
+                }
+                Ok(_)
+                | Err(OpenCodeError::ConnectFailed | OpenCodeError::Io | OpenCodeError::Timeout) => {
+                }
+                Err(error) => return Err(error),
+            }
+            if Instant::now() >= deadline {
+                return Err(OpenCodeError::StartupTimeout);
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    }
+
+    pub(crate) fn process_state(&mut self) -> Result<OpenCodeProcessState, OpenCodeError> {
+        if self.stopped {
+            return Ok(OpenCodeProcessState::Exited);
+        }
+        match self.child.try_wait() {
+            Ok(Some(_)) => Ok(OpenCodeProcessState::Exited),
+            Ok(None) => Ok(OpenCodeProcessState::Running),
+            Err(_) => Ok(OpenCodeProcessState::ObservationFailed),
+        }
+    }
+
+    /// Reads the native provider connection summary. This is deliberately
+    /// restricted to the documented read-only route; callers must whitelist
+    /// fields before exposing any observation outside this module.
+    pub(super) fn read_provider_status(&mut self) -> Result<Value, OpenCodeError> {
+        let path = match self.protocol {
+            OpenCodeServerProtocol::V2_0_26
+            | OpenCodeServerProtocol::V2_0_28
+            | OpenCodeServerProtocol::V2_0_32 => "/api/provider",
+        };
+        let response = self.request_with_response_limit(
+            "GET",
+            path,
+            None,
+            "application/json",
+            MAX_PROFILE_RESPONSE_BYTES,
+        )?;
+        response_json(response)
+    }
+
+    /// Reads the native model catalogue without invoking
+    /// a model or changing OpenCode configuration.
+    pub(super) fn read_configured_provider_catalog(&mut self) -> Result<Value, OpenCodeError> {
+        let path = match self.protocol {
+            OpenCodeServerProtocol::V2_0_26
+            | OpenCodeServerProtocol::V2_0_28
+            | OpenCodeServerProtocol::V2_0_32 => "/api/model",
+        };
+        let response = self.request_with_response_limit(
+            "GET",
+            path,
+            None,
+            "application/json",
+            MAX_PROFILE_RESPONSE_BYTES,
+        )?;
+        response_json(response)
+    }
+
+    /// Creates one native OpenCode session. Session IDs are treated as opaque
+    /// values but are validated before they can become URL path segments.
+    pub(crate) fn create_session(&mut self, title: Option<&str>) -> Result<String, OpenCodeError> {
+        if title.is_some() {
+            // V2 session creation has no title field; silently dropping the
+            // caller's label would make session identity ambiguous.
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        let body = serde_json::Map::new();
+        let response = self.request(
+            "POST",
+            "/api/session",
+            Some({
+                let mut body = body;
+                body.insert(
+                    "location".to_owned(),
+                    json!({"directory": self.working_directory.to_string_lossy()}),
+                );
+                Value::Object(body)
+            }),
+            "application/json",
+        )?;
+        let value = response_json(response)?;
+        let id = value
+            .get("data")
+            .and_then(|data| data.get("id"))
+            .and_then(Value::as_str)
+            .ok_or(OpenCodeError::InvalidResponse)?;
+        validate_session_id(id)?;
+        Ok(id.to_owned())
+    }
+
+    /// Sends a bounded text prompt through the documented session prompt API.
+    /// Native response data is discarded after its bounded admission envelope
+    /// is checked. Model selection remains unqualified and is rejected.
+    pub(crate) fn send_message(
+        &mut self,
+        session_id: &str,
+        text: &str,
+        model: Option<(&str, &str)>,
+    ) -> Result<(), OpenCodeError> {
+        validate_session_id(session_id)?;
+        if text.trim().is_empty() || text.len() > 256 * 1024 || text.chars().any(|c| c == '\0') {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        if model.is_some() {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        let body = json!({"prompt":{"text":text}});
+        let path = format!("/api/session/{session_id}/prompt");
+        let response = self.request("POST", &path, Some(body), "application/json")?;
+        let value = response_json(response)?;
+        if value.get("data").and_then(Value::as_object).is_some() {
+            Ok(())
+        } else {
+            Err(OpenCodeError::InvalidResponse)
+        }
+    }
+
+    /// Admits one prompt without holding the caller until inference completes.
+    /// `message_id` is supplied by the caller for correlation with native events;
+    /// this API field is not treated as an idempotency guarantee by LiteCowork.
+    pub(crate) fn send_message_async(
+        &mut self,
+        session_id: &str,
+        message_id: &str,
+        text: &str,
+        model: Option<(&str, &str)>,
+    ) -> Result<(), OpenCodeError> {
+        validate_session_id(session_id)?;
+        if !valid_message_id(message_id) {
+            return Err(OpenCodeError::InvalidMessageId);
+        }
+        if text.trim().is_empty() || text.len() > 256 * 1024 || text.chars().any(|c| c == '\0') {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        if model.is_some() {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        let body = json!({
+            "id": message_id,
+            "prompt": {"text": text},
+        });
+        let path = format!("/api/session/{session_id}/prompt");
+        let response = self.request("POST", &path, Some(body), "application/json")?;
+        let value = response_json(response)?;
+        if value.get("data").and_then(Value::as_object).is_some() {
+            Ok(())
+        } else {
+            Err(OpenCodeError::InvalidResponse)
+        }
+    }
+
+    /// Send the committed LiteCowork transcript through OpenCode's bounded
+    /// text-only prompt API. The caller must supply a fresh session created for
+    /// this admitted Conversation turn; native session history is not continuity.
+    pub(crate) fn send_conversation_context_async(
+        &mut self,
+        session_id: &str,
+        native_message_id: &str,
+        context: &ConversationContextPackage,
+    ) -> Result<(), OpenCodeError> {
+        let prompt = encode_conversation_context_prompt(context).map_err(|error| match error {
+            ConversationPromptError::InputTooLarge => OpenCodeError::RequestTooLarge,
+            ConversationPromptError::InvalidContext
+            | ConversationPromptError::ResourceMaterializationRequired => {
+                OpenCodeError::InvalidConfiguration
+            }
+        })?;
+        self.send_message_async(session_id, native_message_id, &prompt, None)
+    }
+
+    /// Requests cancellation of one native OpenCode session. `true` is only
+    /// the Server API acknowledgment; it is not process or writer-quiescence
+    /// evidence and must not by itself authorize Attempt replacement.
+    pub(crate) fn abort_session(&mut self, session_id: &str) -> Result<bool, OpenCodeError> {
+        validate_session_id(session_id)?;
+        let path = format!("/api/session/{session_id}/interrupt");
+        let response = self.request("POST", &path, None, "application/json")?;
+        Ok(response.status == 204)
+    }
+
+    /// Opens the native server-instance SSE event stream. OpenCode scopes it
+    /// to this server's instance; callers must still
+    /// correlate session IDs and treat payloads as untrusted observations.
+    pub(crate) fn subscribe_events(&mut self) -> Result<OpenCodeEventStream, OpenCodeError> {
+        let deadline = Instant::now() + self.request_timeout;
+        let stream = connect(self.address, self.request_timeout)?;
+        write_request(
+            stream,
+            RequestOptions {
+                address: self.address,
+                method: "GET",
+                path: "/api/event",
+                authorization: &self.authorization(),
+                body: None,
+                accept: "text/event-stream",
+                stream_body: true,
+                max_response_bytes: MAX_RESPONSE_BYTES,
+                deadline,
+            },
+        )
+        .and_then(|response| {
+            if response.status == 401 || response.status == 403 {
+                return Err(OpenCodeError::Unauthorized);
+            }
+            if response.status != 200 {
+                return Err(OpenCodeError::HttpStatus(response.status));
+            }
+            let content_type = response
+                .headers
+                .get("content-type")
+                .map(String::as_str)
+                .unwrap_or("");
+            if !content_type
+                .to_ascii_lowercase()
+                .starts_with("text/event-stream")
+            {
+                return Err(OpenCodeError::InvalidResponse);
+            }
+            Ok(OpenCodeEventStream {
+                body: response.body_stream,
+                line: Vec::new(),
+                event_data: Vec::new(),
+                event_type: None,
+                event_id: None,
+            })
+        })
+    }
+
+    /// Stops and reaps the owned server process. The returned state covers only
+    /// the direct process and does not establish descendant containment.
+    pub(crate) fn stop(&mut self) -> OpenCodeProcessState {
+        if self.stopped {
+            return OpenCodeProcessState::Exited;
+        }
+        let _ = self.child.kill_tree();
+        match self.child.wait() {
+            Ok(_) => {
+                self.stopped = true;
+                OpenCodeProcessState::Exited
+            }
+            Err(_) => OpenCodeProcessState::ObservationFailed,
+        }
+    }
+
+    fn request(
+        &mut self,
+        method: &'static str,
+        path: &str,
+        body: Option<Value>,
+        accept: &str,
+    ) -> Result<HttpResponse, OpenCodeError> {
+        self.request_with_response_limit(method, path, body, accept, MAX_RESPONSE_BYTES)
+    }
+
+    fn request_with_response_limit(
+        &mut self,
+        method: &'static str,
+        path: &str,
+        body: Option<Value>,
+        accept: &str,
+        max_response_bytes: usize,
+    ) -> Result<HttpResponse, OpenCodeError> {
+        match self.process_state()? {
+            OpenCodeProcessState::Running => {}
+            OpenCodeProcessState::Exited => return Err(OpenCodeError::ProcessExited),
+            OpenCodeProcessState::ObservationFailed => {
+                return Err(OpenCodeError::ProcessObservationFailed);
+            }
+        }
+        let bytes = body
+            .map(|value| {
+                serde_json::to_vec(&value).map_err(|_| OpenCodeError::InvalidConfiguration)
+            })
+            .transpose()?
+            .unwrap_or_default();
+        if bytes.len() > MAX_REQUEST_BYTES {
+            return Err(OpenCodeError::RequestTooLarge);
+        }
+        let deadline = Instant::now() + self.request_timeout;
+        let stream = connect(self.address, self.request_timeout)?;
+        let authorization = self.authorization();
+        let response = write_request(
+            stream,
+            RequestOptions {
+                address: self.address,
+                method,
+                path,
+                authorization: &authorization,
+                body: (!bytes.is_empty()).then_some(bytes.as_slice()),
+                accept,
+                stream_body: false,
+                max_response_bytes,
+                deadline,
+            },
+        )?;
+        if response.status == 401 || response.status == 403 {
+            return Err(OpenCodeError::Unauthorized);
+        }
+        if !(200..300).contains(&response.status) {
+            return Err(OpenCodeError::HttpStatus(response.status));
+        }
+        Ok(response)
+    }
+
+    fn authorization(&self) -> String {
+        let username = self.protocol.server_username();
+        let mut credentials = Vec::with_capacity(username.len() + 1 + self.password.len());
+        credentials.extend_from_slice(username.as_bytes());
+        credentials.push(b':');
+        credentials.extend_from_slice(&self.password);
+        format!("Basic {}", BASE64.encode(credentials))
+    }
+}
+
+/// Wait for evidence from the owned process that its native server bind
+/// succeeded. The reader continues draining stdout after readiness so a later
+/// diagnostic cannot fill the pipe and stall the server process.
+fn wait_for_bound_server(
+    server: &mut OpenCodeServer,
+    startup: &Receiver<Result<SocketAddr, OpenCodeError>>,
+    deadline: Instant,
+) -> Result<(), OpenCodeError> {
+    loop {
+        match server.process_state()? {
+            OpenCodeProcessState::Running => {}
+            OpenCodeProcessState::Exited => return Err(OpenCodeError::ProcessExited),
+            OpenCodeProcessState::ObservationFailed => {
+                return Err(OpenCodeError::ProcessObservationFailed);
+            }
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(OpenCodeError::StartupTimeout);
+        }
+        match startup.recv_timeout(remaining.min(Duration::from_millis(40))) {
+            Ok(Ok(address)) if address == server.address => return Ok(()),
+            Ok(Ok(_)) => return Err(OpenCodeError::InvalidResponse),
+            Ok(Err(error)) => return Err(error),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(OpenCodeError::StartupOutputClosed);
+            }
+        }
+    }
+}
+
+/// Consume the child's bounded startup output. Only a documented listening
+/// marker is sent to the startup waiter; all later output is discarded.
+fn drain_startup_output<R: Read>(
+    mut reader: R,
+    startup: SyncSender<Result<SocketAddr, OpenCodeError>>,
+) {
+    let mut announced = false;
+    let mut total = 0_usize;
+    let mut line = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Ok(0) => {
+                if !announced {
+                    let _ = startup.send(Err(OpenCodeError::StartupOutputClosed));
+                }
+                return;
+            }
+            Ok(count) => count,
+            Err(_) => {
+                if !announced {
+                    let _ = startup.send(Err(OpenCodeError::Io));
+                }
+                return;
+            }
+        };
+        if announced {
+            continue;
+        }
+        for byte in &buffer[..count] {
+            total = total.saturating_add(1);
+            if total > MAX_STARTUP_OUTPUT_BYTES || line.len() >= MAX_STARTUP_LINE_BYTES {
+                let _ = startup.send(Err(OpenCodeError::StartupOutputTooLarge));
+                return;
+            }
+            if *byte == b'\n' {
+                if let Some(address) = parse_server_listening_line(&line) {
+                    announced = true;
+                    let _ = startup.send(Ok(address));
+                    line.clear();
+                    break;
+                }
+                line.clear();
+            } else if *byte != b'\r' {
+                line.push(*byte);
+            }
+        }
+    }
+}
+
+fn parse_server_listening_line(line: &[u8]) -> Option<SocketAddr> {
+    let line = std::str::from_utf8(line).ok()?;
+    let address = line
+        .strip_prefix("opencode server listening on ")
+        .or_else(|| line.strip_prefix("server listening on "))?;
+    let address = address.strip_prefix("http://")?;
+    let socket = address.parse::<SocketAddr>().ok()?;
+    if socket.ip().is_loopback() && socket.port() != 0 {
+        Some(socket)
+    } else {
+        None
+    }
+}
+
+impl Drop for OpenCodeServer {
+    fn drop(&mut self) {
+        let _ = self.stop();
+        self.password.fill(0);
+    }
+}
+
+pub(crate) struct OpenCodeEventStream {
+    body: BodyStream,
+    line: Vec<u8>,
+    event_data: Vec<u8>,
+    event_type: Option<String>,
+    event_id: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct OpenCodeEvent {
+    pub event_type: Option<String>,
+    pub event_id: Option<String>,
+    /// Parsed native JSON remains an untrusted, in-memory observation. Do not
+    /// log, persist, or treat it as an Effect/Evidence/authorization record.
+    pub data: Value,
+}
+
+impl OpenCodeEventStream {
+    /// Waits up to `timeout` total for one complete SSE event. Heartbeats without
+    /// data are skipped. Individual lines and assembled event payloads are
+    /// size-limited before JSON parsing.
+    pub(crate) fn next_event(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<OpenCodeEvent>, OpenCodeError> {
+        if timeout.is_zero() || timeout > Duration::from_secs(60) {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        let deadline = Instant::now() + timeout;
+        self.body.operation_deadline = Some(deadline);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            // Retain a partial line if the socket timeout lands mid-frame;
+            // the next call resumes parsing that same SSE line.
+            let line_read = match read_body_line(&mut self.body, &mut self.line, MAX_SSE_LINE_BYTES)
+            {
+                Ok(read) => read,
+                Err(OpenCodeError::Timeout) => return Ok(None),
+                Err(error) => return Err(error),
+            };
+            if !line_read {
+                return Err(OpenCodeError::StreamClosed);
+            }
+            if self.line.ends_with(b"\r") {
+                self.line.pop();
+            }
+            if self.line.is_empty() {
+                self.line.clear();
+                if self.event_data.is_empty() {
+                    self.event_type = None;
+                    self.event_id = None;
+                    continue;
+                }
+                if self.event_data.last() == Some(&b'\n') {
+                    self.event_data.pop();
+                }
+                let data = serde_json::from_slice(&self.event_data)
+                    .map_err(|_| OpenCodeError::InvalidResponse)?;
+                self.event_data.clear();
+                return Ok(Some(OpenCodeEvent {
+                    event_type: self.event_type.take(),
+                    event_id: self.event_id.take(),
+                    data,
+                }));
+            }
+            if self.line.first() == Some(&b':') {
+                self.line.clear();
+                continue;
+            }
+            let Some(colon) = self.line.iter().position(|byte| *byte == b':') else {
+                self.line.clear();
+                continue;
+            };
+            let field = &self.line[..colon];
+            let value_start = if self.line.get(colon + 1) == Some(&b' ') {
+                colon + 2
+            } else {
+                colon + 1
+            };
+            let value = &self.line[value_start..];
+            match field {
+                b"data" => {
+                    if self.event_data.len().saturating_add(value.len() + 1) > MAX_SSE_EVENT_BYTES {
+                        return Err(OpenCodeError::ResponseTooLarge);
+                    }
+                    self.event_data.extend_from_slice(value);
+                    self.event_data.push(b'\n');
+                }
+                b"event" => self.event_type = Some(String::from_utf8_lossy(value).into_owned()),
+                b"id" if !value.contains(&0) => {
+                    self.event_id = Some(String::from_utf8_lossy(value).into_owned())
+                }
+                _ => {}
+            }
+            self.line.clear();
+        }
+    }
+}
+
+fn validate_session_id(id: &str) -> Result<(), OpenCodeError> {
+    if id.is_empty()
+        || id.len() > MAX_SESSION_ID_BYTES
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
+        return Err(OpenCodeError::InvalidSessionId);
+    }
+    Ok(())
+}
+
+fn valid_message_id(id: &str) -> bool {
+    let Some(suffix) = id.strip_prefix("msg_") else {
+        return false;
+    };
+    !suffix.is_empty()
+        && id.len() <= MAX_SESSION_ID_BYTES
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn valid_option(value: &str, max: usize) -> bool {
+    !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+}
+
+struct HttpResponse {
+    status: u16,
+    headers: std::collections::HashMap<String, String>,
+    body: Vec<u8>,
+    body_stream: BodyStream,
+}
+
+struct BodyStream {
+    reader: BufReader<TcpStream>,
+    chunked: bool,
+    content_length: Option<u64>,
+    chunk_remaining: usize,
+    chunk_terminator_progress: u8,
+    chunk_header: Vec<u8>,
+    chunk_trailers: bool,
+    chunk_trailer_bytes: usize,
+    chunk_trailer_count: usize,
+    operation_deadline: Option<Instant>,
+    finished: bool,
+}
+
+impl BodyStream {
+    fn read_network(&mut self, output: &mut [u8]) -> Result<usize, OpenCodeError> {
+        if let Some(deadline) = self.operation_deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(OpenCodeError::Timeout);
+            }
+            self.reader
+                .get_ref()
+                .set_read_timeout(Some(remaining))
+                .map_err(|_| OpenCodeError::Io)?;
+        }
+        self.reader.read(output).map_err(map_read_error)
+    }
+
+    fn read_body(&mut self, out: &mut [u8]) -> Result<usize, OpenCodeError> {
+        if out.is_empty() || self.finished {
+            return Ok(0);
+        }
+        if self.chunked {
+            if self.chunk_remaining == 0 {
+                self.consume_chunk_terminator()?;
+                if self.read_chunk_header()? == 0 {
+                    self.finished = true;
+                    return Ok(0);
+                }
+            }
+            let take = out.len().min(self.chunk_remaining);
+            let count = self.read_network(&mut out[..take])?;
+            if count == 0 {
+                return Err(OpenCodeError::InvalidResponse);
+            }
+            self.chunk_remaining -= count;
+            if self.chunk_remaining == 0 {
+                self.chunk_terminator_progress = 0;
+            }
+            return Ok(count);
+        }
+        if let Some(remaining) = self.content_length {
+            if remaining == 0 {
+                self.finished = true;
+                return Ok(0);
+            }
+            let take = usize::try_from(remaining.min(out.len() as u64)).unwrap_or(out.len());
+            let count = self.read_network(&mut out[..take])?;
+            if count == 0 {
+                return Err(OpenCodeError::InvalidResponse);
+            }
+            self.content_length = Some(remaining - count as u64);
+            return Ok(count);
+        }
+        self.read_network(out)
+    }
+
+    fn read_chunk_header(&mut self) -> Result<usize, OpenCodeError> {
+        loop {
+            let mut byte = [0_u8; 1];
+            let count = self.read_network(&mut byte)?;
+            if count == 0 {
+                return Err(OpenCodeError::InvalidResponse);
+            }
+            if self.chunk_header.len() >= 4096 {
+                return Err(OpenCodeError::ResponseTooLarge);
+            }
+            self.chunk_header.push(byte[0]);
+            if byte[0] != b'\n' {
+                continue;
+            }
+            let line = std::mem::take(&mut self.chunk_header);
+            if self.chunk_trailers {
+                self.chunk_trailer_bytes = self.chunk_trailer_bytes.saturating_add(line.len());
+                self.chunk_trailer_count = self.chunk_trailer_count.saturating_add(1);
+                if self.chunk_trailer_bytes > 8192 || self.chunk_trailer_count > 32 {
+                    return Err(OpenCodeError::ResponseTooLarge);
+                }
+                if line == b"\r\n" {
+                    return Ok(0);
+                }
+                continue;
+            }
+            if line.len() > 128 {
+                return Err(OpenCodeError::ResponseTooLarge);
+            }
+            let line = std::str::from_utf8(&line).map_err(|_| OpenCodeError::InvalidResponse)?;
+            let digits = line
+                .trim()
+                .split(';')
+                .next()
+                .ok_or(OpenCodeError::InvalidResponse)?;
+            let size =
+                usize::from_str_radix(digits, 16).map_err(|_| OpenCodeError::InvalidResponse)?;
+            if size > MAX_RESPONSE_BYTES {
+                return Err(OpenCodeError::ResponseTooLarge);
+            }
+            if size == 0 {
+                self.chunk_trailers = true;
+                continue;
+            }
+            self.chunk_remaining = size;
+            return Ok(size);
+        }
+    }
+
+    fn consume_chunk_terminator(&mut self) -> Result<(), OpenCodeError> {
+        const TERMINATOR: [u8; 2] = *b"\r\n";
+        while self.chunk_terminator_progress < 2 {
+            let mut byte = [0_u8; 1];
+            let count = self.read_network(&mut byte)?;
+            if count == 0 || byte[0] != TERMINATOR[self.chunk_terminator_progress as usize] {
+                return Err(OpenCodeError::InvalidResponse);
+            }
+            self.chunk_terminator_progress += 1;
+        }
+        self.chunk_terminator_progress = 0;
+        Ok(())
+    }
+}
+
+struct RequestOptions<'a> {
+    address: SocketAddr,
+    method: &'a str,
+    path: &'a str,
+    authorization: &'a str,
+    body: Option<&'a [u8]>,
+    accept: &'a str,
+    stream_body: bool,
+    max_response_bytes: usize,
+    deadline: Instant,
+}
+
+fn write_request(
+    mut stream: TcpStream,
+    request: RequestOptions<'_>,
+) -> Result<HttpResponse, OpenCodeError> {
+    let RequestOptions {
+        address,
+        method,
+        path,
+        authorization,
+        body,
+        accept,
+        stream_body,
+        max_response_bytes,
+        deadline,
+    } = request;
+    if !path.starts_with('/')
+        || path.chars().any(|c| matches!(c, '\r' | '\n' | ' '))
+        || !valid_option(authorization, 256)
+        || max_response_bytes == 0
+        || max_response_bytes > MAX_RESPONSE_BYTES
+    {
+        return Err(OpenCodeError::InvalidConfiguration);
+    }
+    let body = body.unwrap_or_default();
+    if body.len() > MAX_REQUEST_BYTES {
+        return Err(OpenCodeError::RequestTooLarge);
+    }
+    let header = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nAuthorization: {authorization}\r\nAccept: {accept}\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(header.as_bytes())
+        .map_err(|_| OpenCodeError::Io)?;
+    if !body.is_empty() {
+        stream.write_all(body).map_err(|_| OpenCodeError::Io)?;
+    }
+    stream.flush().map_err(|_| OpenCodeError::Io)?;
+
+    let mut reader = BufReader::new(stream);
+    let mut status_line = Vec::new();
+    if !read_bounded_line(&mut reader, &mut status_line, 4096, deadline)? {
+        return Err(OpenCodeError::InvalidResponse);
+    }
+    let status_text =
+        std::str::from_utf8(&status_line).map_err(|_| OpenCodeError::InvalidResponse)?;
+    let mut parts = status_text.split_whitespace();
+    if !parts
+        .next()
+        .is_some_and(|version| version.starts_with("HTTP/1."))
+    {
+        return Err(OpenCodeError::InvalidResponse);
+    }
+    let status = parts
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or(OpenCodeError::InvalidResponse)?;
+
+    let mut headers = std::collections::HashMap::new();
+    let mut header_bytes = status_line.len();
+    loop {
+        let mut line = Vec::new();
+        if !read_bounded_line(&mut reader, &mut line, 8192, deadline)? {
+            return Err(OpenCodeError::InvalidResponse);
+        }
+        header_bytes = header_bytes.saturating_add(line.len());
+        if header_bytes > MAX_HEADER_BYTES {
+            return Err(OpenCodeError::ResponseTooLarge);
+        }
+        if line == b"\r\n" {
+            break;
+        }
+        let line = std::str::from_utf8(&line).map_err(|_| OpenCodeError::InvalidResponse)?;
+        let Some((name, value)) = line.trim_end_matches(['\r', '\n']).split_once(':') else {
+            return Err(OpenCodeError::InvalidResponse);
+        };
+        let key = name.trim().to_ascii_lowercase();
+        let value = value.trim().to_owned();
+        if key.is_empty() || headers.insert(key, value).is_some() {
+            return Err(OpenCodeError::InvalidResponse);
+        }
+    }
+    let transfer_encoding = headers.get("transfer-encoding");
+    let content_length = headers
+        .get("content-length")
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| OpenCodeError::InvalidResponse)
+        })
+        .transpose()?;
+    if transfer_encoding.is_some() && content_length.is_some() {
+        return Err(OpenCodeError::InvalidHttpFraming);
+    }
+    let chunked = match transfer_encoding {
+        None => false,
+        Some(value) if value.trim().eq_ignore_ascii_case("chunked") => true,
+        // This transport implements only a single chunked coding. Reject lists
+        // and all other codings instead of treating a trailing `chunked` token
+        // as if earlier transfer codings had already been decoded.
+        Some(_) => return Err(OpenCodeError::InvalidHttpFraming),
+    };
+    if content_length.is_some_and(|length| response_exceeds_limit(length, max_response_bytes)) {
+        return Err(OpenCodeError::ResponseTooLarge);
+    }
+    let mut body_stream = BodyStream {
+        reader,
+        chunked,
+        content_length,
+        chunk_remaining: 0,
+        chunk_terminator_progress: 2,
+        chunk_header: Vec::new(),
+        chunk_trailers: false,
+        chunk_trailer_bytes: 0,
+        chunk_trailer_count: 0,
+        operation_deadline: (!stream_body).then_some(deadline),
+        finished: false,
+    };
+    let mut response_body = Vec::new();
+    while !stream_body && response_body.len() <= max_response_bytes {
+        let remaining = max_response_bytes + 1 - response_body.len();
+        let mut buffer = vec![0_u8; remaining.min(16 * 1024)];
+        let count = body_stream.read_body(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        response_body.extend_from_slice(&buffer[..count]);
+    }
+    if response_body.len() > max_response_bytes {
+        return Err(OpenCodeError::ResponseTooLarge);
+    }
+    Ok(HttpResponse {
+        status,
+        headers,
+        body: response_body,
+        body_stream,
+    })
+}
+
+fn connect(address: SocketAddr, timeout: Duration) -> Result<TcpStream, OpenCodeError> {
+    TcpStream::connect_timeout(&address, timeout)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => OpenCodeError::Timeout,
+            _ => OpenCodeError::ConnectFailed,
+        })
+        .and_then(|stream| {
+            stream
+                .set_read_timeout(Some(timeout))
+                .map_err(|_| OpenCodeError::Io)?;
+            stream
+                .set_write_timeout(Some(timeout))
+                .map_err(|_| OpenCodeError::Io)?;
+            Ok(stream)
+        })
+}
+
+fn response_json(response: HttpResponse) -> Result<Value, OpenCodeError> {
+    parse_json_response(&response.body)
+}
+
+fn parse_json_response(bytes: &[u8]) -> Result<Value, OpenCodeError> {
+    serde_json::from_slice(bytes).map_err(|_| OpenCodeError::InvalidResponse)
+}
+
+fn response_exceeds_limit(content_length: u64, max_response_bytes: usize) -> bool {
+    content_length > max_response_bytes as u64
+}
+
+fn read_body_line(
+    body: &mut BodyStream,
+    output: &mut Vec<u8>,
+    limit: usize,
+) -> Result<bool, OpenCodeError> {
+    loop {
+        let mut byte = [0_u8; 1];
+        let count = body.read_body(&mut byte)?;
+        if count == 0 {
+            return Ok(!output.is_empty());
+        }
+        if output.len() >= limit {
+            return Err(OpenCodeError::ResponseTooLarge);
+        }
+        if byte[0] == b'\n' {
+            return Ok(true);
+        }
+        output.push(byte[0]);
+    }
+}
+
+fn read_bounded_line(
+    reader: &mut BufReader<TcpStream>,
+    output: &mut Vec<u8>,
+    limit: usize,
+    deadline: Instant,
+) -> Result<bool, OpenCodeError> {
+    output.clear();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(OpenCodeError::Timeout);
+        }
+        reader
+            .get_ref()
+            .set_read_timeout(Some(remaining))
+            .map_err(|_| OpenCodeError::Io)?;
+        let available = reader.fill_buf().map_err(map_read_error)?;
+        if available.is_empty() {
+            return Ok(!output.is_empty());
+        }
+        let take = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        if output.len().saturating_add(take) > limit {
+            return Err(OpenCodeError::ResponseTooLarge);
+        }
+        let has_newline = available.get(take.saturating_sub(1)) == Some(&b'\n');
+        output.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if has_newline {
+            return Ok(true);
+        }
+    }
+}
+
+fn map_read_error(error: std::io::Error) -> OpenCodeError {
+    match error.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => OpenCodeError::Timeout,
+        _ => OpenCodeError::Io,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_server_config() -> OpenCodeServerConfig {
+        #[cfg(windows)]
+        {
+            OpenCodeServerConfig::bounded(
+                r"C:\Program Files\OpenCode\opencode.exe",
+                r"C:\Users\LiteCowork\workspace",
+            )
+        }
+        #[cfg(not(windows))]
+        {
+            OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace")
+        }
+    }
+
+    #[test]
+    fn qualified_protocols_use_their_exact_server_auth_and_readiness_contracts() {
+        assert_eq!(
+            OpenCodeServerProtocol::V2_0_26.server_username(),
+            "litecowork"
+        );
+        assert_eq!(
+            OpenCodeServerProtocol::V2_0_26.readiness_path(),
+            "/api/health"
+        );
+        assert!(OpenCodeServerProtocol::V2_0_26.readiness_response_matches(
+            41,
+            200,
+            br#"{"data":{"healthy":true}}"#
+        ));
+
+        assert_eq!(
+            OpenCodeServerProtocol::for_cli_version("2.0.26"),
+            Some(OpenCodeServerProtocol::V2_0_26)
+        );
+        assert_eq!(
+            OpenCodeServerProtocol::for_cli_version("2.0.28"),
+            Some(OpenCodeServerProtocol::V2_0_28)
+        );
+        assert_eq!(
+            OpenCodeServerProtocol::for_cli_version("2.0.32"),
+            Some(OpenCodeServerProtocol::V2_0_32)
+        );
+        assert_eq!(OpenCodeServerProtocol::for_cli_version("2.0.31"), None);
+        assert_eq!(OpenCodeServerProtocol::for_cli_version("2.1.0"), None);
+
+        let current = OpenCodeServerProtocol::V2_0_28;
+        assert_eq!(current.server_username(), "opencode");
+        assert_eq!(current.readiness_path(), "/api/info");
+        let server_info = br#"{"version":"2.0.28","pid":41,"paths":{"directory":"private"}}"#;
+        assert!(current.readiness_response_matches(41, 200, server_info));
+        assert!(!current.readiness_response_matches(42, 200, server_info));
+        assert!(!current.readiness_response_matches(41, 200, br#"{"version":"2.0.29","pid":41}"#));
+        assert!(!current.readiness_response_matches(41, 401, server_info));
+        assert!(!current.readiness_response_matches(41, 200, b"not json"));
+
+        let installed = OpenCodeServerProtocol::V2_0_32;
+        assert_eq!(installed.server_username(), "opencode");
+        assert_eq!(installed.readiness_path(), "/api/info");
+        let installed_info = br#"{"version":"2.0.32","pid":91,"paths":{"directory":"private"}}"#;
+        assert!(installed.readiness_response_matches(91, 200, installed_info));
+        assert!(!installed.readiness_response_matches(92, 200, installed_info));
+        assert!(!installed.readiness_response_matches(
+            91,
+            200,
+            br#"{"version":"2.0.31","pid":91}"#
+        ));
+        assert!(!installed.readiness_response_matches(91, 401, installed_info));
+    }
+
+    #[test]
+    fn accepts_documented_native_server_listening_markers() {
+        assert_eq!(
+            parse_server_listening_line(b"opencode server listening on http://127.0.0.1:4096"),
+            Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4096))),
+        );
+        assert_eq!(
+            parse_server_listening_line(b"server listening on http://127.0.0.1:4096"),
+            Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4096))),
+        );
+    }
+
+    #[test]
+    fn rejects_unexpected_or_non_loopback_startup_addresses() {
+        assert_eq!(
+            parse_server_listening_line(b"server listening on http://0.0.0.0:4096"),
+            None,
+        );
+        assert_eq!(
+            parse_server_listening_line(b"server listening on https://127.0.0.1:4096"),
+            None,
+        );
+        assert_eq!(parse_server_listening_line(b"ready"), None);
+    }
+
+    #[test]
+    fn server_configuration_bounds_startup_and_request_timeouts() {
+        let config = test_server_config();
+        assert!(config.is_valid());
+
+        let mut zero_timeout = test_server_config();
+        zero_timeout.request_timeout = Duration::ZERO;
+        assert!(!zero_timeout.is_valid());
+
+        let mut excessive_timeout = test_server_config();
+        excessive_timeout.startup_timeout = Duration::from_secs(61);
+        assert!(!excessive_timeout.is_valid());
+    }
+
+    #[test]
+    fn server_configuration_requires_absolute_paths_on_the_current_platform() {
+        let mut relative_executable = test_server_config();
+        relative_executable.executable = PathBuf::from("opencode");
+        assert!(!relative_executable.is_valid());
+
+        let mut relative_workspace = test_server_config();
+        relative_workspace.working_directory = PathBuf::from("workspace");
+        assert!(!relative_workspace.is_valid());
+    }
+
+    #[test]
+    fn response_content_length_is_bounded_before_body_allocation() {
+        assert!(!response_exceeds_limit(
+            MAX_RESPONSE_BYTES as u64,
+            MAX_RESPONSE_BYTES
+        ));
+        assert!(response_exceeds_limit(
+            (MAX_RESPONSE_BYTES + 1) as u64,
+            MAX_RESPONSE_BYTES
+        ));
+    }
+
+    #[test]
+    fn html_fallback_is_rejected_as_invalid_json_without_retaining_body() {
+        assert_eq!(
+            parse_json_response(b"<html><body>desktop app</body></html>"),
+            Err(OpenCodeError::InvalidResponse)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn conversation_context_is_carried_in_the_opencode_http_prompt_request() {
+        use serde_json::{Value, json};
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+        use storage_core::conversation::{ConversationContextMessage, ConversationContextPackage};
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("set request timeout");
+
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let (header_end, content_length) = loop {
+                if let Some(header_end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|index| index + 4)
+                {
+                    let headers = String::from_utf8(request[..header_end].to_vec())
+                        .expect("HTTP headers are UTF-8");
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .expect("request content length");
+                    if request.len() >= header_end + content_length {
+                        break (header_end, content_length);
+                    }
+                }
+                let count = stream.read(&mut buffer).expect("read request");
+                assert_ne!(count, 0, "client closed before completing request");
+                request.extend_from_slice(&buffer[..count]);
+            };
+
+            let headers =
+                String::from_utf8(request[..header_end].to_vec()).expect("HTTP headers are UTF-8");
+            let body =
+                serde_json::from_slice::<Value>(&request[header_end..header_end + content_length])
+                    .expect("JSON prompt body");
+            let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":{}}";
+            stream.write_all(response).expect("write response");
+            (headers, body)
+        });
+
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(2),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: PathBuf::from("/tmp/workspace"),
+        };
+
+        let message =
+            |message_id: &str, role: &str, text: &str, source_agent_binding_id: Option<&str>| {
+                ConversationContextMessage {
+                    message_id: message_id.to_owned(),
+                    role: role.to_owned(),
+                    turn_id: Some(format!("turn-{message_id}")),
+                    source_agent_binding_id: source_agent_binding_id.map(str::to_owned),
+                    content: json!([{"kind":"TEXT","text":text}]),
+                    resource_refs: json!([]),
+                    created_at: "2026-10-25T12:00:00Z".to_owned(),
+                }
+            };
+        let context = ConversationContextPackage {
+            conversation_id: "conversation-one".to_owned(),
+            target_agent_binding_id: "binding-b".to_owned(),
+            through_message_id: "user-current".to_owned(),
+            messages: vec![
+                message("user-first", "USER", "What is the issue?", None),
+                message(
+                    "agent-first",
+                    "AGENT",
+                    "The first agent found a race.",
+                    Some("binding-a"),
+                ),
+                message("user-current", "USER", "Now fix that race.", None),
+            ],
+        };
+
+        server
+            .send_conversation_context_async("session-b", "msg_b", &context)
+            .expect("submit Conversation context");
+        let (headers, body) = captured.join().expect("capture thread");
+        assert!(headers.starts_with("POST /api/session/session-b/prompt HTTP/1.1"));
+        assert!(headers.contains(&format!(
+            "Authorization: Basic {}",
+            BASE64.encode(b"opencode:test-password")
+        )));
+        assert_eq!(body["id"], "msg_b");
+        let prompt = body["prompt"]["text"].as_str().expect("prompt text");
+        let transcript: Value =
+            serde_json::from_str(prompt.rsplit_once('\n').expect("transcript delimiter").1)
+                .expect("serialized conversation transcript");
+        assert_eq!(transcript["conversation_id"], "conversation-one");
+        assert_eq!(transcript["through_message_id"], "user-current");
+        let messages = transcript["messages"]
+            .as_array()
+            .expect("transcript messages");
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["message_id"], "user-first");
+        assert_eq!(messages[1]["message_id"], "agent-first");
+        assert_eq!(messages[1]["source_agent_binding_id"], "binding-a");
+        assert_eq!(messages[2]["message_id"], "user-current");
+        assert!(prompt.contains("untrusted conversation context"));
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
+}

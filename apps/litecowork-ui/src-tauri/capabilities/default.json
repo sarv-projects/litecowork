@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal desktop shell capability set. The UI can invoke only the native lifecycle commands registered by the Tauri application; it has no direct filesystem, network, shell, or daemon command access.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

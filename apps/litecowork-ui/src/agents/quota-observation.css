@@ -1,0 +1,42 @@
+.quota-observation {
+  width: 100%;
+  margin-top: 0.55rem;
+}
+
+.quota-observation__panel {
+  margin-top: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border-subtle, #d8dde3);
+  border-radius: 0.65rem;
+  background: var(--surface-raised, #fff);
+}
+
+.quota-observation__panel p,
+.quota-observation__summary p {
+  margin: 0.5rem 0 0;
+  color: var(--text-secondary, #535b65);
+  font-size: 0.82rem;
+}
+
+.quota-observation__summary dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0;
+}
+
+.quota-observation__summary dl > div {
+  min-width: 0;
+}
+
+.quota-observation__summary dt {
+  color: var(--text-secondary, #535b65);
+  font-size: 0.75rem;
+}
+
+.quota-observation__summary dd {
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.88rem;
+  font-weight: 600;
+}

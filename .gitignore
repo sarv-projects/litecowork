@@ -36,3 +36,5 @@ apps/litecowork-ui/src-tauri/binaries/
 
 # Local upstream reference checkouts (never stage or ship)
 repo_take/
+staging_tar/
+.cargo/
