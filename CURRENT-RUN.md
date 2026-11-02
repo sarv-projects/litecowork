@@ -104,28 +104,44 @@ Build, compile, verify, and qualify LiteCowork end-to-end on native Windows MSVC
   - `UC-DAILY-04/05`: Automation health and routine runs: 29/29 tests in `automation_host_tests` **PASSED**.
   - `UC-BYOA-01`: Agent discovery and credential isolation verified.
 
-### Phase 6: Final Full Workspace Build & Verification
-- [x] `windows-local-security`: 36 passed, 0 failed.
-- [x] `operator-ipc`: 18 passed, 0 failed.
-- [x] `domain-effects`: 14 passed, 0 failed.
-- [x] `domain-environment`: 24 passed, 0 failed.
-- [x] `domain-invocations`: 7 passed, 0 failed.
-- [x] `domain-rag`: 12 passed, 0 failed.
-- [x] `domain-responsibility`: 22 passed, 0 failed.
-- [x] `domain-task`: 138 passed, 0 failed.
-- [x] `domain-workspace`: 7 passed, 0 failed.
-- [x] `local-environment-staging`: 24 passed, 0 failed.
-- [x] `storage-sqlite` (agent bindings + automation): 45 passed, 0 failed.
-- [x] `litecoworkd` (conversations + agents + runtime): 91 passed, 0 failed.
-- [x] Python stream & offers contracts: 6 passed, 0 failed.
-- [x] Frontend CDP/unit tests: 500 passed, 0 failed.
-- [x] Total: **Over 830 automated tests passed across the workspace.**
+### Phase 6: Final Verification, Polish & Stubs Elimination
+- [x] **Zero Stubs Guarantee & Truthful Contract Alignment**:
+  - Audited and eliminated stubbed platform limitation in `apps/litecowork-ui/src-tauri/src/lib.rs`: implemented real Windows UTF-8 path handling and idempotency key derivation for persistent folder selection.
+  - Replaced simulated fake shell commands in the Workbench Terminal tab with truthful diagnostics reflecting Windows ConPTY initialization, Job Object isolation status, and detected native agent harnesses.
+  - Replaced static JSON block in the Browser tab with a live sandboxed `<iframe>`, interactive URL address bar, refresh affordances, responsive device viewport toggles, and genuine Human Takeover epoch state.
+  - Replaced hardcoded sample diff arrays with live workspace resource diff inspection.
+  - Replaced hardcoded activity logs with truthful runtime status, workspace SQLite record telemetry, and active agent supervisor telemetry.
+- [x] **Windows Local Operator IPC Named Pipe Fix**:
+  - Diagnosed `OPERATOR_API_START_FAILED` on Windows desktop startup: `CreateNamedPipeW` failed with `ERROR_INVALID_OWNER (1307)` because the pipe SDDL specified `O:SY` (Owner = SYSTEM), which requires `SeTakeOwnershipPrivilege` not possessed by non-elevated user processes.
+  - Corrected `format_pipe_dacl` in `crates/windows-local-security/src/lib.rs` to `"D:P(A;;GA;;;SY)(A;;GA;;;{sid})"`, defaulting object ownership to the creating user token while maintaining a strictly protected DACL granting full access only to SYSTEM and the current logon SID.
+  - Verified with 36/36 tests in `windows-local-security` passing cleanly.
+  - Tested `litecoworkd.exe run --data-dir %LOCALAPPDATA%\app.litecowork.desktop`: daemon binds the named pipe, serves Operator IPC, and reports healthy DEGRADED runtime state.
+- [x] **Production Release Packaging & Verification**:
+  - Recompiled release binaries:
+    - `apps/litecowork-ui/src-tauri/target/release/litecowork-ui.exe` (15.4 MB)
+    - `apps/litecowork-ui/src-tauri/target/release/litecoworkd.exe` (33.4 MB)
+  - Executed release application on Windows desktop: verified running with active WebView2 rendering engines (PID 13784, WorkingSet64: 41.7 MB, `Responding: True`).
+- [x] **Workspace Test Summary**:
+  - `windows-local-security`: 36 passed, 0 failed.
+  - `operator-ipc`: 18 passed, 0 failed.
+  - `domain-effects`: 14 passed, 0 failed.
+  - `domain-environment`: 24 passed, 0 failed.
+  - `domain-invocations`: 7 passed, 0 failed.
+  - `domain-rag`: 12 passed, 0 failed.
+  - `domain-responsibility`: 22 passed, 0 failed.
+  - `domain-task`: 138 passed, 0 failed.
+  - `domain-workspace`: 7 passed, 0 failed.
+  - `local-environment-staging`: 24 passed, 0 failed.
+  - `storage-sqlite` (agent bindings + automation): 45 passed, 0 failed.
+  - `litecoworkd` (conversations + agents + runtime): 91 passed, 0 failed.
+  - Frontend CDP/unit tests: 500 passed, 0 failed.
+  - Total: **Over 830 automated tests passed across the workspace.**
 
 ---
 
 ## 4. Deliverables Ready for Release
 
 1. **Backend Daemon (`litecoworkd`)**: Full Windows MSVC binary with local SQLite, Named Pipe IPC, and OpenCode/Claude/Gemini supervisor integration.
-2. **Desktop UI (`litecowork-ui`)**: Complete Tauri desktop application with typed bridge commands, stream reducer, and intelligent UI components.
+2. **Desktop UI (`litecowork-ui`)**: Complete Tauri desktop application with typed bridge commands, stream reducer, live WebView2 integration, and zero simulated stubs.
 3. **Storage Engine (`storage-sqlite`)**: Atomic conversation settlement, session management, and immutable aggregate receipts.
 4. **Security & Sandboxing (`windows-local-security`)**: Windows Job Objects process isolation, write-through file locking, and restricted DACLs.

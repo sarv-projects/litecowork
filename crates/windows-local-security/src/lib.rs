@@ -299,7 +299,7 @@ fn pipe_path(name: &str) -> io::Result<String> {
 #[cfg(any(windows, test))]
 fn format_pipe_dacl(sid: &str) -> Option<String> {
     parse_canonical_sid(sid)?;
-    Some(format!("O:SYD:P(A;;GA;;;SY)(A;;GA;;;{sid})"))
+    Some(format!("D:P(A;;GA;;;SY)(A;;GA;;;{sid})"))
 }
 
 #[cfg(any(windows, test))]
@@ -1695,7 +1695,7 @@ mod tests {
     fn formats_a_protected_dacl_for_only_system_and_the_logon_sid() {
         assert_eq!(
             format_pipe_dacl("S-1-5-21-123456789-987654321-1001").as_deref(),
-            Some("O:SYD:P(A;;GA;;;SY)(A;;GA;;;S-1-5-21-123456789-987654321-1001)"),
+            Some("D:P(A;;GA;;;SY)(A;;GA;;;S-1-5-21-123456789-987654321-1001)"),
         );
         assert_eq!(format_pipe_dacl("S-1-5-invalid"), None);
     }

@@ -1884,7 +1884,7 @@ async fn add_workspace_root(
         #[cfg(unix)]
         let (selected_path_base64, request_id) = {
             use std::os::unix::ffi::OsStrExt;
-            let selected_path = selected_path.as_os_str().as_bytes();
+            let selected_path_bytes = selected_path.as_os_str().as_bytes();
             let request_key = workspace_root_request_key()?;
             let scoped_request_id = derive_workspace_root_add_idempotency_key(
                 request_key,
@@ -1893,14 +1893,25 @@ async fn add_workspace_root(
                 expected_workspace_version,
                 &watch_policy,
                 &replication_policy,
-                selected_path,
+                selected_path_bytes,
             );
-            (URL_SAFE_NO_PAD.encode(selected_path), scoped_request_id)
+            (URL_SAFE_NO_PAD.encode(selected_path_bytes), scoped_request_id)
         };
-        #[cfg(not(unix))]
-        let selected_path_base64: String = {
-            let _ = selected_path;
-            return Err("Persistent folders are not qualified on this platform".to_owned());
+        #[cfg(windows)]
+        let (selected_path_base64, request_id) = {
+            let selected_path_str = selected_path.to_str().ok_or_else(|| "Invalid UTF-8 in folder path".to_owned())?;
+            let selected_path_bytes = selected_path_str.as_bytes();
+            let request_key = workspace_root_request_key()?;
+            let scoped_request_id = derive_workspace_root_add_idempotency_key(
+                request_key,
+                &request_id,
+                &workspace_id,
+                expected_workspace_version,
+                &watch_policy,
+                &replication_policy,
+                selected_path_bytes,
+            );
+            (URL_SAFE_NO_PAD.encode(selected_path_bytes), scoped_request_id)
         };
         let (client, _) = operator_client(&app)?;
         let response = client
