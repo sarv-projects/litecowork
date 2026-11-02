@@ -336,19 +336,19 @@ type WorkspaceInstructionView = {
 };
 
 const navigation: { label: Page; displayLabel?: string; icon: string; group?: string }[] = [
-  { label: "Conversations", displayLabel: "Recent chats", icon: "▤" },
-  { label: "Coworkers", icon: "◉" },
-  { label: "Home", displayLabel: "New task", icon: "⌂" },
+  { label: "Conversations", displayLabel: "Recent chats", icon: "▤", group: "MAIN" },
   { label: "Needs You", icon: "◇" },
-  { label: "Work", icon: "▤" },
-  { label: "Library", icon: "▧" },
-  { label: "Discover", icon: "⌕" },
+  { label: "Work", displayLabel: "Tasks & Work", icon: "✓" },
+  { label: "Home", displayLabel: "New task", icon: "⌂" },
+  { label: "Coworkers", icon: "◉", group: "INTELLIGENCE" },
+  { label: "Library", displayLabel: "Library & Files", icon: "▧" },
   { label: "Automations", icon: "◷" },
   { label: "Routines", icon: "↻" },
-  { label: "Goals", icon: "◎" },
+  { label: "Discover", displayLabel: "Discover Skills", icon: "⌕" },
+  { label: "Goals", icon: "◎", group: "MONITORING" },
   { label: "Notifications", icon: "◔" },
   { label: "Ideas", icon: "✦" },
-  { label: "Settings", icon: "⚙", group: "Manage" },
+  { label: "Settings", icon: "⚙", group: "SETTINGS" },
 ];
 
 const UPLOAD_RESUME_KEY = "litecowork.resourceUploadResume.v1";
@@ -2101,6 +2101,23 @@ function App() {
             ) : <small>{workspaces[0]?.name ?? `No Workspace · ${runtime?.state ?? "Checking"}`}</small>}
           </span>
           {workspaces.length > 1 && <span className="chevron" aria-hidden="true">⌄</span>}
+        </div>
+
+        <div className="sidebar-primary-action">
+          <button
+            className="new-chat-button"
+            type="button"
+            disabled={taskSaving}
+            onClick={() => {
+              const focusTarget = navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null;
+              const navigated = requestPageNavigation("Conversations", focusTarget);
+              if (navigationOpen) closeNavigation(navigated);
+            }}
+          >
+            <span className="new-chat-plus" aria-hidden="true">+</span>
+            <span>New Chat</span>
+            <span className="new-chat-shortcut">Ctrl N</span>
+          </button>
         </div>
 
         <nav className="nav-list">

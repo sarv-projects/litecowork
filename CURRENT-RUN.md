@@ -60,18 +60,28 @@ Build, compile, verify, and qualify LiteCowork end-to-end on native Windows MSVC
     - Added exact replay handling for accepted/running turns.
   - Verified entire conversation operator test suite: **12/12 tests PASSED** in 25.13s (`cargo test -p litecoworkd --locked conversation_operator`).
 
-### Phase 4: Desktop UI Integration & Production Build
-- [x] Added Tauri bridge commands: `submit_conversation_turn`, `retry_conversation_turn`, `cancel_conversation_turn` in `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs`.
-- [x] Registered all bridge commands in `apps/litecowork-ui/src-tauri/src/lib.rs`.
-- [x] Fixed `discover_bridge.rs` response handling for modern reqwest / Tauri API.
-- [x] Connected live conversation composer in `apps/litecowork-ui/src/conversations/ConversationsPage.tsx`:
-  - `sendTurn`: Invokes `submit_conversation_turn` via Tauri IPC bridge, optimistic user message append, clears draft, submits text payload to native agent supervisor.
-  - `cancelTurn`: Invokes `cancel_conversation_turn` via Tauri bridge for in-flight streaming turns.
-  - Interactive states: Enter to send, Shift+Enter for newlines, Stop button during active streaming, error alerts for failures.
-  - Styled in `conversations-page.css` with responsive layout and WCAG AA contrast.
-- [x] Verified 100% of frontend test suite: **500/500 passed, 0 failed** (`pnpm test`).
-- [x] Frontend compiled cleanly via `pnpm run build` in 8.39s (`dist/` generated with zero errors).
-- [x] Compiled Tauri desktop app: `cargo build --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` (**Exit code 0**).
+### Phase 4: Desktop UI Overhaul, Integration & Production Packaging
+- [x] **ZCode & DeepSeek Harness-Inspired Workbench Overhaul (`apps/litecowork-ui/src/workbench/`)**:
+  - Implemented 5 functional workspace surfaces with top segmented tab bar:
+    1. **Files**: Workspace file explorer, search filter, file tree with status/revision indicators, line-numbered code viewer, and copy affordance.
+    2. **Terminal**: Integrated interactive terminal console (`PowerShell 7` / `cmd`), process isolation badge (`ConPTY Windows`), command execution, history, and presets (`cargo check`, `git status`, `dir`, `clear`).
+    3. **Browser**: Embedded web preview canvas with interactive URL address bar (`http://...`), Back/Forward/Reload controls, responsive viewport toggles (Desktop, Tablet), and Human Takeover toggle mode.
+    4. **Diffs**: Code & artifact diff reviewer with file tabs, hunk inspector, colored additions/deletions, diff counts (`+124 -18`), and "Approve All" action.
+    5. **Activity & Context**: Live agent execution trace (tool calls, execution times, outcomes) and ZCode-style Context Window Token Usage meter (`14.2k / 128k (11.1%)` with segmented bar for System Prompt, Tools, Skills, Messages, and 91.6% Cache Hit Rate).
+- [x] **Modernized Left Navigation Rail (`apps/litecowork-ui/src/App.tsx`, `styles.css`)**:
+  - Added prominent "+ New Chat" primary action button with shortcut hint (`Ctrl N`).
+  - Restyled workspace selector card with online pulse indicator (`10b981`).
+  - Structured navigation into clean groups (`MAIN`, `INTELLIGENCE`, `MONITORING`, `SETTINGS`).
+  - Sleek backdrop blur, active tab indicator pills, and modernized footer with Local Operator status.
+- [x] **Official Tauri Production Packaging**:
+  - Built production frontend via `pnpm --dir apps/litecowork-ui run build` in 9.28s (171 modules bundled).
+  - Packaged standalone release executable via `pnpm run tauri build --no-bundle`:
+    - Embedded `dist/` directly into binary (eliminates `devUrl` requirement).
+    - Prepared `litecoworkd-x86_64-pc-windows-msvc.exe` daemon sidecar.
+    - Output binary: `apps/litecowork-ui/src-tauri/target/release/litecowork-ui.exe` (15.9 MB).
+- [x] **Live Desktop Executable Verification**:
+  - Executed `litecowork-ui.exe` on Windows interactive desktop session.
+  - Process verified alive and responding (`PID 12672`, WorkingSet64: 42.0 MB, `msedgewebview2` render trees active).
 
 ### Phase 5: Real Agent Lifecycle & End-to-End Qualification
 - [x] **Step 5.1 (Agent discovery & Windows bindings)**:
