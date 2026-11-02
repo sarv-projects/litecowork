@@ -137,6 +137,34 @@ Build, compile, verify, and qualify LiteCowork end-to-end on native Windows MSVC
   - Frontend CDP/unit tests: 500 passed, 0 failed.
   - Total: **Over 830 automated tests passed across the workspace.**
 
+### Phase 7: Release Remediation (R-01 through R-31) & Windows Production Build
+- [x] **R-01 (Runtime Execution Readiness)**:
+  - In `crates/storage-sqlite/src/lib.rs`: Updated `validate_runtime_state_update` mapping `"READY" => "ONLINE"`. Added `("RECOVERING", "READY")`, `("READY", "DEGRADED")`, `("DEGRADED", "READY")`, and `("READY", "DRAINING")` transitions to `transition_local_runtime_incarnation_transaction`, populating `ready_at`.
+  - In `apps/litecoworkd/src/runtime.rs`: Implemented `persist_ready_catalog_transition` and `persist_final_recovery_blockers` to evaluate attempt process scope journal and lease states instead of unconditionally asserting `TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED` and `TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED`. Runtime transitions cleanly to `RuntimeState::Ready` (`"ONLINE"`).
+  - All 37 runtime tests passed in `apps/litecoworkd` (15.94s).
+- [x] **Windows PowerShell 5.1 Test Isolation (`runtime_windows_security_tests.rs`)**:
+  - Isolated `path_dacl_is_protected` by removing inherited `PSModulePath` from Windows PowerShell 5.1 test harness, preventing TypeData collisions with PowerShell 7 modules.
+  - Verified `runtime_bootstrap_protects_state_directory_and_lifecycle_files`: **PASSED**.
+- [x] **R-02 / R-27 (Fail-Closed Provider Dispatch)**:
+  - Removed test fallback from production dispatch in `apps/litecoworkd/src/agents/supervisor.rs`. Missing profiles and unsupported providers fail closed with `CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`.
+- [x] **R-03 / R-30 (Correlated Event Loop & Terminal Verification)**:
+  - In `apps/litecoworkd/src/agents/supervisor.rs`, verified correlated SSE events matching active session ID, required non-empty text, and validated explicit terminal `done: true` state before settlement.
+- [x] **R-04 / R-29 (Version-Checked Turn Cancellation & Retry)**:
+  - Implemented version-checked retry and cancellation in `apps/litecoworkd/src/conversation_operator.rs` with atomic state transition to `CANCELED`, session cleanup, and idempotency receipts.
+- [x] **R-10 / R-11 / R-13 / R-14 / R-15 / R-16 (Honest Workbench UI & Live Discovery)**:
+  - Updated `apps/litecowork-ui/src/components/workbench/WorkbenchPanel.tsx` with dynamic agent discovery, realistic token telemetry notices, honest process isolation status, and active terminal execution.
+- [x] **R-17 / R-31 (Dynamic Workspace Root & Safe Directory Resolution)**:
+  - Resolved dynamic workspace working directory from root and `%USERPROFILE%` on Windows.
+- [x] **R-18 (Monotonic Fallback IDs & Dynamic Timestamps)**:
+  - Replaced hard-coded timestamps with dynamic UTC RFC-3339 formatting and high-entropy monotonic IDs.
+- [x] **R-25 (Windows Process Environment Probe)**:
+  - Added Windows Job Object containment verification in `apps/litecoworkd/src/environment_provider.rs`.
+- [x] **Release Packaging & Gate Verification**:
+  - `cargo fmt --all -- --check` verified clean (Exit 0).
+  - Built standalone `litecoworkd.exe` (33.3 MB) and sidecar `litecoworkd-x86_64-pc-windows-msvc.exe`.
+  - Built `litecowork-ui.exe` (15.9 MB) via Tauri release pipeline (`npm run tauri build -- --no-bundle`).
+  - Verified daemon auto-bootstrapping and process launch on Windows.
+
 ---
 
 ## 4. Deliverables Ready for Release

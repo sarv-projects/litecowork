@@ -5,6 +5,7 @@ use std::{fs, path::Path, process::Command};
 
 fn path_dacl_is_protected(path: &Path) -> bool {
     let result = Command::new("powershell.exe")
+        .env_remove("PSModulePath")
         .args([
             "-NoProfile",
             "-NonInteractive",

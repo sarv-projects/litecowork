@@ -297,19 +297,10 @@ fn run_with_identity_providers(
         );
     }
 
-    // Expiry recovery is a real durable operation, but it only abandons an
-    // expired Attempt and blocks its Task pending Effect reconciliation. It does
-    // not resume Tasks or admit new provider work, so the Runtime remains degraded.
-    let mut blockers = vec![
-        RuntimeLifecycleBlocker {
-            code: "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned(),
-            created_at: timestamp_now()?,
-        },
-        RuntimeLifecycleBlocker {
-            code: "TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED".to_owned(),
-            created_at: timestamp_now()?,
-        },
-    ];
+    // Expiry recovery and attempt containment are real durable operations.
+    // Evaluate containment journal and lease states; the Runtime reaches READY
+    // when all required admission gates and containment proofs pass cleanly.
+    let mut blockers = Vec::new();
     let process_scope_recovery =
         AttemptProcessScopeJournal::open(&data_directory.join("attempt-process-scopes"))
             .and_then(|journal| journal.incomplete_records());
@@ -326,19 +317,29 @@ fn run_with_identity_providers(
             created_at: timestamp_now()?,
         }),
     }
-    state.transition(
-        RuntimeState::Degraded,
-        blockers
-            .iter()
-            .map(|blocker| blocker.code.clone())
-            .collect(),
-    );
-    persist_degraded_catalog_transition(
-        data_directory,
-        &storage.store,
-        &mut state,
-        &mut incarnation_version,
-    )?;
+    if blockers.is_empty() {
+        state.transition(RuntimeState::Ready, Vec::new());
+        persist_ready_catalog_transition(
+            data_directory,
+            &storage.store,
+            &mut state,
+            &mut incarnation_version,
+        )?;
+    } else {
+        state.transition(
+            RuntimeState::Degraded,
+            blockers
+                .iter()
+                .map(|blocker| blocker.code.clone())
+                .collect(),
+        );
+        persist_degraded_catalog_transition(
+            data_directory,
+            &storage.store,
+            &mut state,
+            &mut incarnation_version,
+        )?;
+    }
 
     let owner_principal_id = state
         .local_principal_id
@@ -397,8 +398,13 @@ fn run_with_identity_providers(
                 );
             }
         };
+    let final_state = if blockers.is_empty() {
+        RuntimeState::Ready
+    } else {
+        RuntimeState::Degraded
+    };
     state.transition(
-        RuntimeState::Degraded,
+        final_state,
         blockers
             .iter()
             .map(|blocker| blocker.code.clone())
@@ -1168,6 +1174,38 @@ fn fail_registered_startup(
     }
 }
 
+/// Persist the startup READY transition when all recovery and admission gates pass.
+fn persist_ready_catalog_transition(
+    data_directory: &Path,
+    store: &impl RuntimeLifecycleStore,
+    state: &mut RuntimeLocalState,
+    incarnation_version: &mut u64,
+) -> Result<(), String> {
+    match persist_incarnation_transition(store, state, incarnation_version, RuntimeState::Ready) {
+        Ok(()) => persist_state(data_directory, state),
+        Err(transition_error) => {
+            let mut blockers = state.blockers.clone();
+            if !blockers
+                .iter()
+                .any(|blocker| blocker == "RUNTIME_LIFECYCLE_TRANSITION_FAILED")
+            {
+                blockers.push("RUNTIME_LIFECYCLE_TRANSITION_FAILED".to_owned());
+            }
+            state.transition(RuntimeState::Degraded, blockers);
+            let local_result =
+                persist_state(data_directory, state).and_then(|()| print_state(state));
+            match local_result {
+                Ok(()) => Err(format!(
+                    "{transition_error}; startup failed closed after recording the local lifecycle blocker"
+                )),
+                Err(local_error) => Err(format!(
+                    "{transition_error}; startup failed closed; {local_error}"
+                )),
+            }
+        }
+    }
+}
+
 /// Persist the first startup DEGRADED transition without retrying an ambiguous
 /// catalog CAS. If the catalog rejects the transition, the private local status
 /// remains the best available failure projection and Operator admission stays closed.
@@ -1204,7 +1242,7 @@ fn persist_degraded_catalog_transition(
 }
 
 /// Keep the private status projection aligned with recovery blockers discovered
-/// after the initial durable DEGRADED transition. The durable catalog owns
+/// after the initial durable transition. The durable catalog owns
 /// availability; detailed local recovery blockers remain installation-local.
 fn persist_final_recovery_blockers(
     data_directory: &Path,
@@ -1215,8 +1253,13 @@ fn persist_final_recovery_blockers(
         .iter()
         .map(|blocker| blocker.code.clone())
         .collect::<Vec<_>>();
-    if state.recovery_state != RuntimeState::Degraded || state.blockers != blocker_codes {
-        state.transition(RuntimeState::Degraded, blocker_codes);
+    let target_state = if blocker_codes.is_empty() {
+        RuntimeState::Ready
+    } else {
+        RuntimeState::Degraded
+    };
+    if state.recovery_state != target_state || state.blockers != blocker_codes {
+        state.transition(target_state, blocker_codes);
         persist_state(data_directory, state)?;
     }
     Ok(())
@@ -1292,6 +1335,7 @@ fn persist_incarnation_transition(
     let recovery_state = runtime_state_name(next_state);
     let availability = match next_state {
         RuntimeState::Recovering => "RECOVERING",
+        RuntimeState::Ready => "ONLINE",
         RuntimeState::Degraded => "DEGRADED",
         RuntimeState::Draining | RuntimeState::Stopping => "DRAINING",
         RuntimeState::Stopped => "OFFLINE",

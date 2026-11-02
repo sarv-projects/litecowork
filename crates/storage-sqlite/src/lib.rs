@@ -16932,6 +16932,7 @@ fn validate_local_runtime_registration(
 fn validate_runtime_state_update(update: &RuntimeIncarnationStateUpdate) -> Result<(), StoreError> {
     let expected_availability = match update.recovery_state.as_str() {
         "RECOVERING" => "RECOVERING",
+        "READY" => "ONLINE",
         "DEGRADED" => "DEGRADED",
         "DRAINING" | "STOPPING" => "DRAINING",
         "STOPPED" => "OFFLINE",
@@ -19422,7 +19423,11 @@ fn transition_local_runtime_incarnation_transaction(
     }
     let allowed = matches!(
         (current_state.as_str(), update.recovery_state.as_str()),
-        ("RECOVERING", "DEGRADED")
+        ("RECOVERING", "READY")
+            | ("RECOVERING", "DEGRADED")
+            | ("READY", "DEGRADED")
+            | ("DEGRADED", "READY")
+            | ("READY", "DRAINING")
             | ("DEGRADED", "DRAINING")
             | ("DRAINING", "STOPPING")
             | ("STOPPING", "STOPPED")
@@ -19436,8 +19441,8 @@ fn transition_local_runtime_incarnation_transaction(
         .checked_add(1)
         .ok_or_else(|| StoreError::Integrity("Runtime incarnation version exhausted".to_owned()))?;
     transaction.execute(
-        "UPDATE runtime_incarnations SET recovery_state = ?1, stopped_at = ?2, version = ?3 WHERE runtime_id = ?4 AND runtime_incarnation_id = ?5 AND version = ?6",
-        params![update.recovery_state, update.stopped_at, to_sql_i64(next_version, "Runtime incarnation version")?, update.runtime_id, update.runtime_incarnation_id, to_sql_i64(update.expected_version, "Runtime incarnation version")?],
+        "UPDATE runtime_incarnations SET recovery_state = ?1, ready_at = CASE WHEN ?1 = 'READY' THEN ?2 ELSE ready_at END, stopped_at = ?3, version = ?4 WHERE runtime_id = ?5 AND runtime_incarnation_id = ?6 AND version = ?7",
+        params![update.recovery_state, update.observed_at, update.stopped_at, to_sql_i64(next_version, "Runtime incarnation version")?, update.runtime_id, update.runtime_incarnation_id, to_sql_i64(update.expected_version, "Runtime incarnation version")?],
     ).map_err(map_database_error)?;
     transaction.execute(
         "UPDATE runtimes SET availability = ?1, last_seen = ?2, version = version + 1 WHERE runtime_id = ?3 AND current_incarnation_id = ?4",
