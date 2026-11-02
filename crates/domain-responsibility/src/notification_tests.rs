@@ -194,47 +194,62 @@ fn the_quiet_hours_shape_is_bounded() {
     let quiet = QuietHours::parse(&value).expect("the quiet hours are valid");
     assert_eq!(quiet.start_minute, 22 * 60);
     assert_eq!(quiet.end_minute, 7 * 60);
-    assert_eq!(quiet.weekdays, vec!["SUNDAY".to_owned(), "MONDAY".to_owned()]);
-    assert!(
-        QuietHours::parse(&serde_json::json!({"start": "22:00", "end": "07:00", "timezone": "UTC"}))
-            .is_err()
+    assert_eq!(
+        quiet.weekdays,
+        vec!["SUNDAY".to_owned(), "MONDAY".to_owned()]
     );
-    assert!(QuietHours::parse(&serde_json::json!({
-        "timezone": "UTC",
-        "weekdays": ["SUNDAY"],
-        "start_local_time": "24:00",
-        "end_local_time": "07:00"
-    }))
-    .is_err());
-    assert!(QuietHours::parse(&serde_json::json!({
-        "timezone": "UTC",
-        "weekdays": [],
-        "start_local_time": "22:00",
-        "end_local_time": "07:00"
-    }))
-    .is_err());
-    assert!(QuietHours::parse(&serde_json::json!({
-        "timezone": "UTC",
-        "weekdays": ["FUNDAY"],
-        "start_local_time": "22:00",
-        "end_local_time": "07:00"
-    }))
-    .is_err());
-    assert!(QuietHours::parse(&serde_json::json!({
-        "timezone": "UTC",
-        "weekdays": ["SUNDAY", "SUNDAY"],
-        "start_local_time": "22:00",
-        "end_local_time": "07:00"
-    }))
-    .is_err());
-    assert!(QuietHours::parse(&serde_json::json!({
-        "timezone": "UTC",
-        "weekdays": ["SUNDAY"],
-        "start_local_time": "22:00",
-        "end_local_time": "07:00",
-        "x": 1
-    }))
-    .is_err());
+    assert!(
+        QuietHours::parse(
+            &serde_json::json!({"start": "22:00", "end": "07:00", "timezone": "UTC"})
+        )
+        .is_err()
+    );
+    assert!(
+        QuietHours::parse(&serde_json::json!({
+            "timezone": "UTC",
+            "weekdays": ["SUNDAY"],
+            "start_local_time": "24:00",
+            "end_local_time": "07:00"
+        }))
+        .is_err()
+    );
+    assert!(
+        QuietHours::parse(&serde_json::json!({
+            "timezone": "UTC",
+            "weekdays": [],
+            "start_local_time": "22:00",
+            "end_local_time": "07:00"
+        }))
+        .is_err()
+    );
+    assert!(
+        QuietHours::parse(&serde_json::json!({
+            "timezone": "UTC",
+            "weekdays": ["FUNDAY"],
+            "start_local_time": "22:00",
+            "end_local_time": "07:00"
+        }))
+        .is_err()
+    );
+    assert!(
+        QuietHours::parse(&serde_json::json!({
+            "timezone": "UTC",
+            "weekdays": ["SUNDAY", "SUNDAY"],
+            "start_local_time": "22:00",
+            "end_local_time": "07:00"
+        }))
+        .is_err()
+    );
+    assert!(
+        QuietHours::parse(&serde_json::json!({
+            "timezone": "UTC",
+            "weekdays": ["SUNDAY"],
+            "start_local_time": "22:00",
+            "end_local_time": "07:00",
+            "x": 1
+        }))
+        .is_err()
+    );
 }
 
 #[test]
@@ -252,8 +267,8 @@ fn a_quiet_window_suppresses_a_delivery() {
         "occurrence-1",
     );
     facts.quiet_hours = Some(&quiet);
-    facts.now_epoch_ms = crate::parse_instant("2026-03-01T23:00:00Z")
-        .expect("the test instant is valid");
+    facts.now_epoch_ms =
+        crate::parse_instant("2026-03-01T23:00:00Z").expect("the test instant is valid");
     let decision = decide_notification(&facts);
     assert!(matches!(
         decision,
@@ -264,8 +279,8 @@ fn a_quiet_window_suppresses_a_delivery() {
     ));
     // An overnight window belongs to the weekday it starts on, so the Monday
     // 01:00 tail of a Sunday window is still quiet.
-    facts.now_epoch_ms = crate::parse_instant("2026-03-02T01:00:00Z")
-        .expect("the test instant is valid");
+    facts.now_epoch_ms =
+        crate::parse_instant("2026-03-02T01:00:00Z").expect("the test instant is valid");
     assert!(matches!(
         decide_notification(&facts),
         NotificationDecision::Suppress {
@@ -275,14 +290,14 @@ fn a_quiet_window_suppresses_a_delivery() {
     ));
     // The window only applies on the configured weekdays: the same local time on a
     // Monday is not quiet because Monday is not in the stored list.
-    facts.now_epoch_ms = crate::parse_instant("2026-03-02T23:00:00Z")
-        .expect("the test instant is valid");
+    facts.now_epoch_ms =
+        crate::parse_instant("2026-03-02T23:00:00Z").expect("the test instant is valid");
     assert!(matches!(
         decide_notification(&facts),
         NotificationDecision::Deliver { .. }
     ));
-    facts.now_epoch_ms = crate::parse_instant("2026-03-01T12:00:00Z")
-        .expect("the test instant is valid");
+    facts.now_epoch_ms =
+        crate::parse_instant("2026-03-01T12:00:00Z").expect("the test instant is valid");
     assert!(matches!(
         decide_notification(&facts),
         NotificationDecision::Deliver { .. }

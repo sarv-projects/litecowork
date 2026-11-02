@@ -73,37 +73,35 @@ pub(crate) fn read_index_state(
     };
     let media_type = media_type.unwrap_or_default();
 
-    let indexed_row =
-        match current_revision_id.as_deref() {
-            Some(revision_id) => connection
-                .query_row(
-                    "SELECT resource_revision_id, source_content_digest, parser_id, indexed_at
+    let indexed_row = match current_revision_id.as_deref() {
+        Some(revision_id) => connection
+            .query_row(
+                "SELECT resource_revision_id, source_content_digest, parser_id, indexed_at
                      FROM resource_text_indexes
                      WHERE workspace_id = ?1 AND resource_id = ?2 AND resource_revision_id = ?3",
-                    params![workspace_id, resource_id, revision_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                        ))
-                    },
-                )
-                .optional()
-                .map_err(map_index_state_error)?,
-            None => None,
-        };
-    let (indexed_revision_id, indexed_source_digest, parser_id, indexed_at) =
-        match indexed_row {
-            Some((revision_id, digest, parser, indexed_at)) => (
-                Some(revision_id),
-                Some(digest),
-                Some(parser),
-                Some(indexed_at),
-            ),
-            None => (None, None, None, None),
-        };
+                params![workspace_id, resource_id, revision_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(map_index_state_error)?,
+        None => None,
+    };
+    let (indexed_revision_id, indexed_source_digest, parser_id, indexed_at) = match indexed_row {
+        Some((revision_id, digest, parser, indexed_at)) => (
+            Some(revision_id),
+            Some(digest),
+            Some(parser),
+            Some(indexed_at),
+        ),
+        None => (None, None, None, None),
+    };
     let superseded_index_count: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM resource_text_indexes

@@ -31,15 +31,13 @@ pub enum OfficeFormat {
 impl OfficeFormat {
     pub fn media_types(self) -> &'static [&'static str] {
         match self {
-            Self::Xlsx => &[
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            ],
-            Self::Docx => &[
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ],
-            Self::Pptx => &[
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            ],
+            Self::Xlsx => &["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+            Self::Docx => {
+                &["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+            }
+            Self::Pptx => {
+                &["application/vnd.openxmlformats-officedocument.presentationml.presentation"]
+            }
             Self::Pdf => &["application/pdf"],
             Self::Csv => &["text/csv", "application/csv"],
         }
@@ -150,9 +148,7 @@ pub fn probe_office_providers() -> Vec<OfficeProviderQualification> {
         layout_check: CheckCapability::NotEnforced,
         formula_engine: "unavailable".to_owned(),
         layout_engine: "unavailable".to_owned(),
-        notes: vec![
-            "no qualified office provider is implemented in this build".to_owned(),
-        ],
+        notes: vec!["no qualified office provider is implemented in this build".to_owned()],
     })
     .collect()
 }
@@ -350,7 +346,11 @@ pub struct LayoutCheckRequest {
 /// Check a rendered layout independently of the formula check.
 pub fn check_rendered_layout(request: &LayoutCheckRequest) -> Result<(), SourceRefusal> {
     for font in &request.required_fonts {
-        if !request.available_fonts.iter().any(|available| available == font) {
+        if !request
+            .available_fonts
+            .iter()
+            .any(|available| available == font)
+        {
             return Err(SourceRefusal::FontUnavailable);
         }
     }

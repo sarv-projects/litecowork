@@ -260,10 +260,16 @@ impl std::fmt::Display for IsolationStoreError {
             Self::Io(error) => write!(f, "isolation store I/O failed: {error}"),
             Self::InvalidRecord(detail) => write!(f, "invalid isolation record: {detail}"),
             Self::AlreadyStored => {
-                write!(f, "an isolation attestation is already stored for this environment")
+                write!(
+                    f,
+                    "an isolation attestation is already stored for this environment"
+                )
             }
             Self::StaleAttestation => {
-                write!(f, "the stored isolation attestation is newer than the candidate")
+                write!(
+                    f,
+                    "the stored isolation attestation is newer than the candidate"
+                )
             }
             Self::IncarnationMismatch => write!(
                 f,
@@ -434,7 +440,10 @@ impl RuntimeLocalIsolationStore {
     ) -> Result<Self, IsolationStoreError> {
         validate_identifier(runtime_id)?;
         validate_identifier(runtime_incarnation_id)?;
-        let directory = root.join("isolation").join(runtime_id).join(runtime_incarnation_id);
+        let directory = root
+            .join("isolation")
+            .join(runtime_id)
+            .join(runtime_incarnation_id);
         fs::create_dir_all(&directory)?;
         let metadata = fs::symlink_metadata(&directory)?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -478,10 +487,7 @@ impl RuntimeLocalIsolationStore {
     ///
     /// The write is a compare-and-swap: an existing attestation may only be replaced
     /// by a strictly newer observation, and only for the same Environment.
-    pub fn store(
-        &self,
-        attestation: &IsolationAttestation,
-    ) -> Result<(), IsolationStoreError> {
+    pub fn store(&self, attestation: &IsolationAttestation) -> Result<(), IsolationStoreError> {
         if attestation.runtime_id != self.runtime_id {
             return Err(IsolationStoreError::IncarnationMismatch);
         }
@@ -493,9 +499,7 @@ impl RuntimeLocalIsolationStore {
             if existing.observed_at_ms > attestation.observed_at_ms {
                 return Err(IsolationStoreError::StaleAttestation);
             }
-            if existing.observed_at_ms == attestation.observed_at_ms
-                && existing != *attestation
-            {
+            if existing.observed_at_ms == attestation.observed_at_ms && existing != *attestation {
                 return Err(IsolationStoreError::AlreadyStored);
             }
         }
@@ -660,9 +664,7 @@ pub fn probe_local_provider() -> LocalProviderCapabilities {
 /// A probe cannot prove that a restriction was enforced at run time, so every
 /// dimension is reported as `Unknown`. The resulting attestation is refused by
 /// [`evaluate_isolation_admission`], which is the intended fail-closed behaviour.
-pub fn facts_from_probe(
-    capabilities: &LocalProviderCapabilities,
-) -> ProviderIsolationFacts {
+pub fn facts_from_probe(capabilities: &LocalProviderCapabilities) -> ProviderIsolationFacts {
     ProviderIsolationFacts {
         provider_kind: capabilities.provider_kind.clone(),
         provider_version: capabilities.provider_version.clone(),
@@ -874,14 +876,8 @@ mod tests {
     }
 
     fn attestation() -> IsolationAttestation {
-        build_attestation(
-            &identity(),
-            &prepared(),
-            observed_facts(),
-            1_000,
-            60_000,
-        )
-        .expect("attestation")
+        build_attestation(&identity(), &prepared(), observed_facts(), 1_000, 60_000)
+            .expect("attestation")
     }
 
     fn request(attestation: &IsolationAttestation) -> IsolationAdmissionRequest {
@@ -920,54 +916,57 @@ mod tests {
     #[test]
     fn every_identity_and_digest_mismatch_fails_closed() {
         let attestation = attestation();
-        let mutations: Vec<(&str, fn(&mut IsolationAdmissionRequest), IsolationAdmissionError)> =
-            vec![
-                (
-                    "environment",
-                    |request| request.environment_id = "env-other".to_owned(),
-                    IsolationAdmissionError::EnvironmentMismatch,
-                ),
-                (
-                    "workspace",
-                    |request| request.workspace_id = "workspace-other".to_owned(),
-                    IsolationAdmissionError::WorkspaceMismatch,
-                ),
-                (
-                    "task",
-                    |request| request.task_id = "task-other".to_owned(),
-                    IsolationAdmissionError::TaskMismatch,
-                ),
-                (
-                    "runtime",
-                    |request| request.runtime_id = "runtime-other".to_owned(),
-                    IsolationAdmissionError::RuntimeMismatch,
-                ),
-                (
-                    "incarnation",
-                    |request| request.runtime_incarnation_id = "incarnation-2".to_owned(),
-                    IsolationAdmissionError::RuntimeIncarnationMismatch,
-                ),
-                (
-                    "policy",
-                    |request| request.normalized_policy_digest = "sha256:00".to_owned(),
-                    IsolationAdmissionError::PolicyDigestMismatch,
-                ),
-                (
-                    "inputs",
-                    |request| request.pinned_input_set_digest = "sha256:00".to_owned(),
-                    IsolationAdmissionError::PinnedInputSetMismatch,
-                ),
-                (
-                    "readable",
-                    |request| request.readable_root_set_digest = "sha256:00".to_owned(),
-                    IsolationAdmissionError::ReadableRootSetMismatch,
-                ),
-                (
-                    "writable",
-                    |request| request.writable_root_set_digest = "sha256:00".to_owned(),
-                    IsolationAdmissionError::WritableRootSetMismatch,
-                ),
-            ];
+        let mutations: Vec<(
+            &str,
+            fn(&mut IsolationAdmissionRequest),
+            IsolationAdmissionError,
+        )> = vec![
+            (
+                "environment",
+                |request| request.environment_id = "env-other".to_owned(),
+                IsolationAdmissionError::EnvironmentMismatch,
+            ),
+            (
+                "workspace",
+                |request| request.workspace_id = "workspace-other".to_owned(),
+                IsolationAdmissionError::WorkspaceMismatch,
+            ),
+            (
+                "task",
+                |request| request.task_id = "task-other".to_owned(),
+                IsolationAdmissionError::TaskMismatch,
+            ),
+            (
+                "runtime",
+                |request| request.runtime_id = "runtime-other".to_owned(),
+                IsolationAdmissionError::RuntimeMismatch,
+            ),
+            (
+                "incarnation",
+                |request| request.runtime_incarnation_id = "incarnation-2".to_owned(),
+                IsolationAdmissionError::RuntimeIncarnationMismatch,
+            ),
+            (
+                "policy",
+                |request| request.normalized_policy_digest = "sha256:00".to_owned(),
+                IsolationAdmissionError::PolicyDigestMismatch,
+            ),
+            (
+                "inputs",
+                |request| request.pinned_input_set_digest = "sha256:00".to_owned(),
+                IsolationAdmissionError::PinnedInputSetMismatch,
+            ),
+            (
+                "readable",
+                |request| request.readable_root_set_digest = "sha256:00".to_owned(),
+                IsolationAdmissionError::ReadableRootSetMismatch,
+            ),
+            (
+                "writable",
+                |request| request.writable_root_set_digest = "sha256:00".to_owned(),
+                IsolationAdmissionError::WritableRootSetMismatch,
+            ),
+        ];
         for (name, mutate, expected) in mutations {
             let mut request = request(&attestation);
             mutate(&mut request);
@@ -987,8 +986,8 @@ mod tests {
             facts.process_tree_enforcement = status;
             facts.network_enforcement = status;
             facts.resource_limit_enforcement = status;
-            let attestation =
-                build_attestation(&identity(), &prepared(), facts, 1_000, 60_000).expect("attestation");
+            let attestation = build_attestation(&identity(), &prepared(), facts, 1_000, 60_000)
+                .expect("attestation");
             assert_eq!(
                 evaluate_isolation_admission(Some(&attestation), &request(&attestation)),
                 Err(IsolationAdmissionError::FilesystemEnforcementMissing)
@@ -1003,18 +1002,9 @@ mod tests {
                 IsolationAdmissionError::FilesystemEnforcementMissing,
                 0usize,
             ),
-            (
-                IsolationAdmissionError::ProcessTreeEnforcementMissing,
-                1,
-            ),
-            (
-                IsolationAdmissionError::NetworkEnforcementMissing,
-                2,
-            ),
-            (
-                IsolationAdmissionError::ResourceLimitEnforcementMissing,
-                3,
-            ),
+            (IsolationAdmissionError::ProcessTreeEnforcementMissing, 1),
+            (IsolationAdmissionError::NetworkEnforcementMissing, 2),
+            (IsolationAdmissionError::ResourceLimitEnforcementMissing, 3),
         ];
         for (expected, index) in cases {
             let mut facts = observed_facts();
@@ -1024,8 +1014,8 @@ mod tests {
                 2 => facts.network_enforcement = EnforcementStatus::Unknown,
                 _ => facts.resource_limit_enforcement = EnforcementStatus::Unknown,
             }
-            let attestation =
-                build_attestation(&identity(), &prepared(), facts, 1_000, 60_000).expect("attestation");
+            let attestation = build_attestation(&identity(), &prepared(), facts, 1_000, 60_000)
+                .expect("attestation");
             assert_eq!(
                 evaluate_isolation_admission(Some(&attestation), &request(&attestation)),
                 Err(expected)
@@ -1115,7 +1105,11 @@ mod tests {
             Err(IsolationStoreError::StaleAttestation)
         ));
         assert_eq!(
-            store.load("env-1").expect("load").expect("present").observed_at_ms,
+            store
+                .load("env-1")
+                .expect("load")
+                .expect("present")
+                .observed_at_ms,
             5_000
         );
     }

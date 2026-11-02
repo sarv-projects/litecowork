@@ -86,9 +86,7 @@ impl SqliteAutomationHostStore {
         store: SqliteWorkspaceStore,
         context: AutomationHostContext,
     ) -> Result<Self, StoreError> {
-        if context.origin_runtime_id.trim().is_empty()
-            || context.recorded_at.trim().is_empty()
-        {
+        if context.origin_runtime_id.trim().is_empty() || context.recorded_at.trim().is_empty() {
             return Err(StoreError::Invalid(
                 "Automation host context must name its Runtime and timestamp".to_owned(),
             ));
@@ -666,10 +664,15 @@ impl SqliteAutomationHostStore {
                     .map_err(map_database_error)?;
                 let rows = statement
                     .query_map(params![workspace_id], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, from_row_u64(row, 2)?))
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            from_row_u64(row, 2)?,
+                        ))
                     })
                     .map_err(map_database_error)?;
-                rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_database_error)?
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(map_database_error)?
             };
             for (occurrence_id, task_id, _observed_version) in occurrences {
                 // Each occurrence settles in its own transaction, so a failure
@@ -728,10 +731,7 @@ impl SqliteAutomationHostStore {
                     now: now_epoch_ms,
                     has_task: occurrence.task_id.is_some(),
                 };
-                let transition = match settle_from_task_outcome(
-                    &task_status,
-                    &facts,
-                ) {
+                let transition = match settle_from_task_outcome(&task_status, &facts) {
                     Ok(None) => {
                         // Not terminal: the occurrence stays STARTED and keeps
                         // its concurrency slot. Nothing is written, so no event

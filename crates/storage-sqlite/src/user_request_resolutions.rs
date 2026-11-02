@@ -37,7 +37,6 @@ struct UserRequestAggregateState {
     response: Option<Value>,
 }
 
-
 #[derive(Clone)]
 pub struct SqliteUserRequestResolutionStore {
     store: SqliteWorkspaceStore,

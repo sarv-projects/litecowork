@@ -5,8 +5,8 @@
 
 use super::*;
 use storage_core::conversation::{
-    request_payload_value, ConversationTurn, ConversationTurnStatus, PresentationPreference,
-    TurnCommand, CONVERSATION_SESSION_ADMISSION_UNAVAILABLE,
+    CONVERSATION_SESSION_ADMISSION_UNAVAILABLE, ConversationTurn, ConversationTurnStatus,
+    PresentationPreference, TurnCommand, request_payload_value,
 };
 use storage_core::{
     ConversationMessageRecord, ConversationRecord, ConversationStore, ConversationTurnReceipt,
@@ -98,7 +98,10 @@ impl FromRef<ApiState> for ConversationApiState {
             store: state.store.clone(),
             principal_id: state.principal_id.clone(),
             runtime_id: state.runtime_id.clone(),
-            supervisor: Some(Arc::new(crate::agents::AgentSessionSupervisor::new(state.store.clone(), state.runtime_id.clone()))),
+            supervisor: Some(Arc::new(crate::agents::AgentSessionSupervisor::new(
+                state.store.clone(),
+                state.runtime_id.clone(),
+            ))),
         }
     }
 }
@@ -422,8 +425,8 @@ async fn submit_conversation_turn(
                 .find(|e| e.event_type == "conversation.turn.created.v2")
                 .map(|e| e.correlation_id.clone())
                 .unwrap_or_else(|| correlation_id.clone());
-            let correlation = header::HeaderValue::from_str(&correlation_id)
-                .map_err(|_| internal())?;
+            let correlation =
+                header::HeaderValue::from_str(&correlation_id).map_err(|_| internal())?;
             let turn_receipt = ConversationTurnReceipt {
                 turn_id: receipt.turn.turn_id.clone(),
                 conversation_id: receipt.turn.conversation_id.clone(),
@@ -562,11 +565,17 @@ async fn submit_conversation_turn(
         let wid = workspace_id.clone();
         let cid = conversation_id.clone();
         let tid = turn.turn_id.clone();
+        let tid_spawn = tid.clone();
         let cor = correlation_id.clone();
         let cor_dispatch = cor.clone();
 
         tokio::spawn(async move {
-            let _ = supervisor.dispatch_turn(&pid, &wid, &cid, turn, &cor_dispatch).await;
+            if let Err(e) = supervisor
+                .dispatch_turn(&pid, &wid, &cid, turn, &cor_dispatch)
+                .await
+            {
+                eprintln!("Supervisor dispatch_turn failed for turn {tid_spawn}: {e}");
+            }
         });
 
         let receipt = ConversationTurnReceipt {
@@ -679,8 +688,8 @@ async fn retry_conversation_turn(
     Path((conversation_id, turn_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, Response> {
-    let _request_id = idempotency_key(&headers)?;
-    let _expected_version = super::parse_if_match(&headers)?;
+    let request_id = idempotency_key(&headers)?;
+    let expected_version = super::parse_if_match(&headers)?;
     if !valid_task_query_id(&turn_id) {
         return Err(error(
             StatusCode::BAD_REQUEST,
@@ -689,7 +698,109 @@ async fn retry_conversation_turn(
         ));
     }
     ensure_conversation_available(&state, &headers, &conversation_id).await?;
-    Err(turn_command_unavailable())
+    let workspace_id = selected_workspace(&headers)?;
+    let correlation_id = idempotent_id("cor", &state.principal_id, &request_id, "retry-turn");
+
+    let conv_store = SqliteConversationStore::new(state.store.clone());
+    let turn = conv_store
+        .get_conversation_turn(&workspace_id, &conversation_id, &turn_id)
+        .map_err(map_store_error)?
+        .ok_or_else(|| {
+            error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Conversation turn not found",
+            )
+        })?;
+
+    if turn.version != expected_version {
+        return Err(error(
+            StatusCode::PRECONDITION_FAILED,
+            "STALE_VERSION",
+            "Conversation turn version does not match If-Match precondition",
+        ));
+    }
+
+    if turn.status != ConversationTurnStatus::Failed {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "INVALID_STATE",
+            "Conversation turn can only be retried from FAILED status",
+        ));
+    }
+
+    let new_session_id = new_id("ses").map_err(|_| internal())?;
+    let next_version = turn.version + 1;
+    let next_retry_ordinal = turn.retry_ordinal + 1;
+    let ctx = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+
+    let event = EventDraft {
+        event_id: ctx.event_id,
+        workspace_id: workspace_id.clone(),
+        entity_type: "ConversationTurn".to_owned(),
+        entity_id: turn_id.clone(),
+        origin_runtime_id: state.runtime_id.clone(),
+        entity_revision: next_version,
+        hlc_timestamp: ctx.hlc_timestamp,
+        correlation_id: ctx.correlation_id,
+        causation_id: Some(request_id),
+        schema_version: 1,
+        event_type: "conversation.turn.retried.v1".to_owned(),
+        payload: json!({
+            "turn_id": turn_id,
+            "agent_session_id": new_session_id,
+            "prior_agent_session_id": turn.agent_session_id,
+            "retry_ordinal": next_retry_ordinal,
+            "aggregate_version": next_version,
+        }),
+        recorded_at: ctx.recorded_at.clone(),
+    };
+
+    let updated_turn = run_turn_transition(
+        state.store.clone(),
+        state.principal_id.clone(),
+        workspace_id.clone(),
+        conversation_id.clone(),
+        turn_id.clone(),
+        turn.version,
+        TurnCommand::Retry {
+            agent_session_id: new_session_id,
+        },
+        event,
+    )
+    .await
+    .map_err(map_store_error)?;
+
+    if let Some(ref supervisor) = state.supervisor {
+        let supervisor = supervisor.clone();
+        let turn_to_dispatch = updated_turn.clone();
+        let pid = state.principal_id.clone();
+        let wid = workspace_id.clone();
+        let cid = conversation_id.clone();
+        let tid = turn_id.clone();
+        let cor_dispatch = correlation_id.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = supervisor
+                .dispatch_turn(&pid, &wid, &cid, turn_to_dispatch, &cor_dispatch)
+                .await
+            {
+                eprintln!("Supervisor retry dispatch_turn failed for turn {tid}: {e}");
+            }
+        });
+    }
+
+    let receipt = ConversationTurnReceipt {
+        turn_id: updated_turn.turn_id,
+        conversation_id: updated_turn.conversation_id,
+        user_message_id: updated_turn.user_message_id,
+        status: updated_turn.status,
+        accepted_at: ctx.recorded_at,
+        correlation_id,
+        presentation_preference: updated_turn.presentation_preference,
+    };
+
+    Ok((StatusCode::ACCEPTED, Json(receipt)).into_response())
 }
 
 async fn cancel_conversation_turn(
@@ -697,8 +808,8 @@ async fn cancel_conversation_turn(
     Path((conversation_id, turn_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, Response> {
-    let _request_id = idempotency_key(&headers)?;
-    let _expected_version = super::parse_if_match(&headers)?;
+    let request_id = idempotency_key(&headers)?;
+    let expected_version = super::parse_if_match(&headers)?;
     if !valid_task_query_id(&turn_id) {
         return Err(error(
             StatusCode::BAD_REQUEST,
@@ -707,7 +818,209 @@ async fn cancel_conversation_turn(
         ));
     }
     ensure_conversation_available(&state, &headers, &conversation_id).await?;
-    Err(turn_command_unavailable())
+    let workspace_id = selected_workspace(&headers)?;
+    let correlation_id = idempotent_id("cor", &state.principal_id, &request_id, "cancel-turn");
+
+    let conv_store = SqliteConversationStore::new(state.store.clone());
+    let turn = conv_store
+        .get_conversation_turn(&workspace_id, &conversation_id, &turn_id)
+        .map_err(map_store_error)?
+        .ok_or_else(|| {
+            error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Conversation turn not found",
+            )
+        })?;
+
+    if turn.version != expected_version {
+        return Err(error(
+            StatusCode::PRECONDITION_FAILED,
+            "STALE_VERSION",
+            "Conversation turn version does not match If-Match precondition",
+        ));
+    }
+
+    if matches!(
+        turn.status,
+        ConversationTurnStatus::Completed
+            | ConversationTurnStatus::Failed
+            | ConversationTurnStatus::Cancelled
+    ) {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "INVALID_STATE",
+            "Conversation turn is already settled",
+        ));
+    }
+
+    let ctx = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+
+    let updated_turn = match turn.status {
+        ConversationTurnStatus::Running => {
+            let req_event = EventDraft {
+                event_id: ctx.event_id.clone(),
+                workspace_id: workspace_id.clone(),
+                entity_type: "ConversationTurn".to_owned(),
+                entity_id: turn_id.clone(),
+                origin_runtime_id: state.runtime_id.clone(),
+                entity_revision: turn.version + 1,
+                hlc_timestamp: ctx.hlc_timestamp.clone(),
+                correlation_id: ctx.correlation_id.clone(),
+                causation_id: Some(request_id.clone()),
+                schema_version: 1,
+                event_type: "conversation.turn.status.changed.v1".to_owned(),
+                payload: json!({
+                    "turn_id": turn_id,
+                    "from": "RUNNING",
+                    "to": "CANCEL_REQUESTED",
+                    "reason_code": "USER_REQUESTED",
+                    "agent_session_id": turn.agent_session_id,
+                    "aggregate_version": turn.version + 1,
+                }),
+                recorded_at: ctx.recorded_at.clone(),
+            };
+
+            let req_turn = run_turn_transition(
+                state.store.clone(),
+                state.principal_id.clone(),
+                workspace_id.clone(),
+                conversation_id.clone(),
+                turn_id.clone(),
+                turn.version,
+                TurnCommand::RequestCancel,
+                req_event,
+            )
+            .await
+            .map_err(map_store_error)?;
+
+            let settle_ctx =
+                event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+            let settle_event = EventDraft {
+                event_id: settle_ctx.event_id,
+                workspace_id: workspace_id.clone(),
+                entity_type: "ConversationTurn".to_owned(),
+                entity_id: turn_id.clone(),
+                origin_runtime_id: state.runtime_id.clone(),
+                entity_revision: req_turn.version + 1,
+                hlc_timestamp: settle_ctx.hlc_timestamp,
+                correlation_id: settle_ctx.correlation_id,
+                causation_id: Some(request_id),
+                schema_version: 1,
+                event_type: "conversation.turn.settled.v1".to_owned(),
+                payload: json!({
+                    "turn_id": turn_id,
+                    "from": "CANCEL_REQUESTED",
+                    "to": "CANCELLED",
+                    "aggregate_version": req_turn.version + 1,
+                }),
+                recorded_at: settle_ctx.recorded_at.clone(),
+            };
+
+            run_turn_transition(
+                state.store.clone(),
+                state.principal_id.clone(),
+                workspace_id.clone(),
+                conversation_id.clone(),
+                turn_id.clone(),
+                req_turn.version,
+                TurnCommand::SettleCancelled {
+                    settled_at: settle_ctx.recorded_at,
+                },
+                settle_event,
+            )
+            .await
+            .map_err(map_store_error)?
+        }
+        ConversationTurnStatus::CancelRequested => {
+            let settle_event = EventDraft {
+                event_id: ctx.event_id,
+                workspace_id: workspace_id.clone(),
+                entity_type: "ConversationTurn".to_owned(),
+                entity_id: turn_id.clone(),
+                origin_runtime_id: state.runtime_id.clone(),
+                entity_revision: turn.version + 1,
+                hlc_timestamp: ctx.hlc_timestamp,
+                correlation_id: ctx.correlation_id,
+                causation_id: Some(request_id),
+                schema_version: 1,
+                event_type: "conversation.turn.settled.v1".to_owned(),
+                payload: json!({
+                    "turn_id": turn_id,
+                    "from": "CANCEL_REQUESTED",
+                    "to": "CANCELLED",
+                    "aggregate_version": turn.version + 1,
+                }),
+                recorded_at: ctx.recorded_at.clone(),
+            };
+
+            run_turn_transition(
+                state.store.clone(),
+                state.principal_id.clone(),
+                workspace_id.clone(),
+                conversation_id.clone(),
+                turn_id.clone(),
+                turn.version,
+                TurnCommand::SettleCancelled {
+                    settled_at: ctx.recorded_at.clone(),
+                },
+                settle_event,
+            )
+            .await
+            .map_err(map_store_error)?
+        }
+        ConversationTurnStatus::Open => {
+            let fail_event = EventDraft {
+                event_id: ctx.event_id,
+                workspace_id: workspace_id.clone(),
+                entity_type: "ConversationTurn".to_owned(),
+                entity_id: turn_id.clone(),
+                origin_runtime_id: state.runtime_id.clone(),
+                entity_revision: turn.version + 1,
+                hlc_timestamp: ctx.hlc_timestamp,
+                correlation_id: ctx.correlation_id,
+                causation_id: Some(request_id),
+                schema_version: 1,
+                event_type: "conversation.turn.settled.v1".to_owned(),
+                payload: json!({
+                    "turn_id": turn_id,
+                    "from": "OPEN",
+                    "to": "FAILED",
+                    "reason_code": "USER_CANCELLED",
+                    "aggregate_version": turn.version + 1,
+                }),
+                recorded_at: ctx.recorded_at.clone(),
+            };
+
+            run_turn_transition(
+                state.store.clone(),
+                state.principal_id.clone(),
+                workspace_id.clone(),
+                conversation_id.clone(),
+                turn_id.clone(),
+                turn.version,
+                TurnCommand::Fail {
+                    settled_at: ctx.recorded_at.clone(),
+                },
+                fail_event,
+            )
+            .await
+            .map_err(map_store_error)?
+        }
+        _ => return Err(turn_command_unavailable()),
+    };
+
+    let receipt = ConversationTurnReceipt {
+        turn_id: updated_turn.turn_id,
+        conversation_id: updated_turn.conversation_id,
+        user_message_id: updated_turn.user_message_id,
+        status: updated_turn.status,
+        accepted_at: ctx.recorded_at,
+        correlation_id,
+        presentation_preference: updated_turn.presentation_preference,
+    };
+
+    Ok((StatusCode::ACCEPTED, Json(receipt)).into_response())
 }
 
 async fn ensure_conversation_available(

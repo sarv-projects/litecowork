@@ -19,19 +19,19 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use storage_core::{
     ArtifactReadStore, DemonstrationCaptureConsent, DemonstrationCapturePolicy,
-    DemonstrationSessionRecord, DemonstrationStatus, EnvironmentStore, EventDraft, McpAppBridgeEnvelope,
-    McpAppCsp, McpAppFramePolicy, McpAppFrameRecord, RuntimeCapabilityHostPageRequest,
-    RuntimeCapabilityRef, SensitiveRegionPolicy, SkillCapabilityRef, SkillGuardError, SkillKind,
-    SkillOrigin, SkillProposalDecision, SkillProposalRecord, SkillProposalReviewer,
-    SkillProposalSource, SkillProposalStatus, SkillRecord, SkillRedactionStatus,
-    SkillRedactionSummary, SkillRevision, SkillStatus, build_app_frame, derive_skill_proposal_draft,
-    validate_app_bridge_message,
+    DemonstrationSessionRecord, DemonstrationStatus, EnvironmentStore, EventDraft,
+    McpAppBridgeEnvelope, McpAppCsp, McpAppFramePolicy, McpAppFrameRecord,
+    RuntimeCapabilityHostPageRequest, RuntimeCapabilityRef, SensitiveRegionPolicy,
+    SkillCapabilityRef, SkillGuardError, SkillKind, SkillOrigin, SkillProposalDecision,
+    SkillProposalRecord, SkillProposalReviewer, SkillProposalSource, SkillProposalStatus,
+    SkillRecord, SkillRedactionStatus, SkillRedactionSummary, SkillRevision, SkillStatus,
+    build_app_frame, derive_skill_proposal_draft, validate_app_bridge_message,
 };
 use storage_sqlite::{
     AppFrameCreateRequest, DemonstrationAppendOutcome, DemonstrationAppendRequest,
     DemonstrationCreateRequest, DemonstrationTransition, DemonstrationTransitionRequest,
-    SkillEventContext, SkillMutationRequest, SkillProposalCreateRequest, SkillProposalReviewRequest,
-    SqliteEnvironmentStore, SqliteSkillStore,
+    SkillEventContext, SkillMutationRequest, SkillProposalCreateRequest,
+    SkillProposalReviewRequest, SqliteEnvironmentStore, SqliteSkillStore,
 };
 
 const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -42,18 +42,39 @@ pub(super) fn routes() -> Router<ApiState> {
     Router::new()
         .route("/v1/skills", get(list_skills).post(create_skill))
         .route("/v1/skills/{skill_id}", get(get_skill).put(revise_skill))
-        .route("/v1/skill-proposals", get(list_skill_proposals).post(create_skill_proposal))
-        .route("/v1/skill-proposals/{proposal_id}/approve", post(approve_skill_proposal))
-        .route("/v1/skill-proposals/{proposal_id}/reject", post(reject_skill_proposal))
+        .route(
+            "/v1/skill-proposals",
+            get(list_skill_proposals).post(create_skill_proposal),
+        )
+        .route(
+            "/v1/skill-proposals/{proposal_id}/approve",
+            post(approve_skill_proposal),
+        )
+        .route(
+            "/v1/skill-proposals/{proposal_id}/reject",
+            post(reject_skill_proposal),
+        )
         .route("/v1/demonstrations", post(start_demonstration))
         .route(
             "/v1/demonstrations/{demonstration_id}/actions",
             post(append_demonstration_action),
         )
-        .route("/v1/demonstrations/{demonstration_id}/complete", post(complete_demonstration))
-        .route("/v1/demonstrations/{demonstration_id}/pause", post(pause_demonstration))
-        .route("/v1/demonstrations/{demonstration_id}/resume", post(resume_demonstration))
-        .route("/v1/demonstrations/{demonstration_id}/abort", post(abort_demonstration))
+        .route(
+            "/v1/demonstrations/{demonstration_id}/complete",
+            post(complete_demonstration),
+        )
+        .route(
+            "/v1/demonstrations/{demonstration_id}/pause",
+            post(pause_demonstration),
+        )
+        .route(
+            "/v1/demonstrations/{demonstration_id}/resume",
+            post(resume_demonstration),
+        )
+        .route(
+            "/v1/demonstrations/{demonstration_id}/abort",
+            post(abort_demonstration),
+        )
         .route("/v1/mcp-apps/frames", post(issue_app_frame))
         .route("/v1/mcp-apps/messages", post(validate_app_message))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
@@ -457,12 +478,18 @@ fn decode_cursor(
     }
     let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| invalid())?;
     let cursor: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    let version = cursor.get("version").and_then(serde_json::Value::as_u64).unwrap_or(0);
+    let version = cursor
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
     let cursor_workspace = cursor
         .get("workspace_id")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    let cursor_scope = cursor.get("scope").and_then(serde_json::Value::as_str).unwrap_or_default();
+    let cursor_scope = cursor
+        .get("scope")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
     let created_at = cursor
         .get("created_at")
         .and_then(serde_json::Value::as_str)
@@ -524,10 +551,13 @@ fn proposal_view(proposal: &SkillProposalRecord) -> SkillProposalView {
         draft_digest: proposal.draft_digest.clone(),
         redaction_status: proposal.redaction.status,
         status: proposal.status,
-        approved_by: proposal.approved_by.as_ref().map(|principal_id| PrincipalRefView {
-            principal_id: principal_id.clone(),
-            kind: "USER".to_owned(),
-        }),
+        approved_by: proposal
+            .approved_by
+            .as_ref()
+            .map(|principal_id| PrincipalRefView {
+                principal_id: principal_id.clone(),
+                kind: "USER".to_owned(),
+            }),
         published_capability_ref: None,
         placeholders: proposal
             .placeholders
@@ -570,25 +600,28 @@ fn skill_view(skill: &SkillRecord) -> SkillView {
             component: skill.capability_ref.component.clone(),
         },
         current_revision: skill.current_revision,
-        revision: skill.current_revision_record().map(|revision| SkillRevisionView {
-            revision: revision.revision,
-            title: revision.title.clone(),
-            summary: revision.summary.clone(),
-            manifest_digest: revision.manifest_digest.clone(),
-            content_digest: revision.content_digest.clone(),
-            content_ref: revision.content_ref.clone(),
-            declared_capabilities: revision.declared_capabilities.clone(),
-            declared_requirements: revision.declared_requirements.clone(),
-            created_at: revision.created_at.clone(),
-            created_by: revision.created_by.clone(),
-        }),
+        revision: skill
+            .current_revision_record()
+            .map(|revision| SkillRevisionView {
+                revision: revision.revision,
+                title: revision.title.clone(),
+                summary: revision.summary.clone(),
+                manifest_digest: revision.manifest_digest.clone(),
+                content_digest: revision.content_digest.clone(),
+                content_ref: revision.content_ref.clone(),
+                declared_capabilities: revision.declared_capabilities.clone(),
+                declared_requirements: revision.declared_requirements.clone(),
+                created_at: revision.created_at.clone(),
+                created_by: revision.created_by.clone(),
+            }),
         created_at: skill.created_at.clone(),
         updated_at: skill.updated_at.clone(),
         version: skill.version,
     }
 }
 
-fn demonstration_view(session: &DemonstrationSessionRecord) -> DemonstrationSessionView {    DemonstrationSessionView {
+fn demonstration_view(session: &DemonstrationSessionRecord) -> DemonstrationSessionView {
+    DemonstrationSessionView {
         demonstration_session_id: session.session_id.clone(),
         workspace_id: session.workspace_id.clone(),
         environment_id: session.environment_id.clone(),
@@ -768,7 +801,11 @@ async fn revise_skill(
         return Err(invalid());
     }
     let body: WriteSkillBody = parse_body(&body)?;
-    if body.skill_id.as_deref().is_some_and(|value| value != skill_id) {
+    if body
+        .skill_id
+        .as_deref()
+        .is_some_and(|value| value != skill_id)
+    {
         return Err(invalid());
     }
     let request_id = super::idempotency_key(&headers)?;
@@ -909,7 +946,10 @@ async fn create_skill_proposal(
     // cannot prove it was redacted stays a DRAFT and never becomes reviewable.
     let attestation = state
         .store
-        .get_resource_record(&workspace.workspace_id, &body.draft_resource_ref.resource_id)
+        .get_resource_record(
+            &workspace.workspace_id,
+            &body.draft_resource_ref.resource_id,
+        )
         .map_err(|_| unavailable())?
         .and_then(|resource| {
             resource
@@ -980,7 +1020,11 @@ async fn create_skill_proposal(
         })
         .map_err(storage_error)?;
     Ok(no_store(
-        (StatusCode::CREATED, Json(proposal_view(&committed.proposal))).into_response(),
+        (
+            StatusCode::CREATED,
+            Json(proposal_view(&committed.proposal)),
+        )
+            .into_response(),
     ))
 }
 
@@ -1148,15 +1192,18 @@ async fn issue_app_frame(
         &format!("mcp-app-frame.{}", workspace.workspace_id),
     );
     let issued_at = observed_at.clone();
-    let expires_at = time::OffsetDateTime::parse(&issued_at, &time::format_description::well_known::Rfc3339)
-        .ok()
-        .and_then(|instant| instant.checked_add(time::Duration::seconds(i64::from(body.ttl_seconds))))
-        .and_then(|instant| {
-            instant
-                .format(&time::format_description::well_known::Rfc3339)
-                .ok()
-        })
-        .ok_or_else(invalid)?;
+    let expires_at =
+        time::OffsetDateTime::parse(&issued_at, &time::format_description::well_known::Rfc3339)
+            .ok()
+            .and_then(|instant| {
+                instant.checked_add(time::Duration::seconds(i64::from(body.ttl_seconds)))
+            })
+            .and_then(|instant| {
+                instant
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            })
+            .ok_or_else(invalid)?;
     let policy = McpAppFramePolicy {
         frame_id: frame_id.clone(),
         workspace_id: workspace.workspace_id.clone(),

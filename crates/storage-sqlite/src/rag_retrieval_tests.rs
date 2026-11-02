@@ -9,8 +9,8 @@ use storage_core::{
     ResourceUploadState, ResourceUploadStore, StoreError, WorkspaceCreateRequest,
 };
 
-use crate::blob::{WorkspaceBlobKey, WorkspaceBlobKeyProvider};
 use crate::FileBlobStore;
+use crate::blob::{WorkspaceBlobKey, WorkspaceBlobKeyProvider};
 use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
 
 const WORKSPACE: &str = "workspace-rag-index-state";
@@ -381,8 +381,7 @@ fn an_indexed_text_resource_reports_a_ready_index_state() {
     assert_eq!(state.parser_id.as_deref(), Some("litecowork.plain-text.v1"));
     assert_eq!(state.superseded_index_count, 0);
     assert_eq!(
-        state.indexed_source_digest,
-        state.current_content_digest,
+        state.indexed_source_digest, state.current_content_digest,
         "a ready projection is bound to the current content digest"
     );
 }

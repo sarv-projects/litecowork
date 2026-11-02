@@ -13,7 +13,6 @@ use storage_core::{
     InvocationProviderObservationSource,
 };
 
-
 #[derive(Clone)]
 pub struct SqliteCapabilityInvocationStore {
     store: SqliteWorkspaceStore,

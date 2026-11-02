@@ -40,7 +40,6 @@ impl Replayable for CommittedEvidence {
     }
 }
 
-
 #[derive(Clone)]
 pub struct SqliteEffectEvidenceStore {
     store: SqliteWorkspaceStore,

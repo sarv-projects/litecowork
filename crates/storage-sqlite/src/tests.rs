@@ -1756,7 +1756,10 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
         .expect("query applied migrations")
         .collect::<Result<_, _>>()
         .expect("collect migration versions");
-    assert_eq!(applied, [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+    assert_eq!(
+        applied,
+        [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+    );
 }
 
 #[test]
@@ -2875,8 +2878,8 @@ fn migration_crash_rolls_back_ddl_and_can_retry() {
 #[test]
 fn v27_test_run_migration_rolls_back_and_replays() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let mut connection =
-        Connection::open(directory.path().join("migration-v27.sqlite3")).expect("open test database");
+    let mut connection = Connection::open(directory.path().join("migration-v27.sqlite3"))
+        .expect("open test database");
     connection
         .pragma_update(None, "foreign_keys", true)
         .expect("enable FK");

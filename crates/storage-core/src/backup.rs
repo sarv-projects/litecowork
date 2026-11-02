@@ -201,15 +201,9 @@ pub enum SchemaCompatibility {
         maximum_supported: i64,
     },
     /// The backup was taken by a newer Runtime. Upgrading is refused.
-    RefusedTooNew {
-        found: i64,
-        maximum_supported: i64,
-    },
+    RefusedTooNew { found: i64, maximum_supported: i64 },
     /// The backup predates the oldest schema this Runtime can open.
-    RefusedTooOld {
-        found: i64,
-        minimum_supported: i64,
-    },
+    RefusedTooOld { found: i64, minimum_supported: i64 },
 }
 
 impl SchemaCompatibility {
@@ -417,7 +411,8 @@ mod tests {
             relative_path: "blobs/scope/resource/aa.blob".to_owned(),
             ..blob.clone()
         };
-        let first = backup_integrity_payload(26, &snapshot, &[blob.clone(), other.clone()], &[], &[]);
+        let first =
+            backup_integrity_payload(26, &snapshot, &[blob.clone(), other.clone()], &[], &[]);
         let second = backup_integrity_payload(26, &snapshot, &[other, blob], &[], &[]);
         assert_eq!(first, second);
         assert_eq!(first.blobs[0].relative_path, "blobs/scope/resource/aa.blob");

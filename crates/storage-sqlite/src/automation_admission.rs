@@ -149,10 +149,12 @@ fn validate_test_admission(
         });
     }
     validate_coworker_provenance(tx, task, coworker_id, coworker_revision)?;
-    if admission.inputs != commit.routine_admission.as_ref().map_or_else(
-        || serde_json::Value::Null,
-        |routine| routine.inputs.clone(),
-    ) {
+    if admission.inputs
+        != commit
+            .routine_admission
+            .as_ref()
+            .map_or_else(|| serde_json::Value::Null, |routine| routine.inputs.clone())
+    {
         return Err(StoreError::Invalid(
             "Automation test-run inputs differ from the pinned Routine materialization".to_owned(),
         ));
@@ -455,7 +457,8 @@ fn validate_manual_admission(
     }
     if !matches!(trigger.trigger, TriggerDefinition::Manual) {
         return Err(StoreError::Invalid(
-            "The claimed trigger is not the ManualTrigger of the pinned Automation revision".to_owned(),
+            "The claimed trigger is not the ManualTrigger of the pinned Automation revision"
+                .to_owned(),
         ));
     }
     let expected_key = OccurrenceIdentity::Manual {
@@ -554,8 +557,7 @@ fn validate_schedule_admission(
             actual: None,
         });
     };
-    if from_sql_i64(cursor_revision, "Automation cursor revision")?
-        != admission.automation_revision
+    if from_sql_i64(cursor_revision, "Automation cursor revision")? != admission.automation_revision
         || cursor_runtime_id != admission.trigger_host_runtime_id
     {
         return Err(StoreError::Conflict {

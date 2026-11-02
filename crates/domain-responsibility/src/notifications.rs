@@ -153,9 +153,7 @@ const WEEKDAYS: [&str; 7] = [
 impl QuietHours {
     /// Parses the bounded persisted shape.
     pub fn parse(value: &serde_json::Value) -> Result<Self, DomainError> {
-        let object = value
-            .as_object()
-            .ok_or(DomainError::InvalidDefinition)?;
+        let object = value.as_object().ok_or(DomainError::InvalidDefinition)?;
         if object.len() != 4 {
             return Err(DomainError::InvalidDefinition);
         }
@@ -275,8 +273,12 @@ pub struct NotificationFacts<'a> {
 /// The event class an outcome belongs to.
 pub fn event_class_for(outcome: NotificationOutcome) -> NotificationEventClass {
     match outcome {
-        NotificationOutcome::OccurrenceSettled => NotificationEventClass::AutomationOccurrenceSettled,
-        NotificationOutcome::OccurrenceSkipped => NotificationEventClass::AutomationOccurrenceSkipped,
+        NotificationOutcome::OccurrenceSettled => {
+            NotificationEventClass::AutomationOccurrenceSettled
+        }
+        NotificationOutcome::OccurrenceSkipped => {
+            NotificationEventClass::AutomationOccurrenceSkipped
+        }
         NotificationOutcome::Succeeded => NotificationEventClass::TaskCompleted,
         NotificationOutcome::Failed => NotificationEventClass::TaskFailed,
         NotificationOutcome::Blocked => NotificationEventClass::DependencyBlocked,

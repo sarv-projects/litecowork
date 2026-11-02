@@ -1618,8 +1618,8 @@ fn conversation_activation_fixture() -> (
     let host_id = "host-activation";
     let conversation_store = crate::SqliteConversationStore::new(fixture.store.clone());
 
-    let connection = Connection::open(database_path(&fixture.directory))
-        .expect("open activation fixture");
+    let connection =
+        Connection::open(database_path(&fixture.directory)).expect("open activation fixture");
     connection
         .execute(
             "UPDATE runtimes SET availability='ONLINE' WHERE runtime_id=?1",
@@ -1858,14 +1858,17 @@ fn conversation_activation_fixture() -> (
 
 #[test]
 fn conversation_activation_commits_session_turn_and_local_host_binding_atomically() {
-    use storage_core::conversation::ConversationTurnStatus;
     use storage_core::AgentSessionStore;
+    use storage_core::conversation::ConversationTurnStatus;
 
     let (fixture, reserved, conversation_id, turn_id, session_id, host_id) =
         conversation_activation_fixture();
     let canonical_now = "2026-10-15T10:02:00.000000000Z";
     assert_eq!(reserved.session.started_at, canonical_now);
-    assert_eq!(reserved.session.last_event_at.as_deref(), Some(canonical_now));
+    assert_eq!(
+        reserved.session.last_event_at.as_deref(),
+        Some(canonical_now)
+    );
     assert_eq!(reserved.event.payload["reported_at"], json!(canonical_now));
 
     let activation_for = |session_event_id: &str,
@@ -1942,26 +1945,30 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
         serde_json::from_str(&serialized_request).expect("serialized activation request parses");
     assert!(deserialized_request.native_session_ref.is_none());
 
-    assert!(fixture
-        .store
-        .activate_conversation_agent_session(activation_for(
-            "event-session-started-stale",
-            "event-turn-running-stale",
-            &host_id,
-            99,
-            "native-handle-stale"
-        ))
-        .is_err());
-    assert!(fixture
-        .store
-        .activate_conversation_agent_session(activation_for(
-            "event-session-started-wrong-host",
-            "event-turn-running-wrong-host",
-            "wrong-host",
-            1,
-            "native-handle-wrong-host"
-        ))
-        .is_err());
+    assert!(
+        fixture
+            .store
+            .activate_conversation_agent_session(activation_for(
+                "event-session-started-stale",
+                "event-turn-running-stale",
+                &host_id,
+                99,
+                "native-handle-stale"
+            ))
+            .is_err()
+    );
+    assert!(
+        fixture
+            .store
+            .activate_conversation_agent_session(activation_for(
+                "event-session-started-wrong-host",
+                "event-turn-running-wrong-host",
+                "wrong-host",
+                1,
+                "native-handle-wrong-host"
+            ))
+            .is_err()
+    );
 
     let mut foreign_owner = activation_for(
         "event-session-started-foreign-owner",
@@ -1971,10 +1978,12 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
         "native-handle-foreign-owner",
     );
     foreign_owner.principal_id = "another-principal".to_owned();
-    assert!(fixture
-        .store
-        .activate_conversation_agent_session(foreign_owner)
-        .is_err());
+    assert!(
+        fixture
+            .store
+            .activate_conversation_agent_session(foreign_owner)
+            .is_err()
+    );
 
     fixture
         .store
@@ -1988,16 +1997,18 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
             Some("process-activation-degraded"),
         )
         .expect("the reserved host can become degraded during adapter startup");
-    assert!(fixture
-        .store
-        .activate_conversation_agent_session(activation_for(
-            "event-session-started-degraded-host",
-            "event-turn-running-degraded-host",
-            &host_id,
-            1,
-            "native-handle-degraded-host",
-        ))
-        .is_err());
+    assert!(
+        fixture
+            .store
+            .activate_conversation_agent_session(activation_for(
+                "event-session-started-degraded-host",
+                "event-turn-running-degraded-host",
+                &host_id,
+                1,
+                "native-handle-degraded-host",
+            ))
+            .is_err()
+    );
     fixture
         .store
         .transition_agent_host_instance(
@@ -2020,10 +2031,12 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
     );
     malformed_event.session_event.payload["scope"]["conversation_turn_id"] =
         Value::String("another-turn".to_owned());
-    assert!(fixture
-        .store
-        .activate_conversation_agent_session(malformed_event)
-        .is_err());
+    assert!(
+        fixture
+            .store
+            .activate_conversation_agent_session(malformed_event)
+            .is_err()
+    );
 
     let mut event_collision = activation_for(
         "event-session-started-collision",
@@ -2033,10 +2046,12 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
         "native-handle-collision",
     );
     event_collision.turn_event.event_id = "event-turn-created-activation".to_owned();
-    assert!(fixture
-        .store
-        .activate_conversation_agent_session(event_collision)
-        .is_err());
+    assert!(
+        fixture
+            .store
+            .activate_conversation_agent_session(event_collision)
+            .is_err()
+    );
 
     let connection = Connection::open(database_path(&fixture.directory))
         .expect("inspect rollback before the successful activation");
@@ -2053,7 +2068,10 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("read unchanged session, turn, and host after rejected activations");
-    assert_eq!(before_success, ("STARTING".into(), "OPEN".into(), "READY".into(), 0));
+    assert_eq!(
+        before_success,
+        ("STARTING".into(), "OPEN".into(), "READY".into(), 0)
+    );
     drop(connection);
 
     let activated = fixture
@@ -2070,8 +2088,14 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
     assert_eq!(activated.session.version, 2);
     assert_eq!(activated.turn.status, ConversationTurnStatus::Running);
     assert_eq!(activated.turn.version, 2);
-    assert_eq!(activated.turn.agent_session_id.as_deref(), Some(session_id.as_str()));
-    assert_eq!(activated.session_event.event_type, "agent.session.started.v1");
+    assert_eq!(
+        activated.turn.agent_session_id.as_deref(),
+        Some(session_id.as_str())
+    );
+    assert_eq!(
+        activated.session_event.event_type,
+        "agent.session.started.v1"
+    );
     assert_eq!(
         activated.turn_event.event_type,
         "conversation.turn.status.changed.v1"
@@ -2083,8 +2107,8 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
         "the opaque native session handle never enters the committed result"
     );
 
-    let connection = Connection::open(database_path(&fixture.directory))
-        .expect("inspect committed activation");
+    let connection =
+        Connection::open(database_path(&fixture.directory)).expect("inspect committed activation");
     let committed_rows: (String, String, String, Option<String>, i64) = connection
         .query_row(
             "SELECT s.status,t.status,h.state,b.native_session_ref,
@@ -2097,7 +2121,15 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
              JOIN agent_host_instances h ON h.host_instance_id=b.host_instance_id
              WHERE s.workspace_id=?1 AND s.agent_session_id=?2 AND t.turn_id=?3",
             params![WORKSPACE_ID, session_id, turn_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .expect("read committed activation rows");
     assert_eq!(
@@ -2134,8 +2166,7 @@ fn conversation_activation_commits_session_turn_and_local_host_binding_atomicall
     drop(connection);
 
     assert_eq!(
-        reserved.session.status,
-        "STARTING",
+        reserved.session.status, "STARTING",
         "the activation result is distinct from the reservation receipt"
     );
 }
@@ -2291,19 +2322,43 @@ fn conversation_agent_response_commit_settles_turn_and_session_atomically() {
     };
 
     // Stale turn version fails
-    assert!(conv_store
-        .commit_conversation_agent_response(make_commit("req-stale-turn", "msg-1", 1, 2, OWNER_ID))
-        .is_err());
+    assert!(
+        conv_store
+            .commit_conversation_agent_response(make_commit(
+                "req-stale-turn",
+                "msg-1",
+                1,
+                2,
+                OWNER_ID
+            ))
+            .is_err()
+    );
 
     // Stale session version fails
-    assert!(conv_store
-        .commit_conversation_agent_response(make_commit("req-stale-sess", "msg-1", 2, 1, OWNER_ID))
-        .is_err());
+    assert!(
+        conv_store
+            .commit_conversation_agent_response(make_commit(
+                "req-stale-sess",
+                "msg-1",
+                2,
+                1,
+                OWNER_ID
+            ))
+            .is_err()
+    );
 
     // Foreign principal fails
-    assert!(conv_store
-        .commit_conversation_agent_response(make_commit("req-foreign", "msg-1", 2, 2, "foreign-user"))
-        .is_err());
+    assert!(
+        conv_store
+            .commit_conversation_agent_response(make_commit(
+                "req-foreign",
+                "msg-1",
+                2,
+                2,
+                "foreign-user"
+            ))
+            .is_err()
+    );
 
     // Successful commit
     let committed = conv_store
@@ -2337,7 +2392,10 @@ fn conversation_agent_response_commit_settles_turn_and_session_atomically() {
     assert_eq!(turn_status, "COMPLETED", "turn must be settled COMPLETED");
     assert_eq!(sess_status, "CLOSED", "session must be CLOSED");
     assert_eq!(binding_count, 0, "ephemeral host binding must be deleted");
-    assert_eq!(host_state, "READY", "host instance state must be restored to READY");
+    assert_eq!(
+        host_state, "READY",
+        "host instance state must be restored to READY"
+    );
     drop(conn);
 
     // Replay with exact same request returns identical receipt

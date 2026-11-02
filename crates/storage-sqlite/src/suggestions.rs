@@ -37,7 +37,6 @@ type StoredSuggestionRow = (
     u64,
 );
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SuggestionReadError {
     Unauthorized,

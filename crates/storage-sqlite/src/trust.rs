@@ -161,7 +161,6 @@ fn secret_store_error() -> StoreError {
     StoreError::Blob("OS SecretStore is unavailable or rejected the write".to_owned())
 }
 
-
 #[derive(Clone)]
 pub struct SqliteApprovalStore {
     store: SqliteWorkspaceStore,

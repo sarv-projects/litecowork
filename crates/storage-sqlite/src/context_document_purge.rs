@@ -9,7 +9,6 @@ use storage_core::{
     PendingEmptyContextDocumentPurge,
 };
 
-
 type PurgeTargetGroupKey = (String, &'static str);
 type PurgeTargetRevisionAndChunkRefs = (Vec<String>, Vec<ContextDocumentPurgeUploadChunkRef>);
 type PurgeReceiptIdentityRow = (String, Option<String>, Option<String>, String, String);

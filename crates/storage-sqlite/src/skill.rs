@@ -23,7 +23,6 @@ use storage_core::{
     SkillProposalStatus, SkillRecord, evaluate_skill_proposal_review,
 };
 
-
 const SKILL_ENTITY: &str = "skill";
 const SKILL_PROPOSAL_ENTITY: &str = "skill_proposal";
 const DEMONSTRATION_ENTITY: &str = "demonstration_session";
@@ -476,7 +475,9 @@ impl SqliteSkillStore {
         limit: usize,
     ) -> Result<SkillPage, StoreError> {
         if !(1..=MAX_PAGE_LIMIT).contains(&limit) {
-            return Err(StoreError::Invalid("Skill page limit is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "Skill page limit is invalid".to_owned(),
+            ));
         }
         let store = self.store.clone();
         let workspace = workspace_id.to_owned();
@@ -486,14 +487,8 @@ impl SqliteSkillStore {
                 .transaction_with_behavior(TransactionBehavior::Deferred)
                 .map_err(map_database_error)?;
             authorize_owner(&tx, &workspace, &principal)?;
-            let page = list_aggregate::<SkillRecord>(
-                &tx,
-                &store,
-                &workspace,
-                SKILL_ENTITY,
-                after,
-                limit,
-            )?;
+            let page =
+                list_aggregate::<SkillRecord>(&tx, &store, &workspace, SKILL_ENTITY, after, limit)?;
             Ok(SkillPage {
                 items: page.items,
                 next: page.next,
@@ -517,7 +512,9 @@ impl SqliteSkillStore {
         F: Fn(&SkillRecord) -> bool + Send + 'static,
     {
         if !(1..=MAX_PAGE_LIMIT).contains(&limit) {
-            return Err(StoreError::Invalid("Skill page limit is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "Skill page limit is invalid".to_owned(),
+            ));
         }
         let store = self.store.clone();
         let workspace = workspace_id.to_owned();
@@ -1588,17 +1585,12 @@ fn elapsed_millis(started_at: &str, now: &str) -> u64 {
     else {
         return u64::MAX;
     };
-    let Ok(end) =
-        time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)
+    let Ok(end) = time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)
     else {
         return u64::MAX;
     };
     let millis = (end - start).whole_milliseconds();
-    if millis <= 0 {
-        0
-    } else {
-        millis as u64
-    }
+    if millis <= 0 { 0 } else { millis as u64 }
 }
 
 /// Write the aggregate-state blob and its snapshot row for one aggregate.
@@ -1676,9 +1668,8 @@ fn load_aggregate<T: for<'de> Deserialize<'de>>(
         .inner
         .blobs
         .get(workspace_id, BlobPurpose::AggregateState, &blob)?;
-    let value = serde_json::from_slice(&bytes).map_err(|_| {
-        StoreError::Integrity("Skill aggregate state is malformed".to_owned())
-    })?;
+    let value = serde_json::from_slice(&bytes)
+        .map_err(|_| StoreError::Integrity("Skill aggregate state is malformed".to_owned()))?;
     Ok(Some(value))
 }
 
@@ -1719,7 +1710,8 @@ where
     let scan_budget = limit.saturating_mul(8).max(64);
     let mut scanned = 0usize;
     'scan: while items.len() < limit && scanned < scan_budget {
-        let page = list_aggregate::<T>(tx, store, workspace_id, entity_type, cursor.clone(), limit)?;
+        let page =
+            list_aggregate::<T>(tx, store, workspace_id, entity_type, cursor.clone(), limit)?;
         scanned = scanned.saturating_add(page.items.len());
         let page_has_more = page.has_more;
         let page_next = page.next.clone();
@@ -1868,17 +1860,15 @@ fn find_receipt<T: for<'de> Deserialize<'de> + Replayable>(
     if stored_digest != request_digest {
         return Err(StoreError::IdempotencyConflict);
     }
-    let response = response.ok_or_else(|| {
-        StoreError::Integrity("Skill request receipt has no response".to_owned())
-    })?;
+    let response = response
+        .ok_or_else(|| StoreError::Integrity("Skill request receipt has no response".to_owned()))?;
     if response_digest.as_deref() != Some(digest(response.as_bytes()).as_str()) {
         return Err(StoreError::Integrity(
             "Skill request receipt digest mismatch".to_owned(),
         ));
     }
-    let mut committed: T = serde_json::from_str(&response).map_err(|_| {
-        StoreError::Integrity("Skill request receipt is malformed".to_owned())
-    })?;
+    let mut committed: T = serde_json::from_str(&response)
+        .map_err(|_| StoreError::Integrity("Skill request receipt is malformed".to_owned()))?;
     committed.mark_replayed();
     Ok(Some(committed))
 }

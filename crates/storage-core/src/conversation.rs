@@ -249,7 +249,6 @@ pub struct ResolvedConversationHost {
     pub runtime_incarnation_id: String,
 }
 
-
 pub fn validate_conversation_record(record: &ConversationRecord) -> Result<(), StoreError> {
     let valid = |value: &str| {
         !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
@@ -261,7 +260,10 @@ pub fn validate_conversation_record(record: &ConversationRecord) -> Result<(), S
                 || title.chars().count() > 160
                 || title.chars().any(char::is_control)
         })
-        || record.active_agent_binding_id.as_ref().is_some_and(|binding_id| !valid(binding_id))
+        || record
+            .active_agent_binding_id
+            .as_ref()
+            .is_some_and(|binding_id| !valid(binding_id))
         || record.version == 0
         || record.version > i64::MAX as u64
     {
@@ -271,8 +273,6 @@ pub fn validate_conversation_record(record: &ConversationRecord) -> Result<(), S
     }
     Ok(())
 }
-
-
 
 /// One durable message projected into the canonical Conversation context sent to an
 /// agent. Native session identifiers are intentionally excluded.
@@ -360,10 +360,8 @@ pub fn build_conversation_context_package(
         })?;
 
     let mut projected = Vec::new();
-    let mut projected_bytes = conversation_id.len()
-        + target_agent_binding_id.len()
-        + through_message_id.len()
-        + 64;
+    let mut projected_bytes =
+        conversation_id.len() + target_agent_binding_id.len() + through_message_id.len() + 64;
     for source in ordered {
         if source.conversation_revision > boundary_revision {
             break;
@@ -394,9 +392,9 @@ pub fn build_conversation_context_package(
                 .len();
             projected_bytes = projected_bytes
                 .checked_add(encoded_len + 1)
-                .ok_or_else(|| StoreError::Invalid(
-                    "CONVERSATION_CONTEXT_LIMIT_EXCEEDED".to_owned(),
-                ))?;
+                .ok_or_else(|| {
+                    StoreError::Invalid("CONVERSATION_CONTEXT_LIMIT_EXCEEDED".to_owned())
+                })?;
             if projected_bytes > CONVERSATION_CONTEXT_MAX_BYTES {
                 return Err(StoreError::Invalid(
                     "CONVERSATION_CONTEXT_LIMIT_EXCEEDED".to_owned(),
@@ -417,7 +415,8 @@ pub fn build_conversation_context_package(
 #[cfg(test)]
 mod conversation_context_tests {
     use super::{
-        build_conversation_context_package, ConversationContextSourceMessage, ConversationMessageRecord,
+        ConversationContextSourceMessage, ConversationMessageRecord,
+        build_conversation_context_package,
     };
     use serde_json::json;
 
@@ -459,12 +458,60 @@ mod conversation_context_tests {
     #[test]
     fn switching_binding_replays_committed_history_without_old_native_session_handles() {
         let messages = vec![
-            message("m-user-1", "same-conversation", "USER", "Build a report", "2026-01-01T00:00:01Z", None, None),
-            message("m-agent-1", "same-conversation", "AGENT", "I found three sources", "2026-01-01T00:00:02Z", Some("agent-a"), Some("private-session-a")),
-            message("m-user-2", "same-conversation", "USER", "Use the second source", "2026-01-01T00:00:03Z", None, None),
-            message("m-agent-2", "same-conversation", "AGENT", "Drafted from source two", "2026-01-01T00:00:04Z", Some("agent-b"), Some("private-session-b")),
-            message("m-later", "same-conversation", "USER", "This message is after the turn boundary", "2026-01-01T00:00:06Z", None, None),
-            message("m-other-chat", "other-conversation", "USER", "Never transfer this", "2026-01-01T00:00:01Z", None, None),
+            message(
+                "m-user-1",
+                "same-conversation",
+                "USER",
+                "Build a report",
+                "2026-01-01T00:00:01Z",
+                None,
+                None,
+            ),
+            message(
+                "m-agent-1",
+                "same-conversation",
+                "AGENT",
+                "I found three sources",
+                "2026-01-01T00:00:02Z",
+                Some("agent-a"),
+                Some("private-session-a"),
+            ),
+            message(
+                "m-user-2",
+                "same-conversation",
+                "USER",
+                "Use the second source",
+                "2026-01-01T00:00:03Z",
+                None,
+                None,
+            ),
+            message(
+                "m-agent-2",
+                "same-conversation",
+                "AGENT",
+                "Drafted from source two",
+                "2026-01-01T00:00:04Z",
+                Some("agent-b"),
+                Some("private-session-b"),
+            ),
+            message(
+                "m-later",
+                "same-conversation",
+                "USER",
+                "This message is after the turn boundary",
+                "2026-01-01T00:00:06Z",
+                None,
+                None,
+            ),
+            message(
+                "m-other-chat",
+                "other-conversation",
+                "USER",
+                "Never transfer this",
+                "2026-01-01T00:00:01Z",
+                None,
+                None,
+            ),
         ];
 
         let sources = ordered(&messages[..5]);
@@ -480,11 +527,21 @@ mod conversation_context_tests {
         assert_eq!(context.target_agent_binding_id, "agent-c");
         assert_eq!(context.through_message_id, "m-agent-2");
         assert_eq!(
-            context.messages.iter().map(|message| message.message_id.as_str()).collect::<Vec<_>>(),
+            context
+                .messages
+                .iter()
+                .map(|message| message.message_id.as_str())
+                .collect::<Vec<_>>(),
             ["m-user-1", "m-agent-1", "m-user-2", "m-agent-2"]
         );
-        assert_eq!(context.messages[1].source_agent_binding_id.as_deref(), Some("agent-a"));
-        assert_eq!(context.messages[1].content[0]["text"], "I found three sources");
+        assert_eq!(
+            context.messages[1].source_agent_binding_id.as_deref(),
+            Some("agent-a")
+        );
+        assert_eq!(
+            context.messages[1].content[0]["text"],
+            "I found three sources"
+        );
         let encoded = serde_json::to_string(&context).expect("serialize provider context");
         assert!(!encoded.contains("private-session-a"));
         assert!(!encoded.contains("private-session-b"));
@@ -503,20 +560,19 @@ mod conversation_context_tests {
         )];
         let sources = ordered(&messages);
 
-        assert!(build_conversation_context_package(
-            "conversation-a",
-            "agent-a",
-            "missing-boundary",
-            &sources,
-        )
-        .is_err());
-        assert!(build_conversation_context_package(
-            "conversation-b",
-            "agent-a",
-            "m-user",
-            &sources,
-        )
-        .is_err());
+        assert!(
+            build_conversation_context_package(
+                "conversation-a",
+                "agent-a",
+                "missing-boundary",
+                &sources,
+            )
+            .is_err()
+        );
+        assert!(
+            build_conversation_context_package("conversation-b", "agent-a", "m-user", &sources,)
+                .is_err()
+        );
     }
 
     #[test]
@@ -533,15 +589,11 @@ mod conversation_context_tests {
         )];
         let sources = ordered(&messages);
 
-        assert!(build_conversation_context_package(
-            "conversation-a",
-            "agent-a",
-            "m-large",
-            &sources,
-        )
-        .is_err());
+        assert!(
+            build_conversation_context_package("conversation-a", "agent-a", "m-large", &sources,)
+                .is_err()
+        );
     }
-
 }
 
 pub fn request_payload_value(workspace_id: &str, title: Option<&str>) -> Value {

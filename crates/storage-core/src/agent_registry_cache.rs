@@ -71,7 +71,10 @@ pub fn validate_agent_registry_cache_snapshot(
             return Err("entry identity or metadata is invalid".to_owned());
         }
         let remaining = AGENT_REGISTRY_CACHE_MAX_SNAPSHOT_BYTES.saturating_sub(bytes);
-        let mut counter = BoundedCounter { written: 0, remaining };
+        let mut counter = BoundedCounter {
+            written: 0,
+            remaining,
+        };
         serde_json::to_writer(&mut counter, &entry.metadata)
             .map_err(|_| "snapshot exceeds the bounded cache size".to_owned())?;
         bytes = bytes

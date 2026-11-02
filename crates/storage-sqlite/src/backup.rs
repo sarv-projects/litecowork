@@ -37,12 +37,11 @@ use storage_core::{
     BACKUP_BLOB_ROOT, BACKUP_CONTAINER_MAGIC, BACKUP_CONTAINER_VERSION,
     BACKUP_CONTENT_ALGORITHM_XCHACHA20POLY1305, BACKUP_DATABASE_SNAPSHOT_PATH,
     BACKUP_EXCLUDED_BLOB_PURPOSES, BACKUP_EXCLUDED_TABLES, BACKUP_KDF_MINIMUM_ITERATIONS,
-    BACKUP_KDF_PBKDF2_HMAC_SHA256, BACKUP_MAX_BLOB_DESCRIPTORS,
-    BACKUP_MAX_CHUNK_BYTES, BACKUP_MAX_MANIFEST_BYTES, BACKUP_MAX_PAYLOAD_CHUNKS,
-    BackupArchiveManifest, BackupBlobDescriptor, BackupCreateOutcome, BackupEventCursor,
-    BackupKeyReference, BackupPayloadDescriptor, BackupRestoreOutcome, BackupVerification,
-    BlobPurpose, SchemaCompatibility, StoreError, backup_integrity_payload,
-    check_schema_compatibility,
+    BACKUP_KDF_PBKDF2_HMAC_SHA256, BACKUP_MAX_BLOB_DESCRIPTORS, BACKUP_MAX_CHUNK_BYTES,
+    BACKUP_MAX_MANIFEST_BYTES, BACKUP_MAX_PAYLOAD_CHUNKS, BackupArchiveManifest,
+    BackupBlobDescriptor, BackupCreateOutcome, BackupEventCursor, BackupKeyReference,
+    BackupPayloadDescriptor, BackupRestoreOutcome, BackupVerification, BlobPurpose,
+    SchemaCompatibility, StoreError, backup_integrity_payload, check_schema_compatibility,
 };
 use zeroize::Zeroizing;
 
@@ -358,7 +357,9 @@ impl LocalBackupService {
             })?;
         }
         fs::rename(&staging, destination).map_err(|error| {
-            StoreError::Io(format!("could not install the restored state directory: {error}"))
+            StoreError::Io(format!(
+                "could not install the restored state directory: {error}"
+            ))
         })?;
 
         Ok(outcome)
@@ -378,16 +379,20 @@ impl LocalBackupService {
         verify_restored_snapshot(&snapshot_path, manifest)?;
 
         let revoked_grant_count = revoke_live_authority(&snapshot_path)? as usize;
-        let dropped_lease_count: usize = ["execution_leases", "environment_control_leases", "secret_leases"]
-            .iter()
-            .map(|table| {
-                manifest
-                    .dropped_local_row_counts
-                    .get(*table)
-                    .copied()
-                    .unwrap_or(0) as usize
-            })
-            .sum();
+        let dropped_lease_count: usize = [
+            "execution_leases",
+            "environment_control_leases",
+            "secret_leases",
+        ]
+        .iter()
+        .map(|table| {
+            manifest
+                .dropped_local_row_counts
+                .get(*table)
+                .copied()
+                .unwrap_or(0) as usize
+        })
+        .sum();
 
         // Every restored blob must decrypt with the referenced key version
         // before the destination is replaced.
@@ -441,7 +446,10 @@ fn build_filtered_snapshot(
     // `VACUUM INTO` produces a transactionally consistent copy of the live
     // database without blocking the writer for the whole copy.
     source
-        .execute("VACUUM INTO ?1", params![destination_path.to_string_lossy()])
+        .execute(
+            "VACUUM INTO ?1",
+            params![destination_path.to_string_lossy()],
+        )
         .map_err(map_database_error)?;
 
     let snapshot = open_database(destination_path)?;
@@ -484,13 +492,11 @@ fn empty_table(connection: &Connection, table: &str) -> Result<u64, StoreError> 
         .execute(&format!("DELETE FROM \"{}\"", escape_identifier(table)), [])
         .map_err(map_database_error)?;
     for (name, sql) in triggers {
-        connection
-            .execute_batch(&sql)
-            .map_err(|error| {
-                StoreError::Integrity(format!(
-                    "could not restore the delete guard {name} on {table}: {error}"
-                ))
-            })?;
+        connection.execute_batch(&sql).map_err(|error| {
+            StoreError::Integrity(format!(
+                "could not restore the delete guard {name} on {table}: {error}"
+            ))
+        })?;
     }
     Ok(deleted as u64)
 }
@@ -657,11 +663,15 @@ fn collect_backup_blobs(
         }
         let mut objects: Vec<_> = fs::read_dir(&purpose_directory)
             .map_err(|error| {
-                StoreError::Io(format!("could not read the blob purpose directory: {error}"))
+                StoreError::Io(format!(
+                    "could not read the blob purpose directory: {error}"
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| {
-                StoreError::Io(format!("could not read the blob purpose directory: {error}"))
+                StoreError::Io(format!(
+                    "could not read the blob purpose directory: {error}"
+                ))
             })?;
         objects.sort_by_key(|entry| entry.file_name());
         for object in objects {
@@ -677,11 +687,13 @@ fn collect_backup_blobs(
                 continue;
             }
             let blob_digest = format!("sha256:{digest_hex}");
-            let envelope = fs::read(&object_path)
-                .map_err(|error| StoreError::Io(format!("could not read a blob envelope: {error}")))?;
+            let envelope = fs::read(&object_path).map_err(|error| {
+                StoreError::Io(format!("could not read a blob envelope: {error}"))
+            })?;
             let key_version = read_envelope_key_version(&envelope)?;
             let envelope_digest = digest_bytes(&envelope);
-            let relative_path = format!("{BACKUP_BLOB_ROOT}/{scope_digest}/{purpose_name}/{file_name}");
+            let relative_path =
+                format!("{BACKUP_BLOB_ROOT}/{scope_digest}/{purpose_name}/{file_name}");
 
             let mut resolved: Option<BlobRefCandidate> = None;
             for candidate in candidates
@@ -714,8 +726,9 @@ fn collect_backup_blobs(
             if let Some(parent) = target.parent() {
                 ensure_private_directory(parent)?;
             }
-            fs::write(&target, &envelope)
-                .map_err(|error| StoreError::Io(format!("could not stage a blob envelope: {error}")))?;
+            fs::write(&target, &envelope).map_err(|error| {
+                StoreError::Io(format!("could not stage a blob envelope: {error}"))
+            })?;
 
             descriptors.push(BackupBlobDescriptor {
                 workspace_scope_digest: scope_digest.clone(),
@@ -770,7 +783,9 @@ fn collect_blob_ref_candidates_from(
 
     if table_exists(connection, "resource_text_indexes")? {
         let mut statement = connection
-            .prepare("SELECT extracted_blob_digest, extracted_size_bytes FROM resource_text_indexes")
+            .prepare(
+                "SELECT extracted_blob_digest, extracted_size_bytes FROM resource_text_indexes",
+            )
             .map_err(map_database_error)?;
         let rows = statement
             .query_map([], |row| {
@@ -862,7 +877,10 @@ fn included_tables(connection: &Connection) -> Result<Vec<String>, StoreError> {
 
 fn text_json_columns(connection: &Connection, table: &str) -> Result<Vec<String>, StoreError> {
     let mut statement = connection
-        .prepare(&format!("PRAGMA table_info(\"{}\")", escape_identifier(table)))
+        .prepare(&format!(
+            "PRAGMA table_info(\"{}\")",
+            escape_identifier(table)
+        ))
         .map_err(map_database_error)?;
     let rows = statement
         .query_map([], |row| {
@@ -876,9 +894,7 @@ fn text_json_columns(connection: &Connection, table: &str) -> Result<Vec<String>
         .map_err(map_database_error)?;
     Ok(columns
         .into_iter()
-        .filter(|(name, declared)| {
-            declared.eq_ignore_ascii_case("TEXT") && name.ends_with("_json")
-        })
+        .filter(|(name, declared)| declared.eq_ignore_ascii_case("TEXT") && name.ends_with("_json"))
         .map(|(name, _)| name)
         .collect())
 }
@@ -934,9 +950,7 @@ fn purpose_to_blob_purpose(purpose: &str) -> Result<BlobPurpose, StoreError> {
         "CHECKPOINT" => Ok(BlobPurpose::Checkpoint),
         "RESOURCE_UPLOAD_CHUNK" => Ok(BlobPurpose::ResourceUploadChunk),
         "RICH_PRESENTATION" => Ok(BlobPurpose::RichPresentation),
-        other => Err(StoreError::Invalid(format!(
-            "unknown blob purpose {other}"
-        ))),
+        other => Err(StoreError::Invalid(format!("unknown blob purpose {other}"))),
     }
 }
 
@@ -947,10 +961,8 @@ fn blob_associated_data(
     size_bytes: u64,
     media_type: &str,
 ) -> Vec<u8> {
-    format!(
-        "litecowork-blob-v1\0{workspace_id}\0{purpose}\0{digest}\0{size_bytes}\0{media_type}"
-    )
-    .into_bytes()
+    format!("litecowork-blob-v1\0{workspace_id}\0{purpose}\0{digest}\0{size_bytes}\0{media_type}")
+        .into_bytes()
 }
 
 fn read_envelope_key_version(envelope: &[u8]) -> Result<u32, StoreError> {
@@ -1087,14 +1099,8 @@ fn write_container(
             let plaintext = read_chunk(&container_file.source, chunk)?;
             let mut nonce = [0_u8; NONCE_LEN];
             getrandom::fill(&mut nonce).map_err(|error| StoreError::Blob(error.to_string()))?;
-            let ciphertext = encrypt_chunk(
-                &key,
-                &nonce,
-                &aad_prefix,
-                b"chunk",
-                chunk_index,
-                &plaintext,
-            )?;
+            let ciphertext =
+                encrypt_chunk(&key, &nonce, &aad_prefix, b"chunk", chunk_index, &plaintext)?;
             file.write_all(&nonce)
                 .and_then(|()| file.write_all(&ciphertext))
                 .map_err(|error| {
@@ -1299,9 +1305,11 @@ fn read_container(
             "the backup archive uses an unsupported container algorithm".to_owned(),
         ));
     }
-    let iterations = u32::from_be_bytes(bytes[10..14].try_into().map_err(|_| {
-        StoreError::Integrity("the backup header is malformed".to_owned())
-    })?);
+    let iterations = u32::from_be_bytes(
+        bytes[10..14]
+            .try_into()
+            .map_err(|_| StoreError::Integrity("the backup header is malformed".to_owned()))?,
+    );
     if iterations < BACKUP_KDF_MINIMUM_ITERATIONS {
         return Err(StoreError::Integrity(
             "the backup archive uses a weakened key derivation".to_owned(),
@@ -1311,15 +1319,21 @@ fn read_container(
     salt.copy_from_slice(&bytes[14..30]);
     let mut manifest_nonce = [0_u8; NONCE_LEN];
     manifest_nonce.copy_from_slice(&bytes[30..54]);
-    let file_count = u32::from_be_bytes(bytes[54..58].try_into().map_err(|_| {
-        StoreError::Integrity("the backup header is malformed".to_owned())
-    })?);
-    let chunk_size = u32::from_be_bytes(bytes[58..62].try_into().map_err(|_| {
-        StoreError::Integrity("the backup header is malformed".to_owned())
-    })?);
-    let manifest_len = u32::from_be_bytes(bytes[62..66].try_into().map_err(|_| {
-        StoreError::Integrity("the backup header is malformed".to_owned())
-    })?);
+    let file_count = u32::from_be_bytes(
+        bytes[54..58]
+            .try_into()
+            .map_err(|_| StoreError::Integrity("the backup header is malformed".to_owned()))?,
+    );
+    let chunk_size = u32::from_be_bytes(
+        bytes[58..62]
+            .try_into()
+            .map_err(|_| StoreError::Integrity("the backup header is malformed".to_owned()))?,
+    );
+    let manifest_len = u32::from_be_bytes(
+        bytes[62..66]
+            .try_into()
+            .map_err(|_| StoreError::Integrity("the backup header is malformed".to_owned()))?,
+    );
     if chunk_size as usize != CHUNK_SIZE {
         return Err(StoreError::Integrity(
             "the backup archive uses an unsupported chunk size".to_owned(),
@@ -1361,9 +1375,10 @@ fn read_container(
                     "the backup chunk directory is truncated".to_owned(),
                 ));
             }
-            let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().map_err(|_| {
-                StoreError::Integrity("the backup chunk directory is malformed".to_owned())
-            })?);
+            let length =
+                u32::from_be_bytes(bytes[offset..offset + 4].try_into().map_err(|_| {
+                    StoreError::Integrity("the backup chunk directory is malformed".to_owned())
+                })?);
             offset += 4;
             if u64::from(length) > BACKUP_MAX_CHUNK_BYTES + TAG_LEN as u64 + NONCE_LEN as u64 {
                 return Err(StoreError::Integrity(
@@ -1409,7 +1424,9 @@ fn read_container(
     let manifest: BackupArchiveManifest = serde_json::from_slice(&manifest_plaintext)
         .map_err(|_| StoreError::Integrity("the backup manifest is malformed".to_owned()))?;
     if manifest.format_version != u32::from(BACKUP_CONTAINER_VERSION) {
-        return Err(StoreError::UnsupportedSchema(i64::from(manifest.format_version)));
+        return Err(StoreError::UnsupportedSchema(i64::from(
+            manifest.format_version,
+        )));
     }
     if manifest_authentication(&manifest)? != manifest.manifest_authentication {
         return Err(StoreError::Integrity(
@@ -1474,7 +1491,8 @@ fn read_container(
     }
     for (index, blob) in manifest.blobs.iter().enumerate() {
         let payload = &files[index + 1];
-        if digest_bytes(payload) != blob.envelope_digest || payload.len() as u64 != blob.size_bytes {
+        if digest_bytes(payload) != blob.envelope_digest || payload.len() as u64 != blob.size_bytes
+        {
             return Err(StoreError::Integrity(format!(
                 "the backup blob {} does not match its manifest digest",
                 blob.relative_path
@@ -1518,9 +1536,8 @@ fn extract_container(
         if let Some(parent) = target.parent() {
             ensure_private_directory(parent)?;
         }
-        fs::write(&target, &files[index + 1]).map_err(|error| {
-            StoreError::Io(format!("could not stage a blob envelope: {error}"))
-        })?;
+        fs::write(&target, &files[index + 1])
+            .map_err(|error| StoreError::Io(format!("could not stage a blob envelope: {error}")))?;
     }
     Ok(())
 }
@@ -1671,9 +1688,10 @@ fn record_manifest_row(
         StoreError::Invalid(format!("could not encode the blob manifest: {error}"))
     })?;
     let blob_manifest_digest = digest_bytes(&canonical_json(&blob_manifest)?);
-    let database_snapshot_ref = serde_json::to_value(&manifest.database_snapshot).map_err(|error| {
-        StoreError::Invalid(format!("could not encode the snapshot reference: {error}"))
-    })?;
+    let database_snapshot_ref =
+        serde_json::to_value(&manifest.database_snapshot).map_err(|error| {
+            StoreError::Invalid(format!("could not encode the snapshot reference: {error}"))
+        })?;
     let encryption_key_ref = serde_json::to_value(&manifest.key_references).map_err(|error| {
         StoreError::Invalid(format!("could not encode the key reference: {error}"))
     })?;
@@ -1969,14 +1987,13 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(
-                directory.path(),
-                fs::Permissions::from_mode(0o700),
-            )
-            .expect("restrict the installation directory");
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("restrict the installation directory");
         }
-        let blobs: Arc<dyn storage_core::BlobStore> =
-            Arc::new(FileBlobStore::new(directory.path().join("blobs"), FixedKeys));
+        let blobs: Arc<dyn storage_core::BlobStore> = Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            FixedKeys,
+        ));
         let store = SqliteWorkspaceStore::open(
             directory.path().join(DATABASE_FILE_NAME),
             Arc::clone(&blobs),
@@ -2023,13 +2040,9 @@ mod tests {
                 "application/json",
             )
             .expect("the aggregate blob commits");
-        let connection = rusqlite::Connection::open(
-            installation
-                ._directory
-                .path()
-                .join(DATABASE_FILE_NAME),
-        )
-        .expect("inspect the store");
+        let connection =
+            rusqlite::Connection::open(installation._directory.path().join(DATABASE_FILE_NAME))
+                .expect("inspect the store");
         connection
             .execute(
                 "INSERT INTO aggregate_snapshots (workspace_id, entity_type, entity_id, through_revision, projection_schema_version, state_digest, blob_ref_json, created_at) VALUES (?1, 'Task', 'task-backup', 1, 1, ?2, ?3, '2026-10-20T10:00:00Z')",
@@ -2108,13 +2121,16 @@ mod tests {
             b"{\"value\":42}"
         );
 
-        let connection = rusqlite::Connection::open(&restored_database).expect("inspect the restore");
+        let connection =
+            rusqlite::Connection::open(&restored_database).expect("inspect the restore");
         let workspaces: i64 = connection
             .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))
             .expect("count workspaces");
         assert_eq!(workspaces, 1);
         let grants: i64 = connection
-            .query_row("SELECT COUNT(*) FROM capability_grants", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM capability_grants", [], |row| {
+                row.get(0)
+            })
             .expect("count grants");
         assert_eq!(grants, 0, "live authority is never restored");
     }
@@ -2123,10 +2139,9 @@ mod tests {
     fn the_filtered_snapshot_drops_runtime_local_tables_and_keeps_workspace_rows() {
         let installation = install();
         create_workspace(&installation.store);
-        let connection = rusqlite::Connection::open(
-            installation._directory.path().join(DATABASE_FILE_NAME),
-        )
-        .expect("inspect the store");
+        let connection =
+            rusqlite::Connection::open(installation._directory.path().join(DATABASE_FILE_NAME))
+                .expect("inspect the store");
         connection
             .execute(
                 "INSERT INTO runtimes (runtime_id, device_identity_json, runtime_version, platform, architecture, roles_json, trust_zone, availability, startup_policy, resource_capacity_json, last_seen, version) VALUES ('runtime-backup', '{}', '0.1.0', 'linux', 'x86_64', '[]', 'LOCAL', 'ONLINE', 'MANUAL', '{}', '2026-10-20T10:00:00Z', 1)",
@@ -2148,7 +2163,9 @@ mod tests {
         .expect("the filtered snapshot is built");
         assert_eq!(summary.schema_version, crate::SCHEMA_VERSION);
         assert_eq!(
-            summary.dropped_local_row_counts.get("provider_circuit_states"),
+            summary
+                .dropped_local_row_counts
+                .get("provider_circuit_states"),
             Some(&1)
         );
 
@@ -2302,12 +2319,16 @@ mod tests {
     fn the_upgrade_check_refuses_an_unknown_schema_version() {
         let installation = install();
         let service = LocalBackupService::new(installation._directory.path());
-        assert!(service.check_upgrade_compatibility().expect("version").is_compatible());
+        assert!(
+            service
+                .check_upgrade_compatibility()
+                .expect("version")
+                .is_compatible()
+        );
 
-        let connection = rusqlite::Connection::open(
-            installation._directory.path().join(DATABASE_FILE_NAME),
-        )
-        .expect("inspect the store");
+        let connection =
+            rusqlite::Connection::open(installation._directory.path().join(DATABASE_FILE_NAME))
+                .expect("inspect the store");
         connection
             .pragma_update(None, "user_version", crate::SCHEMA_VERSION + 1)
             .expect("raise the schema version");
@@ -2327,7 +2348,8 @@ mod tests {
             .create_backup(&FixedKeys, &request("foreign-schema"))
             .expect("the backup is created");
         let archive = PathBuf::from(&outcome.archive_path);
-        let mut manifest = read_container_manifest(&archive, PASSPHRASE).expect("read the manifest");
+        let mut manifest =
+            read_container_manifest(&archive, PASSPHRASE).expect("read the manifest");
         manifest.schema_version = crate::SCHEMA_VERSION + 1;
         let snapshot = installation._directory.path().join("foreign.sqlite3");
         fs::copy(

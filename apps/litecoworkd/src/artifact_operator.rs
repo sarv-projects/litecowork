@@ -781,7 +781,14 @@ async fn list_task_artifacts(
     }
     let items = state
         .store
-        .list_artifacts_page(&workspace.workspace_id, None, Some(&task_id), None, None, 201)
+        .list_artifacts_page(
+            &workspace.workspace_id,
+            None,
+            Some(&task_id),
+            None,
+            None,
+            201,
+        )
         .map_err(artifact_error)?;
     if items.len() > 200 {
         return Err(operator_error(

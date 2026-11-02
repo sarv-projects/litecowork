@@ -31,9 +31,12 @@ fn occurrence_status_tokens_round_trip() {
 
 #[test]
 fn claiming_an_occurrence_increments_the_version_and_the_claim_epoch() {
-    let transition =
-        decide_occurrence_transition(OccurrenceStatus::Pending, OccurrenceStatus::Claimed, &facts())
-            .unwrap();
+    let transition = decide_occurrence_transition(
+        OccurrenceStatus::Pending,
+        OccurrenceStatus::Claimed,
+        &facts(),
+    )
+    .unwrap();
     assert_eq!(transition.version, 2);
     assert_eq!(transition.claim_epoch, 1);
 }
@@ -115,7 +118,11 @@ fn an_expired_claim_is_requeued_with_an_incremented_claim_epoch() {
 #[test]
 fn an_illegal_transition_is_rejected() {
     assert_eq!(
-        decide_occurrence_transition(OccurrenceStatus::Pending, OccurrenceStatus::Started, &facts()),
+        decide_occurrence_transition(
+            OccurrenceStatus::Pending,
+            OccurrenceStatus::Started,
+            &facts()
+        ),
         Err(DomainError::InvalidDefinition)
     );
     assert_eq!(

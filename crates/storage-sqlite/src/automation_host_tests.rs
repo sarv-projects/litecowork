@@ -1,7 +1,7 @@
 use super::*;
 use crate::automation_host::{TaskOutcomeSettlement, schedule_occurrence_key, settlement_window};
-use domain_responsibility::*;
 use domain_responsibility::parse_instant;
+use domain_responsibility::*;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -87,11 +87,7 @@ fn coworker_command(
     request: &str,
     command: ResponsibilityCommand,
 ) -> Result<CommittedResponsibility, DomainError> {
-    ResponsibilityService::new(coworker_adapter(
-        store,
-        &format!("event-{request}"),
-    ))
-    .execute(
+    ResponsibilityService::new(coworker_adapter(store, &format!("event-{request}"))).execute(
         &OwnerCommandScope {
             principal_id: "owner-local".into(),
             workspace_id: WORKSPACE.into(),
@@ -265,7 +261,10 @@ fn a_schedule_trigger_cannot_be_enabled_without_a_local_trigger_host() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(cursors, 0, "a refused enable must not leave a cursor behind");
+    assert_eq!(
+        cursors, 0,
+        "a refused enable must not leave a cursor behind"
+    );
 }
 
 #[test]
@@ -298,7 +297,15 @@ fn a_cursor_is_created_once_and_a_second_host_cannot_take_it_over() {
     );
     let host = host_adapter(&fixture.store);
     let cursor = host
-        .create_cursor(WORKSPACE, "automation-1", 1, "trigger-daily", RUNTIME_ID, 1, Some(1_000))
+        .create_cursor(
+            WORKSPACE,
+            "automation-1",
+            1,
+            "trigger-daily",
+            RUNTIME_ID,
+            1,
+            Some(1_000),
+        )
         .expect("the local host creates its cursor");
     assert_eq!(cursor.host_epoch, 1);
     assert_eq!(cursor.next_scheduled_at, Some(1_000));
@@ -359,9 +366,16 @@ fn an_enabled_schedule_trigger_is_listed_for_its_owning_runtime_only() {
     assert_eq!(due[0].automation_id, "automation-1");
     assert_eq!(due[0].trigger.trigger_id, "trigger-daily");
     assert_eq!(due[0].routine_id, "routine-1");
-    assert_eq!(due[0].cursor.as_ref().map(|cursor| cursor.host_epoch), Some(1));
+    assert_eq!(
+        due[0].cursor.as_ref().map(|cursor| cursor.host_epoch),
+        Some(1)
+    );
     // Another Runtime owns no trigger here.
-    assert!(host.list_due_schedules("runtime-other", 5_000).unwrap().is_empty());
+    assert!(
+        host.list_due_schedules("runtime-other", 5_000)
+            .unwrap()
+            .is_empty()
+    );
 
     // Pausing the Automation stops new claims without discarding the cursor.
     coworker_command(
@@ -374,7 +388,11 @@ fn an_enabled_schedule_trigger_is_listed_for_its_owning_runtime_only() {
         },
     )
     .expect("Automation pauses");
-    assert!(host.list_due_schedules(RUNTIME_ID, 5_000).unwrap().is_empty());
+    assert!(
+        host.list_due_schedules(RUNTIME_ID, 5_000)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -405,7 +423,10 @@ fn a_misfire_records_a_bounded_skipped_occurrence_and_advances_the_cursor() {
     let settlement = schedule
         .schedule
         .plan_settlement(
-            schedule.cursor.as_ref().and_then(|cursor| cursor.next_scheduled_at),
+            schedule
+                .cursor
+                .as_ref()
+                .and_then(|cursor| cursor.next_scheduled_at),
             settlement_window(now, 60_000),
         )
         .expect("the schedule plans a settlement");
@@ -439,7 +460,10 @@ fn a_misfire_records_a_bounded_skipped_occurrence_and_advances_the_cursor() {
         recorded += 1;
     }
     assert!(recorded > 0, "a missed slot must never be dropped");
-    assert_eq!(recorded, 3, "three daily slots elapsed while the host was asleep");
+    assert_eq!(
+        recorded, 3,
+        "three daily slots elapsed while the host was asleep"
+    );
 
     // The same slot is never recorded twice.
     let missed = first_missed.expect("at least one missed slot");
@@ -492,7 +516,10 @@ fn a_misfire_records_a_bounded_skipped_occurrence_and_advances_the_cursor() {
         )
         .unwrap();
     assert_eq!(deliveries, i64::try_from(recorded).unwrap());
-    assert_eq!(distinct_keys, deliveries, "one delivery per logical skipped outcome");
+    assert_eq!(
+        distinct_keys, deliveries,
+        "one delivery per logical skipped outcome"
+    );
     assert_eq!(delivery_status, "PENDING");
 }
 
@@ -515,14 +542,28 @@ fn the_cursor_advance_is_monotonic_and_never_rewinds_on_a_backwards_clock() {
     )
     .expect("cursor");
     let advanced = host
-        .advance_cursor(WORKSPACE, "automation-1", "trigger-daily", Some(2_000), 2_000, false)
+        .advance_cursor(
+            WORKSPACE,
+            "automation-1",
+            "trigger-daily",
+            Some(2_000),
+            2_000,
+            false,
+        )
         .expect("the cursor advances");
     assert_eq!(advanced.next_scheduled_at, Some(2_000));
     assert_eq!(advanced.version, 2);
 
     // A clock that moved backwards must not rewind the persisted deadline.
     let unchanged = host
-        .advance_cursor(WORKSPACE, "automation-1", "trigger-daily", Some(1_000), 500, false)
+        .advance_cursor(
+            WORKSPACE,
+            "automation-1",
+            "trigger-daily",
+            Some(1_000),
+            500,
+            false,
+        )
         .expect("the cursor is unchanged");
     assert_eq!(unchanged.next_scheduled_at, Some(2_000));
 
@@ -706,7 +747,7 @@ fn scheduled_task_commit(
             objective: "Review project".to_owned(),
             task_category: None,
             constraints: vec![
-                "Routine instructions (untrusted task context):\nReview the project".to_owned()
+                "Routine instructions (untrusted task context):\nReview the project".to_owned(),
             ],
             non_goals: Vec::new(),
             input_refs: Vec::new(),
@@ -835,7 +876,10 @@ fn a_due_schedule_slot_materializes_an_ordinary_ready_task() {
     assert_eq!(status, "STARTED");
     assert_eq!(version, 3);
     assert_eq!(claim_epoch, 1);
-    assert_eq!(scheduled_for.as_deref(), Some("2026-03-01T09:00:00.000000000Z"));
+    assert_eq!(
+        scheduled_for.as_deref(),
+        Some("2026-03-01T09:00:00.000000000Z")
+    );
     assert_eq!(task_id.as_deref(), Some("task-automation-1"));
 
     // The occurrence commits no planning or execution record.
@@ -1369,7 +1413,10 @@ fn the_health_facts_report_host_readiness_the_pinned_routine_and_the_occurrences
     assert_eq!(facts.routine_id, "routine-1");
     assert_eq!(facts.routine_revision, 1);
     assert_eq!(facts.routine_status, "ACTIVE");
-    assert!(facts.host_ready, "the enrolled Runtime hosts this Workspace");
+    assert!(
+        facts.host_ready,
+        "the enrolled Runtime hosts this Workspace"
+    );
     assert_eq!(facts.counts.completed, 0);
     assert_eq!(facts.nonterminal_occurrences, 0);
     assert!(facts.routine_tasks.is_empty());
@@ -1524,8 +1571,14 @@ fn a_terminal_task_outcome_settles_the_occurrence_and_releases_its_slot() {
 
     let (status, version, blockers) = persisted_occurrence(&fixture);
     assert_eq!(status, "COMPLETED");
-    assert_eq!(version, 4, "every persisted transition increments version once");
-    assert_eq!(blockers, "[]", "a settled occurrence carries no open blocker");
+    assert_eq!(
+        version, 4,
+        "every persisted transition increments version once"
+    );
+    assert_eq!(
+        blockers, "[]",
+        "a settled occurrence carries no open blocker"
+    );
     assert_eq!(
         settled_event_count(&fixture),
         1,
@@ -1668,7 +1721,10 @@ fn every_nonterminal_task_status_leaves_its_occurrence_running() {
             "{status} must not settle an occurrence"
         );
         let (persisted_status, _, _) = persisted_occurrence(&fixture);
-        assert_eq!(persisted_status, "STARTED", "{status} left the row untouched");
+        assert_eq!(
+            persisted_status, "STARTED",
+            "{status} left the row untouched"
+        );
         assert_eq!(
             settled_event_count(&fixture),
             0,

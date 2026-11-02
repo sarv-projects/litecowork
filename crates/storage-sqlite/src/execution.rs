@@ -11,7 +11,6 @@ use storage_core::{
     StepAttemptAdmissionSnapshot, StepAttemptStore,
 };
 
-
 struct ExpiryStateRefs {
     task: AggregateStateRef,
     step: AggregateStateRef,

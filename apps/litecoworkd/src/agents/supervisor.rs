@@ -19,9 +19,9 @@ use storage_core::conversation::{
     ConversationTurnStatus, ConversationTurnStore, TurnCommand,
 };
 use storage_core::{
-    ActivateConversationAgentSession, AgentCatalogStore, AgentHostInstanceRecord,
-    AgentHostStore, AgentSessionRecord, AgentSessionStore, ConversationAgentSessionStart,
-    EventDraft, MarkStartingConversationAgentSessionLost, WorkspaceCreateRequest,
+    ActivateConversationAgentSession, AgentCatalogStore, AgentHostInstanceRecord, AgentHostStore,
+    AgentSessionRecord, AgentSessionStore, ConversationAgentSessionStart, EventDraft,
+    MarkStartingConversationAgentSessionLost, WorkspaceCreateRequest,
 };
 use storage_sqlite::{SqliteConversationStore, SqliteWorkspaceStore};
 
@@ -32,13 +32,59 @@ use super::opencode_server::{
 fn now_utc_rfc3339() -> String {
     let now = time::OffsetDateTime::now_utc();
     now.format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "2026-10-15T12:00:00.000000000Z".to_owned())
+        .unwrap_or_else(|_| {
+            format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+                now.year(),
+                now.month() as u8,
+                now.day(),
+                now.hour(),
+                now.minute(),
+                now.second()
+            )
+        })
 }
 
 fn generate_id(prefix: &str) -> String {
     let mut bytes = [0_u8; 16];
-    let _ = getrandom::fill(&mut bytes);
+    if let Err(e) = getrandom::fill(&mut bytes) {
+        eprintln!("WARNING: getrandom failed in generate_id: {e:?}");
+        let nanos = time::OffsetDateTime::now_utc().unix_timestamp_nanos();
+        return format!("{}_{:x}", prefix, nanos);
+    }
     format!("{}_{}", prefix, hex::encode(bytes))
+}
+
+fn resolve_workspace_working_dir(
+    store: &SqliteWorkspaceStore,
+    principal_id: &str,
+    workspace_id: &str,
+    runtime_id: &str,
+) -> PathBuf {
+    use storage_core::{WorkspaceRootRevalidationBindings, WorkspaceRootStore};
+    if let Ok(roots) = store.list_workspace_roots(workspace_id, Some("ACTIVE"), None, None, 1) {
+        if let Some(first) = roots.first() {
+            if let Ok(Some(candidate)) = store.get_workspace_root_scan_candidate(
+                principal_id,
+                workspace_id,
+                &first.root.workspace_root_id,
+                runtime_id,
+                "default",
+            ) {
+                match candidate.bindings {
+                    WorkspaceRootRevalidationBindings::CurrentIncarnation { locator, .. }
+                    | WorkspaceRootRevalidationBindings::Previous { locator, .. } => {
+                        let path = PathBuf::from(locator.private_locator);
+                        if path.exists() {
+                            return path;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 #[derive(Clone)]
@@ -133,12 +179,21 @@ impl AgentSessionSupervisor {
                 .iter()
                 .find(|p| p.profile.agent_profile_id == binding.agent_profile_id)
                 .map(|p| p.profile.provider_key.clone())
-                .unwrap_or_else(|| "test-provider".to_owned());
+                .ok_or_else(|| {
+                    format!(
+                        "No agent profile found for binding {} with profile ID {}",
+                        binding.agent_binding_id, binding.agent_profile_id
+                    )
+                })?;
 
             // 3. Ensure host instance exists in SQLite via published AgentHostStore trait
             let host_instance_id = format!("host-{}", host.endpoint_id);
             let existing_host = store
-                .get_agent_host_instance(&host.runtime_id, &host.runtime_incarnation_id, &host_instance_id)
+                .get_agent_host_instance(
+                    &host.runtime_id,
+                    &host.runtime_incarnation_id,
+                    &host_instance_id,
+                )
                 .map_err(|e| format!("Get host instance error: {e:?}"))?;
 
             if existing_host.is_none() {
@@ -239,36 +294,23 @@ impl AgentSessionSupervisor {
             );
 
             if let Err(err) = run_res {
-                // If failure occurs, mark session lost and turn failed
                 let now = now_utc_rfc3339();
-                let _ = store.mark_starting_conversation_agent_session_lost(
-                    MarkStartingConversationAgentSessionLost {
-                        workspace_id: workspace.clone(),
-                        agent_session_id: session_id.clone(),
-                        expected_version: 1,
-                        occurred_at: now.clone(),
-                        event: EventDraft {
-                            event_id: generate_id("ev"),
-                            workspace_id: workspace.clone(),
-                            entity_type: "AgentSession".to_owned(),
-                            entity_id: session_id.clone(),
-                            origin_runtime_id: runtime_id.clone(),
-                            entity_revision: 2,
-                            hlc_timestamp: now.clone(),
-                            correlation_id: correlation.clone(),
-                            causation_id: None,
-                            schema_version: 1,
-                            event_type: "agent.session.lost.v1".to_owned(),
-                            payload: json!({
-                                "agent_session_id": session_id,
-                                "from": "STARTING",
-                                "to": "LOST",
-                                "reason_code": "NATIVE_SPAWN_FAILED",
-                            }),
-                            recorded_at: now.clone(),
-                        },
-                    },
-                );
+                // Check if turn was already activated (RUNNING) or still OPEN
+                let current_turn = conv_store
+                    .get_conversation_turn(&workspace, &conversation, &turn_id)
+                    .ok()
+                    .flatten();
+                let current_version = current_turn
+                    .as_ref()
+                    .map(|t| t.version)
+                    .unwrap_or(turn.version);
+                let current_status_str = current_turn
+                    .as_ref()
+                    .map(|t| match t.status {
+                        ConversationTurnStatus::Running => "RUNNING",
+                        _ => "OPEN",
+                    })
+                    .unwrap_or("OPEN");
 
                 let settled_event = EventDraft {
                     event_id: generate_id("ev"),
@@ -276,7 +318,7 @@ impl AgentSessionSupervisor {
                     entity_type: "ConversationTurn".to_owned(),
                     entity_id: turn_id.clone(),
                     origin_runtime_id: runtime_id.clone(),
-                    entity_revision: turn.version + 1,
+                    entity_revision: current_version + 1,
                     hlc_timestamp: now.clone(),
                     correlation_id: correlation.clone(),
                     causation_id: None,
@@ -284,10 +326,10 @@ impl AgentSessionSupervisor {
                     event_type: "conversation.turn.settled.v1".to_owned(),
                     payload: json!({
                         "turn_id": turn_id,
-                        "from": "OPEN",
+                        "from": current_status_str,
                         "to": "FAILED",
                         "reason_code": "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE",
-                        "aggregate_version": turn.version + 1,
+                        "aggregate_version": current_version + 1,
                     }),
                     recorded_at: now.clone(),
                 };
@@ -296,10 +338,43 @@ impl AgentSessionSupervisor {
                     &workspace,
                     &conversation,
                     &turn_id,
-                    turn.version,
-                    TurnCommand::Fail { settled_at: now },
+                    current_version,
+                    TurnCommand::Fail {
+                        settled_at: now.clone(),
+                    },
                     settled_event,
                 );
+
+                if current_status_str == "OPEN" {
+                    let _ = store.mark_starting_conversation_agent_session_lost(
+                        MarkStartingConversationAgentSessionLost {
+                            workspace_id: workspace.clone(),
+                            agent_session_id: session_id.clone(),
+                            expected_version: 1,
+                            occurred_at: now.clone(),
+                            event: EventDraft {
+                                event_id: generate_id("ev"),
+                                workspace_id: workspace.clone(),
+                                entity_type: "AgentSession".to_owned(),
+                                entity_id: session_id.clone(),
+                                origin_runtime_id: runtime_id.clone(),
+                                entity_revision: 2,
+                                hlc_timestamp: now.clone(),
+                                correlation_id: correlation.clone(),
+                                causation_id: None,
+                                schema_version: 1,
+                                event_type: "agent.session.lost.v1".to_owned(),
+                                payload: json!({
+                                    "agent_session_id": session_id,
+                                    "from": "STARTING",
+                                    "to": "LOST",
+                                    "reason_code": "NATIVE_SPAWN_FAILED",
+                                }),
+                                recorded_at: now.clone(),
+                            },
+                        },
+                    );
+                }
                 return Err(err);
             }
 
@@ -327,17 +402,13 @@ fn execute_agent_turn(
     let conv_store = SqliteConversationStore::new(store.clone());
 
     // Native session establishment
-    let (native_session_ref, response_text) = match provider_key {
-        "test-provider" | "test-agent" => {
-            // Simulated provider for tests
-            let native_ref = format!("native-ref-{}", session_id);
-            let resp = "Test agent response completed successfully.".to_owned();
-            (native_ref, resp)
-        }
+    match provider_key {
         "opencode" => {
             // Real OpenCode integration
-            let exe = find_opencode_executable().ok_or_else(|| "opencode executable not found".to_owned())?;
-            let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let exe = find_opencode_executable()
+                .ok_or_else(|| "opencode executable not found".to_owned())?;
+            let working_dir =
+                resolve_workspace_working_dir(store, principal_id, workspace_id, runtime_id);
             let config = OpenCodeServerConfig::bounded(exe, working_dir)
                 .with_protocol(OpenCodeServerProtocol::V2_0_32);
 
@@ -434,36 +505,54 @@ fn execute_agent_turn(
 
             // Read events until completion or timeout
             let mut accumulated_text = String::new();
+            let mut completed = false;
             let read_deadline = std::time::Instant::now() + Duration::from_secs(60);
             while std::time::Instant::now() < read_deadline {
                 match event_stream.next_event(Duration::from_millis(500)) {
                     Ok(Some(ev)) => {
+                        // Correlate session ID if present in untrusted payload
+                        if let Some(event_session) = ev
+                            .data
+                            .get("session_id")
+                            .or_else(|| ev.data.get("sessionId"))
+                            .or_else(|| ev.data.get("session"))
+                            .and_then(Value::as_str)
+                        {
+                            if event_session != native_session {
+                                continue;
+                            }
+                        }
+
                         if let Some(delta) = ev.data.get("delta").and_then(Value::as_str) {
                             accumulated_text.push_str(delta);
-                        } else if let Some(content) = ev.data.get("content").and_then(Value::as_str) {
+                        } else if let Some(content) = ev.data.get("content").and_then(Value::as_str)
+                        {
                             accumulated_text = content.to_owned();
                         }
                         if ev.event_type.as_deref() == Some("message_completed")
                             || ev.data.get("done").and_then(Value::as_bool) == Some(true)
                         {
+                            completed = true;
                             break;
                         }
                     }
                     Ok(None) => {}
                     Err(OpenCodeError::StreamClosed) => break,
                     Err(e) => {
-                        eprintln!("SSE event error: {e:?}");
-                        break;
+                        let _ = server.stop();
+                        return Err(format!("OpenCode SSE event error: {e:?}"));
                     }
                 }
             }
 
             let _ = server.stop();
-            if accumulated_text.trim().is_empty() {
-                accumulated_text = "I received your message and processed the conversation context.".to_owned();
+            if !completed || accumulated_text.trim().is_empty() {
+                return Err(format!(
+                    "OpenCode turn failed closed: stream completed={completed}, response length={}",
+                    accumulated_text.trim().len()
+                ));
             }
 
-            // Return early since activation already happened
             let final_message_id = format!("msg-agent-{}", generate_id("m"));
             let now = now_utc_rfc3339();
             let commit_resp = CommitConversationAgentResponse {
@@ -558,200 +647,75 @@ fn execute_agent_turn(
                 .commit_conversation_agent_response(commit_resp)
                 .map_err(|e| format!("Commit response error: {e:?}"))?;
 
-            return Ok(());
+            Ok(())
         }
-        _ => {
-            // Fallback for other CLIs or default behavior
-            let native_ref = format!("cli-ref-{}", session_id);
-            let resp = "Agent turn processed successfully.".to_owned();
-            (native_ref, resp)
-        }
-    };
-
-    // Generic activation + response commit
-    let now = now_utc_rfc3339();
-    let activation = ActivateConversationAgentSession {
-        principal_id: principal_id.to_owned(),
-        workspace_id: workspace_id.to_owned(),
-        agent_session_id: session_id.to_owned(),
-        expected_session_version: 1,
-        expected_turn_version: turn_version,
-        occurred_at: now.clone(),
-        host_instance_id: host_instance_id.to_owned(),
-        native_session_ref: Some(native_session_ref),
-        session_event: EventDraft {
-            event_id: generate_id("ev"),
-            workspace_id: workspace_id.to_owned(),
-            entity_type: "AgentSession".to_owned(),
-            entity_id: session_id.to_owned(),
-            origin_runtime_id: runtime_id.to_owned(),
-            entity_revision: 2,
-            hlc_timestamp: now.clone(),
-            correlation_id: correlation_id.to_owned(),
-            causation_id: None,
-            schema_version: 1,
-            event_type: "agent.session.started.v1".to_owned(),
-            payload: json!({
-                "agent_session_id": session_id,
-                "task_spec_revision": null,
-                "scope": {
-                    "kind": "CONVERSATION",
-                    "conversation_id": conversation_id,
-                    "conversation_turn_id": turn_id,
-                },
-                "agent_binding_id": agent_binding_id,
-                "session_state": "ACTIVE",
-                "reported_at": now,
-            }),
-            recorded_at: now.clone(),
-        },
-        turn_event: EventDraft {
-            event_id: generate_id("ev"),
-            workspace_id: workspace_id.to_owned(),
-            entity_type: "ConversationTurn".to_owned(),
-            entity_id: turn_id.to_owned(),
-            origin_runtime_id: runtime_id.to_owned(),
-            entity_revision: turn_version + 1,
-            hlc_timestamp: now.clone(),
-            correlation_id: correlation_id.to_owned(),
-            causation_id: None,
-            schema_version: 1,
-            event_type: "conversation.turn.status.changed.v1".to_owned(),
-            payload: json!({
-                "turn_id": turn_id,
-                "from": "OPEN",
-                "to": "RUNNING",
-                "reason_code": "SESSION_READY",
-                "agent_session_id": session_id,
-                "aggregate_version": turn_version + 1,
-            }),
-            recorded_at: now.clone(),
-        },
-    };
-
-    store
-        .activate_conversation_agent_session(activation)
-        .map_err(|e| format!("Activate session error: {e:?}"))?;
-
-    // Commit final AGENT message and terminal turn state
-    let final_message_id = format!("msg-agent-{}", generate_id("m"));
-    let now = now_utc_rfc3339();
-    let commit_resp = CommitConversationAgentResponse {
-        request: WorkspaceCreateRequest {
-            principal_id: principal_id.to_owned(),
-            request_id: format!("req-commit-{}", final_message_id),
-            request_payload: json!({ "turn_id": turn_id }),
-        },
-        principal_id: principal_id.to_owned(),
-        workspace_id: workspace_id.to_owned(),
-        conversation_id: conversation_id.to_owned(),
-        turn_id: turn_id.to_owned(),
-        agent_session_id: session_id.to_owned(),
-        expected_turn_version: turn_version + 1,
-        expected_session_version: 2,
-        turn_status: ConversationTurnStatus::Completed,
-        message: ConversationMessageRecord {
-            message_id: final_message_id.clone(),
-            conversation_id: conversation_id.to_owned(),
-            author: json!({ "kind": "AGENT", "agent_binding_id": agent_binding_id }),
-            role: "AGENT".to_owned(),
-            agent_session_id: Some(session_id.to_owned()),
-            agent_binding_id: Some(agent_binding_id.to_owned()),
-            turn_id: Some(turn_id.to_owned()),
-            content: json!([{ "kind": "TEXT", "text": response_text }]),
-            resource_refs: json!([]),
-            source_channel_ref: None,
-            created_at: now.clone(),
-        },
-        message_event: EventDraft {
-            event_id: generate_id("ev"),
-            workspace_id: workspace_id.to_owned(),
-            entity_type: "Conversation".to_owned(),
-            entity_id: conversation_id.to_owned(),
-            origin_runtime_id: runtime_id.to_owned(),
-            entity_revision: 3,
-            hlc_timestamp: now.clone(),
-            correlation_id: correlation_id.to_owned(),
-            causation_id: None,
-            schema_version: 1,
-            event_type: "conversation.message.added.v1".to_owned(),
-            payload: json!({
-                "conversation_id": conversation_id,
-                "message_id": final_message_id,
-                "role": "AGENT",
-            }),
-            recorded_at: now.clone(),
-        },
-        turn_event: EventDraft {
-            event_id: generate_id("ev"),
-            workspace_id: workspace_id.to_owned(),
-            entity_type: "ConversationTurn".to_owned(),
-            entity_id: turn_id.to_owned(),
-            origin_runtime_id: runtime_id.to_owned(),
-            entity_revision: turn_version + 2,
-            hlc_timestamp: now.clone(),
-            correlation_id: correlation_id.to_owned(),
-            causation_id: None,
-            schema_version: 1,
-            event_type: "conversation.turn.settled.v1".to_owned(),
-            payload: json!({
-                "turn_id": turn_id,
-                "from": "RUNNING",
-                "to": "COMPLETED",
-                "aggregate_version": turn_version + 2,
-            }),
-            recorded_at: now.clone(),
-        },
-        session_event: EventDraft {
-            event_id: generate_id("ev"),
-            workspace_id: workspace_id.to_owned(),
-            entity_type: "AgentSession".to_owned(),
-            entity_id: session_id.to_owned(),
-            origin_runtime_id: runtime_id.to_owned(),
-            entity_revision: 3,
-            hlc_timestamp: now.clone(),
-            correlation_id: correlation_id.to_owned(),
-            causation_id: None,
-            schema_version: 1,
-            event_type: "agent.session.closed.v1".to_owned(),
-            payload: json!({
-                "agent_session_id": session_id,
-                "from": "ACTIVE",
-                "to": "CLOSED",
-                "aggregate_version": 3,
-            }),
-            recorded_at: now.clone(),
-        },
-    };
-
-    conv_store
-        .commit_conversation_agent_response(commit_resp)
-        .map_err(|e| format!("Commit response error: {e:?}"))?;
-
-    Ok(())
+        other => Err(format!(
+            "Agent provider '{other}' is not supported or not configured for execution in this runtime"
+        )),
+    }
 }
 
 fn find_opencode_executable() -> Option<PathBuf> {
-    let candidates = [
-        "C:\\Users\\Sonali\\.bun\\bin\\opencode.exe",
-        "C:\\Users\\Sonali\\AppData\\Local\\pi-node\\current\\opencode.cmd",
-        "C:\\Users\\Sonali\\AppData\\Roaming\\npm\\opencode.cmd",
-    ];
-    for path_str in candidates {
-        let p = Path::new(path_str);
-        if p.exists() {
-            return Some(p.to_path_buf());
+    let mut candidates = Vec::new();
+
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        candidates.push(
+            PathBuf::from(&user_profile)
+                .join(".bun")
+                .join("bin")
+                .join("opencode.exe"),
+        );
+        candidates.push(
+            PathBuf::from(&user_profile)
+                .join(".bun")
+                .join("bin")
+                .join("opencode.cmd"),
+        );
+    }
+    if let Ok(app_data) = std::env::var("APPDATA") {
+        candidates.push(PathBuf::from(&app_data).join("npm").join("opencode.cmd"));
+        candidates.push(PathBuf::from(&app_data).join("npm").join("opencode.exe"));
+    }
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(&local_app_data)
+                .join("pi-node")
+                .join("current")
+                .join("opencode.cmd"),
+        );
+        candidates.push(
+            PathBuf::from(&local_app_data)
+                .join("pi-node")
+                .join("current")
+                .join("opencode.exe"),
+        );
+        candidates.push(
+            PathBuf::from(&local_app_data)
+                .join("Programs")
+                .join("opencode")
+                .join("opencode.exe"),
+        );
+    }
+
+    for p in candidates {
+        if p.is_file() {
+            return Some(p);
         }
     }
+
     if let Ok(paths) = std::env::var("PATH") {
         for dir in std::env::split_paths(&paths) {
             let exe = dir.join("opencode.exe");
-            if exe.exists() {
+            if exe.is_file() {
                 return Some(exe);
             }
             let cmd = dir.join("opencode.cmd");
-            if cmd.exists() {
+            if cmd.is_file() {
                 return Some(cmd);
+            }
+            let bare = dir.join("opencode");
+            if bare.is_file() {
+                return Some(bare);
             }
         }
     }

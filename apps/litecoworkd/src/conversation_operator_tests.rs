@@ -1,9 +1,9 @@
 use super::*;
 use axum::{
-    body::{to_bytes, Body},
+    Router,
+    body::{Body, to_bytes},
     http::{Request, StatusCode},
     response::Response,
-    Router,
 };
 use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
 use serde::Deserialize;
@@ -11,9 +11,9 @@ use serde::Deserialize;
 use std::os::unix::fs::PermissionsExt;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use storage_core::{
-    conversation::request_payload_value, BlobPurpose, ConversationRecord, ConversationStore,
-    ConversationTurnStore, CreateConversationCommit, EventDraft, StoreError,
-    WorkspaceCreateRequest,
+    BlobPurpose, ConversationRecord, ConversationStore, ConversationTurnStore,
+    CreateConversationCommit, EventDraft, StoreError, WorkspaceCreateRequest,
+    conversation::request_payload_value,
 };
 use storage_sqlite::{
     FileBlobStore, SqliteConfig, SqliteConversationStore, SqliteWorkspaceStore, WorkspaceBlobKey,
@@ -351,11 +351,7 @@ fn seed_ready_runtime_for_conversation(
 
 /// Configures the Workspace default AgentBinding through the same guarded column
 /// the `PATCH /v1/workspaces/{id}/default-agent-binding` route writes.
-fn set_workspace_default_agent(
-    database: &std::path::Path,
-    workspace_id: &str,
-    binding_id: &str,
-) {
+fn set_workspace_default_agent(database: &std::path::Path, workspace_id: &str, binding_id: &str) {
     let connection = rusqlite::Connection::open(database).expect("seed Workspace default");
     connection
         .execute_batch("PRAGMA foreign_keys=ON;")
@@ -397,17 +393,15 @@ async fn set_conversation_agent_binding_request(
     request_id: &str,
     agent_binding_id: serde_json::Value,
 ) -> Response {
-    let mut request = Request::patch(format!(
-        "/v1/conversations/{conversation_id}/agent-binding"
-    ))
-    .header("x-workspace-id", workspace_id)
-    .header("if-match", format!("\"{expected_version}\""))
-    .header("idempotency-key", request_id)
-    .header("content-type", "application/json")
-    .body(Body::from(
-        serde_json::json!({ "agent_binding_id": agent_binding_id }).to_string(),
-    ))
-    .expect("Conversation AgentBinding mutation request is valid");
+    let mut request = Request::patch(format!("/v1/conversations/{conversation_id}/agent-binding"))
+        .header("x-workspace-id", workspace_id)
+        .header("if-match", format!("\"{expected_version}\""))
+        .header("idempotency-key", request_id)
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({ "agent_binding_id": agent_binding_id }).to_string(),
+        ))
+        .expect("Conversation AgentBinding mutation request is valid");
     request.extensions_mut().insert(AuthenticatedLocalPeer);
     router
         .clone()
@@ -788,8 +782,8 @@ async fn conversation_turn_route_requires_a_pinned_eligible_agent_before_persist
 }
 
 #[tokio::test]
-async fn conversation_turn_submit_stays_fail_closed_when_runtime_is_ready_without_session_supervisor(
-) {
+async fn conversation_turn_submit_stays_fail_closed_when_runtime_is_ready_without_session_supervisor()
+ {
     let directory = tempfile::tempdir().expect("temporary Conversation turn directory");
     #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
@@ -832,13 +826,14 @@ async fn conversation_turn_submit_stays_fail_closed_when_runtime_is_ready_withou
     assert_eq!(response.headers()["cache-control"], "no-store");
     let (_, error) = read_operator_error(response).await;
     assert_eq!(error["code"], "DEPENDENCY_UNAVAILABLE");
-    assert!(error["message"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("not sent"));
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not sent")
+    );
 
-    let connection = rusqlite::Connection::open(&database)
-        .expect("read committed turn identity");
+    let connection = rusqlite::Connection::open(&database).expect("read committed turn identity");
     let turn_id: String = connection
         .query_row(
             "SELECT turn_id FROM conversation_turns WHERE conversation_id=?1",
@@ -848,12 +843,7 @@ async fn conversation_turn_submit_stays_fail_closed_when_runtime_is_ready_withou
         .expect("the unavailable turn remains committed");
     drop(connection);
     let resolved_host = SqliteConversationStore::new(store.clone())
-        .resolve_conversation_session_host_for_turn(
-            OWNER,
-            WORKSPACE_A,
-            conversation_id,
-            &turn_id,
-        )
+        .resolve_conversation_session_host_for_turn(OWNER, WORKSPACE_A, conversation_id, &turn_id)
         .expect("turn-scoped Runtime inventory resolution succeeds");
     assert_eq!(
         resolved_host.map(|host| host.agent_binding_id),
@@ -1190,7 +1180,7 @@ async fn conversation_turn_submit_denies_foreign_owner_and_unauthenticated_calle
 
 #[tokio::test]
 async fn conversation_turn_route_uses_the_workspace_default_binding_when_the_conversation_has_no_override()
-{
+ {
     let directory = tempfile::tempdir().expect("temporary Conversation default directory");
     #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
@@ -1258,7 +1248,8 @@ async fn conversation_turn_route_uses_the_workspace_default_binding_when_the_con
 }
 
 #[tokio::test]
-async fn conversation_turn_route_refuses_an_ineligible_conversation_override_without_falling_back() {
+async fn conversation_turn_route_refuses_an_ineligible_conversation_override_without_falling_back()
+{
     let directory = tempfile::tempdir().expect("temporary Conversation override directory");
     #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
@@ -1287,13 +1278,7 @@ async fn conversation_turn_route_refuses_an_ineligible_conversation_override_wit
     );
     // The Conversation's own override is configured but no longer enabled. It stays
     // authoritative: the route must not silently use the Workspace default instead.
-    seed_agent_binding(
-        &database,
-        WORKSPACE_A,
-        "turn-override-binding",
-        false,
-        true,
-    );
+    seed_agent_binding(&database, WORKSPACE_A, "turn-override-binding", false, true);
     set_conversation_agent(
         &database,
         WORKSPACE_A,
@@ -1368,7 +1353,8 @@ async fn conversation_turn_route_rejects_cross_workspace_resource_pins_before_pr
 }
 
 #[tokio::test]
-async fn conversation_agent_binding_route_commits_replays_clears_and_rejects_stale_or_ineligible_choices() {
+async fn conversation_agent_binding_route_commits_replays_clears_and_rejects_stale_or_ineligible_choices()
+ {
     let directory = tempfile::tempdir().expect("temporary Conversation AgentBinding directory");
     #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
@@ -1414,7 +1400,10 @@ async fn conversation_agent_binding_route_commits_replays_clears_and_rejects_sta
         .await,
     )
     .await;
-    assert_eq!(first.active_agent_binding_id.as_deref(), Some("eligible-binding"));
+    assert_eq!(
+        first.active_agent_binding_id.as_deref(),
+        Some("eligible-binding")
+    );
     assert_eq!(first.version, 2);
 
     let replay = read_updated_conversation(
@@ -1473,9 +1462,18 @@ async fn conversation_agent_binding_route_commits_replays_clears_and_rejects_sta
     assert_eq!(stale.status(), StatusCode::CONFLICT);
 
     for (binding, key) in [
-        ("disabled-binding", "conversation-agent-binding-disabled-request"),
-        ("non-lead-binding", "conversation-agent-binding-non-lead-request"),
-        ("foreign-binding", "conversation-agent-binding-foreign-request"),
+        (
+            "disabled-binding",
+            "conversation-agent-binding-disabled-request",
+        ),
+        (
+            "non-lead-binding",
+            "conversation-agent-binding-non-lead-request",
+        ),
+        (
+            "foreign-binding",
+            "conversation-agent-binding-foreign-request",
+        ),
     ] {
         let rejected = set_conversation_agent_binding_request(
             &router,
@@ -1504,8 +1502,7 @@ async fn conversation_agent_binding_route_commits_replays_clears_and_rejects_sta
         .expect("read binding-change events");
     assert_eq!(event_count, 2, "replay and rejected writes emit no event");
     assert_eq!(final_event_type, "conversation.agent_binding.changed.v1");
-    let payload: serde_json::Value =
-        serde_json::from_str(&payload).expect("event payload is JSON");
+    let payload: serde_json::Value = serde_json::from_str(&payload).expect("event payload is JSON");
     assert_eq!(payload["from_agent_binding_id"], "eligible-binding");
     assert_eq!(payload["to_agent_binding_id"], serde_json::Value::Null);
     assert_eq!(payload["aggregate_version"], 3);
@@ -1547,24 +1544,50 @@ async fn conversation_turn_submit_returns_accepted_receipt_with_active_session_s
         store.clone(),
         RUNTIME.to_owned(),
     ));
-    let router = test_router_with_supervisor(store.clone(), OWNER.to_owned(), RUNTIME.to_owned(), supervisor);
+    let router = test_router_with_supervisor(
+        store.clone(),
+        OWNER.to_owned(),
+        RUNTIME.to_owned(),
+        supervisor,
+    );
 
     let request_id = "conv-turn-supervisor-req-1";
     let body = r#"{"content":[{"kind":"TEXT","text":"Hello native supervisor."}],"resource_refs":[],"agent_binding_id":null,"presentation_preference":"AUTO"}"#;
-    let response = submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, body).await;
-    assert_eq!(response.status(), StatusCode::ACCEPTED, "the turn is accepted for dispatch");
+    let response =
+        submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, body).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::ACCEPTED,
+        "the turn is accepted for dispatch"
+    );
 
-    let bytes = to_bytes(response.into_body(), 64 * 1024).await.expect("read receipt body");
+    let bytes = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("read receipt body");
     let receipt: ConversationTurnReceipt = serde_json::from_slice(&bytes).expect("parse receipt");
     assert_eq!(receipt.conversation_id, conversation_id);
-    assert_eq!(receipt.status, storage_core::conversation::ConversationTurnStatus::Open);
-    assert_eq!(receipt.presentation_preference, storage_core::conversation::PresentationPreference::Auto);
+    assert_eq!(
+        receipt.status,
+        storage_core::conversation::ConversationTurnStatus::Open
+    );
+    assert_eq!(
+        receipt.presentation_preference,
+        storage_core::conversation::PresentationPreference::Auto
+    );
 
     // Replay with exact same request key returns 202 Accepted with identical turn receipt
-    let replay_response = submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, body).await;
-    assert_eq!(replay_response.status(), StatusCode::ACCEPTED, "exact replay returns 202 Accepted");
-    let replay_bytes = to_bytes(replay_response.into_body(), 64 * 1024).await.expect("read replay receipt body");
-    let replay_receipt: ConversationTurnReceipt = serde_json::from_slice(&replay_bytes).expect("parse replay receipt");
+    let replay_response =
+        submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, body).await;
+    assert_eq!(
+        replay_response.status(),
+        StatusCode::ACCEPTED,
+        "exact replay returns 202 Accepted"
+    );
+    let replay_bytes = to_bytes(replay_response.into_body(), 64 * 1024)
+        .await
+        .expect("read replay receipt body");
+    let replay_receipt: ConversationTurnReceipt =
+        serde_json::from_slice(&replay_bytes).expect("parse replay receipt");
     assert_eq!(replay_receipt.turn_id, receipt.turn_id);
     assert_eq!(replay_receipt.conversation_id, receipt.conversation_id);
     assert_eq!(replay_receipt.user_message_id, receipt.user_message_id);

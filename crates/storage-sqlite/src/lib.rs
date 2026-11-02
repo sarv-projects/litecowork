@@ -1,9 +1,8 @@
-mod workspace_access;
 mod agent_registry_cache;
 mod artifacts;
-mod backup;
 mod automation_admission;
 mod automation_host;
+mod backup;
 mod blob;
 mod capability_dispatch;
 mod context_document_purge;
@@ -17,10 +16,11 @@ mod discover;
 mod effect_evidence;
 mod environments;
 mod invocations;
-mod lead_handoff_boundary;
 mod lead_failover_choice_request;
+mod lead_handoff_boundary;
 mod needs_you;
 mod notification;
+mod workspace_access;
 pub use notification::NotificationEventContext;
 mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
@@ -32,26 +32,26 @@ mod context_document_migration_tests;
 mod context_document_purge_tests;
 #[cfg(test)]
 mod delegation_result_migration_tests;
-#[cfg(test)]
-mod invocation_dispatch_migration_tests;
-#[cfg(test)]
-mod skill_tests;
 mod execution;
 mod goals;
+#[cfg(test)]
+mod invocation_dispatch_migration_tests;
 mod os_key_provider;
 mod os_principal_binding;
+pub mod rag_retrieval;
+#[cfg(test)]
+mod rag_retrieval_tests;
 #[cfg(test)]
 mod resource_edge_migration_tests;
 #[cfg(test)]
 mod resource_edge_tests;
 mod resource_edges;
 mod resource_index;
-#[cfg(test)]
-mod rag_retrieval_tests;
-pub mod rag_retrieval;
 mod routines;
 mod runtime_identity;
 mod skill;
+#[cfg(test)]
+mod skill_tests;
 mod suggestions;
 mod trust;
 mod user_request_details;
@@ -83,8 +83,7 @@ pub use delegation_profiles::{
 };
 pub use delegation_results::SqliteDelegationResultStore;
 pub use discover::{
-    DiscoverCatalogPage, DiscoverProviderStatus, SqliteDiscoverStore,
-    PACKAGE_SERVICE_NOT_QUALIFIED,
+    DiscoverCatalogPage, DiscoverProviderStatus, PACKAGE_SERVICE_NOT_QUALIFIED, SqliteDiscoverStore,
 };
 pub use effect_evidence::SqliteEffectEvidenceStore;
 pub use environments::SqliteEnvironmentStore;
@@ -136,27 +135,24 @@ use std::{
 use storage_core::{
     ActivateConversationAgentSession, ActivateTaskPlanningSession, AgentBindingCreateRequest,
     AgentBindingDisableRequest, AgentBindingEnableRequest, AgentBindingRecord, AgentCatalogStore,
-    AgentEndpointRecord,
-    AgentEndpointViewRecord, AgentHostInstanceRecord, AgentHostStore, AgentProfileRecord,
-    AgentProfileViewRecord, AgentSessionRecord, AgentSessionStore, AggregateStateRef,
-    AutomationTaskAdmission, BlobPurpose, BlobRef, BlobStore, CommittedAgentBinding,
-    CommittedAgentSession, CommittedContextDocumentStatus, CommittedConversationActivation,
-    CommittedPlanningActivation,
-    CommittedResource, CommittedResourceUpload, CommittedTaskLeadHandoff,
-    CommittedTaskSpecRevision, CommittedWorkspace, CommittedWorkspaceInstructionRevision,
-    ConversationAgentSessionStart,
-    CommittedWorkspaceRoot, CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus,
-    ContextDocumentOwnerStatus, ContextDocumentStatusCommand, ContextDocumentStatusStore,
+    AgentEndpointRecord, AgentEndpointViewRecord, AgentHostInstanceRecord, AgentHostStore,
+    AgentProfileRecord, AgentProfileViewRecord, AgentSessionRecord, AgentSessionStore,
+    AggregateStateRef, AutomationTaskAdmission, BlobPurpose, BlobRef, BlobStore,
+    CommittedAgentBinding, CommittedAgentSession, CommittedContextDocumentStatus,
+    CommittedConversationActivation, CommittedPlanningActivation, CommittedResource,
+    CommittedResourceUpload, CommittedTaskLeadHandoff, CommittedTaskSpecRevision,
+    CommittedWorkspace, CommittedWorkspaceInstructionRevision, CommittedWorkspaceRoot,
+    CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus, ContextDocumentOwnerStatus,
+    ContextDocumentStatusCommand, ContextDocumentStatusStore, ConversationAgentSessionStart,
     DeviceIdentityRecord, DomainEvent, EventDraft, EventStore, IdempotentWorkspaceStore,
     LocalAgentEndpointBindingRecord, LocalRuntimeLifecycleSnapshot,
     LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest,
     MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE, MAX_WORKSPACE_ROOT_SCAN_ENTRIES,
     MarkStartingAgentSessionLost, MarkStartingConversationAgentSessionLost, PinnedResourceRef,
-    PlanAcceptance, PlanAcceptanceCommit,
-    PlanRevisionRecord, PreparedResourceTextIndex, ReplicationPolicy,
-    ResourceDependencyPageRequest, ResourceDependencyViewRecord, ResourceLocationRecord,
-    ResourceLocationViewRecord, ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord,
-    ResourceStore, ResourceSummary, ResourceTextIndexRebuildOutcome,
+    PlanAcceptance, PlanAcceptanceCommit, PlanRevisionRecord, PreparedResourceTextIndex,
+    ReplicationPolicy, ResourceDependencyPageRequest, ResourceDependencyViewRecord,
+    ResourceLocationRecord, ResourceLocationViewRecord, ResourceRecord, ResourceRevisionRecord,
+    ResourceSearchRecord, ResourceStore, ResourceSummary, ResourceTextIndexRebuildOutcome,
     ResourceTextIndexRebuildRequest, ResourceTextIndexRebuildResult, ResourceTextIndexSkipReason,
     ResourceTextSearchPage, ResourceTextSearchPosition, ResourceUploadChunkInput,
     ResourceUploadChunkReceiptRequest, ResourceUploadSessionRecord, ResourceUploadState,
@@ -2513,7 +2509,10 @@ impl AgentSessionStore for SqliteWorkspaceStore {
             || session.agent_session_id.trim().is_empty()
             || session.scope_kind != "CONVERSATION"
             || session.conversation_id.as_deref().is_none_or(str::is_empty)
-            || session.conversation_turn_id.as_deref().is_none_or(str::is_empty)
+            || session
+                .conversation_turn_id
+                .as_deref()
+                .is_none_or(str::is_empty)
             || session.task_id.is_some()
             || session.task_spec_revision.is_some()
             || session.attempt_id.is_some()
@@ -2713,7 +2712,9 @@ impl AgentSessionStore for SqliteWorkspaceStore {
         mut activation: ActivateConversationAgentSession,
     ) -> Result<CommittedConversationActivation, StoreError> {
         activation.occurred_at = canonicalize_utc_timestamp(&activation.occurred_at)?;
-        if let Some(Value::String(reported_at)) = activation.session_event.payload.get_mut("reported_at") {
+        if let Some(Value::String(reported_at)) =
+            activation.session_event.payload.get_mut("reported_at")
+        {
             *reported_at = canonicalize_utc_timestamp(reported_at)?;
         }
         if activation.principal_id.trim().is_empty()
@@ -2746,10 +2747,9 @@ impl AgentSessionStore for SqliteWorkspaceStore {
                 actual: Some(session.version),
             });
         }
-        let conversation_id = session
-            .conversation_id
-            .clone()
-            .ok_or_else(|| StoreError::Integrity("Conversation session has no Conversation".to_owned()))?;
+        let conversation_id = session.conversation_id.clone().ok_or_else(|| {
+            StoreError::Integrity("Conversation session has no Conversation".to_owned())
+        })?;
         let turn_id = session
             .conversation_turn_id
             .clone()
@@ -12699,10 +12699,8 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
         || task.resume_status.is_some()
         || task.routine_id.is_some() != task.routine_revision.is_some()
         || task.automation_id.is_some() != task.automation_occurrence_id.is_some()
-        || task.automation_test_run_id.is_some()
-            != commit.automation_test_admission.is_some()
-        || (commit.automation_admission.is_some()
-            && commit.automation_test_admission.is_some())
+        || task.automation_test_run_id.is_some() != commit.automation_test_admission.is_some()
+        || (commit.automation_admission.is_some() && commit.automation_test_admission.is_some())
         || task.version != 1
         || !task.blocking_conditions.is_empty()
         || task.priority != "NORMAL"
@@ -12809,7 +12807,9 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
             || test.routine_id != task.routine_id.as_deref().unwrap_or_default()
             || Some(test.routine_revision) != task.routine_revision
             || !test.inputs.is_object()
-            || request_object.get("automation_test_run_id").and_then(Value::as_str)
+            || request_object
+                .get("automation_test_run_id")
+                .and_then(Value::as_str)
                 != Some(test.test_run_id.as_str())
             || request_object.get("automation_id").and_then(Value::as_str)
                 != Some(test.automation_id.as_str())
@@ -13765,10 +13765,9 @@ fn activate_conversation_agent_session_transaction(
     session_state_ref: AggregateStateRef,
     turn_state_ref: AggregateStateRef,
 ) -> Result<CommittedConversationActivation, StoreError> {
-    let conversation_id = session
-        .conversation_id
-        .as_deref()
-        .ok_or_else(|| StoreError::Invalid("Conversation session has no Conversation".to_owned()))?;
+    let conversation_id = session.conversation_id.as_deref().ok_or_else(|| {
+        StoreError::Invalid("Conversation session has no Conversation".to_owned())
+    })?;
     let turn_id = session
         .conversation_turn_id
         .as_deref()
@@ -13816,19 +13815,50 @@ fn activate_conversation_agent_session_transaction(
         return Err(StoreError::Invalid("Workspace is not active".to_owned()));
     }
 
-    let current_session: Option<(String, i64, String, Option<String>, Option<String>, String, String, String, String)> = tx.query_row(
-        "SELECT status,version,scope_kind,conversation_id,conversation_turn_id,
+    let current_session: Option<(
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        String,
+        String,
+    )> = tx
+        .query_row(
+            "SELECT status,version,scope_kind,conversation_id,conversation_turn_id,
                 agent_binding_id,endpoint_id,runtime_id,runtime_incarnation_id
            FROM agent_sessions
           WHERE workspace_id=?1 AND agent_session_id=?2",
-        params![activation.workspace_id, activation.agent_session_id],
-        |row| Ok((
-            row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
-            row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?,
-        )),
-    ).optional().map_err(map_database_error)?;
-    let Some((session_status, session_version, scope_kind, stored_conversation_id, stored_turn_id,
-              binding_id, endpoint_id, runtime_id, runtime_incarnation_id)) = current_session
+            params![activation.workspace_id, activation.agent_session_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((
+        session_status,
+        session_version,
+        scope_kind,
+        stored_conversation_id,
+        stored_turn_id,
+        binding_id,
+        endpoint_id,
+        runtime_id,
+        runtime_incarnation_id,
+    )) = current_session
     else {
         return Err(StoreError::NotFound);
     };
@@ -13852,8 +13882,9 @@ fn activate_conversation_agent_session_transaction(
         ));
     }
 
-    let current_turn = conversations::load_turn(&tx, &activation.workspace_id, conversation_id, turn_id)?
-        .ok_or(StoreError::NotFound)?;
+    let current_turn =
+        conversations::load_turn(&tx, &activation.workspace_id, conversation_id, turn_id)?
+            .ok_or(StoreError::NotFound)?;
     if current_turn.version != activation.expected_turn_version {
         return Err(StoreError::Conflict {
             expected: Some(activation.expected_turn_version),
@@ -15051,9 +15082,7 @@ fn commit_task_lead_handoff_transaction(
 
     let policy_observation = if commit.cause == delegation_failover::POLICY_FAILOVER_CAUSE {
         let value = commit.trigger_observation.as_ref().ok_or_else(|| {
-            StoreError::Invalid(
-                "policy failover requires a trigger observation".to_owned(),
-            )
+            StoreError::Invalid("policy failover requires a trigger observation".to_owned())
         })?;
         Some(delegation_failover::StoredFailoverObservation::parse(
             value,
@@ -19575,8 +19604,6 @@ fn writer_loop(
                         })();
                         let _ = reply.send(result);
                     }
-                    Command::Operation { operation } => operation(&mut connection),
-                    Command::Operation { operation } => operation(&mut connection),
                     Command::AuthorizeArtifactAppend {
                         workspace_id,
                         artifact_id,
@@ -21569,7 +21596,11 @@ fn migrate_with_failpoint(
         migrate_workspace_root_file_membership(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION
+        V23_SCHEMA_VERSION
+            | V24_SCHEMA_VERSION
+            | V25_SCHEMA_VERSION
+            | V26_SCHEMA_VERSION
+            | V27_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21580,7 +21611,10 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V23_SCHEMA_VERSION {
         migrate_delegation_results(connection, failpoint)?;
-    } else if !matches!(current_version, V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION) {
+    } else if !matches!(
+        current_version,
+        V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION
+    ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -21590,7 +21624,10 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V24_SCHEMA_VERSION {
         migrate_resource_edges(connection, failpoint)?;
-    } else if !matches!(current_version, V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION) {
+    } else if !matches!(
+        current_version,
+        V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION
+    ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));

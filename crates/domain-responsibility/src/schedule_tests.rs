@@ -83,7 +83,9 @@ fn cron_5_sunday_is_accepted_as_zero_and_seven() {
 fn cron_5_daily_slot_is_resolved_in_the_declared_timezone() {
     let trigger = daily_cron("UTC", "0 9 * * *");
     let start = utc("2026-03-01T00:00:00Z");
-    let slots = trigger.slots_between(start, utc("2026-03-02T00:00:00Z")).unwrap();
+    let slots = trigger
+        .slots_between(start, utc("2026-03-02T00:00:00Z"))
+        .unwrap();
     assert_eq!(slots, vec![utc("2026-03-01T09:00:00Z")]);
 }
 
@@ -91,7 +93,9 @@ fn cron_5_daily_slot_is_resolved_in_the_declared_timezone() {
 fn cron_5_slot_uses_the_declared_timezone_offset() {
     let trigger = daily_cron("Asia/Tokyo", "0 9 * * *");
     let start = utc("2026-02-28T12:00:00Z");
-    let slots = trigger.slots_between(start, utc("2026-03-01T12:00:00Z")).unwrap();
+    let slots = trigger
+        .slots_between(start, utc("2026-03-01T12:00:00Z"))
+        .unwrap();
     // 09:00 JST is 00:00 UTC.
     assert_eq!(slots, vec![utc("2026-03-01T00:00:00Z")]);
 }
@@ -156,7 +160,12 @@ fn rrule_count_bounds_the_rule_from_its_anchor() {
         slots,
         vec![utc("2026-03-01T08:00:00Z"), utc("2026-03-02T08:00:00Z")]
     );
-    assert_eq!(trigger.next_slot_after(utc("2026-03-02T08:00:00Z")).unwrap(), None);
+    assert_eq!(
+        trigger
+            .next_slot_after(utc("2026-03-02T08:00:00Z"))
+            .unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -300,7 +309,10 @@ fn on_time_slot_produces_exactly_one_run_intent() {
         }]
     );
     assert!(!settlement.misfired);
-    assert_eq!(settlement.next_scheduled_at, Some(utc("2026-03-02T09:00:00Z")));
+    assert_eq!(
+        settlement.next_scheduled_at,
+        Some(utc("2026-03-02T09:00:00Z"))
+    );
 }
 
 #[test]
@@ -339,7 +351,10 @@ fn skip_misfire_records_every_missed_slot_and_creates_no_run() {
             },
         ]
     );
-    assert_eq!(settlement.next_scheduled_at, Some(utc("2026-03-05T09:00:00Z")));
+    assert_eq!(
+        settlement.next_scheduled_at,
+        Some(utc("2026-03-05T09:00:00Z"))
+    );
 }
 
 #[test]
@@ -388,9 +403,7 @@ fn catch_up_bounded_misfire_creates_a_bounded_run_set_and_one_summary() {
         RecurrenceFormat::Cron5,
         "UTC",
         "0 9 * * *",
-        MisfirePolicy::CatchUpBounded {
-            max_occurrences: 2,
-        },
+        MisfirePolicy::CatchUpBounded { max_occurrences: 2 },
         AmbiguousLocalTime::Earlier,
         NonexistentLocalTime::Skip,
         None,
@@ -448,7 +461,10 @@ fn a_backwards_clock_never_fires_or_rewinds_the_persisted_deadline() {
         .unwrap();
     assert!(settlement.intents.is_empty());
     assert!(!settlement.misfired);
-    assert_eq!(settlement.next_scheduled_at, Some(utc("2026-03-05T09:00:00Z")));
+    assert_eq!(
+        settlement.next_scheduled_at,
+        Some(utc("2026-03-05T09:00:00Z"))
+    );
 }
 
 #[test]
@@ -464,7 +480,10 @@ fn a_first_observation_creates_no_occurrence_and_finds_the_next_slot() {
         )
         .unwrap();
     assert!(settlement.intents.is_empty());
-    assert_eq!(settlement.next_scheduled_at, Some(utc("2026-03-02T09:00:00Z")));
+    assert_eq!(
+        settlement.next_scheduled_at,
+        Some(utc("2026-03-02T09:00:00Z"))
+    );
 }
 
 #[test]
@@ -499,39 +518,45 @@ fn an_exhausted_rule_reports_no_next_slot() {
         ..trigger
     };
     assert_eq!(
-        bounded.next_slot_after(utc("2026-03-02T00:00:00Z")).unwrap(),
+        bounded
+            .next_slot_after(utc("2026-03-02T00:00:00Z"))
+            .unwrap(),
         None
     );
 }
 
 #[test]
 fn schedule_parsing_rejects_an_unknown_timezone() {
-    assert!(ScheduleTrigger::parse(
-        RecurrenceFormat::Cron5,
-        "Mars/Olympus_Mons",
-        "0 9 * * *",
-        MisfirePolicy::Skip,
-        AmbiguousLocalTime::Earlier,
-        NonexistentLocalTime::Skip,
-        None,
-        None,
-    )
-    .is_err());
+    assert!(
+        ScheduleTrigger::parse(
+            RecurrenceFormat::Cron5,
+            "Mars/Olympus_Mons",
+            "0 9 * * *",
+            MisfirePolicy::Skip,
+            AmbiguousLocalTime::Earlier,
+            NonexistentLocalTime::Skip,
+            None,
+            None,
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn rrule_without_a_start_anchor_is_rejected() {
-    assert!(ScheduleTrigger::parse(
-        RecurrenceFormat::Rfc5545Rrule,
-        "UTC",
-        "FREQ=DAILY",
-        MisfirePolicy::Skip,
-        AmbiguousLocalTime::Earlier,
-        NonexistentLocalTime::Skip,
-        None,
-        None,
-    )
-    .is_err());
+    assert!(
+        ScheduleTrigger::parse(
+            RecurrenceFormat::Rfc5545Rrule,
+            "UTC",
+            "FREQ=DAILY",
+            MisfirePolicy::Skip,
+            AmbiguousLocalTime::Earlier,
+            NonexistentLocalTime::Skip,
+            None,
+            None,
+        )
+        .is_err()
+    );
 }
 
 #[test]

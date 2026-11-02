@@ -184,7 +184,9 @@ pub fn admit_environment_use(
             max_wall_time_ms: budget
                 .max_wall_time_ms
                 .map(|limit| limit.saturating_sub(usage.wall_time_ms)),
-            max_tokens: budget.max_tokens.map(|limit| limit.saturating_sub(usage.tokens)),
+            max_tokens: budget
+                .max_tokens
+                .map(|limit| limit.saturating_sub(usage.tokens)),
             max_child_attempts: budget
                 .max_child_attempts
                 .map(|limit| limit.saturating_sub(child_attempts_used)),
@@ -327,11 +329,23 @@ pub fn probe_environment_provider() -> EnvironmentProviderCapabilities {
         );
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
+        classes.push(LocalProviderClass::LocalWorkspace);
+        supports_attempt_lifetime = true;
+        supports_task_retained_lifetime = true;
         notes.push(
-            "no local Environment provider is implemented for this platform".to_owned(),
+            "the Windows local workspace provider is available with Job Object process-tree isolation and KILL_ON_CLOSE active"
+                .to_owned(),
         );
+        notes.push(
+            "no container or desktop substrate provider is implemented in this build".to_owned(),
+        );
+    }
+
+    #[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
+    {
+        notes.push("no local Environment provider is implemented for this platform".to_owned());
     }
 
     EnvironmentProviderCapabilities {
@@ -526,10 +540,7 @@ mod tests {
             assert_environment_may_be_archived(&[], true, false).unwrap_err(),
             EnvironmentLifecycleRefusal::NotQuiescent
         );
-        assert_eq!(
-            assert_environment_may_be_archived(&[], true, true),
-            Ok(())
-        );
+        assert_eq!(assert_environment_may_be_archived(&[], true, true), Ok(()));
     }
 
     #[test]
@@ -574,7 +585,10 @@ mod tests {
         assert!(!capabilities.notes.is_empty());
         assert!(!capabilities.supports_checkpoint);
         assert!(!capabilities.supports_restore);
-        assert_eq!(capabilities.budget_enforcement, BudgetEnforcement::Unavailable);
+        assert_eq!(
+            capabilities.budget_enforcement,
+            BudgetEnforcement::Unavailable
+        );
     }
 
     #[test]

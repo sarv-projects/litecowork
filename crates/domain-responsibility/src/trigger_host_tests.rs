@@ -24,11 +24,7 @@ fn daily_cron(expression: &str, policy: MisfirePolicy) -> ScheduleTrigger {
     .expect("the test schedule is valid")
 }
 
-fn concurrency(
-    nonterminal: u32,
-    max: u32,
-    overlap_policy: OverlapPolicy,
-) -> HostConcurrencyFacts {
+fn concurrency(nonterminal: u32, max: u32, overlap_policy: OverlapPolicy) -> HostConcurrencyFacts {
     HostConcurrencyFacts {
         nonterminal_occurrences: nonterminal,
         max_concurrent_occurrences: max,
@@ -44,7 +40,10 @@ fn a_due_slot_is_materialized_and_the_cursor_moves_forward() {
     let plan = plan_host_settlement(
         &schedule,
         Some(first),
-        SettlementWindow { now, grace_ms: 60_000 },
+        SettlementWindow {
+            now,
+            grace_ms: 60_000,
+        },
         concurrency(0, 1, OverlapPolicy::Skip),
     )
     .expect("the settlement plan is valid");
@@ -82,7 +81,10 @@ fn a_misfire_is_recorded_as_a_skip_and_never_dropped() {
     let plan = plan_host_settlement(
         &schedule,
         Some(first),
-        SettlementWindow { now, grace_ms: 60_000 },
+        SettlementWindow {
+            now,
+            grace_ms: 60_000,
+        },
         concurrency(0, 1, OverlapPolicy::Skip),
     )
     .expect("the settlement plan is valid");
@@ -101,13 +103,19 @@ fn a_misfire_is_recorded_as_a_skip_and_never_dropped() {
 
 #[test]
 fn catch_up_bounded_records_the_excess_slots_as_one_skip() {
-    let schedule = daily_cron("0 9 * * *", MisfirePolicy::CatchUpBounded { max_occurrences: 2 });
+    let schedule = daily_cron(
+        "0 9 * * *",
+        MisfirePolicy::CatchUpBounded { max_occurrences: 2 },
+    );
     let first = utc("2026-03-01T09:00:00Z");
     let now = utc("2026-03-05T12:00:00Z");
     let plan = plan_host_settlement(
         &schedule,
         Some(first),
-        SettlementWindow { now, grace_ms: 60_000 },
+        SettlementWindow {
+            now,
+            grace_ms: 60_000,
+        },
         concurrency(0, 8, OverlapPolicy::Allow),
     )
     .expect("the settlement plan is valid");

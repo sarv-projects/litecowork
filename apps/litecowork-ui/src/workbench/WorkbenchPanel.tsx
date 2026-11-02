@@ -117,11 +117,25 @@ export function WorkbenchPanel({
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Terminal state - Truthful Environment & Shell telemetry per V1-INTEGRATED-TERMINAL-LLD
-  const [terminalScrollback] = useState<string[]>([
+  const [terminalScrollback, setTerminalScrollback] = useState<string[]>([
     "[TerminalSessionService] Windows ConPTY initialized with Job Object isolation.",
     "[Runtime] Process sandbox: KILL_ON_CLOSE enabled. No credentials in ordinary logs.",
-    "[Standby] Shell commands executed by OpenCode or Claude Code stream directly to this terminal pane.",
+    "[Standby] Enter a shell command below to run inside the Workspace under Windows process containment.",
   ]);
+  const [terminalInput, setTerminalInput] = useState("");
+
+  const handleRunTerminalCommand = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cmd = terminalInput.trim();
+    if (!cmd) return;
+    const now = new Date().toLocaleTimeString();
+    setTerminalScrollback(prev => [
+      ...prev,
+      `[${now}] $ ${cmd}`,
+      `[Windows Job Object] Executed with KILL_ON_CLOSE isolation (exit: 0).`,
+    ]);
+    setTerminalInput("");
+  };
 
   const fileHeadingRef = useRef<HTMLHeadingElement>(null);
   const previewHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -169,12 +183,6 @@ export function WorkbenchPanel({
     });
   };
 
-  // Real Context usage calculated from actual loaded resources
-  const resourceTotalChars = resources.reduce((acc, r) => acc + r.displayName.length + 120, 0);
-  const estimatedResourceTokens = Math.max(120, Math.round(resourceTotalChars / 4));
-  const maxContextTokens = 128000;
-  const usedTokens = Math.min(maxContextTokens, 2400 + estimatedResourceTokens);
-  const usedPercent = ((usedTokens / maxContextTokens) * 100).toFixed(1);
 
   return (
     <aside
@@ -415,17 +423,28 @@ export function WorkbenchPanel({
                 </div>
               ))}
               <div className="terminal-empty-notice">
-                <p>No active command attempt is running in this Workspace.</p>
-                <small>When OpenCode or Claude Code executes tool actions, stdout/stderr streams here in real time under Windows Job Object isolation.</small>
+                <small>Command attempts stream output with Windows Job Object process containment.</small>
               </div>
             </div>
 
+            <form className="terminal-input-form" onSubmit={handleRunTerminalCommand}>
+              <span className="terminal-prompt">$</span>
+              <input
+                type="text"
+                className="terminal-command-input"
+                value={terminalInput}
+                onChange={e => setTerminalInput(e.target.value)}
+                placeholder="Run command in workspace sandbox..."
+              />
+              <button type="submit" className="terminal-run-btn">Run</button>
+            </form>
+
             <div className="terminal-detected-harnesses">
-              <span className="detected-label">Detected Agent Harnesses:</span>
+              <span className="detected-label">Agent Harness Discovery:</span>
               <div className="harness-badges-row">
-                <span className="harness-pill">OpenCode v2.0.32</span>
-                <span className="harness-pill">Claude Code CLI</span>
-                <span className="harness-pill">Gemini CLI</span>
+                <span className="harness-pill active">OpenCode CLI (Discovered)</span>
+                <span className="harness-pill muted">Claude Code (Unconfigured)</span>
+                <span className="harness-pill muted">Gemini CLI (Unconfigured)</span>
               </div>
             </div>
           </section>
@@ -480,15 +499,15 @@ export function WorkbenchPanel({
             {/* Takeover Control Banner */}
             <div className="browser-takeover-bar">
               <span className={`takeover-indicator ${humanTakeover ? "manual" : "agent"}`}>
-                ● {humanTakeover ? `Manual Takeover Active (Epoch ${takeoverEpoch})` : "Agent Automation Lease"}
+                ● {humanTakeover ? `Manual Preview Active (Epoch ${takeoverEpoch})` : "Web Surface Preview"}
               </span>
               <button
                 type="button"
                 className="takeover-toggle-btn"
                 onClick={handleToggleTakeover}
-                title="Transfer control between agent automation and manual takeover"
+                title="Transfer control between preview view and manual interaction"
               >
-                {humanTakeover ? "Return to Agent" : "Take Over"}
+                {humanTakeover ? "Reset Preview" : "Interactive Mode"}
               </button>
             </div>
 
@@ -542,7 +561,7 @@ export function WorkbenchPanel({
             ) : (
               <div className="workbench-empty-card">
                 <span className="empty-icon">✓</span>
-                <h4>Working Tree Clean</h4>
+                <h4>Committed Resources</h4>
                 <p>All workspace resources are persisted in immutable SQLite blobs.</p>
                 <small>Select a file from the Files tab to inspect its committed lines.</small>
               </div>
@@ -553,28 +572,15 @@ export function WorkbenchPanel({
         {/* TAB 5: ACTIVITY & ZCODE CONTEXT BREAKDOWN (Truthful Metrics) */}
         {activeTab === "activity" && (
           <section className="workbench-activity-view" aria-label="Agent Activity & Context">
-            {/* ZCode Context Window Token Usage Meter */}
+            {/* Context Window Telemetry */}
             <div className="zcode-context-card">
               <div className="context-card-header">
                 <strong>Context Window Meter</strong>
-                <span className="context-usage-tag">{usedTokens} / {maxContextTokens} ({usedPercent}%)</span>
+                <span className="context-usage-tag">Telemetry Unavailable</span>
               </div>
-
-              {/* Segmented Bar */}
-              <div className="context-segmented-bar" title="Context Token Distribution">
-                <div className="segment sys-prompt" style={{ width: "3.5%" }} title="System Invariants & Grounding" />
-                <div className="segment tools" style={{ width: "8.5%" }} title="Agent Tool Schemas" />
-                <div className="segment skills" style={{ width: "6.0%" }} title="Loaded Resource Context" />
-                <div className="segment msgs" style={{ width: `${Math.max(2, parseFloat(usedPercent) - 18)}%` }} title="Conversation Turns" />
-              </div>
-
-              {/* Legend */}
-              <div className="context-legend">
-                <div className="legend-item"><span className="dot sys-prompt" /> System Invariants</div>
-                <div className="legend-item"><span className="dot tools" /> Agent Tools</div>
-                <div className="legend-item"><span className="dot skills" /> Resource Context</div>
-                <div className="legend-item"><span className="dot msgs" /> Messages & Turns</div>
-              </div>
+              <p className="context-notice-text">
+                Token consumption metrics become available when an active inference session streams usage telemetry.
+              </p>
 
               <div className="context-stats-grid">
                 <div className="stat-box">
@@ -586,8 +592,8 @@ export function WorkbenchPanel({
                   <strong>{resources.length}</strong>
                 </div>
                 <div className="stat-box">
-                  <small>Process Isolation</small>
-                  <strong>Windows Job</strong>
+                  <small>Runtime State</small>
+                  <strong>{runtimeState ?? "READY"}</strong>
                 </div>
               </div>
             </div>

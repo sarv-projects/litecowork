@@ -89,7 +89,13 @@ impl SqliteWorkspaceStore {
                             )
                             .map_err(map_database_error)?;
                         let mut rows = statement
-                            .query(params![workspace, status, after_created, after_id, limit as i64])
+                            .query(params![
+                                workspace,
+                                status,
+                                after_created,
+                                after_id,
+                                limit as i64
+                            ])
                             .map_err(map_database_error)?;
                         let mut items = Vec::new();
                         while let Some(row) = rows.next().map_err(map_database_error)? {
@@ -118,8 +124,7 @@ impl SqliteWorkspaceStore {
                                 .map_err(as_integrity_error)?;
                             if workspace_id != workspace {
                                 return Err(StoreError::Integrity(
-                                    "UserRequest Workspace changed during the page read"
-                                        .to_owned(),
+                                    "UserRequest Workspace changed during the page read".to_owned(),
                                 ));
                             }
                             if !matches!(

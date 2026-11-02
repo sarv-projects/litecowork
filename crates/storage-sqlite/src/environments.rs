@@ -17,7 +17,6 @@ use storage_core::{
     ProviderBindingCommit, RuntimeId, RuntimeIncarnationId, StoreError,
 };
 
-
 #[derive(Clone)]
 pub struct SqliteEnvironmentStore {
     store: SqliteWorkspaceStore,

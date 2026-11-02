@@ -730,7 +730,8 @@ async fn list_automation_occurrences(
     } else {
         None
     };
-    let mut response = Json(AutomationOccurrencePageResponse { items, next_cursor }).into_response();
+    let mut response =
+        Json(AutomationOccurrencePageResponse { items, next_cursor }).into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-store"),
@@ -744,9 +745,7 @@ fn decode_occurrence_cursor(
     workspace_id: &str,
     automation_id: &str,
 ) -> Result<(String, String), Response> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(cursor)
-        .map_err(|_| invalid())?;
+    let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| invalid())?;
     let decoded: AutomationOccurrenceCursor =
         serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     if decoded.version != 1
@@ -1528,9 +1527,7 @@ async fn run_automation_test(
     }
     .key()
     .map_err(|_| invalid())?;
-    let mut event = event_context(&state.runtime_id, &correlation).map_err(|_| {
-        unavailable()
-    })?;
+    let mut event = event_context(&state.runtime_id, &correlation).map_err(|_| unavailable())?;
     event.event_id = idempotent_id(
         "ev",
         &state.principal_id,
@@ -1575,9 +1572,7 @@ async fn run_automation_test(
         replay_store.get_task_create_receipt(&principal_id, &replay_request_id, &replay_payload)
     })
     .await
-    .map_err(|_| {
-        unavailable()
-    })?
+    .map_err(|_| unavailable())?
     .map_err(|error| match error {
         storage_core::StoreError::Conflict { .. } => operator_error(
             StatusCode::CONFLICT,
@@ -1668,9 +1663,7 @@ async fn run_automation_test(
         recorded_at: event.recorded_at.clone(),
     };
     let routine_store =
-        SqliteRoutineStore::new(state.store.clone(), routine_context).map_err(|_| {
-            unavailable()
-        })?;
+        SqliteRoutineStore::new(state.store.clone(), routine_context).map_err(|_| unavailable())?;
     let routine_revision = routine_store
         .get_revision(
             &state.principal_id,
@@ -2052,11 +2045,8 @@ fn settle_hosted_triggers(
     // that is not terminal leaves its occurrence at STARTED and keeps holding the
     // slot, which is what prevents a second concurrent run of the same Automation.
     for workspace in workspaces {
-        host.settle_started_occurrences_from_task_outcomes(
-            &workspace.workspace_id,
-            now_epoch_ms,
-        )
-        .map_err(|_| "OCCURRENCE_SETTLEMENT_UNAVAILABLE".to_owned())?;
+        host.settle_started_occurrences_from_task_outcomes(&workspace.workspace_id, now_epoch_ms)
+            .map_err(|_| "OCCURRENCE_SETTLEMENT_UNAVAILABLE".to_owned())?;
     }
     let due = host
         .list_due_schedules(&context.runtime_id, now_epoch_ms)
@@ -2174,13 +2164,7 @@ fn settle_one_trigger(
             }
             HostSlotDecision::Skip { instant, reason } => {
                 let reason_token = skip_reason_token(*reason);
-                let recorded = record_skipped_slot(
-                    context,
-                    host,
-                    due,
-                    *instant,
-                    &reason_token,
-                );
+                let recorded = record_skipped_slot(context, host, due, *instant, &reason_token);
                 settlement.skipped.push(AutomationHostSkip {
                     scheduled_for: format_slot_instant(*instant),
                     reason: reason_token,
@@ -2364,19 +2348,19 @@ fn materialize_scheduled_slot(
         .map_err(|_| "ROUTINE_LOOKUP_FAILED".to_owned())?
         .ok_or_else(|| "ROUTINE_REVISION_UNAVAILABLE".to_owned())?;
     let inputs = serde_json::json!({});
-    let materialized = match materialize_routine_inputs(&routine_revision, &inputs, &workspace.workspace_id)
-    {
-        Ok(materialized) => materialized,
-        Err(_) => {
-            // A schedule trigger carries no inputs. A Routine that requires one
-            // cannot be materialized by a slot, and the contract records the
-            // occurrence as skipped with a typed diagnostic.
-            if routine_requires_input(&routine_revision) {
-                return Err("MISSING_REQUIRED_INPUT".to_owned());
+    let materialized =
+        match materialize_routine_inputs(&routine_revision, &inputs, &workspace.workspace_id) {
+            Ok(materialized) => materialized,
+            Err(_) => {
+                // A schedule trigger carries no inputs. A Routine that requires one
+                // cannot be materialized by a slot, and the contract records the
+                // occurrence as skipped with a typed diagnostic.
+                if routine_requires_input(&routine_revision) {
+                    return Err("MISSING_REQUIRED_INPUT".to_owned());
+                }
+                return Err("INPUT_MATERIALIZATION_FAILED".to_owned());
             }
-            return Err("INPUT_MATERIALIZATION_FAILED".to_owned());
-        }
-    };
+        };
     let coworker_store = SqliteCoworkerStore::new(
         context.store.clone(),
         CoworkerEventContext {
@@ -2405,7 +2389,12 @@ fn materialize_scheduled_slot(
         .definition
         .default_lead_agent_binding_id
         .clone()
-        .or_else(|| routine_revision.definition.preferred_agent_binding_id.clone())
+        .or_else(|| {
+            routine_revision
+                .definition
+                .preferred_agent_binding_id
+                .clone()
+        })
         .or_else(|| workspace.default_agent_binding_id.clone())
         .ok_or_else(|| "AGENT_UNAVAILABLE".to_owned())?;
     let scope = format!("automation.host.{}.{}", due.workspace_id, due.automation_id);
@@ -2428,15 +2417,13 @@ fn materialize_scheduled_slot(
         .map_err(|_| "TRIGGER_HOST_BINDING_UNAVAILABLE".to_owned())?
         .ok_or_else(|| "TRIGGER_HOST_BINDING_UNAVAILABLE".to_owned())?;
     let trigger_host_binding_version = binding.version;
-    let claim_expires_at = time::OffsetDateTime::parse(
-        recorded_at,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .map_err(|_| "CLAIM_WINDOW_UNAVAILABLE".to_owned())?
-    .checked_add(time::Duration::minutes(2))
-    .ok_or_else(|| "CLAIM_WINDOW_UNAVAILABLE".to_owned())?
-    .format(&time::format_description::well_known::Rfc3339)
-    .map_err(|_| "CLAIM_WINDOW_UNAVAILABLE".to_owned())?;
+    let claim_expires_at =
+        time::OffsetDateTime::parse(recorded_at, &time::format_description::well_known::Rfc3339)
+            .map_err(|_| "CLAIM_WINDOW_UNAVAILABLE".to_owned())?
+            .checked_add(time::Duration::minutes(2))
+            .ok_or_else(|| "CLAIM_WINDOW_UNAVAILABLE".to_owned())?
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|_| "CLAIM_WINDOW_UNAVAILABLE".to_owned())?;
     let scheduled_for = format_slot_instant(instant);
     let covered_misfire_range = if covered_count > 1 || covered_from.is_some() {
         Some(json!({
@@ -2497,7 +2484,12 @@ fn materialize_scheduled_slot(
         request_id: slot_request_id.clone(),
         request_payload,
         event: EventContext {
-            event_id: idempotent_id("ev", &context.principal_id, &slot_request_id, &format!("{scope}.event")),
+            event_id: idempotent_id(
+                "ev",
+                &context.principal_id,
+                &slot_request_id,
+                &format!("{scope}.event"),
+            ),
             origin_runtime_id: context.runtime_id.clone(),
             hlc_timestamp: recorded_at.to_owned(),
             correlation_id: format!("automation-host:{}", due.automation_id),
@@ -2723,6 +2715,8 @@ mod automation_route_tests {
     };
     use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
     use sha2::Digest;
+    use std::sync::Arc;
+    use std::time::Duration;
     use storage_core::{
         BlobPurpose, DeviceIdentityRecord, LocalRuntimeWorkspaceEnrollmentRequest,
         RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
@@ -2730,10 +2724,9 @@ mod automation_route_tests {
         RuntimeWorkspaceBindingStore, StoreError, WorkspaceCreateRequest,
     };
     use storage_sqlite::{
-        FileBlobStore, SqliteConfig, SqliteWorkspaceStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider,
+        FileBlobStore, SqliteConfig, SqliteWorkspaceStore, WorkspaceBlobKey,
+        WorkspaceBlobKeyProvider,
     };
-    use std::sync::Arc;
-    use std::time::Duration;
     use tower::ServiceExt;
     use zeroize::Zeroizing;
 
@@ -2778,11 +2771,8 @@ mod automation_route_tests {
     fn fixture() -> (tempfile::TempDir, SqliteWorkspaceStore) {
         let directory = tempfile::tempdir().expect("temporary Automation route directory");
         #[cfg(unix)]
-        std::fs::set_permissions(
-            directory.path(),
-            std::fs::Permissions::from_mode(0o700),
-        )
-        .expect("private Automation route directory");
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("private Automation route directory");
         let store = SqliteWorkspaceStore::open(
             directory.path().join("state.sqlite3"),
             Arc::new(FileBlobStore::new(
@@ -3052,7 +3042,10 @@ mod automation_route_tests {
         assert_eq!(body["status"], "PAUSED");
         // The enrolled local Runtime is the trigger host of this Workspace.
         assert_eq!(body["host_ready"], true);
-        assert_eq!(body["routine_health"]["routine_id"], "routine-automation-route");
+        assert_eq!(
+            body["routine_health"]["routine_id"],
+            "routine-automation-route"
+        );
         assert_eq!(body["routine_health"]["sample_size"], 0);
         assert_eq!(body["routine_health"]["drift_state"], "UNKNOWN");
         assert_eq!(body["drift_state"], "UNKNOWN");
@@ -3072,11 +3065,7 @@ mod automation_route_tests {
         assert_eq!(body["items"].as_array().map(Vec::len), Some(0));
         assert!(body["next_cursor"].is_null());
 
-        let (missing, _) = get(
-            router(store),
-            "/v1/automations/automation-missing/health",
-        )
-        .await;
+        let (missing, _) = get(router(store), "/v1/automations/automation-missing/health").await;
         assert_eq!(missing, StatusCode::NOT_FOUND);
     }
 }

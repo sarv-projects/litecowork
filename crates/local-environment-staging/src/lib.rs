@@ -1441,17 +1441,11 @@ mod tests {
         )
         .unwrap();
         for index in 0..5 {
-            fs::write(
-                prepared.output_root.join(format!("file-{index}.bin")),
-                b"x",
-            )
-            .unwrap();
+            fs::write(prepared.output_root.join(format!("file-{index}.bin")), b"x").unwrap();
         }
 
         assert_eq!(
-            prepared
-                .output_usage(OutputScanLimits::new(3))
-                .unwrap_err(),
+            prepared.output_usage(OutputScanLimits::new(3)).unwrap_err(),
             StagingError::OutputScanLimitExceeded
         );
         prepared.cleanup().unwrap();
@@ -1548,7 +1542,10 @@ mod tests {
         second.resource_id = "resource-2".to_owned();
 
         let baseline = digest_pinned_inputs(&[first.clone()]);
-        assert_ne!(baseline, digest_pinned_inputs(&[first.clone(), second.clone()]));
+        assert_ne!(
+            baseline,
+            digest_pinned_inputs(&[first.clone(), second.clone()])
+        );
 
         let mut changed_revision = first.clone();
         changed_revision.revision_id = "revision-4".to_owned();
@@ -1561,7 +1558,10 @@ mod tests {
             digest_root_set(&["outputs", "inputs"]),
             digest_root_set(&["inputs", "outputs"])
         );
-        assert_ne!(digest_root_set(&["inputs"]), digest_root_set(&["inputs", "outputs"]));
+        assert_ne!(
+            digest_root_set(&["inputs"]),
+            digest_root_set(&["inputs", "outputs"])
+        );
         // Absolute host paths must never enter an attestation digest.
         assert_eq!(
             digest_root_set(&["/workspace/inputs"]),

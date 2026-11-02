@@ -114,8 +114,8 @@ fn a_repair_proposal_is_only_offered_for_a_drifted_revision() {
         transient_failures: 0,
         dependencies: vec![healthy_dependency()],
     };
-    let proposal =
-        propose_drift_repair("routine-1", 2, &revision_input(), &drifted).expect("a proposal exists");
+    let proposal = propose_drift_repair("routine-1", 2, &revision_input(), &drifted)
+        .expect("a proposal exists");
     assert_eq!(proposal.current_revision, 2);
     assert_eq!(proposal.drift_state, DriftState::Drifted);
     assert!(proposal.requires_owner_review);

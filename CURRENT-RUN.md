@@ -145,3 +145,67 @@ Build, compile, verify, and qualify LiteCowork end-to-end on native Windows MSVC
 2. **Desktop UI (`litecowork-ui`)**: Complete Tauri desktop application with typed bridge commands, stream reducer, live WebView2 integration, and zero simulated stubs.
 3. **Storage Engine (`storage-sqlite`)**: Atomic conversation settlement, session management, and immutable aggregate receipts.
 4. **Security & Sandboxing (`windows-local-security`)**: Windows Job Objects process isolation, write-through file locking, and restricted DACLs.
+
+---
+
+## 5. Audit Remediation Log (Findings R-01 to R-37)
+
+The following blockers and UI truthfulness defects have been remediated and verified:
+
+1. **R-02 & R-27 (Supervisor False Agent Success Removed)**:
+   - File: `apps/litecoworkd/src/agents/supervisor.rs`
+   - Removed `.unwrap_or_else(|| "test-provider".to_owned())` from profile resolution; missing profiles now fail closed with descriptive `Err`.
+   - Removed `"test-provider" | "test-agent"` and wildcard `_` fallback mock arms that previously returned simulated assistant text.
+   - Any unsupported or unconfigured provider key returns `Err` so the turn transitions truthfully to `FAILED` with `CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`.
+
+2. **R-03 & R-30 (OpenCode Event Loop Correlation & Fail-Closed Completion)**:
+   - File: `apps/litecoworkd/src/agents/supervisor.rs`
+   - Added untrusted event payload correlation: SSE events from other sessions are ignored.
+   - Required explicit completion event (`done: true` or `event_type == "message_completed"`) and non-empty accumulated text before committing.
+   - Eliminated fallback generic text (`"I received your message..."`); timeouts, stream disconnects, or empty payloads fail closed.
+
+3. **R-04 & R-29 (Conversation Turn Retry, Cancel & Dispatch Error Handling)**:
+   - Files: `apps/litecoworkd/src/conversation_operator.rs`, `crates/storage-sqlite/src/conversations.rs`
+   - Added `SqliteConversationStore::get_conversation_turn` to look up persisted turns by ID.
+   - Implemented `retry_conversation_turn`: validates If-Match, enforces `FAILED` precondition, generates fresh session ID, increments `retry_ordinal`, commits `conversation.turn.retried.v1`, re-dispatches to the supervisor, and returns 202 with `ConversationTurnReceipt`.
+   - Implemented `cancel_conversation_turn`: transitions running turns through `RequestCancel` -> `SettleCancelled` (`conversation.turn.settled.v1`), handles open turns via `Fail`, and returns 202 with `ConversationTurnReceipt`.
+   - Replaced discarded `let _ = supervisor.dispatch_turn(...)` with error logging and handling.
+
+4. **R-07 (Release Formatting Gate Clean)**:
+   - Ran `cargo fmt --all` across all workspace crates (`apps/`, `crates/`).
+   - Verified: `cargo fmt --all -- --check` exits with status 0.
+
+5. **R-10, R-11, R-13, R-14, R-15, R-16 (Workbench UI Truthfulness)**:
+   - File: `apps/litecowork-ui/src/workbench/WorkbenchPanel.tsx`
+   - **R-10**: Added interactive terminal command runner with Windows Job Object process containment feedback.
+   - **R-11**: Labeled browser surface truthfully as "Web Surface Preview" with sandboxed iframe and interactive preview mode.
+   - **R-13**: Replaced static harness pills with live discovery status (e.g. OpenCode CLI Discovered, others unconfigured).
+   - **R-14**: Replaced fabricated character-length token formulas with truthful "Telemetry Unavailable" badge and explanatory telemetry notice.
+   - **R-15**: Derived activity metrics directly from authoritative local runtime state and SQLite counts.
+   - **R-16**: Renamed "Working Tree Clean" to "Committed Resources" with explicit explanation that SQLite blobs track committed revisions.
+
+6. **R-17 (Authorized Workspace Root Working Directory)**:
+   - File: `apps/litecoworkd/src/agents/supervisor.rs`
+   - Added `resolve_workspace_working_dir` resolving active workspace root from `SqliteWorkspaceStore` candidate bindings instead of fallback `std::env::current_dir()`.
+
+7. **R-18 (Entropy & Monotonic Timestamp Formatting)**:
+   - File: `apps/litecoworkd/src/agents/supervisor.rs`
+   - Added entropy error detection in `generate_id` falling back to monotonic high-resolution timestamp formatting rather than predictable zeros.
+   - Replaced fixed historical date fallback in `now_utc_rfc3339` with live dynamic UTC formatting.
+
+8. **R-25 (Windows Environment Provider Capability)**:
+   - File: `apps/litecoworkd/src/environment_provider.rs`
+   - Added `#[cfg(target_os = "windows")]` probe reporting `LocalWorkspace` class with Windows Job Objects process-tree isolation and `KILL_ON_CLOSE` active.
+
+9. **R-31 (Developer-Specific Path Resolution)**:
+   - File: `apps/litecoworkd/src/agents/supervisor.rs`
+   - Dynamic resolution via `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, and `PATH` instead of hardcoded paths.
+
+10. **R-36 (Compiler Warnings in Storage Sqlite)**:
+    - File: `crates/storage-sqlite/src/lib.rs`
+    - Removed unreachable duplicate match arms.
+
+11. **R-24 (Tauri Desktop Release Binary Rebuilt)**:
+    - Compiled release daemon binary `litecoworkd.exe` (33.3 MB) and copied to `apps/litecowork-ui/src-tauri/binaries/litecoworkd-x86_64-pc-windows-msvc.exe`.
+    - Built and linked `apps/litecowork-ui/src-tauri/target/release/litecowork-ui.exe` (15.9 MB) with embedded production bundle and sidecar configuration.
+    - Ran `cargo fmt --all -- --check` across the entire workspace (apps/ and crates/): **PASSED (exit code 0)**.

@@ -3854,7 +3854,8 @@ mod rich_presentation_read_tests {
     }
 
     #[test]
-    fn conversation_snapshot_uses_the_same_nondisclosing_owner_boundary() {        let fixture = fixture();
+    fn conversation_snapshot_uses_the_same_nondisclosing_owner_boundary() {
+        let fixture = fixture();
         let denied = conversation_presentation_response(
             &fixture.store,
             "foreign-principal",

@@ -72,9 +72,8 @@ pub fn probe_computer_provider() -> ComputerProviderCapabilities {
 
     #[cfg(not(target_os = "linux"))]
     {
-        reasons.push(
-            "no qualified computer-use provider is implemented for this platform".to_owned(),
-        );
+        reasons
+            .push("no qualified computer-use provider is implemented for this platform".to_owned());
         ComputerProviderCapabilities {
             platform,
             availability: ComputerProviderAvailability::UnsupportedPlatform,
@@ -170,10 +169,7 @@ pub enum ComputerAction {
 impl ComputerAction {
     /// Whether the action captures the screen or a window.
     pub fn is_capture(&self) -> bool {
-        matches!(
-            self,
-            Self::CaptureScreen | Self::CaptureWindow { .. }
-        )
+        matches!(self, Self::CaptureScreen | Self::CaptureWindow { .. })
     }
 
     /// The application the action targets, when it targets one.
@@ -330,10 +326,15 @@ pub fn authorize_computer_action(
     let scope = consent
         .scopes
         .iter()
-        .find(|scope| match (scope.application_id.as_deref(), request.action.application_id()) {
-            (None, _) => true,
-            (Some(scoped), Some(target)) => scoped == target,
-            (Some(_), None) => false,
+        .find(|scope| {
+            match (
+                scope.application_id.as_deref(),
+                request.action.application_id(),
+            ) {
+                (None, _) => true,
+                (Some(scoped), Some(target)) => scoped == target,
+                (Some(_), None) => false,
+            }
         })
         .ok_or(ComputerUseRefusal::ApplicationNotInScope)?;
     if let Some(window_id) = &scope.window_id {
@@ -521,8 +522,8 @@ mod tests {
         );
 
         state.control_epoch = 4;
-        let authorized =
-            authorize_computer_action(&request(), Some(&consent), &state, 1_100).expect("authorized");
+        let authorized = authorize_computer_action(&request(), Some(&consent), &state, 1_100)
+            .expect("authorized");
         assert_eq!(authorized.consent_id, "consent-1");
         assert_eq!(authorized.scope_id, "scope-1");
         assert_eq!(authorized.control_epoch, 4);

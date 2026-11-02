@@ -631,7 +631,6 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<String, StoreError> {
         .map_err(|_| StoreError::Integrity("notification preference is not UTF-8".to_owned()))
 }
 
-
 /// The transaction-scoped body of [`SqliteWorkspaceStore::record_automation_outcome_delivery`].
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_automation_outcome_delivery_in_transaction(
@@ -665,13 +664,12 @@ pub(super) fn record_automation_outcome_delivery_in_transaction(
     let Some(policy_json) = policy_json else {
         return Ok(None);
     };
-    let execution_policy: AutomationExecutionPolicy = serde_json::from_str(&policy_json).map_err(
-        |error| {
+    let execution_policy: AutomationExecutionPolicy =
+        serde_json::from_str(&policy_json).map_err(|error| {
             StoreError::Integrity(format!(
                 "stored Automation execution policy is invalid: {error}"
             ))
-        },
-    )?;
+        })?;
 
     // The Workspace class preference may silence the class outright.
     let preference: Option<(String, Option<String>)> = tx
@@ -698,7 +696,9 @@ pub(super) fn record_automation_outcome_delivery_in_transaction(
     let quiet_hours = match preference.as_ref().and_then(|(_, quiet)| quiet.as_ref()) {
         Some(quiet) => {
             let value: Value = serde_json::from_str(quiet).map_err(|error| {
-                StoreError::Integrity(format!("stored notification quiet hours are invalid: {error}"))
+                StoreError::Integrity(format!(
+                    "stored notification quiet hours are invalid: {error}"
+                ))
             })?;
             match DomainQuietHours::parse(&value) {
                 Ok(parsed) => Some(parsed),
@@ -729,13 +729,14 @@ pub(super) fn record_automation_outcome_delivery_in_transaction(
         .optional()
         .map_err(map_database_error)?;
     let has_local_channel = channel_binding_id.is_some()
-        || tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM runtime_workspace_bindings
+        || tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtime_workspace_bindings
              WHERE workspace_id = ?1 AND status = 'ACTIVE')",
-            params![workspace_id],
-            |row| row.get(0),
-        )
-        .map_err(map_database_error)?;
+                params![workspace_id],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
 
     let facts = NotificationFacts {
         automation_policy: execution_policy.notification_policy,

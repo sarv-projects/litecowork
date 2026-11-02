@@ -32,7 +32,10 @@ fn invocation_dispatch_migration_is_atomic_and_installs_the_approval_bound() {
         .expect("read version after injected failure");
     assert_eq!(rolled_back_version, 25);
     assert!(
-        !trigger_exists(&connection, "capability_invocation_dispatch_requires_consumed_approval"),
+        !trigger_exists(
+            &connection,
+            "capability_invocation_dispatch_requires_consumed_approval"
+        ),
         "an interrupted migration must not leave the dispatch guard installed"
     );
 
@@ -49,11 +52,17 @@ fn invocation_dispatch_migration_is_atomic_and_installs_the_approval_bound() {
     // The blanket creation block is gone, so the combined writer may create an
     // Invocation, and the consumed-approval guard is installed in its place.
     assert!(
-        !trigger_exists(&connection, "capability_invocation_creation_admission_closed"),
+        !trigger_exists(
+            &connection,
+            "capability_invocation_creation_admission_closed"
+        ),
         "the blanket creation block must be removed by the migration"
     );
     assert!(
-        trigger_exists(&connection, "capability_invocation_dispatch_requires_consumed_approval"),
+        trigger_exists(
+            &connection,
+            "capability_invocation_dispatch_requires_consumed_approval"
+        ),
         "the dispatch approval guard must be installed by the migration"
     );
     assert!(
@@ -103,7 +112,9 @@ fn the_migration_keeps_the_version_one_authority_boundary_installed() {
             |row| row.get(0),
         )
         .expect("read the transition guard");
-    assert!(guard_sql.contains("OLD.status = 'CREATED' AND NEW.status IN ('DISPATCHED', 'CANCELLED')"));
+    assert!(
+        guard_sql.contains("OLD.status = 'CREATED' AND NEW.status IN ('DISPATCHED', 'CANCELLED')")
+    );
     assert!(guard_sql.contains("NEW.version <> OLD.version + 1"));
     assert!(!guard_sql.contains("NEW.status = 'DISPATCHED' OR"));
 }

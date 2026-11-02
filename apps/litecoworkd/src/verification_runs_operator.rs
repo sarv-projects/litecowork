@@ -494,7 +494,10 @@ mod tests {
             StatusCode::OK,
             "an archived Workspace must keep its VerificationRun reads"
         );
-        assert_eq!(body["items"][0]["verification_run_id"], "verification-run-a");
+        assert_eq!(
+            body["items"][0]["verification_run_id"],
+            "verification-run-a"
+        );
     }
 
     #[tokio::test]

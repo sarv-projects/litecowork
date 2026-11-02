@@ -76,7 +76,7 @@ impl RetrievalScope {
                         Some(pinned) => pinned == resource_revision_id,
                         None => true,
                     }
-            })
+            }),
         }
     }
 

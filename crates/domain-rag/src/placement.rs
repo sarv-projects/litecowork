@@ -139,9 +139,7 @@ impl PlacementDecision {
             resource_id: resource_id.to_owned(),
             placement,
             policy: inputs.policy,
-            blocked_code: blocker
-                .as_ref()
-                .map(|blocker| blocker.code.to_owned()),
+            blocked_code: blocker.as_ref().map(|blocker| blocker.code.to_owned()),
             blocked_reason: blocker.map(|blocker| blocker.reason),
         }
     }
@@ -203,10 +201,12 @@ mod tests {
 
     #[test]
     fn a_local_only_resource_blocks_a_cloud_consumer() {
-        let blocker =
-            evaluate_task_placement(ResourcePlacement::LocalOnly, TaskPlacement::Cloud).unwrap_err();
+        let blocker = evaluate_task_placement(ResourcePlacement::LocalOnly, TaskPlacement::Cloud)
+            .unwrap_err();
         assert_eq!(blocker.code, "RESOURCE_LOCAL_ONLY");
-        assert!(evaluate_task_placement(ResourcePlacement::LocalOnly, TaskPlacement::Local).is_ok());
+        assert!(
+            evaluate_task_placement(ResourcePlacement::LocalOnly, TaskPlacement::Local).is_ok()
+        );
         assert!(
             evaluate_task_placement(ResourcePlacement::CloudEligible, TaskPlacement::Cloud).is_ok()
         );

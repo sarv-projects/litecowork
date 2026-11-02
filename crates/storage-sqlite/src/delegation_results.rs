@@ -24,7 +24,6 @@ const RESULT_EVENT_PAYLOAD_KEYS: [&str; 6] = [
     "aggregate_version",
 ];
 
-
 #[derive(Clone)]
 pub struct SqliteDelegationResultStore {
     store: SqliteWorkspaceStore,

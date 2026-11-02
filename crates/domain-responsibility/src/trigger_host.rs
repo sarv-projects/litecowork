@@ -17,8 +17,7 @@
 //!   so a later pass can still materialize it.
 
 use crate::{
-    DomainError, MisfireReason, OccurrenceIntent, OverlapPolicy, ScheduleTrigger,
-    SettlementWindow,
+    DomainError, MisfireReason, OccurrenceIntent, OverlapPolicy, ScheduleTrigger, SettlementWindow,
 };
 
 /// Why a due slot produced no ordinary Task.
@@ -48,18 +47,24 @@ pub enum HostSlotDecision {
         covered_count: u32,
     },
     /// Record one bounded `SKIPPED` occurrence and create no Task.
-    Skip { instant: i64, reason: SlotOutcomeReason },
+    Skip {
+        instant: i64,
+        reason: SlotOutcomeReason,
+    },
     /// Keep the slot due. A prior run must settle before this one may start.
-    Defer { instant: i64, reason: SlotOutcomeReason },
+    Defer {
+        instant: i64,
+        reason: SlotOutcomeReason,
+    },
 }
 
 impl HostSlotDecision {
     /// The slot instant this decision refers to.
     pub fn instant(&self) -> i64 {
         match self {
-            Self::Materialize { instant, .. } | Self::Skip { instant, .. } | Self::Defer { instant, .. } => {
-                *instant
-            }
+            Self::Materialize { instant, .. }
+            | Self::Skip { instant, .. }
+            | Self::Defer { instant, .. } => *instant,
         }
     }
 
@@ -94,32 +99,26 @@ pub struct HostSettlementPlan {
 impl HostSettlementPlan {
     /// The slots that must become ordinary Tasks.
     pub fn materialized(&self) -> impl Iterator<Item = i64> + '_ {
-        self.decisions
-            .iter()
-            .filter_map(|decision| match decision {
-                HostSlotDecision::Materialize { instant, .. } => Some(*instant),
-                _ => None,
-            })
+        self.decisions.iter().filter_map(|decision| match decision {
+            HostSlotDecision::Materialize { instant, .. } => Some(*instant),
+            _ => None,
+        })
     }
 
     /// The slots that must be recorded as bounded skipped occurrences.
     pub fn skipped(&self) -> impl Iterator<Item = (i64, SlotOutcomeReason)> + '_ {
-        self.decisions
-            .iter()
-            .filter_map(|decision| match decision {
-                HostSlotDecision::Skip { instant, reason } => Some((*instant, *reason)),
-                _ => None,
-            })
+        self.decisions.iter().filter_map(|decision| match decision {
+            HostSlotDecision::Skip { instant, reason } => Some((*instant, *reason)),
+            _ => None,
+        })
     }
 
     /// The slots that stay due because a prior run must settle first.
     pub fn deferred(&self) -> impl Iterator<Item = (i64, SlotOutcomeReason)> + '_ {
-        self.decisions
-            .iter()
-            .filter_map(|decision| match decision {
-                HostSlotDecision::Defer { instant, reason } => Some((*instant, *reason)),
-                _ => None,
-            })
+        self.decisions.iter().filter_map(|decision| match decision {
+            HostSlotDecision::Defer { instant, reason } => Some((*instant, *reason)),
+            _ => None,
+        })
     }
 }
 

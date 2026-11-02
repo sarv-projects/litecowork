@@ -293,8 +293,8 @@ pub fn settle_from_task_outcome(
         "FAILED" => OccurrenceStatus::Failed,
         "CANCELLED" => OccurrenceStatus::Skipped,
         // Terminal Task statuses settle; every other status stays unsettled.
-        "READY" | "RUNNING" | "VERIFYING" | "BLOCKED" | "NEEDS_USER" | "INCOMPLETE"
-        | "PAUSED" | "PAUSE_REQUESTED" | "WAITING_USER" | "CANCEL_REQUESTED" => return Ok(None),
+        "READY" | "RUNNING" | "VERIFYING" | "BLOCKED" | "NEEDS_USER" | "INCOMPLETE" | "PAUSED"
+        | "PAUSE_REQUESTED" | "WAITING_USER" | "CANCEL_REQUESTED" => return Ok(None),
         _ => {
             return Err(DomainError::InvalidDefinition);
         }

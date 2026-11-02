@@ -177,15 +177,14 @@ pub fn measure_output_root(
                     path.display().to_string(),
                 ));
             }
-            usage.total_bytes = usage
-                .total_bytes
-                .checked_add(metadata.len())
-                .ok_or(StagingError::OutputQuotaExceeded {
+            usage.total_bytes = usage.total_bytes.checked_add(metadata.len()).ok_or(
+                StagingError::OutputQuotaExceeded {
                     limit_bytes: u64::MAX,
                     observed_bytes: u64::MAX,
                     limit_files: usize::MAX,
                     observed_files: usage.file_count.saturating_add(1),
-                })?;
+                },
+            )?;
             usage.file_count = usage.file_count.saturating_add(1);
         }
     }

@@ -29,50 +29,47 @@ pub use delegation_admission::{
 
 mod coworker_learning;
 pub use coworker_learning::{
-    CoworkerLearningPolicy, LearningCandidate, LearningCandidateKind, LearningCandidateState,
-    LearningCertainty, LearningConflict, LearningConversationClass, LearningDisposition,
-    LearningEvaluation, LearningEvaluationContext, LearningMemoryClass, LearningMemoryMode,
-    LearningMemoryScope, LearningNotificationMode, LearningReviewMode, LearningSensitivity,
-    LearningSourceChannel, LearningSourceKind, MemoryCandidatePayload, MemoryComparison,
-    MemoryRecordMetadata, RedactionReport, SensitiveFinding, SensitiveFindingKind,
-    classify_learning_conflict, evaluate_learning_candidate, learning_candidate_event_payload,
-    normalized_learning_value, normalized_memory_key, normalize_learning_text,
-    redact_sensitive_content, LEARNING_PAYLOAD_PREVIEW_MAX_BYTES, LEARNING_REASON_CODE_MAX,
+    CoworkerLearningPolicy, LEARNING_PAYLOAD_PREVIEW_MAX_BYTES, LEARNING_REASON_CODE_MAX,
+    LearningCandidate, LearningCandidateKind, LearningCandidateState, LearningCertainty,
+    LearningConflict, LearningConversationClass, LearningDisposition, LearningEvaluation,
+    LearningEvaluationContext, LearningMemoryClass, LearningMemoryMode, LearningMemoryScope,
+    LearningNotificationMode, LearningReviewMode, LearningSensitivity, LearningSourceChannel,
+    LearningSourceKind, MemoryCandidatePayload, MemoryComparison, MemoryRecordMetadata,
+    RedactionReport, SensitiveFinding, SensitiveFindingKind, classify_learning_conflict,
+    evaluate_learning_candidate, learning_candidate_event_payload, normalize_learning_text,
+    normalized_learning_value, normalized_memory_key, redact_sensitive_content,
 };
 
 mod discover;
 pub use discover::{
     AuthRecipeDescriptor, AuthRecipeKind, CONNECTOR_MAX_ACTIONS, CONNECTOR_MAX_AUTH_RECIPES,
     CONNECTOR_MAX_TRIGGERS, ConnectorActionDescriptor, ConnectorIdempotency,
-    ConnectorOperationClass, ConnectorPackageManifest, ConnectorTriggerDescriptor, DiscoverAuthState,
-    DiscoverAvailability, DiscoverCapabilitySummary, DiscoverCatalogEntry,
+    ConnectorOperationClass, ConnectorPackageManifest, ConnectorTriggerDescriptor,
+    DiscoverAuthState, DiscoverAvailability, DiscoverCapabilitySummary, DiscoverCatalogEntry,
     DiscoverCatalogEntryDetail, DiscoverCompatibility, DiscoverEntryKind, DiscoverEntrySource,
-    DiscoverError, DiscoverInstallState, RedirectPolicy, ScopeRisk,
-    connector_capability_summaries, connector_catalog_entry, derive_discover_availability,
-    validate_connector_package_manifest,
+    DiscoverError, DiscoverInstallState, RedirectPolicy, ScopeRisk, connector_capability_summaries,
+    connector_catalog_entry, derive_discover_availability, validate_connector_package_manifest,
 };
 
 mod skill;
 pub use skill::{
-    CaptureDecision, CaptureRefusal, DemonstrationAction, DemonstrationCaptureConsent,
-    DemonstrationCapturePolicy, DemonstrationSessionRecord, DemonstrationStatus,
-    DemonstrationTrace, McpAppBridgeEnvelope, McpAppBridgeRequest, McpAppCsp,
-    McpAppFrameDescriptor, McpAppFramePolicy, McpAppFrameRecord, SensitiveRegionPolicy,
+    APP_BRIDGE_MAX_PAYLOAD_BYTES, APP_BRIDGE_METHODS, CAPTURE_MAX_POLICY_ACTIONS,
+    CAPTURE_MAX_POLICY_DURATION_MS, CAPTURE_MAX_POLICY_TRACE_BYTES, CaptureDecision,
+    CaptureRefusal, DemonstrationAction, DemonstrationCaptureConsent, DemonstrationCapturePolicy,
+    DemonstrationSessionRecord, DemonstrationStatus, DemonstrationTrace, McpAppBridgeEnvelope,
+    McpAppBridgeRequest, McpAppCsp, McpAppFrameDescriptor, McpAppFramePolicy, McpAppFrameRecord,
+    PACKAGE_SERVICE_NOT_QUALIFIED, SKILL_DECLARED_CAPABILITY_MAX, SKILL_DRIFT_BLOCKER_CODE,
+    SKILL_MANIFEST_MAX_FILES, SKILL_MANIFEST_MAX_TOTAL_BYTES, SKILL_MAX_REVISIONS,
+    SKILL_PLACEHOLDER_MAX, SKILL_SUMMARY_MAX_BYTES, SKILL_TITLE_MAX_BYTES, SensitiveRegionPolicy,
     SkillActivation, SkillActivationGrant, SkillCapabilityRef, SkillDrift, SkillGuardError,
     SkillKind, SkillManifest, SkillManifestKind, SkillManifestResource, SkillOrigin,
     SkillPlaceholder, SkillPlaceholderKind, SkillProposalDecision, SkillProposalDraft,
     SkillProposalRecord, SkillProposalReviewOutcome, SkillProposalReviewer, SkillProposalSource,
     SkillProposalStatus, SkillRecord, SkillRedactionStatus, SkillRedactionSummary, SkillRevision,
-    SkillStatus,
-    APP_BRIDGE_METHODS, APP_BRIDGE_MAX_PAYLOAD_BYTES, CAPTURE_MAX_POLICY_ACTIONS,
-    CAPTURE_MAX_POLICY_DURATION_MS, CAPTURE_MAX_POLICY_TRACE_BYTES,
-    PACKAGE_SERVICE_NOT_QUALIFIED, SKILL_DECLARED_CAPABILITY_MAX, SKILL_DRIFT_BLOCKER_CODE,
-    SKILL_MANIFEST_MAX_FILES, SKILL_MANIFEST_MAX_TOTAL_BYTES, SKILL_MAX_REVISIONS,
-    SKILL_PLACEHOLDER_MAX, SKILL_SUMMARY_MAX_BYTES, SKILL_TITLE_MAX_BYTES, build_app_frame,
-    derive_skill_proposal_draft, detect_skill_drift, evaluate_capture_append,
-    evaluate_skill_activation, evaluate_skill_definition_write, evaluate_skill_proposal_review,
-    is_valid_identifier, is_valid_uri, validate_app_bridge_message, validate_skill_manifest,
-    validate_skill_revision,
+    SkillStatus, build_app_frame, derive_skill_proposal_draft, detect_skill_drift,
+    evaluate_capture_append, evaluate_skill_activation, evaluate_skill_definition_write,
+    evaluate_skill_proposal_review, is_valid_identifier, is_valid_uri, validate_app_bridge_message,
+    validate_skill_manifest, validate_skill_revision,
 };
 
 mod artifact;
@@ -93,10 +90,10 @@ pub use resource_edge::{
 };
 pub mod conversation;
 pub use conversation::{
-    CommittedConversation, CommittedConversationTurn, ConversationMessageRecord,
-    ConversationPage, ConversationRecord,
-    ConversationStore, ConversationTurnReceipt, ConversationTurnStore, CreateConversationCommit,
-    CreateConversationTurnCommit, ResolvedConversationHost, SetConversationAgentBinding,
+    CommittedConversation, CommittedConversationTurn, ConversationMessageRecord, ConversationPage,
+    ConversationRecord, ConversationStore, ConversationTurnReceipt, ConversationTurnStore,
+    CreateConversationCommit, CreateConversationTurnCommit, ResolvedConversationHost,
+    SetConversationAgentBinding,
 };
 
 mod effect_evidence;
@@ -1663,7 +1660,10 @@ impl std::fmt::Debug for ActivateConversationAgentSession {
             .field("expected_turn_version", &self.expected_turn_version)
             .field("occurred_at", &self.occurred_at)
             .field("host_instance_id", &self.host_instance_id)
-            .field("native_session_ref_present", &self.native_session_ref.is_some())
+            .field(
+                "native_session_ref_present",
+                &self.native_session_ref.is_some(),
+            )
             .field("session_event", &self.session_event)
             .field("turn_event", &self.turn_event)
             .finish()

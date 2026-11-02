@@ -687,7 +687,8 @@ fn lifecycle_facts(
     connection: &Connection,
     workspace: &str,
     id: &str,
-) -> Result<CoworkerLifecycleFacts, DomainError> {    let is_primary = connection
+) -> Result<CoworkerLifecycleFacts, DomainError> {
+    let is_primary = connection
         .query_row(
             "SELECT primary_coworker_id = ?2 FROM workspaces WHERE workspace_id = ?1",
             params![workspace, id],

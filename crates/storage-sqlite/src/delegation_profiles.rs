@@ -14,7 +14,6 @@ use domain_responsibility::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-
 type DelegationProfileHeadRow = (
     String,
     String,

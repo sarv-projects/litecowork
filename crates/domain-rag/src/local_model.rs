@@ -123,8 +123,8 @@ pub fn agent_module_compatible(
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentModuleCompatibility, LocalModelAvailability, LocalModelInventoryEntry, LocalModelState,
-        agent_module_compatible, resolve_local_model_state,
+        AgentModuleCompatibility, LocalModelAvailability, LocalModelInventoryEntry,
+        LocalModelState, agent_module_compatible, resolve_local_model_state,
     };
 
     fn entry() -> LocalModelInventoryEntry {

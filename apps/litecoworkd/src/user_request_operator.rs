@@ -346,53 +346,59 @@ struct UserRequestPageView {
 async fn list_user_requests(
     State(state): State<UserRequestApiState>,
     headers: HeaderMap,
-    query: Result<axum::extract::Query<UserRequestListQuery>, axum::extract::rejection::QueryRejection>,
+    query: Result<
+        axum::extract::Query<UserRequestListQuery>,
+        axum::extract::rejection::QueryRejection,
+    >,
 ) -> Response {
-    let parsed = (|| -> Result<(String, Option<String>, usize, Option<(String, String)>), Response> {
-        let workspace_id = selected_workspace(&headers)?;
-        let query = query.map_err(|_| invalid_user_request("UserRequest page query is invalid"))?.0;
-        let status = match query.status {
-            Some(value)
-                if matches!(
-                    value.as_str(),
-                    "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED"
-                ) =>
-            {
+    let parsed =
+        (|| -> Result<(String, Option<String>, usize, Option<(String, String)>), Response> {
+            let workspace_id = selected_workspace(&headers)?;
+            let query = query
+                .map_err(|_| invalid_user_request("UserRequest page query is invalid"))?
+                .0;
+            let status = match query.status {
                 Some(value)
-            }
-            Some(_) => return Err(invalid_user_request("UserRequest status is invalid")),
-            None => None,
-        };
-        let limit = query.limit.unwrap_or(50);
-        if !(1..=100).contains(&limit) {
-            return Err(invalid_user_request("UserRequest page limit is invalid"));
-        }
-        let cursor = match query.cursor {
-            None => None,
-            Some(encoded) => {
-                if encoded.is_empty() || encoded.len() > 2048 {
-                    return Err(invalid_user_request("UserRequest page cursor is invalid"));
-                }
-                let bytes = URL_SAFE_NO_PAD
-                    .decode(encoded.as_bytes())
-                    .map_err(|_| invalid_user_request("UserRequest page cursor is invalid"))?;
-                let cursor: UserRequestListCursor = serde_json::from_slice(&bytes)
-                    .map_err(|_| invalid_user_request("UserRequest page cursor is invalid"))?;
-                if cursor.version != 1
-                    || cursor.workspace_id != workspace_id
-                    || cursor.status != status
-                    || cursor.limit != limit
-                    || cursor.request_id.trim().is_empty()
-                    || cursor.request_id.len() > USER_REQUEST_ID_MAX_BYTES
-                    || !valid_cursor_timestamp(&cursor.created_at)
+                    if matches!(
+                        value.as_str(),
+                        "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED"
+                    ) =>
                 {
-                    return Err(invalid_user_request("UserRequest page cursor is invalid"));
+                    Some(value)
                 }
-                Some((cursor.created_at, cursor.request_id))
+                Some(_) => return Err(invalid_user_request("UserRequest status is invalid")),
+                None => None,
+            };
+            let limit = query.limit.unwrap_or(50);
+            if !(1..=100).contains(&limit) {
+                return Err(invalid_user_request("UserRequest page limit is invalid"));
             }
-        };
-        Ok((workspace_id, status, limit, cursor))
-    })();
+            let cursor = match query.cursor {
+                None => None,
+                Some(encoded) => {
+                    if encoded.is_empty() || encoded.len() > 2048 {
+                        return Err(invalid_user_request("UserRequest page cursor is invalid"));
+                    }
+                    let bytes = URL_SAFE_NO_PAD
+                        .decode(encoded.as_bytes())
+                        .map_err(|_| invalid_user_request("UserRequest page cursor is invalid"))?;
+                    let cursor: UserRequestListCursor = serde_json::from_slice(&bytes)
+                        .map_err(|_| invalid_user_request("UserRequest page cursor is invalid"))?;
+                    if cursor.version != 1
+                        || cursor.workspace_id != workspace_id
+                        || cursor.status != status
+                        || cursor.limit != limit
+                        || cursor.request_id.trim().is_empty()
+                        || cursor.request_id.len() > USER_REQUEST_ID_MAX_BYTES
+                        || !valid_cursor_timestamp(&cursor.created_at)
+                    {
+                        return Err(invalid_user_request("UserRequest page cursor is invalid"));
+                    }
+                    Some((cursor.created_at, cursor.request_id))
+                }
+            };
+            Ok((workspace_id, status, limit, cursor))
+        })();
     let (workspace_id, status, limit, cursor) = match parsed {
         Ok(value) => value,
         Err(response) => return add_no_store(response),
@@ -446,13 +452,7 @@ async fn list_user_requests(
     } else {
         None
     };
-    add_no_store(
-        Json(UserRequestPageView {
-            items,
-            next_cursor,
-        })
-        .into_response(),
-    )
+    add_no_store(Json(UserRequestPageView { items, next_cursor }).into_response())
 }
 
 fn invalid_user_request(message: &'static str) -> Response {
@@ -461,11 +461,8 @@ fn invalid_user_request(message: &'static str) -> Response {
 
 fn valid_cursor_timestamp(value: &str) -> bool {
     value.len() <= 64
-        && time::OffsetDateTime::parse(
-            value,
-            &time::format_description::well_known::Rfc3339,
-        )
-        .is_ok()
+        && time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+            .is_ok()
 }
 
 async fn get_user_request_detail(
@@ -856,7 +853,10 @@ mod tests {
         let bytes = axum::body::to_bytes(response.into_body(), 256 * 1024)
             .await
             .expect("list body reads");
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     async fn get(router: Router, workspace_id: &str, request_id: &str) -> Response {
@@ -1182,13 +1182,7 @@ mod tests {
         .status();
         assert_eq!(status, StatusCode::FORBIDDEN);
 
-        let first_response = list(
-            router.clone(),
-            WORKSPACE,
-            "?status=PENDING&limit=2",
-            true,
-        )
-        .await;
+        let first_response = list(router.clone(), WORKSPACE, "?status=PENDING&limit=2", true).await;
         assert_eq!(
             first_response
                 .headers()
@@ -1205,7 +1199,10 @@ mod tests {
         assert!(items[0].get("prompt").is_none());
         assert!(items[0].get("choices").is_none());
         assert!(items[0].get("agent_session_id").is_none());
-        let cursor = first["next_cursor"].as_str().expect("next cursor").to_owned();
+        let cursor = first["next_cursor"]
+            .as_str()
+            .expect("next cursor")
+            .to_owned();
 
         let (status, second) = list_json(
             list(
@@ -1237,13 +1234,10 @@ mod tests {
             .await
             .status();
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        let (status, empty) = list_json(
-            list(router, WORKSPACE, "?status=ANSWERED&limit=10", true).await,
-        )
-        .await;
+        let (status, empty) =
+            list_json(list(router, WORKSPACE, "?status=ANSWERED&limit=10", true).await).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(empty["items"], serde_json::json!([]));
         assert!(empty["next_cursor"].is_null());
     }
-
 }

@@ -16,7 +16,6 @@ use storage_core::{
     VerificationRunActor, VerificationRunEventContext, VerificationRunStore,
 };
 
-
 impl VerificationRunStore for SqliteWorkspaceStore {
     fn start_verification_run(
         &self,

@@ -55,7 +55,9 @@ pub(crate) fn require_write_access(
 ) -> Result<(), StoreError> {
     match workspace_status(connection, workspace_id, principal_id)? {
         Some(status) if status == "ACTIVE" => Ok(()),
-        Some(status) if status == "ARCHIVED" => Err(StoreError::Invalid(WORKSPACE_ARCHIVED.to_owned())),
+        Some(status) if status == "ARCHIVED" => {
+            Err(StoreError::Invalid(WORKSPACE_ARCHIVED.to_owned()))
+        }
         Some(_) => Err(StoreError::Invalid(WORKSPACE_ARCHIVED.to_owned())),
         None => Err(StoreError::NotFound),
     }

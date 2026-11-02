@@ -25,10 +25,9 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 use storage_core::{
-    DiscoverAuthState, DiscoverAvailability, DiscoverCatalogEntry,
-    DiscoverCatalogEntryDetail, DiscoverCompatibility, DiscoverEntryKind, DiscoverEntrySource,
-    DiscoverInstallState, RuntimeCapabilityHostPageRequest, RuntimeCapabilityRef, SkillKind,
-    SkillRecord, SkillStatus,
+    DiscoverAuthState, DiscoverAvailability, DiscoverCatalogEntry, DiscoverCatalogEntryDetail,
+    DiscoverCompatibility, DiscoverEntryKind, DiscoverEntrySource, DiscoverInstallState,
+    RuntimeCapabilityHostPageRequest, RuntimeCapabilityRef, SkillKind, SkillRecord, SkillStatus,
 };
 
 use crate::skill::SqliteSkillStore;
@@ -133,7 +132,8 @@ impl SqliteDiscoverStore {
                 }
             },
         )?;
-        let items: Vec<DiscoverCatalogEntry> = skills.items.iter().map(skill_catalog_entry).collect();
+        let items: Vec<DiscoverCatalogEntry> =
+            skills.items.iter().map(skill_catalog_entry).collect();
         let runtime_capabilities = self.runtime_capability_entries(
             principal_id,
             workspace_id,
@@ -164,8 +164,11 @@ impl SqliteDiscoverStore {
         now: &str,
     ) -> Result<Option<DiscoverCatalogEntryDetail>, StoreError> {
         if let Some(skill_id) = item_ref.strip_prefix("skill:") {
-            let skill = SqliteSkillStore::read_only(self.store.clone())
-                .get_skill(principal_id, workspace_id, skill_id)?;
+            let skill = SqliteSkillStore::read_only(self.store.clone()).get_skill(
+                principal_id,
+                workspace_id,
+                skill_id,
+            )?;
             let Some(skill) = skill else {
                 return Ok(None);
             };

@@ -16,7 +16,6 @@ type ConversationTurnStorageRow = (
 use domain_conversation::{ConversationTurn, TurnCommand};
 use storage_core::conversation::{validate_conversation_record, *};
 
-
 #[derive(Clone)]
 pub struct SqliteConversationStore {
     store: SqliteWorkspaceStore,
@@ -25,6 +24,18 @@ pub struct SqliteConversationStore {
 impl SqliteConversationStore {
     pub fn new(store: SqliteWorkspaceStore) -> Self {
         Self { store }
+    }
+
+    pub fn get_conversation_turn(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<domain_conversation::ConversationTurn>, StoreError> {
+        let workspace = workspace_id.to_owned();
+        let conversation = conversation_id.to_owned();
+        let turn = turn_id.to_owned();
+        self.run(move |connection| load_turn(connection, &workspace, &conversation, &turn))
     }
 
     fn run<T: Send + 'static>(
@@ -141,10 +152,12 @@ impl ConversationStore for SqliteConversationStore {
             .ok_or_else(|| StoreError::Invalid("Conversation version exhausted".to_owned()))?;
         let request_payload = &commit.request.request_payload;
         let binding_matches = match commit.agent_binding_id.as_deref() {
-            Some(binding_id) => request_payload
-                .get("agent_binding_id")
-                .and_then(Value::as_str)
-                == Some(binding_id),
+            Some(binding_id) => {
+                request_payload
+                    .get("agent_binding_id")
+                    .and_then(Value::as_str)
+                    == Some(binding_id)
+            }
             None => request_payload
                 .get("agent_binding_id")
                 .is_some_and(Value::is_null),
@@ -155,17 +168,20 @@ impl ConversationStore for SqliteConversationStore {
             || commit.workspace_id.trim().is_empty()
             || commit.conversation_id.trim().is_empty()
             || commit.expected_version == 0
-            || commit
-                .agent_binding_id
-                .as_ref()
-                .is_some_and(|id| id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control))
+            || commit.agent_binding_id.as_ref().is_some_and(|id| {
+                id.trim().is_empty() || id.len() > 256 || id.chars().any(char::is_control)
+            })
             || request_payload.get("operation").and_then(Value::as_str)
                 != Some("conversation.agent_binding.set.v1")
             || request_payload.get("workspace_id").and_then(Value::as_str)
                 != Some(commit.workspace_id.as_str())
-            || request_payload.get("conversation_id").and_then(Value::as_str)
+            || request_payload
+                .get("conversation_id")
+                .and_then(Value::as_str)
                 != Some(commit.conversation_id.as_str())
-            || request_payload.get("expected_version").and_then(Value::as_u64)
+            || request_payload
+                .get("expected_version")
+                .and_then(Value::as_u64)
                 != Some(commit.expected_version)
             || !binding_matches
             || commit.event.workspace_id != commit.workspace_id
@@ -615,8 +631,10 @@ impl ConversationTurnStore for SqliteConversationStore {
 
         commit.message.created_at = canonicalize_utc_timestamp(&commit.message.created_at)?;
         commit.turn_event.recorded_at = canonicalize_utc_timestamp(&commit.turn_event.recorded_at)?;
-        commit.session_event.recorded_at = canonicalize_utc_timestamp(&commit.session_event.recorded_at)?;
-        commit.message_event.recorded_at = canonicalize_utc_timestamp(&commit.message_event.recorded_at)?;
+        commit.session_event.recorded_at =
+            canonicalize_utc_timestamp(&commit.session_event.recorded_at)?;
+        commit.message_event.recorded_at =
+            canonicalize_utc_timestamp(&commit.message_event.recorded_at)?;
 
         let principal = commit.principal_id.clone();
         let blobs = Arc::clone(&self.store.inner.blobs);
@@ -1222,7 +1240,6 @@ impl ConversationTurnStore for SqliteConversationStore {
             )
         })
     }
-
 }
 
 pub(super) fn conversation_turn_pinned_binding_id(
@@ -1244,8 +1261,12 @@ pub(super) fn conversation_turn_pinned_binding_id(
         .map_err(map_database_error)?
         .ok_or(StoreError::NotFound)?;
 
-    let (event_count, event_payload, event_revision, event_schema_version):
-        (i64, Option<String>, Option<i64>, Option<i64>) = connection
+    let (event_count, event_payload, event_revision, event_schema_version): (
+        i64,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+    ) = connection
         .query_row(
             "SELECT COUNT(*),MIN(payload_json),MIN(entity_revision),MIN(schema_version)
                FROM domain_events
@@ -1297,9 +1318,7 @@ pub(super) fn conversation_turn_pinned_binding_id(
         .filter(|binding| !binding.trim().is_empty())
         .map(str::to_owned)
         .ok_or_else(|| {
-            StoreError::Integrity(
-                "Conversation turn creation event has no AgentBinding".to_owned(),
-            )
+            StoreError::Integrity("Conversation turn creation event has no AgentBinding".to_owned())
         })
 }
 
@@ -1323,8 +1342,12 @@ pub(super) fn resolve_conversation_session_host_in_transaction(
         .map_err(map_database_error)?
         .ok_or(StoreError::NotFound)?;
 
-    let (event_count, event_payload, event_revision, event_schema_version):
-        (i64, Option<String>, Option<i64>, Option<i64>) = connection
+    let (event_count, event_payload, event_revision, event_schema_version): (
+        i64,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+    ) = connection
         .query_row(
             "SELECT COUNT(*),MIN(payload_json),MIN(entity_revision),MIN(schema_version)
                FROM domain_events
@@ -1375,9 +1398,7 @@ pub(super) fn resolve_conversation_session_host_in_transaction(
         .and_then(Value::as_str)
         .filter(|binding| !binding.trim().is_empty())
         .ok_or_else(|| {
-            StoreError::Integrity(
-                "Conversation turn creation event has no AgentBinding".to_owned(),
-            )
+            StoreError::Integrity("Conversation turn creation event has no AgentBinding".to_owned())
         })?;
 
     let resolved: Option<(String, String, String, String)> = connection

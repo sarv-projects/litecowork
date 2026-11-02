@@ -581,7 +581,10 @@ pub fn validate_connector_package_manifest(
         if action.action_key.trim().is_empty() || action.title.trim().is_empty() {
             return Err(DiscoverError::InvalidManifest);
         }
-        if action_keys.iter().any(|key| *key == action.action_key.as_str()) {
+        if action_keys
+            .iter()
+            .any(|key| *key == action.action_key.as_str())
+        {
             return Err(DiscoverError::DuplicateKey);
         }
         action_keys.push(action.action_key.as_str());
@@ -591,7 +594,10 @@ pub fn validate_connector_package_manifest(
         if trigger.trigger_key.trim().is_empty() || trigger.title.trim().is_empty() {
             return Err(DiscoverError::InvalidManifest);
         }
-        if trigger_keys.iter().any(|key| *key == trigger.trigger_key.as_str()) {
+        if trigger_keys
+            .iter()
+            .any(|key| *key == trigger.trigger_key.as_str())
+        {
             return Err(DiscoverError::DuplicateKey);
         }
         trigger_keys.push(trigger.trigger_key.as_str());
@@ -862,10 +868,7 @@ mod tests {
             DiscoverEntrySource::LiteSpmPackage,
         );
         entry.authoritative = true;
-        assert_eq!(
-            entry.validate(),
-            Err(DiscoverError::EntryClaimsAuthority)
-        );
+        assert_eq!(entry.validate(), Err(DiscoverError::EntryClaimsAuthority));
     }
 
     #[test]
@@ -874,7 +877,11 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].capability_id, "acme-invoices:list");
         assert_eq!(summaries[0].operation_class, ConnectorOperationClass::Read);
-        assert!(summaries[0].required_scopes.contains(&"invoices.read".to_owned()));
+        assert!(
+            summaries[0]
+                .required_scopes
+                .contains(&"invoices.read".to_owned())
+        );
     }
 
     #[test]

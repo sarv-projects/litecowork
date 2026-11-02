@@ -101,9 +101,7 @@ pub fn probe_local_provider() -> LocalProviderProbe {
     }
     let user_namespaces_available = user_namespaces_available();
     if !user_namespaces_available {
-        reasons.push(
-            "this host does not permit unprivileged user namespaces".to_owned(),
-        );
+        reasons.push("this host does not permit unprivileged user namespaces".to_owned());
     }
 
     LocalProviderProbe {
@@ -247,10 +245,20 @@ mod tests {
             assert!(probe.reasons.iter().any(|reason| reason.contains("cgroup")));
         }
         if !probe.systemd_available {
-            assert!(probe.reasons.iter().any(|reason| reason.contains("systemd")));
+            assert!(
+                probe
+                    .reasons
+                    .iter()
+                    .any(|reason| reason.contains("systemd"))
+            );
         }
         if !probe.user_namespaces_available {
-            assert!(probe.reasons.iter().any(|reason| reason.contains("namespace")));
+            assert!(
+                probe
+                    .reasons
+                    .iter()
+                    .any(|reason| reason.contains("namespace"))
+            );
         }
     }
 

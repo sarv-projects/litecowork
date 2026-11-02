@@ -425,7 +425,6 @@ async fn routine_run_route_authenticates_replays_and_refuses_changed_or_archived
     assert_eq!(stored_task.3, 1);
 }
 
-
 fn test_run_request(
     workspace_id: &str,
     idempotency_key: Option<&str>,
@@ -514,7 +513,10 @@ async fn automation_test_run_creates_one_ready_task_without_occurrence_or_cursor
     assert_eq!(first["task"]["task"]["routine_id"], ROUTINE);
     assert_eq!(first["task"]["task"]["routine_revision"], 1);
     assert_eq!(first["task"]["task"]["automation_id"], Value::Null);
-    assert_eq!(first["task"]["task"]["automation_occurrence_id"], Value::Null);
+    assert_eq!(
+        first["task"]["task"]["automation_occurrence_id"],
+        Value::Null
+    );
     assert!(first["task"]["task"]["automation_test_run_id"].is_string());
     assert_eq!(first["task"]["current_spec_revision"]["revision"], 1);
     let task_id = first["task"]["task"]["task_id"]
@@ -697,7 +699,6 @@ async fn automation_test_run_creates_one_ready_task_without_occurrence_or_cursor
     assert!(stored.3.is_some());
 }
 
-
 fn status_request(
     path: &str,
     workspace_id: &str,
@@ -712,7 +713,9 @@ fn status_request(
     if let Some(version) = if_match {
         builder = builder.header("if-match", version);
     }
-    let mut request = builder.body(Body::empty()).expect("Automation status request");
+    let mut request = builder
+        .body(Body::empty())
+        .expect("Automation status request");
     if authenticated {
         request.extensions_mut().insert(AuthenticatedLocalPeer);
     }
@@ -823,7 +826,11 @@ async fn capability_commands_require_an_idempotency_key_and_stay_truthful() {
         .body(Body::from(body.clone()))
         .expect("capability request builds");
     request.extensions_mut().insert(AuthenticatedLocalPeer);
-    let response = router.clone().oneshot(request).await.expect("router responds");
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("router responds");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let mut request = Request::post("/v1/capabilities/cap-1/connect-or-install")
@@ -833,7 +840,11 @@ async fn capability_commands_require_an_idempotency_key_and_stay_truthful() {
         .body(Body::from(body.clone()))
         .expect("capability request builds");
     request.extensions_mut().insert(AuthenticatedLocalPeer);
-    let response = router.clone().oneshot(request).await.expect("router responds");
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("router responds");
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
         .await

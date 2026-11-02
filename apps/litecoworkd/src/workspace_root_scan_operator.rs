@@ -1315,7 +1315,10 @@ mod route_tests {
         }
         let store = SqliteWorkspaceStore::open(
             directory.path().join("state.sqlite3"),
-            Arc::new(FileBlobStore::new(directory.path().join("blobs"), RouteTestKeys)),
+            Arc::new(FileBlobStore::new(
+                directory.path().join("blobs"),
+                RouteTestKeys,
+            )),
             SqliteConfig {
                 writer_queue_capacity: 8,
                 busy_timeout: Duration::from_secs(2),
@@ -1343,7 +1346,10 @@ mod route_tests {
                 RuntimeRecord {
                     runtime_id: RUNTIME.to_owned(),
                     device_identity: DeviceIdentityRecord {
-                        device_id: format!("ed25519-sha256:{}", hex::encode(Sha256::digest(public_key))),
+                        device_id: format!(
+                            "ed25519-sha256:{}",
+                            hex::encode(Sha256::digest(public_key))
+                        ),
                         public_key: format!("ed25519:{}", hex::encode(public_key)),
                         key_version: 1,
                         issued_at: NOW.to_owned(),
@@ -1598,11 +1604,13 @@ mod route_tests {
     #[tokio::test]
     async fn a_malformed_observation_cursor_is_never_cacheable() {
         let fixture = fixture();
-        let request = Request::get(format!("/v1/workspace-roots/{ROOT}/observations?cursor=not-a-cursor"))
-            .header("x-workspace-id", WORKSPACE)
-            .header("if-match", "1")
-            .body(Body::empty())
-            .expect("observation request builds");
+        let request = Request::get(format!(
+            "/v1/workspace-roots/{ROOT}/observations?cursor=not-a-cursor"
+        ))
+        .header("x-workspace-id", WORKSPACE)
+        .header("if-match", "1")
+        .body(Body::empty())
+        .expect("observation request builds");
         let response = routes()
             .with_state(fixture.state)
             .oneshot(request)

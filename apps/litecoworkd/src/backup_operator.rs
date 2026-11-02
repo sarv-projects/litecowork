@@ -117,8 +117,8 @@ fn optional<'a>(options: &'a [(String, String)], name: &str) -> Option<&'a str> 
 /// The passphrase is never echoed. A missing or empty file is an error: an
 /// empty passphrase would produce an archive that anyone can open.
 fn read_passphrase(path: &Path) -> Result<BackupPassphrase, String> {
-    let bytes = fs::read(path)
-        .map_err(|error| format!("could not read the passphrase file: {error}"))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("could not read the passphrase file: {error}"))?;
     let text = String::from_utf8(bytes)
         .map_err(|_| "the passphrase file is not valid UTF-8".to_owned())?;
     let trimmed = text.trim_end_matches(['\r', '\n']);
@@ -234,6 +234,7 @@ fn now_timestamp() -> String {
 }
 
 fn render(value: Value) -> String {
-    serde_json::to_string_pretty(&value)
-        .unwrap_or_else(|_| "{\"status\":\"error\",\"error\":\"could not encode the result\"}".to_owned())
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| {
+        "{\"status\":\"error\",\"error\":\"could not encode the result\"}".to_owned()
+    })
 }

@@ -166,7 +166,10 @@ fn decode_cursor(encoded: &str, workspace: &str) -> Result<(String, String), Res
     }
     let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| invalid())?;
     let cursor: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    let version = cursor.get("version").and_then(serde_json::Value::as_u64).unwrap_or(0);
+    let version = cursor
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
     let cursor_workspace = cursor
         .get("workspace_id")
         .and_then(serde_json::Value::as_str)
@@ -274,9 +277,11 @@ async fn search_discover(
         .map_err(|_| unavailable())?;
     let items: Vec<DiscoverItemView> = page.items.iter().map(item_view).collect();
     let next_cursor = match page.next_cursor {
-        Some((created_at, entity_id)) => {
-            Some(encode_cursor(&workspace.workspace_id, &created_at, &entity_id)?)
-        }
+        Some((created_at, entity_id)) => Some(encode_cursor(
+            &workspace.workspace_id,
+            &created_at,
+            &entity_id,
+        )?),
         None => None,
     };
     Ok(no_store(
@@ -284,11 +289,7 @@ async fn search_discover(
             items,
             next_cursor,
             provider_status: page.provider_status,
-            runtime_capabilities: page
-                .runtime_capabilities
-                .iter()
-                .map(item_view)
-                .collect(),
+            runtime_capabilities: page.runtime_capabilities.iter().map(item_view).collect(),
         })
         .into_response(),
     ))

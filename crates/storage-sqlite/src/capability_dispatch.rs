@@ -22,7 +22,6 @@ use storage_core::{
     EffectEvidenceEventContext,
 };
 
-
 #[derive(Clone)]
 pub struct SqliteCapabilityDispatchStore {
     store: SqliteWorkspaceStore,
@@ -1327,8 +1326,8 @@ fn timestamp_is_future(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use storage_core::{CapabilityDispatchEvents, TrustDispatchDecision};
     use std::time::Duration;
+    use storage_core::{CapabilityDispatchEvents, TrustDispatchDecision};
 
     const AT: &str = "2026-10-20T10:00:00Z";
     const FUTURE: &str = "2099-01-01T00:00:00Z";
@@ -1953,7 +1952,9 @@ mod tests {
                 message.contains("INVOCATION_DISPATCH_REQUIRES_CONSUMED_APPROVAL"),
                 "unexpected rejection: {message}"
             ),
-            other => panic!("a dispatch without a consumed Approval must be refused, got {other:?}"),
+            other => {
+                panic!("a dispatch without a consumed Approval must be refused, got {other:?}")
+            }
         }
         assert_eq!(
             count(&connection, "approval_uses"),

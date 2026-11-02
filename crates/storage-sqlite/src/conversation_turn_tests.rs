@@ -798,7 +798,6 @@ fn unavailable_admission_settles_the_durable_turn_and_exact_replay_writes_nothin
     );
 }
 
-
 #[test]
 fn conversation_turn_creation_serializes_appends_from_the_same_stale_snapshot() {
     let (directory, store, first) = fixture();
@@ -842,7 +841,8 @@ fn conversation_turn_creation_serializes_appends_from_the_same_stale_snapshot() 
         .create_conversation_turn(second)
         .expect("a concurrent append must be serialized at the current revision");
 
-    let connection = Connection::open(state_database(&directory)).expect("inspect serialized turns");
+    let connection =
+        Connection::open(state_database(&directory)).expect("inspect serialized turns");
     let (conversation_version, message_revision, messages, turns): (i64, i64, i64, i64) = connection
         .query_row(
             "SELECT
@@ -854,9 +854,11 @@ fn conversation_turn_creation_serializes_appends_from_the_same_stale_snapshot() 
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("read serialized Conversation and event revisions");
-    assert_eq!((conversation_version, message_revision, messages, turns), (3, 3, 2, 2));
+    assert_eq!(
+        (conversation_version, message_revision, messages, turns),
+        (3, 3, 2, 2)
+    );
 }
-
 
 fn insert_context_message_event(
     connection: &Connection,
@@ -896,17 +898,37 @@ fn switched_agent_context_is_a_turn_pinned_prefix_of_the_same_conversation() {
         .create_conversation_turn(commit)
         .expect("persist the turn for the newly selected agent");
     let connection = Connection::open(state_database(&directory)).expect("reopen conversation DB");
-    connection.execute(
-        "UPDATE domain_events SET entity_revision=4 WHERE event_id='event-user-message'",
-        [],
-    ).unwrap();
-    insert_context_message_event(&connection, "event-old-user", "message-old-user", 2, 900_001);
-    insert_context_message_event(&connection, "event-old-agent", "message-old-agent", 3, 900_002);
+    connection
+        .execute(
+            "UPDATE domain_events SET entity_revision=4 WHERE event_id='event-user-message'",
+            [],
+        )
+        .unwrap();
+    insert_context_message_event(
+        &connection,
+        "event-old-user",
+        "message-old-user",
+        2,
+        900_001,
+    );
+    insert_context_message_event(
+        &connection,
+        "event-old-agent",
+        "message-old-agent",
+        3,
+        900_002,
+    );
     connection.execute(
         "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,agent_session_id,agent_binding_id,turn_id,content_json,resource_refs_json,source_channel_ref_json,created_at) VALUES('aaa-later-message','conversation-turn','{}','AGENT','private-session-b','binding-turn','turn-later','[{\"kind\":\"TEXT\",\"text\":\"Future answer must not leak backwards\"}]','[]',NULL,'2026-10-09T12:00:00Z')",
         [],
     ).unwrap();
-    insert_context_message_event(&connection, "event-later-agent", "aaa-later-message", 5, 900_003);
+    insert_context_message_event(
+        &connection,
+        "event-later-agent",
+        "aaa-later-message",
+        5,
+        900_003,
+    );
 
     let context = SqliteConversationStore::new(store)
         .load_conversation_context_for_turn(
@@ -921,7 +943,11 @@ fn switched_agent_context_is_a_turn_pinned_prefix_of_the_same_conversation() {
     assert_eq!(context.target_agent_binding_id, "binding-turn");
     assert_eq!(context.through_message_id, "message-turn");
     assert_eq!(
-        context.messages.iter().map(|message| message.message_id.as_str()).collect::<Vec<_>>(),
+        context
+            .messages
+            .iter()
+            .map(|message| message.message_id.as_str())
+            .collect::<Vec<_>>(),
         ["message-old-user", "message-old-agent", "message-turn"]
     );
     let serialized = serde_json::to_string(&context).expect("serialize context package");

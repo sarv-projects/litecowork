@@ -500,7 +500,10 @@ mod tests {
         )
         .expect("admitted");
         assert_eq!(admitted.actor, BrowserControlOwner::Agent);
-        assert_eq!(admitted.execution_method, Some(BrowserExecutionMethod::Navigation));
+        assert_eq!(
+            admitted.execution_method,
+            Some(BrowserExecutionMethod::Navigation)
+        );
     }
 
     #[test]
@@ -594,13 +597,8 @@ mod tests {
     #[test]
     fn takeover_advances_the_epoch_and_moves_ownership_to_the_user() {
         let user = AuthenticatedPrincipal::user("principal-1");
-        let taken = request_takeover(
-            &command(ClaimedActor::User),
-            &user,
-            &lease(),
-            1_000,
-        )
-        .expect("takeover");
+        let taken = request_takeover(&command(ClaimedActor::User), &user, &lease(), 1_000)
+            .expect("takeover");
         assert_eq!(taken.owner, BrowserControlOwner::User);
         assert_eq!(taken.control_epoch, 5);
         assert_eq!(taken.owner_principal_id.as_deref(), Some("principal-1"));
@@ -640,13 +638,8 @@ mod tests {
     #[test]
     fn a_queued_agent_action_is_discarded_after_takeover() {
         let user = AuthenticatedPrincipal::user("principal-1");
-        let taken = request_takeover(
-            &command(ClaimedActor::User),
-            &user,
-            &lease(),
-            1_000,
-        )
-        .expect("takeover");
+        let taken = request_takeover(&command(ClaimedActor::User), &user, &lease(), 1_000)
+            .expect("takeover");
         // The queued agent command still carries the pre-takeover epoch.
         assert_eq!(
             admit_action(
@@ -686,7 +679,10 @@ mod tests {
         .expect("returned");
         assert_eq!(returned.owner, BrowserControlOwner::Agent);
         assert_eq!(returned.control_epoch, taken.control_epoch + 1);
-        assert_eq!(returned.observation_revision, observation.observation_revision);
+        assert_eq!(
+            returned.observation_revision,
+            observation.observation_revision
+        );
     }
 
     #[test]
@@ -698,15 +694,7 @@ mod tests {
         return_command.expected_epoch = taken.control_epoch;
 
         assert_eq!(
-            return_to_agent(
-                &return_command,
-                &user,
-                &taken,
-                None,
-                1_200,
-                5_000
-            )
-            .unwrap_err(),
+            return_to_agent(&return_command, &user, &taken, None, 1_200, 5_000).unwrap_err(),
             BrowserControlError::ObservationNotUsable
         );
 

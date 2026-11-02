@@ -146,13 +146,12 @@ pub fn evaluate_drift_state(inputs: &DriftInputs) -> DriftState {
         return DriftState::Drifted;
     }
     if inputs.transient_failures > 0
-        || inputs
-            .dependencies
-            .iter()
-            .any(|dependency| matches!(
+        || inputs.dependencies.iter().any(|dependency| {
+            matches!(
                 dependency.state,
                 DependencyHealthState::Degraded | DependencyHealthState::Unhealthy
-            ))
+            )
+        })
     {
         return DriftState::Warning;
     }

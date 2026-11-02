@@ -11,9 +11,7 @@
 
 use std::sync::Arc;
 
-use storage_core::{
-    ResourceDetailRecord, ResourceStore, ResourceTextSearchRecord, StoreError,
-};
+use storage_core::{ResourceDetailRecord, ResourceStore, ResourceTextSearchRecord, StoreError};
 
 use crate::grounding::{
     RetrievalCitation, RetrievalWarning, SegmentLocator, TextSpan, detect_embedded_instructions,
@@ -149,19 +147,16 @@ impl RetrievalProvider for LocalLexicalRetrievalProvider {
                         .to_owned(),
                 });
             }
-            if !request
-                .scope
-                .allows(&record.result.summary.resource_id, &record.resource_revision_id)
-            {
+            if !request.scope.allows(
+                &record.result.summary.resource_id,
+                &record.resource_revision_id,
+            ) {
                 continue;
             }
-            if !self
-                .is_still_authorized(&request.workspace_id, &record)?
-            {
+            if !self.is_still_authorized(&request.workspace_id, &record)? {
                 continue;
             }
-            let Some(citation) =
-                build_citation(&record, &self.provider_version, request.budget)?
+            let Some(citation) = build_citation(&record, &self.provider_version, request.budget)?
             else {
                 continue;
             };
@@ -225,7 +220,10 @@ pub fn context_document_is_active(detail: &ResourceDetailRecord) -> bool {
     let Some(context_document) = detail.context_document.as_ref() else {
         return true;
     };
-    match context_document.get("status").and_then(|value| value.as_str()) {
+    match context_document
+        .get("status")
+        .and_then(|value| value.as_str())
+    {
         Some(status) => status == "ACTIVE",
         None => false,
     }
@@ -361,7 +359,9 @@ mod tests {
         assert!(context_document_is_active(&detail(Some("ACTIVE"))));
         assert!(!context_document_is_active(&detail(Some("REVOKED"))));
         assert!(!context_document_is_active(&detail(Some("DELETED"))));
-        assert!(!context_document_is_active(&detail(Some("DELETION_PENDING"))));
+        assert!(!context_document_is_active(&detail(Some(
+            "DELETION_PENDING"
+        ))));
     }
 
     #[test]
@@ -389,9 +389,7 @@ mod tests {
     #[test]
     fn only_the_qualified_parser_generation_can_be_compared() {
         assert!(parser_generation_is_compatible("litecowork.plain-text.v1"));
-        assert!(!parser_generation_is_compatible(
-            "litecowork.plain-text.v0"
-        ));
+        assert!(!parser_generation_is_compatible("litecowork.plain-text.v0"));
         assert!(!parser_generation_is_compatible(""));
     }
 }

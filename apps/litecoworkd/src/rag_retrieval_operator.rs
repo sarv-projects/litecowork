@@ -16,12 +16,12 @@ use std::sync::Arc;
 
 use axum::extract::Path;
 use domain_rag::{
-    AuthorizedResourceRef, GroundedStatus, InsufficientEvidenceReason, LocalLexicalRetrievalProvider,
-    ProviderStatus, ResourceIndexFacts, RetrievalBudget, RetrievalError, RetrievalProvider,
-    RetrievalRequest, RetrievalScope, resolve_index_state,
+    AuthorizedResourceRef, GroundedStatus, InsufficientEvidenceReason,
+    LocalLexicalRetrievalProvider, ProviderStatus, ResourceIndexFacts, RetrievalBudget,
+    RetrievalError, RetrievalProvider, RetrievalRequest, RetrievalScope, resolve_index_state,
 };
 use serde::{Deserialize, Serialize};
-use storage_core::{ResourceTextIndexSkipReason, ResourceStore};
+use storage_core::{ResourceStore, ResourceTextIndexSkipReason};
 
 pub(super) fn routes() -> Router<ApiState> {
     Router::new()
@@ -645,12 +645,8 @@ mod tests {
         );
         let router = router_for(store, OWNER);
 
-        let response = post_retrieval(
-            &router,
-            Some(WORKSPACE),
-            json!({"query": "absent-term"}),
-        )
-        .await;
+        let response =
+            post_retrieval(&router, Some(WORKSPACE), json!({"query": "absent-term"})).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), 256 * 1024)
             .await
@@ -659,7 +655,10 @@ mod tests {
         assert_eq!(body["status"], "INSUFFICIENT_EVIDENCE");
         assert_eq!(body["insufficientReason"], "NO_AUTHORIZED_MATCH");
         assert!(
-            body["citations"].as_array().expect("citations array").is_empty(),
+            body["citations"]
+                .as_array()
+                .expect("citations array")
+                .is_empty(),
             "an unsupported answer must not carry an unreferenced citation"
         );
     }
@@ -688,12 +687,7 @@ mod tests {
         );
         let router = router_for(store, OWNER);
 
-        let response = post_retrieval(
-            &router,
-            Some(WORKSPACE),
-            json!({"query": "needle"}),
-        )
-        .await;
+        let response = post_retrieval(&router, Some(WORKSPACE), json!({"query": "needle"})).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), 256 * 1024)
             .await
@@ -723,12 +717,8 @@ mod tests {
         );
 
         let other_router = router_for(store.clone(), OTHER_OWNER);
-        let denied = post_retrieval(
-            &other_router,
-            Some(WORKSPACE),
-            json!({"query": "needle"}),
-        )
-        .await;
+        let denied =
+            post_retrieval(&other_router, Some(WORKSPACE), json!({"query": "needle"})).await;
         assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 
         let router = router_for(store, OWNER);
@@ -776,12 +766,7 @@ mod tests {
         drop(connection);
 
         let router = router_for(store.clone(), OWNER);
-        let active = post_retrieval(
-            &router,
-            Some(WORKSPACE),
-            json!({"query": "needle"}),
-        )
-        .await;
+        let active = post_retrieval(&router, Some(WORKSPACE), json!({"query": "needle"})).await;
         assert_eq!(active.status(), StatusCode::OK);
         let body = to_bytes(active.into_body(), 256 * 1024)
             .await
@@ -808,12 +793,7 @@ mod tests {
             })
             .expect("the owner revokes the ContextDocument");
 
-        let revoked = post_retrieval(
-            &router,
-            Some(WORKSPACE),
-            json!({"query": "needle"}),
-        )
-        .await;
+        let revoked = post_retrieval(&router, Some(WORKSPACE), json!({"query": "needle"})).await;
         assert_eq!(revoked.status(), StatusCode::OK);
         let body = to_bytes(revoked.into_body(), 256 * 1024)
             .await
@@ -824,13 +804,17 @@ mod tests {
             "a revoked Resource must never be served from the local index"
         );
         assert!(
-            body["citations"].as_array().expect("citations array").is_empty(),
+            body["citations"]
+                .as_array()
+                .expect("citations array")
+                .is_empty(),
             "a revoked Resource must not produce a citation"
         );
     }
 
     #[tokio::test]
-    async fn the_index_state_route_reports_ready_stale_and_not_indexable() {        let directory = tempfile::tempdir().expect("temporary retrieval directory");
+    async fn the_index_state_route_reports_ready_stale_and_not_indexable() {
+        let directory = tempfile::tempdir().expect("temporary retrieval directory");
         let store = test_store(&directory);
         create_workspace(&store, WORKSPACE, OWNER);
         create_text_resource(
@@ -867,18 +851,16 @@ mod tests {
 
         let response = router
             .clone()
-            .oneshot(
-                {
-                    let mut request = Request::builder()
-                        .method(axum::http::Method::GET)
-                        .uri("/v1/capabilities/local-models")
-                        .header("x-workspace-id", WORKSPACE)
-                        .body(Body::empty())
-                        .expect("request builds");
-                    request.extensions_mut().insert(AuthenticatedLocalPeer);
-                    request
-                },
-            )
+            .oneshot({
+                let mut request = Request::builder()
+                    .method(axum::http::Method::GET)
+                    .uri("/v1/capabilities/local-models")
+                    .header("x-workspace-id", WORKSPACE)
+                    .body(Body::empty())
+                    .expect("request builds");
+                request.extensions_mut().insert(AuthenticatedLocalPeer);
+                request
+            })
             .await
             .expect("router responds");
         assert_eq!(response.status(), StatusCode::OK);

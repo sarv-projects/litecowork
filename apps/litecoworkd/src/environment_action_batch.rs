@@ -131,10 +131,7 @@ pub fn plan_batch(
                 .iter()
                 .any(|candidate| candidate.member_id == *dependency)
         }) {
-            refused.push((
-                member.member_id.clone(),
-                BatchRefusal::UnknownDependency,
-            ));
+            refused.push((member.member_id.clone(), BatchRefusal::UnknownDependency));
             continue;
         }
         if member
@@ -153,10 +150,7 @@ pub fn plan_batch(
             .find(|(member_id, _)| member_id == &member.member_id)
             .map(|(_, digest)| digest.as_str());
         if precondition != Some(member.precondition_digest.as_str()) {
-            refused.push((
-                member.member_id.clone(),
-                BatchRefusal::StalePrecondition,
-            ));
+            refused.push((member.member_id.clone(), BatchRefusal::StalePrecondition));
             continue;
         }
         if member.estimated_duration_ms > remaining {
@@ -412,12 +406,7 @@ mod tests {
         batch
             .members
             .iter()
-            .map(|member| {
-                (
-                    member.member_id.clone(),
-                    member.precondition_digest.clone(),
-                )
-            })
+            .map(|member| (member.member_id.clone(), member.precondition_digest.clone()))
             .collect()
     }
 
@@ -438,10 +427,7 @@ mod tests {
         assert_eq!(plan.admitted, vec!["m1", "m2"]);
         assert_eq!(
             plan.refused,
-            vec![(
-                "m3".to_owned(),
-                BatchRefusal::InsufficientDeadlineBudget
-            )]
+            vec![("m3".to_owned(), BatchRefusal::InsufficientDeadlineBudget)]
         );
     }
 
@@ -451,10 +437,11 @@ mod tests {
         let plan = plan_batch(&batch, 10_000, 16, &preconditions(&batch));
         assert!(plan.admitted.is_empty());
         assert_eq!(plan.refused.len(), 3);
-        assert!(plan
-            .refused
-            .iter()
-            .all(|(_, reason)| *reason == BatchRefusal::DeadlinePassed));
+        assert!(
+            plan.refused
+                .iter()
+                .all(|(_, reason)| *reason == BatchRefusal::DeadlinePassed)
+        );
     }
 
     #[test]
@@ -466,10 +453,7 @@ mod tests {
         assert_eq!(plan.admitted, vec!["m1", "m3"]);
         assert_eq!(
             plan.refused,
-            vec![(
-                "m2".to_owned(),
-                BatchRefusal::StalePrecondition
-            )]
+            vec![("m2".to_owned(), BatchRefusal::StalePrecondition)]
         );
     }
 
@@ -614,12 +598,8 @@ mod tests {
             },
         };
         let mut holds = vec![hold("older", 1_000), hold("newer", 2_000)];
-        let evicted = evict_under_pressure(
-            &mut holds,
-            3_000,
-            PRESSURE_BYTES_PER_HOLD,
-            "sha256:config",
-        );
+        let evicted =
+            evict_under_pressure(&mut holds, 3_000, PRESSURE_BYTES_PER_HOLD, "sha256:config");
         assert_eq!(evicted, vec!["older".to_owned()]);
         assert_eq!(holds.len(), 1);
         assert_eq!(holds[0].hold_id, "newer");

@@ -10,7 +10,7 @@ use storage_core::{
     DemonstrationSessionRecord, DemonstrationStatus, McpAppFrameRecord, SensitiveRegionPolicy,
     SkillCapabilityRef, SkillKind, SkillOrigin, SkillPlaceholder, SkillPlaceholderKind,
     SkillProposalDecision, SkillProposalRecord, SkillProposalReviewer, SkillProposalSource,
-    SkillProposalStatus, SkillRedactionStatus, SkillRedactionSummary, SkillRecord, SkillRevision,
+    SkillProposalStatus, SkillRecord, SkillRedactionStatus, SkillRedactionSummary, SkillRevision,
     SkillStatus,
 };
 
@@ -181,7 +181,9 @@ fn seed_task_and_artifact(
     connection
         .pragma_update(None, "foreign_keys", true)
         .expect("enable foreign keys");
-    let tx = connection.unchecked_transaction().expect("seed transaction");
+    let tx = connection
+        .unchecked_transaction()
+        .expect("seed transaction");
     tx.execute(
         "INSERT INTO agent_profiles(agent_profile_id,provider_key,display_name,discovered_at) VALUES ('profile-1','TEST','Test profile','2026-10-20T10:00:00Z')",
         [],
@@ -535,13 +537,20 @@ fn an_issued_app_frame_is_durable_event_backed_and_idempotent() {
         .expect("the frame is issued");
     assert!(!committed.replayed);
     assert_eq!(committed.frame.version, 1);
-    assert_eq!(committed.frame.descriptor.sandbox, vec!["allow-scripts".to_owned()]);
+    assert_eq!(
+        committed.frame.descriptor.sandbox,
+        vec!["allow-scripts".to_owned()]
+    );
     assert!(
         !committed.frame.descriptor.csp.contains("allow-same-origin"),
         "the frame must never allow same-origin"
     );
     assert!(
-        committed.frame.descriptor.csp.contains("default-src 'none'"),
+        committed
+            .frame
+            .descriptor
+            .csp
+            .contains("default-src 'none'"),
         "the frame must default to denying every source"
     );
 
@@ -683,7 +692,8 @@ fn an_issued_app_frame_survives_a_restart() {
 }
 
 #[test]
-fn a_foreign_workspace_never_reads_or_writes_a_skill() {    let directory = tempfile::tempdir().expect("temporary store directory");
+fn a_foreign_workspace_never_reads_or_writes_a_skill() {
+    let directory = tempfile::tempdir().expect("temporary store directory");
     let store = test_store(&directory);
     create_workspace(&store, WORKSPACE, OWNER);
     create_workspace(&store, "workspace-other", OTHER_OWNER);
@@ -833,15 +843,18 @@ fn an_owner_approval_never_activates_or_publishes_a_skill() {
 
     let connection = Connection::open(state_database(&directory)).expect("inspect store");
     let activations: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM capability_activations",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM capability_activations", [], |row| {
+            row.get(0)
+        })
         .expect("read activation count");
-    assert_eq!(activations, 0, "approving a proposal must not activate a Skill");
+    assert_eq!(
+        activations, 0,
+        "approving a proposal must not activate a Skill"
+    );
     let grants: i64 = connection
-        .query_row("SELECT COUNT(*) FROM capability_grants", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM capability_grants", [], |row| {
+            row.get(0)
+        })
         .expect("read grant count");
     assert_eq!(grants, 0, "approving a proposal must not grant authority");
 }
@@ -988,10 +1001,7 @@ fn a_demonstration_capture_stops_at_its_action_cap() {
             now: TIMESTAMP.to_owned(),
         })
         .expect("the first observation commits");
-    assert!(matches!(
-        first,
-        DemonstrationAppendOutcome::Recorded { .. }
-    ));
+    assert!(matches!(first, DemonstrationAppendOutcome::Recorded { .. }));
 
     let capped = adapter(&store, "event-demonstration-cap-2")
         .append_demonstration_action(DemonstrationAppendRequest {
@@ -1002,10 +1012,7 @@ fn a_demonstration_capture_stops_at_its_action_cap() {
             now: TIMESTAMP.to_owned(),
         })
         .expect("the capped observation is refused");
-    assert!(matches!(
-        capped,
-        DemonstrationAppendOutcome::Refused { .. }
-    ));
+    assert!(matches!(capped, DemonstrationAppendOutcome::Refused { .. }));
 }
 
 #[test]

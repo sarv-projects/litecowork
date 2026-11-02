@@ -419,13 +419,12 @@ async fn get_routine_health(
                 .unwrap_or_default(),
         )
     };
-    let drift_state = domain_responsibility::evaluate_drift_state(
-        &domain_responsibility::DriftInputs {
+    let drift_state =
+        domain_responsibility::evaluate_drift_state(&domain_responsibility::DriftInputs {
             explicit_drift_evidence: Vec::new(),
             transient_failures,
             dependencies: Vec::new(),
-        },
-    );
+        });
     Ok(no_store(
         Json(domain_responsibility::RoutineHealth {
             routine_id: facts.routine_id.clone(),

@@ -2176,9 +2176,9 @@ mod bubblewrap;
 mod provider_probe;
 
 pub use provider_probe::{
-    BubblewrapCandidate, LocalProviderProbe, bubblewrap_binary_is_trusted,
-    cgroup_v2_available, current_cgroup_path, operating_system_build, probe_local_provider,
-    systemd_available, user_namespaces_available,
+    BubblewrapCandidate, LocalProviderProbe, bubblewrap_binary_is_trusted, cgroup_v2_available,
+    current_cgroup_path, operating_system_build, probe_local_provider, systemd_available,
+    user_namespaces_available,
 };
 
 #[cfg(target_os = "linux")]

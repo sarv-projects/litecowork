@@ -4965,10 +4965,7 @@ fn ensure_workspace_owner_for(
 /// This is the default for Workspace routes. A module that reuses it inherits the
 /// stricter check rather than silently omitting it, which is how eight hand-written
 /// copies of this policy had already diverged.
-fn authorized_workspace(
-    state: &ApiState,
-    headers: &HeaderMap,
-) -> Result<Workspace, Response> {
+fn authorized_workspace(state: &ApiState, headers: &HeaderMap) -> Result<Workspace, Response> {
     let workspace_id = selected_workspace(headers)?;
     let workspace = ensure_workspace_owner(state, &workspace_id)?;
     let binding = state
@@ -5002,10 +4999,7 @@ fn authorized_workspace(
 /// Workspace-scoped execution, so `docs/SERVICES.md` does not require an ACTIVE
 /// `RuntimeWorkspaceBinding` for them. The exception is named separately so that
 /// skipping the binding check is a recorded decision rather than a missing guard.
-fn authorized_data_workspace(
-    state: &ApiState,
-    headers: &HeaderMap,
-) -> Result<Workspace, Response> {
+fn authorized_data_workspace(state: &ApiState, headers: &HeaderMap) -> Result<Workspace, Response> {
     let workspace_id = selected_workspace(headers)?;
     ensure_workspace_owner(state, &workspace_id)
 }

@@ -21,7 +21,7 @@
 //! the other shared typed records until the module is relocated.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Bounded proposed-payload size. A candidate body is Resource-backed; the payload
 /// this module inspects is a bounded preview of it.
@@ -1274,9 +1274,11 @@ mod tests {
         let evaluation = evaluate_learning_candidate(&base_candidate(), &base_context());
         assert_eq!(evaluation.disposition, LearningDisposition::AutoCommit);
         assert_eq!(evaluation.state, LearningCandidateState::AutoCommitEligible);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"ELIGIBLE_FOR_AUTO_COMMIT".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"ELIGIBLE_FOR_AUTO_COMMIT".to_owned())
+        );
     }
 
     #[test]
@@ -1286,9 +1288,11 @@ mod tests {
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::NeedsReview);
         assert_eq!(evaluation.state, LearningCandidateState::NeedsReview);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"REVIEW_ALL_POLICY".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"REVIEW_ALL_POLICY".to_owned())
+        );
     }
 
     #[test]
@@ -1297,9 +1301,11 @@ mod tests {
         context.payload.certainty = LearningCertainty::Inferred;
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::NeedsReview);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"INFERRED_REQUIRES_REVIEW".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"INFERRED_REQUIRES_REVIEW".to_owned())
+        );
     }
 
     #[test]
@@ -1312,9 +1318,10 @@ mod tests {
         candidate.confidence = Some(0.5);
         let low = evaluate_learning_candidate(&candidate, &context);
         assert_eq!(low.disposition, LearningDisposition::NeedsReview);
-        assert!(low
-            .reason_codes
-            .contains(&"INFERRED_CONFIDENCE_BELOW_THRESHOLD".to_owned()));
+        assert!(
+            low.reason_codes
+                .contains(&"INFERRED_CONFIDENCE_BELOW_THRESHOLD".to_owned())
+        );
 
         candidate.confidence = Some(0.95);
         let high = evaluate_learning_candidate(&candidate, &context);
@@ -1327,9 +1334,11 @@ mod tests {
         context.conversation_class = Some(LearningConversationClass::Temporary);
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"TEMPORARY_CONVERSATION".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"TEMPORARY_CONVERSATION".to_owned())
+        );
     }
 
     #[test]
@@ -1342,9 +1351,11 @@ mod tests {
         context.conversation_class = Some(LearningConversationClass::Temporary);
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"TEMPORARY_CONVERSATION".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"TEMPORARY_CONVERSATION".to_owned())
+        );
     }
 
     #[test]
@@ -1366,9 +1377,11 @@ mod tests {
                 LearningDisposition::Rejected,
                 "channel {channel:?} must not create memory"
             );
-            assert!(evaluation
-                .reason_codes
-                .contains(&"UNTRUSTED_SOURCE_CHANNEL".to_owned()));
+            assert!(
+                evaluation
+                    .reason_codes
+                    .contains(&"UNTRUSTED_SOURCE_CHANNEL".to_owned())
+            );
         }
     }
 
@@ -1380,9 +1393,11 @@ mod tests {
         context.source_channel = LearningSourceChannel::VerifiedTaskOutcome;
         let evaluation = evaluate_learning_candidate(&candidate, &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"SOURCE_KIND_NOT_ELIGIBLE".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"SOURCE_KIND_NOT_ELIGIBLE".to_owned())
+        );
     }
 
     #[test]
@@ -1392,9 +1407,11 @@ mod tests {
         candidate.source_kind = LearningSourceKind::UserFeedback;
         let evaluation = evaluate_learning_candidate(&candidate, &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"SOURCE_KIND_CHANNEL_MISMATCH".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"SOURCE_KIND_CHANNEL_MISMATCH".to_owned())
+        );
     }
 
     #[test]
@@ -1409,9 +1426,11 @@ mod tests {
             candidate.kind = kind;
             let evaluation = evaluate_learning_candidate(&candidate, &base_context());
             assert_eq!(evaluation.disposition, LearningDisposition::NeedsReview);
-            assert!(evaluation
-                .reason_codes
-                .contains(&"KIND_REQUIRES_REVIEW".to_owned()));
+            assert!(
+                evaluation
+                    .reason_codes
+                    .contains(&"KIND_REQUIRES_REVIEW".to_owned())
+            );
         }
     }
 
@@ -1421,17 +1440,21 @@ mod tests {
         forbidden.payload.sensitivity = LearningSensitivity::Forbidden;
         let evaluation = evaluate_learning_candidate(&base_candidate(), &forbidden);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"FORBIDDEN_SENSITIVE_CONTENT".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"FORBIDDEN_SENSITIVE_CONTENT".to_owned())
+        );
 
         let mut review = base_context();
         review.payload.sensitivity = LearningSensitivity::ReviewRequired;
         let evaluation = evaluate_learning_candidate(&base_candidate(), &review);
         assert_eq!(evaluation.disposition, LearningDisposition::NeedsReview);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"SENSITIVE_CONTENT_REQUIRES_REVIEW".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"SENSITIVE_CONTENT_REQUIRES_REVIEW".to_owned())
+        );
     }
 
     #[test]
@@ -1440,18 +1463,22 @@ mod tests {
         trusted.trust_excluded = true;
         let evaluation = evaluate_learning_candidate(&base_candidate(), &trusted);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"TRUST_EXCLUDED_SOURCE".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"TRUST_EXCLUDED_SOURCE".to_owned())
+        );
 
         let mut labelled = base_context();
         labelled.policy.excluded_resource_labels = vec!["private-imports".to_owned()];
         labelled.source_resource_labels = vec!["private-imports".to_owned()];
         let evaluation = evaluate_learning_candidate(&base_candidate(), &labelled);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"EXCLUDED_RESOURCE_LABEL".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"EXCLUDED_RESOURCE_LABEL".to_owned())
+        );
     }
 
     #[test]
@@ -1460,9 +1487,11 @@ mod tests {
         context.policy.memory_mode = LearningMemoryMode::Off;
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"MEMORY_MODE_OFF".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"MEMORY_MODE_OFF".to_owned())
+        );
     }
 
     #[test]
@@ -1471,9 +1500,11 @@ mod tests {
         context.policy.coworker_id = "coworker-2".to_owned();
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"POLICY_COWORKER_MISMATCH".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"POLICY_COWORKER_MISMATCH".to_owned())
+        );
     }
 
     fn memory(certainty: LearningCertainty, value: &str) -> MemoryComparison {
@@ -1509,9 +1540,11 @@ mod tests {
         )];
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Deduplicated);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"DUPLICATE_MEMORY".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"DUPLICATE_MEMORY".to_owned())
+        );
         assert!(matches!(
             evaluation.conflict,
             LearningConflict::Duplicate { .. }
@@ -1540,9 +1573,11 @@ mod tests {
             evaluation.conflict,
             LearningConflict::Supersedes { .. }
         ));
-        assert!(evaluation
-            .reason_codes
-            .contains(&"SUPERSEDES_INFERRED_MEMORY".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"SUPERSEDES_INFERRED_MEMORY".to_owned())
+        );
     }
 
     #[test]
@@ -1604,10 +1639,12 @@ mod tests {
     #[test]
     fn the_detector_finds_a_payment_card_number() {
         let report = redact_sensitive_content("card 4111 1111 1111 1111");
-        assert!(report
-            .findings
-            .iter()
-            .any(|finding| finding.kind == SensitiveFindingKind::PaymentCard));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.kind == SensitiveFindingKind::PaymentCard)
+        );
     }
 
     #[test]
@@ -1630,9 +1667,11 @@ mod tests {
         context.redaction = redact_sensitive_content("token sk-ant-api03-abcdefghijklmnop");
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::Rejected);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"FORBIDDEN_SENSITIVE_CONTENT".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"FORBIDDEN_SENSITIVE_CONTENT".to_owned())
+        );
     }
 
     #[test]
@@ -1641,9 +1680,11 @@ mod tests {
         context.redaction = redact_sensitive_content("id 123-45-6789 on file");
         let evaluation = evaluate_learning_candidate(&base_candidate(), &context);
         assert_eq!(evaluation.disposition, LearningDisposition::NeedsReview);
-        assert!(evaluation
-            .reason_codes
-            .contains(&"SENSITIVE_CONTENT_REQUIRES_REVIEW".to_owned()));
+        assert!(
+            evaluation
+                .reason_codes
+                .contains(&"SENSITIVE_CONTENT_REQUIRES_REVIEW".to_owned())
+        );
     }
 
     #[test]

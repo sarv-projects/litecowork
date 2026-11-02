@@ -261,9 +261,7 @@ impl ScheduleTrigger {
         }
         let from_local = local_from_instant(self.timezone, from);
         let to_local = local_from_instant(self.timezone, to);
-        let candidates = self
-            .recurrence
-            .candidates_after(from_local, to_local)?;
+        let candidates = self.recurrence.candidates_after(from_local, to_local)?;
         let until = self.until();
         let mut slots = Vec::with_capacity(candidates.len());
         for candidate in candidates {
@@ -469,8 +467,7 @@ impl Cron5 {
         let (hours, _) = parse_cron_field(fields[1], 0, 23, &[], 0)?;
         let (days_of_month, dom_restricted) = parse_cron_field(fields[2], 1, 31, &[], 0)?;
         let (months, _) = parse_cron_field(fields[3], 1, 12, MONTH_NAMES, 1)?;
-        let (mut days_of_week, dow_restricted) =
-            parse_cron_field(fields[4], 0, 7, DAY_NAMES, 0)?;
+        let (mut days_of_week, dow_restricted) = parse_cron_field(fields[4], 0, 7, DAY_NAMES, 0)?;
         // Sunday is both 0 and 7 in cron; normalize to 0.
         if days_of_week.remove(&7) {
             days_of_week.insert(0);
@@ -712,10 +709,7 @@ impl Rrule {
     }
 
     /// The local candidates produced by one base period of the rule.
-    fn candidates_in_period(
-        &self,
-        period: usize,
-    ) -> Result<Vec<NaiveDateTime>, DomainError> {
+    fn candidates_in_period(&self, period: usize) -> Result<Vec<NaiveDateTime>, DomainError> {
         let anchor_date = self.anchor_local.date();
         let mut dates = Vec::new();
         match self.freq {
@@ -729,9 +723,7 @@ impl Rrule {
             }
             Freq::Weekly => {
                 let anchor_week = anchor_date
-                    - chrono::Duration::days(
-                        anchor_date.weekday().num_days_from_monday() as i64,
-                    );
+                    - chrono::Duration::days(anchor_date.weekday().num_days_from_monday() as i64);
                 let Some(week) = anchor_week.checked_add_signed(chrono::Duration::weeks(
                     (period as i64) * (self.interval as i64),
                 )) else {
@@ -751,8 +743,7 @@ impl Rrule {
                 }
             }
             Freq::Monthly => {
-                let Some(date) =
-                    add_months(anchor_date, period as i64 * self.interval as i64)
+                let Some(date) = add_months(anchor_date, period as i64 * self.interval as i64)
                 else {
                     return Ok(Vec::new());
                 };
@@ -779,7 +770,9 @@ impl Rrule {
             }
             Freq::Yearly => {
                 let Some(base) = add_months(
-                    anchor_date.with_day(1).ok_or(DomainError::InvalidDefinition)?,
+                    anchor_date
+                        .with_day(1)
+                        .ok_or(DomainError::InvalidDefinition)?,
                     (period as i64) * (self.interval as i64) * 12,
                 ) else {
                     return Ok(Vec::new());
@@ -808,8 +801,8 @@ impl Rrule {
                             let Some(next) = day.succ_opt() else { break };
                             day = next;
                         }
-                    } else if let Some(value) = month_date
-                        .with_day(anchor_date.day().min(days_in_month(month_date)))
+                    } else if let Some(value) =
+                        month_date.with_day(anchor_date.day().min(days_in_month(month_date)))
                     {
                         dates.push(value);
                     }
@@ -892,13 +885,9 @@ impl Rrule {
             }
             Freq::Weekly => {
                 let anchor_week = anchor.date()
-                    - chrono::Duration::days(
-                        anchor.date().weekday().num_days_from_monday() as i64,
-                    );
+                    - chrono::Duration::days(anchor.date().weekday().num_days_from_monday() as i64);
                 let after_week = after.date()
-                    - chrono::Duration::days(
-                        after.date().weekday().num_days_from_monday() as i64,
-                    );
+                    - chrono::Duration::days(after.date().weekday().num_days_from_monday() as i64);
                 let weeks = after_week.signed_duration_since(anchor_week).num_weeks();
                 if weeks <= 0 {
                     0
@@ -941,10 +930,7 @@ impl Rrule {
         }
     }
 
-    fn next_candidate(
-        &self,
-        after: NaiveDateTime,
-    ) -> Result<Option<NaiveDateTime>, DomainError> {
+    fn next_candidate(&self, after: NaiveDateTime) -> Result<Option<NaiveDateTime>, DomainError> {
         // `COUNT` bounds the rule from its anchor, so the scan has to start at the
         // anchor to know the ordinal of each candidate.
         let start = if self.count.is_some() {
@@ -1088,9 +1074,7 @@ fn parse_cron_value(
     {
         return Ok(index as u32 + name_offset);
     }
-    if !names.is_empty()
-        && trimmed.len() == 2
-    {
+    if !names.is_empty() && trimmed.len() == 2 {
         let upper = trimmed.to_ascii_uppercase();
         let matches: Vec<usize> = names
             .iter()

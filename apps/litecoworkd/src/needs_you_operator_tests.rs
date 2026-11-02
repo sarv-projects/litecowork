@@ -72,9 +72,10 @@ fn source_router_fixture() -> (tempfile::TempDir, SqliteWorkspaceStore, Router) 
         )
         .expect("seed the pending Approval");
     drop(connection);
-    let router = super::super::approval_operator::test_router(store.clone(), OWNER.to_owned()).merge(
-        super::super::needs_you_operator::test_router(store.clone(), OWNER.to_owned()),
-    );
+    let router =
+        super::super::approval_operator::test_router(store.clone(), OWNER.to_owned()).merge(
+            super::super::needs_you_operator::test_router(store.clone(), OWNER.to_owned()),
+        );
     (directory, store, router)
 }
 
@@ -111,14 +112,10 @@ fn user_request_router_fixture() -> (tempfile::TempDir, SqliteWorkspaceStore, Ro
         )
         .expect("seed the pending UserRequest");
     drop(connection);
-    let router = super::super::user_request_operator::test_router(
-        store.clone(),
-        OWNER.to_owned(),
-    )
-    .merge(super::super::needs_you_operator::test_router(
-        store.clone(),
-        OWNER.to_owned(),
-    ));
+    let router =
+        super::super::user_request_operator::test_router(store.clone(), OWNER.to_owned()).merge(
+            super::super::needs_you_operator::test_router(store.clone(), OWNER.to_owned()),
+        );
     (directory, store, router)
 }
 
@@ -171,7 +168,11 @@ async fn resolving_an_approval_source_removes_exactly_one_open_inbox_item() {
 
     let open_before = needs_you_page(&router, "OPEN").await;
     let items = open_before["items"].as_array().expect("open item array");
-    assert_eq!(items.len(), 1, "the pending Approval is one open inbox item");
+    assert_eq!(
+        items.len(),
+        1,
+        "the pending Approval is one open inbox item"
+    );
     assert_eq!(items[0]["kind"], "APPROVAL");
     assert_eq!(items[0]["approval_id"], APPROVAL);
     assert_eq!(items[0]["status"], "OPEN");
@@ -210,8 +211,7 @@ async fn resolving_an_approval_source_removes_exactly_one_open_inbox_item() {
 #[tokio::test]
 async fn an_already_resolved_source_is_rejected_and_leaves_the_inbox_unchanged() {
     let (_directory, _store, router) = source_router_fixture();
-    let body =
-        r#"{"decision":"APPROVE","confirmation_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#;
+    let body = r#"{"decision":"APPROVE","confirmation_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#;
     let first = resolve_approval(&router, "needs-you-approve-once", "1", body).await;
     assert_eq!(first.status(), StatusCode::OK);
     let history_before = needs_you_page(&router, "RESOLVED").await;
@@ -250,8 +250,7 @@ async fn an_already_resolved_source_is_rejected_and_leaves_the_inbox_unchanged()
         assert_eq!(error["code"], expected_code);
         let history_after = needs_you_page(&router, "RESOLVED").await;
         assert_eq!(
-            history_after["items"],
-            history_before["items"],
+            history_after["items"], history_before["items"],
             "a rejected decision adds no inbox row"
         );
         assert_eq!(needs_you_page(&router, "OPEN").await["items"], json!([]));
@@ -266,7 +265,11 @@ async fn answering_a_user_request_source_removes_exactly_one_open_inbox_item() {
 
     let open_before = needs_you_page(&router, "OPEN").await;
     let items = open_before["items"].as_array().expect("open item array");
-    assert_eq!(items.len(), 1, "the pending UserRequest is one open inbox item");
+    assert_eq!(
+        items.len(),
+        1,
+        "the pending UserRequest is one open inbox item"
+    );
     assert_eq!(items[0]["kind"], "USER_REQUEST");
     assert_eq!(items[0]["user_request_id"], USER_REQUEST);
     let open_item_id = items[0]["item_id"].as_str().expect("stable item identity");

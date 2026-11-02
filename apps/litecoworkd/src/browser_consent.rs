@@ -76,9 +76,7 @@ pub enum ChromeAttachRefusal {
 impl ChromeAttachRefusal {
     pub fn reason_code(&self) -> &'static str {
         match self {
-            Self::DefaultUserProfileNotAutomatable => {
-                "BROWSER_DEFAULT_PROFILE_NOT_AUTOMATABLE"
-            }
+            Self::DefaultUserProfileNotAutomatable => "BROWSER_DEFAULT_PROFILE_NOT_AUTOMATABLE",
             Self::ProfileNotManagedByLiteCowork => "BROWSER_PROFILE_NOT_MANAGED",
             Self::ConsentMissing => "BROWSER_CONSENT_MISSING",
             Self::ConsentRevoked => "BROWSER_CONSENT_REVOKED",
@@ -140,9 +138,7 @@ pub fn decide_existing_chrome_attach(
         );
     }
     if !is_litecowork_managed_profile(candidate_profile_directory) {
-        return ChromeAttachDecision::Refused(
-            ChromeAttachRefusal::ProfileNotManagedByLiteCowork,
-        );
+        return ChromeAttachDecision::Refused(ChromeAttachRefusal::ProfileNotManagedByLiteCowork);
     }
     let Some(consent) = consent else {
         return ChromeAttachDecision::Refused(ChromeAttachRefusal::ConsentMissing);
@@ -166,9 +162,7 @@ pub fn decide_existing_chrome_attach(
         });
     }
     if !consent.high_trust_acknowledged {
-        return ChromeAttachDecision::Refused(
-            ChromeAttachRefusal::HighTrustAcknowledgementMissing,
-        );
+        return ChromeAttachDecision::Refused(ChromeAttachRefusal::HighTrustAcknowledgementMissing);
     }
     ChromeAttachDecision::Attached {
         consent_id: consent.consent_id.clone(),
@@ -384,9 +378,7 @@ pub fn preview_profile_import(
     rejected.sort_by_key(|rejection| format!("{rejection:?}"));
     let preview_digest = format!(
         "sha256:{}",
-        hex::encode(sha2::Sha256::digest(
-            accepted.join("\n").as_bytes()
-        ))
+        hex::encode(sha2::Sha256::digest(accepted.join("\n").as_bytes()))
     );
     ProfileImportPreview {
         accepted,
@@ -669,9 +661,9 @@ mod tests {
             .expect("home directory");
         let default_profile = home.join(".config/google-chrome");
         assert!(is_default_chrome_user_data_directory(&default_profile));
-        assert!(
-            is_default_chrome_user_data_directory(&default_profile.join("Default"))
-        );
+        assert!(is_default_chrome_user_data_directory(
+            &default_profile.join("Default")
+        ));
 
         let temp = tempdir().unwrap();
         let directory = create_managed_profile(temp.path(), "profile-1").expect("managed profile");
@@ -686,7 +678,12 @@ mod tests {
         let consent = consent(now);
 
         assert_eq!(
-            decide_existing_chrome_attach(&directory, Some(&consent), MIN_EXISTING_CHROME_MAJOR_VERSION, now),
+            decide_existing_chrome_attach(
+                &directory,
+                Some(&consent),
+                MIN_EXISTING_CHROME_MAJOR_VERSION,
+                now
+            ),
             ChromeAttachDecision::Attached {
                 consent_id: "consent-1".to_owned()
             }
@@ -700,22 +697,35 @@ mod tests {
         let mut revoked = consent.clone();
         revoked.revoked_at_ms = Some(now);
         assert_eq!(
-            decide_existing_chrome_attach(&directory, Some(&revoked), MIN_EXISTING_CHROME_MAJOR_VERSION, now),
+            decide_existing_chrome_attach(
+                &directory,
+                Some(&revoked),
+                MIN_EXISTING_CHROME_MAJOR_VERSION,
+                now
+            ),
             ChromeAttachDecision::Refused(ChromeAttachRefusal::ConsentRevoked)
         );
 
         assert_eq!(
-            decide_existing_chrome_attach(&directory, Some(&consent), MIN_EXISTING_CHROME_MAJOR_VERSION, now + 60_000),
+            decide_existing_chrome_attach(
+                &directory,
+                Some(&consent),
+                MIN_EXISTING_CHROME_MAJOR_VERSION,
+                now + 60_000
+            ),
             ChromeAttachDecision::Refused(ChromeAttachRefusal::ConsentExpired)
         );
 
         let mut unacknowledged = consent.clone();
         unacknowledged.high_trust_acknowledged = false;
         assert_eq!(
-            decide_existing_chrome_attach(&directory, Some(&unacknowledged), MIN_EXISTING_CHROME_MAJOR_VERSION, now),
-            ChromeAttachDecision::Refused(
-                ChromeAttachRefusal::HighTrustAcknowledgementMissing
-            )
+            decide_existing_chrome_attach(
+                &directory,
+                Some(&unacknowledged),
+                MIN_EXISTING_CHROME_MAJOR_VERSION,
+                now
+            ),
+            ChromeAttachDecision::Refused(ChromeAttachRefusal::HighTrustAcknowledgementMissing)
         );
     }
 
@@ -741,10 +751,13 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let now = 1_000;
         assert_eq!(
-            decide_existing_chrome_attach(&directory, Some(&consent(now)), MIN_EXISTING_CHROME_MAJOR_VERSION, now),
-            ChromeAttachDecision::Refused(
-                ChromeAttachRefusal::ProfileNotManagedByLiteCowork
-            )
+            decide_existing_chrome_attach(
+                &directory,
+                Some(&consent(now)),
+                MIN_EXISTING_CHROME_MAJOR_VERSION,
+                now
+            ),
+            ChromeAttachDecision::Refused(ChromeAttachRefusal::ProfileNotManagedByLiteCowork)
         );
     }
 

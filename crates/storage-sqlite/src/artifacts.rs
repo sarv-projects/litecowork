@@ -9,7 +9,6 @@ use storage_core::{
     TaskPresentationReadModel, TaskPresentationReadStore,
 };
 
-
 impl ArtifactLibraryWriteStore for SqliteWorkspaceStore {
     fn change_artifact_library(
         &self,

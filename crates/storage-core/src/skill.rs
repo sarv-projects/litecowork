@@ -192,25 +192,23 @@ impl std::error::Error for SkillGuardError {}
 
 /// True when `value` is a bounded, printable identifier.
 pub fn is_valid_identifier(value: &str) -> bool {
-    !value.trim().is_empty()
-        && value.len() <= 256
-        && !value.chars().any(char::is_control)
+    !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
 /// True when `value` is an absolute URI with a scheme and no whitespace.
 pub fn is_valid_uri(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 2_048
-        && !value.chars().any(|character| character.is_control() || character.is_whitespace())
-        && value
-            .split_once(':')
-            .is_some_and(|(scheme, _)| {
-                !scheme.is_empty()
-                    && scheme.starts_with(|c: char| c.is_ascii_lowercase())
-                    && scheme
-                        .bytes()
-                        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"+-.".contains(&byte))
-            })
+        && !value
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+        && value.split_once(':').is_some_and(|(scheme, _)| {
+            !scheme.is_empty()
+                && scheme.starts_with(|c: char| c.is_ascii_lowercase())
+                && scheme.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"+-.".contains(&byte)
+                })
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -359,9 +357,7 @@ impl SkillStatus {
 #[serde(tag = "origin_kind", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SkillOrigin {
     /// Derived from an owner-approved SkillProposal in this Workspace.
-    LocalProposal {
-        proposal_id: String,
-    },
+    LocalProposal { proposal_id: String },
     /// Published by an MCP Skills extension server.
     McpServer {
         server_identity: String,
@@ -473,9 +469,7 @@ pub fn validate_skill_revision(revision: &SkillRevision) -> Result<(), SkillGuar
     if revision.summary.len() > SKILL_SUMMARY_MAX_BYTES {
         return Err(SkillGuardError::SummaryTooLong);
     }
-    if !is_sha256_digest(&revision.manifest_digest)
-        || !is_sha256_digest(&revision.content_digest)
-    {
+    if !is_sha256_digest(&revision.manifest_digest) || !is_sha256_digest(&revision.content_digest) {
         return Err(SkillGuardError::InvalidDigest);
     }
     if !is_valid_identifier(&revision.content_ref) {
@@ -604,7 +598,11 @@ pub fn evaluate_skill_activation(
         return Err(SkillGuardError::GrantDigestMismatch);
     }
     for capability in &revision.declared_capabilities {
-        if !grant.allowed_operations.iter().any(|allowed| allowed == capability) {
+        if !grant
+            .allowed_operations
+            .iter()
+            .any(|allowed| allowed == capability)
+        {
             return Err(SkillGuardError::CapabilityNotGranted);
         }
     }
@@ -866,7 +864,10 @@ pub fn evaluate_skill_proposal_review(
     if reviewer.principal_kind != "USER" {
         return Err(SkillGuardError::ReviewerNotHuman);
     }
-    if !matches!(reviewer.assurance_level.as_str(), "APPROVE_SAFE" | "APPROVE_HIGH") {
+    if !matches!(
+        reviewer.assurance_level.as_str(),
+        "APPROVE_SAFE" | "APPROVE_HIGH"
+    ) {
         return Err(SkillGuardError::ReviewerAssuranceTooLow);
     }
     match proposal.status {
@@ -974,7 +975,10 @@ impl DemonstrationCapturePolicy {
         if self.max_trace_bytes == 0 || self.max_trace_bytes > CAPTURE_MAX_POLICY_TRACE_BYTES {
             return Err(SkillGuardError::CapturePolicyInvalid);
         }
-        if !matches!(self.allowed_environment_class.as_str(), "BROWSER" | "DESKTOP") {
+        if !matches!(
+            self.allowed_environment_class.as_str(),
+            "BROWSER" | "DESKTOP"
+        ) {
             return Err(SkillGuardError::CaptureEnvironmentClassNotAllowed);
         }
         Ok(())
@@ -1069,7 +1073,9 @@ impl DemonstrationAction {
 
     /// The number of bytes this observation occupies in the bounded trace.
     pub fn trace_bytes(&self) -> u32 {
-        serde_json::to_vec(self).map(|bytes| bytes.len() as u32).unwrap_or(0)
+        serde_json::to_vec(self)
+            .map(|bytes| bytes.len() as u32)
+            .unwrap_or(0)
     }
 }
 
@@ -1141,7 +1147,10 @@ impl DemonstrationSessionRecord {
             actions: self.actions.clone(),
             trace_bytes: self.captured_trace_bytes,
             started_at: self.started_at.clone(),
-            ended_at: self.completed_at.clone().unwrap_or_else(|| self.updated_at.clone()),
+            ended_at: self
+                .completed_at
+                .clone()
+                .unwrap_or_else(|| self.updated_at.clone()),
         }
     }
 }
@@ -1201,7 +1210,8 @@ pub fn evaluate_capture_append(
             reason: CaptureRefusal::EnvironmentMismatch,
         };
     }
-    if action.sensitive && policy.sensitive_region_policy == SensitiveRegionPolicy::PauseOnDetection {
+    if action.sensitive && policy.sensitive_region_policy == SensitiveRegionPolicy::PauseOnDetection
+    {
         // The capture stops here. The caller pauses the session durably and
         // waits for an explicit owner resume.
         return CaptureDecision::Refused {
@@ -1496,7 +1506,9 @@ const APP_CREDENTIAL_KEYS: [&str; 12] = [
 /// applies `default-src 'none'` and only the exact declared domains; when a
 /// declaration is absent or invalid, every external connection and resource is
 /// blocked and the host never invents a fallback domain.
-pub fn build_app_frame(policy: &McpAppFramePolicy) -> Result<McpAppFrameDescriptor, SkillGuardError> {
+pub fn build_app_frame(
+    policy: &McpAppFramePolicy,
+) -> Result<McpAppFrameDescriptor, SkillGuardError> {
     if !is_valid_identifier(&policy.frame_id) || !is_valid_identifier(&policy.workspace_id) {
         return Err(SkillGuardError::EmptyIdentifier);
     }
@@ -1530,7 +1542,10 @@ pub fn build_app_frame(policy: &McpAppFramePolicy) -> Result<McpAppFrameDescript
         csp,
         connect_domains,
         resource_domains,
-        bridge_methods: APP_BRIDGE_METHODS.iter().map(|value| (*value).to_owned()).collect(),
+        bridge_methods: APP_BRIDGE_METHODS
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
         server_identity: policy.server_identity.clone(),
         resource_uri: policy.resource_uri.clone(),
         content_digest: policy.content_digest.clone(),
@@ -1602,11 +1617,15 @@ pub fn validate_app_bridge_message(
     if expected_nonce.is_empty() || envelope.nonce != expected_nonce {
         return Err(SkillGuardError::AppNonceMismatch);
     }
-    if !descriptor.bridge_methods.iter().any(|method| method == &envelope.method) {
+    if !descriptor
+        .bridge_methods
+        .iter()
+        .any(|method| method == &envelope.method)
+    {
         return Err(SkillGuardError::AppMethodNotAllowed);
     }
-    let payload_bytes = serde_json::to_vec(&envelope.payload)
-        .map_err(|_| SkillGuardError::AppPayloadTooLarge)?;
+    let payload_bytes =
+        serde_json::to_vec(&envelope.payload).map_err(|_| SkillGuardError::AppPayloadTooLarge)?;
     if payload_bytes.len() > APP_BRIDGE_MAX_PAYLOAD_BYTES {
         return Err(SkillGuardError::AppPayloadTooLarge);
     }
@@ -2549,13 +2568,9 @@ mod tests {
     fn a_well_formed_app_message_is_accepted() {
         let descriptor = build_app_frame(&frame_policy()).expect("a valid frame policy builds");
         let message = envelope("tool.invoke", json!({"action": "preview"}));
-        let request = validate_app_bridge_message(
-            &descriptor,
-            &message,
-            "nonce-1",
-            "2026-10-20T00:00:00Z",
-        )
-        .expect("a bound, non-credential message is accepted");
+        let request =
+            validate_app_bridge_message(&descriptor, &message, "nonce-1", "2026-10-20T00:00:00Z")
+                .expect("a bound, non-credential message is accepted");
         assert_eq!(request.method, "tool.invoke");
     }
 }
