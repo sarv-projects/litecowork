@@ -1013,8 +1013,23 @@ function App() {
   const disableAgentBinding = (binding: AgentBindingView) => changeAgentBindingState(binding, "disable");
 
   useEffect(() => {
-    void refreshRuntime();
-    void refreshWorkspaces();
+    const bootstrap = async () => {
+      try {
+        const initialStatus = await invoke<RuntimeStatus>("get_runtime_status");
+        if (!initialStatus.processRunning && initialStatus.daemonAvailable) {
+          try {
+            await invoke<RuntimeStatus>("start_local_runtime");
+          } catch {
+            // Manual fallback if auto-start doesn't complete
+          }
+        }
+      } catch {
+        // Desktop runtime query failure handled by refreshRuntime
+      }
+      await refreshRuntime();
+      await refreshWorkspaces();
+    };
+    void bootstrap();
   }, []);
 
   useEffect(() => {
