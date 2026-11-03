@@ -335,20 +335,122 @@ type WorkspaceInstructionView = {
   createdAt: string;
 };
 
-const navigation: { label: Page; displayLabel?: string; icon: string; group?: string }[] = [
-  { label: "Conversations", displayLabel: "Recent chats", icon: "▤", group: "MAIN" },
-  { label: "Needs You", icon: "◇" },
-  { label: "Work", displayLabel: "Tasks & Work", icon: "✓" },
-  { label: "Home", displayLabel: "New task", icon: "⌂" },
-  { label: "Coworkers", icon: "◉", group: "INTELLIGENCE" },
-  { label: "Library", displayLabel: "Library & Files", icon: "▧" },
-  { label: "Automations", icon: "◷" },
-  { label: "Routines", icon: "↻" },
-  { label: "Discover", displayLabel: "Discover Skills", icon: "⌕" },
-  { label: "Goals", icon: "◎", group: "MONITORING" },
-  { label: "Notifications", icon: "◔" },
-  { label: "Ideas", icon: "✦" },
-  { label: "Settings", icon: "⚙", group: "SETTINGS" },
+function SidebarNavIcon({ page }: { page: Page }) {
+  switch (page) {
+    case "Conversations":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      );
+    case "Work":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="9 11 12 14 22 4" />
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+        </svg>
+      );
+    case "Needs You":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+      );
+    case "Home":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </svg>
+      );
+    case "Coworkers":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
+    case "Library":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
+    case "Automations":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      );
+    case "Routines":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+      );
+    case "Discover":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+      );
+    case "Goals":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <circle cx="12" cy="12" r="6" />
+          <circle cx="12" cy="12" r="2" />
+        </svg>
+      );
+    case "Notifications":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </svg>
+      );
+    case "Ideas":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 18h6" />
+          <path d="M10 22h4" />
+          <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
+        </svg>
+      );
+    case "Settings":
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+const navigation: { label: Page; displayLabel?: string; group?: string }[] = [
+  { label: "Conversations", displayLabel: "Recent chats", group: "WORKSPACE" },
+  { label: "Work", displayLabel: "Tasks & Work" },
+  { label: "Needs You", displayLabel: "Needs Decision" },
+  { label: "Home", displayLabel: "New task" },
+  { label: "Library", displayLabel: "Library & Files", group: "RESOURCES" },
+  { label: "Coworkers", displayLabel: "Coworkers" },
+  { label: "Discover", displayLabel: "Discover Skills" },
+  { label: "Automations", displayLabel: "Automations", group: "AUTOMATION" },
+  { label: "Routines", displayLabel: "Routines" },
+  { label: "Goals", displayLabel: "Goals", group: "MONITORING" },
+  { label: "Notifications", displayLabel: "Notifications" },
+  { label: "Ideas", displayLabel: "Ideas" },
+  { label: "Settings", displayLabel: "Settings", group: "SYSTEM" },
 ];
 
 const UPLOAD_RESUME_KEY = "litecowork.resourceUploadResume.v1";
@@ -484,6 +586,36 @@ function App() {
     }
     return {};
   });
+  const [workbenchWidth, setWorkbenchWidth] = useState<number>(() => {
+    try {
+      const saved = window.localStorage.getItem("litecowork.workbenchWidth");
+      return saved ? Math.max(340, Math.min(parseInt(saved, 10), 1200)) : 480;
+    } catch {
+      return 480;
+    }
+  });
+  const [workbenchFullView, setWorkbenchFullView] = useState(false);
+  const [isDraggingWorkbench, setIsDraggingWorkbench] = useState(false);
+
+  useEffect(() => {
+    if (!isDraggingWorkbench) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.max(320, Math.min(window.innerWidth - e.clientX, Math.floor(window.innerWidth * 0.75)));
+      setWorkbenchWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      setIsDraggingWorkbench(false);
+      try {
+        window.localStorage.setItem("litecowork.workbenchWidth", String(workbenchWidth));
+      } catch {}
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDraggingWorkbench, workbenchWidth]);
   useEffect(() => {
     try {
       window.localStorage.setItem("litecowork.workbench.layout.v1", JSON.stringify(workbenchLayoutByWorkspace));
@@ -2151,7 +2283,7 @@ function App() {
                   if (navigationOpen) closeNavigation(navigated);
                 }}
               >
-                <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                <span className="nav-icon" aria-hidden="true"><SidebarNavIcon page={item.label} /></span>
                 <span>{item.displayLabel ?? item.label}</span>
               </button>
             </div>
@@ -2211,7 +2343,10 @@ function App() {
           </div>
         </header>
 
-        <div className={`workspace-shell ${workbenchShown ? "has-workbench" : ""}`}>
+        <div
+          className={`workspace-shell ${workbenchShown ? "has-workbench" : ""}`}
+          style={{ "--workbench-width": `${workbenchWidth}px` } as React.CSSProperties}
+        >
           <div className="workspace-route-content" inert={routeContentInert} aria-hidden={routeContentInert || undefined}>
         {page === "Home" ? (
           <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} onWorkspaceNameChange={setWorkspaceName} workspaceCreateBusy={workspaceCreateBusy} pendingWorkspaceRequest={pendingWorkspaceRequest} createWorkspace={createWorkspace} workspacesCount={workspaces.length} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => requestPageNavigation("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => requestPageNavigation("Settings")} onOpenCoworkers={() => requestPageNavigation("Coworkers")} onWorkspaceUpdated={(updated) => updateWorkspaceProjection(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
@@ -2323,6 +2458,22 @@ function App() {
           <PlaceholderPage page={page} onSettings={() => requestPageNavigation("Settings")} />
         )}
           </div>
+          {workbenchShown && !workbenchNarrow && !workbenchFullView && (
+            <div
+              className={`workbench-resizer ${isDraggingWorkbench ? "is-dragging" : ""}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsDraggingWorkbench(true);
+              }}
+              onDoubleClick={() => {
+                setWorkbenchWidth(480);
+                try { window.localStorage.setItem("litecowork.workbenchWidth", "480"); } catch {}
+              }}
+              title="Drag to resize Workbench panel (Double-click to reset)"
+              role="separator"
+              aria-orientation="vertical"
+            />
+          )}
           {workbenchNarrow && workbenchOpen && (
             <button className="workbench-backdrop" type="button" tabIndex={-1} aria-label="Close Workbench" onClick={() => closeWorkbench()} />
           )}
@@ -2345,6 +2496,8 @@ function App() {
               previewResourceName={previewResourceName}
               preview={resourcePreview}
               previewError={previewError}
+              isFullView={workbenchFullView}
+              onToggleFullView={() => setWorkbenchFullView(prev => !prev)}
               onClose={() => closeWorkbench()}
               onOpenLibrary={() => requestPageNavigation("Library")}
               onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }}
