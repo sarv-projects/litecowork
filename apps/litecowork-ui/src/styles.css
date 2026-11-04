@@ -642,3 +642,342 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* ==========================================================================
+   Modern Workstation Left Sidebar - Antigravity Reference
+   ========================================================================== */
+.sidebar {
+  width: 250px;
+  flex: 0 0 250px;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px 10px;
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  box-shadow: none;
+  box-sizing: border-box;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 12px;
+  margin-bottom: 6px;
+}
+
+.sidebar-brand-icon {
+  display: flex;
+  align-items: center;
+  color: #111827;
+}
+
+.sidebar-top-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.sidebar-icon-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.sidebar-new-action-wrap {
+  padding: 0 4px;
+  margin-bottom: 14px;
+}
+
+.sidebar-new-conv-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 9999px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: all 120ms ease;
+}
+
+.sidebar-new-conv-pill:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.sidebar-plus-glyph {
+  font-size: 16px;
+  font-weight: 500;
+  color: #6b7280;
+  line-height: 1;
+}
+
+.sidebar-quick-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px;
+  margin-bottom: 18px;
+}
+
+.sidebar-quick-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 120ms ease;
+}
+
+.sidebar-quick-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.sidebar-quick-item.selected {
+  background: #f3f4f6;
+  color: #111827;
+  font-weight: 600;
+}
+
+.sidebar-quick-icon {
+  font-size: 14px;
+  flex: 0 0 16px;
+}
+
+.sidebar-projects-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0 4px;
+}
+
+.sidebar-projects-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  margin-bottom: 8px;
+}
+
+.sidebar-projects-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.sidebar-projects-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-mini-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.sidebar-mini-icon-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.sidebar-projects-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar-project-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-project-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: all 120ms ease;
+  width: 100%;
+}
+
+.sidebar-project-folder-row:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.sidebar-project-folder-row.active-folder {
+  color: #111827;
+  font-weight: 600;
+}
+
+.folder-icon {
+  font-size: 14px;
+  flex: 0 0 16px;
+}
+
+.folder-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-project-conv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 14px;
+  margin-top: 2px;
+  margin-bottom: 4px;
+}
+
+.sidebar-project-conv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #4b5563;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 120ms ease;
+  width: 100%;
+}
+
+.sidebar-project-conv-row:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.sidebar-project-conv-row.selected-conv {
+  background: #f3f4f6;
+  color: #111827;
+  font-weight: 500;
+}
+
+.conv-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 6px;
+}
+
+.conv-now-pill {
+  font-size: 11px;
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.conv-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.conv-dot.has-unread {
+  background: #2563eb;
+}
+
+.sidebar-project-conv-empty {
+  font-size: 12px;
+  color: #9ca3af;
+  padding: 4px 10px;
+  font-style: italic;
+}
+
+.sidebar-bottom-bar {
+  margin-top: auto;
+  padding: 8px 4px 4px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.sidebar-settings-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.sidebar-settings-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.sidebar-settings-btn.selected {
+  background: #f3f4f6;
+  color: #111827;
+  font-weight: 600;
+}

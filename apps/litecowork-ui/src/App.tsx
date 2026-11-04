@@ -74,6 +74,7 @@ import { canOfferLocalRuntimeStart } from "./runtime/runtime-start-readiness";
 import { RuntimeInventoryStreamController, type RuntimeInventoryStreamStatus } from "./runtime/runtime-inventory-stream.ts";
 import { desktopRuntimeInventoryStreamDriver } from "./runtime/desktop-runtime-inventory-stream.ts";
 import { ConversationsPage } from "./conversations/ConversationsPage";
+import type { ConversationSummary } from "./conversations/conversation-view";
 import { DiscoverPage } from "./discover/DiscoverPage";
 import { desktopDiscoverApi } from "./discover/desktop-discover-api";
 import {
@@ -335,7 +336,7 @@ type WorkspaceInstructionView = {
   createdAt: string;
 };
 
-function SidebarNavIcon({ page }: { page: Page }) {
+export function SidebarNavIcon({ page }: { page: Page }) {
   switch (page) {
     case "Conversations":
       return (
@@ -437,7 +438,7 @@ function SidebarNavIcon({ page }: { page: Page }) {
   }
 }
 
-const navigation: { label: Page; displayLabel?: string; group?: string }[] = [
+export const navigation: { label: Page; displayLabel?: string; group?: string }[] = [
   { label: "Conversations", displayLabel: "Recent chats", group: "WORKSPACE" },
   { label: "Work", displayLabel: "Tasks & Work" },
   { label: "Needs You", displayLabel: "Needs Decision" },
@@ -729,6 +730,8 @@ function App() {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
   const workspacesRef = useRef<WorkspaceView[]>([]);
   const updateWorkspaceProjection = (update: WorkspaceView[] | ((current: WorkspaceView[]) => WorkspaceView[])) => {
     const next = typeof update === "function" ? update(workspacesRef.current) : update;
@@ -2229,81 +2232,225 @@ function App() {
         aria-modal={navigationOpen ? true : undefined}
         inert={pendingLibraryNavigation !== null}
       >
-        <div className="sidebar-heading">
-          <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); const focusTarget = navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null; const navigated = requestPageNavigation("Home", focusTarget); closeNavigation(navigated); }}>
-            <span className="brand-mark" aria-hidden="true">L</span>
-            <span>LiteCowork</span>
-          </a>
-          <button className="icon-button sidebar-close" type="button" aria-label="Close navigation" onClick={() => closeNavigation()}>×</button>
+        <div className="sidebar-top-bar">
+          <div className="sidebar-brand-icon" title="LiteCowork">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3L2 21h4.5l2.2-5h6.6l2.2 5H22L12 3z" />
+              <path d="M9.8 13.5h4.4" />
+            </svg>
+          </div>
+          <div className="sidebar-top-nav-group">
+            <button
+              className="sidebar-icon-btn"
+              type="button"
+              aria-label="Close or collapse sidebar"
+              onClick={() => closeNavigation()}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M9 3v18" />
+              </svg>
+            </button>
+            <button
+              className="sidebar-icon-btn"
+              type="button"
+              aria-label="Back"
+              onClick={() => window.history.back()}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <button
+              className="sidebar-icon-btn"
+              type="button"
+              aria-label="Forward"
+              onClick={() => window.history.forward()}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </button>
+            <button
+              className="sidebar-icon-btn"
+              type="button"
+              aria-label="Search resources and files"
+              onClick={() => {
+                requestPageNavigation("Library");
+                if (navigationOpen) closeNavigation(true);
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div className="workspace-switcher" aria-label={`Local Runtime ${runtime?.state ?? "status unknown"}; Operator API ${runtime?.operatorReady ? "serving" : "not ready"}`}>
-          <span className={`workspace-dot ${runtime?.operatorReady ? "online" : ""}`} aria-hidden="true" />
-          <span className="workspace-label">
-            <strong>Desktop</strong>
-            {workspaces.length > 1 ? (
-              <select aria-label="Selected Workspace" value={selectedWorkspaceId} disabled={taskSaving} onChange={(event) => selectWorkspace(event.target.value)}>
-                {workspaces.map((workspace) => <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.name}</option>)}
-              </select>
-            ) : <small>{workspaces[0]?.name ?? `No Workspace · ${runtime?.state ?? "Checking"}`}</small>}
-          </span>
-          {workspaces.length > 1 && <span className="chevron" aria-hidden="true">⌄</span>}
-        </div>
-
-        <div className="sidebar-primary-action">
+        <div className="sidebar-new-action-wrap">
           <button
-            className="new-chat-button"
+            className="sidebar-new-conv-pill"
             type="button"
             disabled={taskSaving}
             onClick={() => {
+              setSelectedConversationId(null);
               const focusTarget = navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null;
               const navigated = requestPageNavigation("Conversations", focusTarget);
               if (navigationOpen) closeNavigation(navigated);
             }}
           >
-            <span className="new-chat-plus" aria-hidden="true">+</span>
-            <span>New Chat</span>
-            <span className="new-chat-shortcut">Ctrl N</span>
+            <span className="sidebar-plus-glyph" aria-hidden="true">+</span>
+            <span>New Conversation</span>
           </button>
         </div>
 
-        <nav className="nav-list">
-          {navigation.map((item) => (
-            <div key={item.label}>
-              {item.group && <div className="nav-group-label">{item.group}</div>}
+        <div className="sidebar-quick-links">
+          <button
+            className={`sidebar-quick-item ${page === "Automations" ? "selected" : ""}`}
+            type="button"
+            onClick={() => {
+              requestPageNavigation("Automations");
+              if (navigationOpen) closeNavigation(true);
+            }}
+          >
+            <span className="sidebar-quick-icon" aria-hidden="true">🕒</span>
+            <span>Automations</span>
+          </button>
+          <button
+            className={`sidebar-quick-item ${page === "Discover" ? "selected" : ""}`}
+            type="button"
+            onClick={() => {
+              requestPageNavigation("Discover");
+              if (navigationOpen) closeNavigation(true);
+            }}
+          >
+            <span className="sidebar-quick-icon" aria-hidden="true">🗃</span>
+            <span>Customizations</span>
+          </button>
+        </div>
+
+        <div className="sidebar-projects-section">
+          <div className="sidebar-projects-header">
+            <span className="sidebar-projects-title">Projects</span>
+            <div className="sidebar-projects-actions">
               <button
-                className={`nav-item ${page === item.label ? "selected" : ""}`}
+                className="sidebar-mini-icon-btn"
                 type="button"
-                disabled={taskSaving}
-                aria-current={page === item.label ? "page" : undefined}
+                title="Sort projects"
+                aria-label="Sort projects"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="15" y2="12" />
+                  <line x1="3" y1="18" x2="9" y2="18" />
+                </svg>
+              </button>
+              <button
+                className="sidebar-mini-icon-btn"
+                type="button"
+                title="New workspace or project"
+                aria-label="New workspace or project"
                 onClick={() => {
-                  const focusTarget = navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null;
-                  const navigated = requestPageNavigation(item.label, focusTarget);
-                  if (navigated && item.label === "Work") setOpenedTask(null);
-                  if (navigationOpen) closeNavigation(navigated);
+                  requestPageNavigation("Home");
+                  if (navigationOpen) closeNavigation(true);
                 }}
               >
-                <span className="nav-icon" aria-hidden="true"><SidebarNavIcon page={item.label} /></span>
-                <span>{item.displayLabel ?? item.label}</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  <line x1="12" y1="11" x2="12" y2="17" />
+                  <line x1="9" y1="14" x2="15" y2="14" />
+                </svg>
               </button>
             </div>
-          ))}
-        </nav>
+          </div>
 
-        <div className="sidebar-bottom">
-          <div className="connection-note" role="status">
-            <span className={`connection-dot ${runtime?.state === "READY" ? "online" : ""}`} aria-hidden="true" />
-            <span>Runtime {runtime?.state?.toLowerCase().replaceAll("_", " ") ?? "status unknown"}</span>
+          <div className="sidebar-projects-tree" role="tree">
+            {workspaces.map(ws => {
+              const isSelected = ws.workspaceId === selectedWorkspaceId;
+              const currentConvList = isSelected ? (conversationsByWorkspace[ws.workspaceId] ?? []) : [];
+
+              return (
+                <div key={ws.workspaceId} className={`sidebar-project-node ${isSelected ? "is-expanded" : ""}`}>
+                  <button
+                    className={`sidebar-project-folder-row ${isSelected ? "active-folder" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      if (selectedWorkspaceId !== ws.workspaceId) {
+                        selectWorkspace(ws.workspaceId);
+                        setSelectedConversationId(null);
+                      }
+                      if (page !== "Conversations") {
+                        requestPageNavigation("Conversations");
+                      }
+                      if (navigationOpen) closeNavigation(true);
+                    }}
+                  >
+                    <span className="folder-icon" aria-hidden="true">{isSelected ? "📂" : "📁"}</span>
+                    <span className="folder-name" title={ws.name}>{ws.name}</span>
+                  </button>
+
+                  {isSelected && (
+                    <div className="sidebar-project-conv-list">
+                      {currentConvList.length === 0 ? (
+                        <div className="sidebar-project-conv-empty">No conversations yet</div>
+                      ) : (
+                        currentConvList.map((conv, idx) => {
+                          const isConvActive = selectedConversationId === conv.conversation_id;
+                          return (
+                            <button
+                              key={conv.conversation_id}
+                              className={`sidebar-project-conv-row ${isConvActive ? "selected-conv" : ""}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedConversationId(conv.conversation_id);
+                                if (page !== "Conversations") {
+                                  requestPageNavigation("Conversations");
+                                }
+                                if (navigationOpen) closeNavigation(true);
+                              }}
+                            >
+                              <span className="conv-title" title={conv.title || "Untitled"}>
+                                {conv.title || "Untitled"}
+                              </span>
+                              {isConvActive ? (
+                                <span className="conv-now-pill">now</span>
+                              ) : (
+                                <span className={`conv-dot ${idx === 0 ? "has-unread" : ""}`} />
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-          <div className="user-row">
-            <span className="user-avatar" aria-hidden="true">S</span>
-            <span className="user-meta"><strong>Local desktop</strong><small>Single-user local session</small></span>
-          </div>
+        </div>
+
+        <div className="sidebar-bottom-bar">
+          <button
+            className={`sidebar-settings-btn ${page === "Settings" ? "selected" : ""}`}
+            type="button"
+            onClick={() => {
+              requestPageNavigation("Settings");
+              if (navigationOpen) closeNavigation(true);
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            <span>Settings</span>
+          </button>
         </div>
       </aside>
 
       <main className="main-area" inert={mainAreaInert} aria-hidden={mainAreaInert || undefined}>
-        <header className="topbar">
+        {page !== "Conversations" && (
+          <header className="topbar">
           <button
             ref={navigationTriggerRef}
             className="icon-button mobile-navigation-toggle"
@@ -2316,7 +2463,7 @@ function App() {
             <span aria-hidden="true">☰</span>
             <span>Menu</span>
           </button>
-          <div className="breadcrumbs"><span>LiteCowork</span><span className="crumb-separator">/</span><strong>{page === "Conversations" ? "Recent chats" : page === "Home" ? "New task" : page}</strong></div>
+          <div className="breadcrumbs"><span>LiteCowork</span><span className="crumb-separator">/</span><strong>{page === "Home" ? "New task" : page}</strong></div>
           <div className="topbar-actions">
             <button
               ref={workbenchTriggerRef}
@@ -2342,6 +2489,7 @@ function App() {
             </button>
           </div>
         </header>
+        )}
 
         <div
           className={`workspace-shell ${workbenchShown ? "has-workbench" : ""}`}
@@ -2360,6 +2508,23 @@ function App() {
             draft={conversationDrafts[selectedWorkspaceId] ?? ""}
             onDraftChange={value => setConversationDrafts(current => ({ ...current, [selectedWorkspaceId]: value }))}
             onOpenAgentSettings={() => requestPageNavigation("Settings")}
+            selectedConversationId={selectedConversationId}
+            onSelectConversation={setSelectedConversationId}
+            onConversationsLoaded={(loaded) => {
+              setConversationsByWorkspace(current => ({ ...current, [selectedWorkspaceId]: loaded }));
+            }}
+            workbenchOpen={workbenchShown}
+            onToggleWorkbench={() => {
+              if (workbenchNarrow) {
+                if (workbenchOpen) closeWorkbench();
+                else {
+                  closeNavigation(false);
+                  setWorkbenchOpen(true);
+                }
+              } else {
+                setWorkbenchLayoutByWorkspace(current => ({ ...current, [workbenchLayoutKey]: !workbenchDesktopVisible }));
+              }
+            }}
           />
         ) : page === "Work" ? (
           <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
@@ -2498,7 +2663,13 @@ function App() {
               previewError={previewError}
               isFullView={workbenchFullView}
               onToggleFullView={() => setWorkbenchFullView(prev => !prev)}
-              onClose={() => closeWorkbench()}
+              onClose={() => {
+                if (workbenchNarrow) {
+                  closeWorkbench();
+                } else {
+                  setWorkbenchLayoutByWorkspace(current => ({ ...current, [workbenchLayoutKey]: false }));
+                }
+              }}
               onOpenLibrary={() => requestPageNavigation("Library")}
               onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }}
               onOpenSettings={() => requestPageNavigation("Settings")}

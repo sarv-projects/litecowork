@@ -4,10 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
 import type { PresentationStreamState, TransientTurn } from "../presentation/presentation-stream";
-import { appendConversationListPage, appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
+import { appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
 import { buildConversationAgentChoices, type ConversationAgentBindingOption, type ConversationAgentProfileOption } from "./conversation-agent-selection";
-import { firstUseConversationGuidance } from "./first-use-guidance";
 import "./conversations-page.css";
 
 // Keep ambiguous create receipts across keyed Workspace page remounts for this app session.
@@ -135,7 +134,20 @@ type ConversationAgentMutationNotice = {
   message: string;
 };
 
-export function ConversationsPage({ workspaceId, workspaceName, operatorReady, draft, onDraftChange, onOpenAgentSettings, workspaceDefaultAgentBindingId = null }: {
+export function ConversationsPage({
+  workspaceId,
+  workspaceName,
+  operatorReady,
+  draft,
+  onDraftChange,
+  onOpenAgentSettings: _onOpenAgentSettings,
+  workspaceDefaultAgentBindingId = null,
+  selectedConversationId: externalSelectedId = null,
+  onSelectConversation,
+  onConversationsLoaded,
+  onToggleWorkbench,
+  workbenchOpen = false,
+}: {
   workspaceId: string;
   workspaceName: string;
   operatorReady: boolean;
@@ -143,28 +155,33 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   onDraftChange: (value: string) => void;
   onOpenAgentSettings: () => void;
   workspaceDefaultAgentBindingId?: string | null;
+  selectedConversationId?: string | null;
+  onSelectConversation?: (id: string | null) => void;
+  onConversationsLoaded?: (items: ConversationSummary[]) => void;
+  onToggleWorkbench?: () => void;
+  workbenchOpen?: boolean;
 }) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
-  const [listCursor, setListCursor] = useState<string | null>(null);
-  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
+  const [, setListCursor] = useState<string | null>(null);
+  
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedConversationId = useRef<string | null>(selectedId);
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
   const [agentBindings, setAgentBindings] = useState<ConversationAgentBindingOption[]>([]);
   const [agentProfiles, setAgentProfiles] = useState<ConversationAgentProfileOption[]>([]);
   const [agentCatalogStatus, setAgentCatalogStatus] = useState<ConversationAgentCatalogStatus>("LOADING");
-  const [agentCatalogError, setAgentCatalogError] = useState<string | null>(null);
-  const [agentCatalogAttempt, setAgentCatalogAttempt] = useState(0);
+  const [_agentCatalogError, setAgentCatalogError] = useState<string | null>(null);
+  const [agentCatalogAttempt, _setAgentCatalogAttempt] = useState(0);
   const [agentMutationNotice, setAgentMutationNotice] = useState<ConversationAgentMutationNotice | null>(null);
   const agentMutationLock = useRef(false);
   const [snapshot, setSnapshot] = useState<ConversationSnapshotView | null>(null);
   const [richPresentationEpochs, setRichPresentationEpochs] = useState<Map<string, number>>(() => new Map());
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
-  const [listStatus, setListStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
+  const [_listStatus, setListStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
   const [createJournalStatus, setCreateJournalStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
-  const [createJournalAttempt, setCreateJournalAttempt] = useState(0);
-  const [pendingCreateRequests, setPendingCreateRequests] = useState<PendingConversationCreate[]>([]);
+  const [createJournalAttempt, _setCreateJournalAttempt] = useState(0);
+  const [, setPendingCreateRequests] = useState<PendingConversationCreate[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createReceiptError, setCreateReceiptError] = useState<{ workspaceId: string; requestId: string; message: string } | null>(null);
@@ -186,6 +203,19 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   const pendingCreateDrafts = useRef(new Map<string, string>());
   activeWorkspace.current = workspaceId;
   selectedConversationId.current = selectedId;
+
+  const streamBottomRef = useRef<HTMLDivElement>(null);
+  const streamContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (externalSelectedId !== undefined && externalSelectedId !== null && externalSelectedId !== selectedId) {
+      setSelectedId(externalSelectedId);
+    }
+  }, [externalSelectedId, selectedId]);
+
+  useEffect(() => {
+    onSelectConversation?.(selectedId);
+  }, [selectedId, onSelectConversation]);
   useEffect(() => {
     if (!workspaceId || !operatorReady) {
       setAgentCatalogStatus("OFFLINE");
@@ -248,7 +278,6 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   const refresh = useCallback(async (preserveCurrent = false) => {
     const current = requests.current.beginList();
     activeListEpoch.current = current;
-    setLoadingMoreConversations(false);
     if (!operatorReady || !workspaceId) {
       setBusy(false);
       if (!workspaceId) {
@@ -274,8 +303,11 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
       if (activeWorkspace.current !== workspaceId || !requests.current.isCurrentList(current)) return;
       const page = parseConversationListPage(response, workspaceId);
       setItems(page.items);
+      onConversationsLoaded?.(page.items);
       setListCursor(page.next_cursor);
-      setSelectedId(page.items[0]?.conversation_id ?? null);
+      if (!externalSelectedId) {
+        setSelectedId(page.items[0]?.conversation_id ?? null);
+      }
       setListStatus("READY");
     } catch (cause) {
       if (activeWorkspace.current === workspaceId && requests.current.isCurrentList(current)) {
@@ -298,27 +330,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
     return () => { mounted.current = false; };
   }, []);
 
-  const loadMoreConversations = async () => {
-    if (!listCursor || loadingMoreConversations || !workspaceId) return;
-    const current = activeListEpoch.current;
-    if (current === null || !requests.current.isCurrentList(current)) return;
-    const requestWorkspaceId = workspaceId;
-    const cursor = listCursor;
-    setLoadingMoreConversations(true);
-    try {
-      const response = await invoke<unknown>("list_conversations", { workspaceId: requestWorkspaceId, cursor });
-      if (activeWorkspace.current !== requestWorkspaceId || !requests.current.isCurrentList(current)) return;
-      const page = parseConversationListPage(response, requestWorkspaceId);
-      if (page.next_cursor === cursor) throw new Error("Conversation catalog did not advance its pagination cursor.");
-      setItems(existing => appendConversationListPage({ items: existing, next_cursor: cursor }, page).items);
-      setListCursor(page.next_cursor);
-    } catch (cause) {
-      if (activeWorkspace.current === requestWorkspaceId && requests.current.isCurrentList(current)) setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      if (activeWorkspace.current === requestWorkspaceId && requests.current.isCurrentList(current)) setLoadingMoreConversations(false);
-    }
-  };
-
+  
   useEffect(() => {
     const current = requests.current.beginSnapshot();
     activeSnapshotEpoch.current = current;
@@ -418,7 +430,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
 
   const submitCreate = async (request: PendingConversationCreate) => {
     if (!operatorReady || busy || createJournalStatus !== "READY") return;
-    const createDraftKey = request.workspaceId + " " + request.requestId;
+    const createDraftKey = request.workspaceId + "" + request.requestId;
     const requestSelection = conversationWorkspaceSelections.capture(request.workspaceId);
     if (!requestSelection) return;
     const isCurrentCreateRequest = () => mounted.current
@@ -473,7 +485,11 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
         if (latestDraft.current === carriedDraft) onDraftChange("");
       }
       pendingCreateDrafts.current.delete(createDraftKey);
-      setItems(current => [created, ...current.filter(item => item.conversation_id !== created.conversation_id)]);
+      setItems(current => {
+        const nextList = [created, ...current.filter(item => item.conversation_id !== created.conversation_id)];
+        onConversationsLoaded?.(nextList);
+        return nextList;
+      });
       setSelectedId(created.conversation_id);
       setSnapshot({ workspace_id: request.workspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
       setSnapshotLoadedKey(`${request.workspaceId}\u0000${created.conversation_id}`);
@@ -508,7 +524,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
     try {
       const request = pendingCreates.get(workspaceId, normalizedTitle, () => crypto.randomUUID());
       if (!selectedId && draft.trim()) {
-        pendingCreateDrafts.current.set(workspaceId + " " + request.requestId, draft);
+        pendingCreateDrafts.current.set(workspaceId + "" + request.requestId, draft);
       }
       void submitCreate(request);
     } catch (cause) {
@@ -516,8 +532,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
     }
   };
 
-  const workspacePendingCreates = pendingCreateRequests.filter(request => request.workspaceId === workspaceId);
-
+  
   const selected = items.find(item => item.conversation_id === selectedId) ?? null;
   const agentChoices = buildConversationAgentChoices(
     workspaceId,
@@ -644,7 +659,11 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
 
   const sendTurn = async () => {
     const text = composerDraft.trim();
-    if (!text || !selectedId || !workspaceId || !operatorReady || sendingTurn || isTurnRunning) return;
+    if (!text || !workspaceId || !operatorReady || sendingTurn || isTurnRunning) return;
+    if (!selectedId) {
+      void create(text.slice(0, 36));
+      return;
+    }
 
     setSendingTurn(true);
     setTurnError(null);
@@ -716,167 +735,214 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
     : streamStatus === "RECONNECTING" ? "Reconnecting saved-history updates…"
       : streamStatus === "CONNECTING" ? "Connecting saved-history updates…"
         : null;
-  const firstUseGuidance = firstUseConversationGuidance({ workspaceAvailable: Boolean(workspaceId), operatorReady });
-  const firstUseUnavailable = firstUseGuidance.state !== "SENDING_NOT_AVAILABLE";
-  const firstUseView = <section className={firstUseUnavailable ? "conversation-unavailable" : "conversation-first-use"} aria-labelledby="conversation-first-use-title">
-    <h2 id="conversation-first-use-title">{firstUseGuidance.heading}</h2>
-    <p>{firstUseGuidance.message}</p>
-    <label htmlFor="conversation-first-use-draft">Question draft</label>
-    <textarea
-      id="conversation-first-use-draft"
-      aria-label="Question draft"
-      placeholder="Write a question to keep in this window…"
-      value={draft}
-      onChange={event => onDraftChange(event.target.value)}
-      rows={4}
-    />
-    <p className="conversation-first-use-status" role="status" aria-live="polite">
-      {draft.trim() ? "Draft only. It has not been sent or saved. Opening Settings will not send it." : "No message has been sent. Any text you add stays only in this window."}
-    </p>
-    {firstUseGuidance.actionLabel && <button className="primary-button" type="button" onClick={onOpenAgentSettings}>{firstUseGuidance.actionLabel}</button>}
-  </section>;
+    
+  return (
+    <div className="conversations-page-modern">
+      {/* Top Breadcrumbs & Window Actions Bar */}
+      <header className="conversation-top-breadcrumbs">
+        <span className="crumb-workspace">{workspaceName}</span>
+        <span className="crumb-sep">/</span>
+        <strong className="crumb-title">{selected?.title ?? "AI Capabilities Overview"}</strong>
+        {statusLabel && <span className="conversation-header-badge">{statusLabel}</span>}
+        {streamStatusLabel && <span className="conversation-header-badge">{streamStatusLabel}</span>}
+        {(error || createReceiptError) && <span className="conversation-header-badge is-error">{error || createReceiptError?.message}</span>}
+        <div className="conversation-top-actions">
+          <button className="conversation-action-icon-btn" type="button" title="More options">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <circle cx="12" cy="5" r="2" />
+              <circle cx="12" cy="12" r="2" />
+              <circle cx="12" cy="19" r="2" />
+            </svg>
+          </button>
+          <button
+            className="conversation-action-icon-btn"
+            type="button"
+            onClick={onToggleWorkbench}
+            title={workbenchOpen ? "Close side pane" : "Open side pane"}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M15 3v18" />
+            </svg>
+          </button>
+        </div>
+      </header>
 
-  return <div className="page-content conversations-page">
-    <div className="conversation-page-heading">
-      <div><div className="eyebrow">WORKSPACE CHATS</div><h1>Chats</h1></div>
-      <button className="primary-button conversation-new-chat" type="button" onClick={() => void create("")} disabled={!workspaceId || !operatorReady || busy || createJournalStatus !== "READY"} aria-busy={busy} title={!workspaceId ? "Select a Workspace before creating a chat." : !operatorReady ? "Start the local Runtime before creating a chat." : createJournalStatus !== "READY" ? "Wait until pending conversation requests are checked." : undefined}>
-        <span aria-hidden="true">＋</span> New chat
-      </button>
-    </div>
-    <p className="conversation-intro">{workspaceId ? `Conversations are saved locally in ${workspaceName}.` : "Select a Workspace to view its locally saved conversations."}</p>
-    {!workspaceId || (!operatorReady && items.length === 0) ? firstUseView : <div className="conversation-layout">
-      <aside className="conversation-list" aria-label="Saved conversations">
-        {createJournalStatus === "LOADING" && <p className="conversation-create-recovery" role="status">Checking pending Conversation requests…</p>}
-        {createJournalStatus === "FAILED" && <section className="conversation-create-recovery" role="alert">
-          <p>Pending Conversation retry state is unavailable. Creating a Conversation is disabled until the local journal can be read.</p>
-          <button type="button" disabled={busy} onClick={() => {
-            setError(null);
-            setCreateJournalStatus("LOADING");
-            setCreateJournalAttempt(value => value + 1);
-          }}>Retry checking pending Conversation requests</button>
-        </section>}
-        {workspacePendingCreates.length > 0 && <section className="conversation-create-recovery" aria-label="Pending Conversation creations">
-          <p>A previous create may have completed. Retry uses the same request identity and will not create a duplicate.</p>
-          <ul>{workspacePendingCreates.map(request => <li key={request.requestId}>
-            <span>{request.title ?? "Untitled conversation"}</span>
-            <button type="button" disabled={!operatorReady || busy} onClick={() => void submitCreate(request)}>Retry pending create</button>
-          </li>)}</ul>
-        </section>}
-        <details id="conversation-create-details" className="conversation-create-details">
-          <summary>Create a blank conversation</summary>
-          <form className="conversation-create" onSubmit={event => { event.preventDefault(); void create(); }}>
-            <label htmlFor="conversation-title">Optional title</label>
-            <input id="conversation-title" value={title} onChange={event => setTitle(event.target.value)} maxLength={160} placeholder="Name this conversation" disabled={!operatorReady || busy || createJournalStatus !== "READY"} />
-            <p>This saves an empty conversation. It does not start an agent.</p>
-            <button className="primary-button" type="submit" disabled={!operatorReady || busy || createJournalStatus !== "READY"}>{busy ? "Saving…" : "Create blank conversation"}</button>
-          </form>
-        </details>
-        <div className="conversation-list-heading"><strong>Recent</strong><button type="button" className="text-button" onClick={() => void refresh()} disabled={!operatorReady || busy}>Refresh</button></div>
-        {items.length === 0 && !busy ? <p className="conversation-list-empty">No saved conversations yet.</p> : <ul>
-          {items.map(item => <li key={item.conversation_id}><button className={`conversation-list-item ${selectedId === item.conversation_id ? "selected" : ""}`} type="button" disabled={!operatorReady && item.conversation_id !== selectedId} onClick={() => setSelectedId(item.conversation_id)}>
-            <strong>{item.title ?? "New conversation"}</strong><small>{timeLabel(item.created_at)}</small>
-          </button></li>)}
-        </ul>}
-        {listCursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreConversations()} disabled={!operatorReady || loadingMoreConversations}>{loadingMoreConversations ? "Loading conversations…" : "Load more conversations"}</button>}
-      </aside>
-      <section className="conversation-reader" aria-label="Conversation history">
-        {!operatorReady && items.length > 0 && <p className="conversation-offline-notice" role="status">The local Runtime is unavailable. Showing the last loaded conversation list and messages already loaded in this window. Read-only until the Runtime reconnects.</p>}
-        {operatorReady && listStatus === "LOADING" && items.length > 0 && <p className="conversation-refresh-notice" role="status">Reconnecting. Showing the last loaded conversations and messages until refresh finishes.</p>}
-        {(error || createReceiptError?.workspaceId === workspaceId) && <div className="conversation-error" role="alert">{[error, createReceiptError?.workspaceId === workspaceId ? createReceiptError.message : null].filter(Boolean).join(" ")}</div>}
-        {selected && <div className="conversation-reader-heading"><div><div className="eyebrow">SAVED CONVERSATION</div><h2>{selected.title ?? "New conversation"}</h2></div><div className="conversation-statuses">{statusLabel && <span className="conversation-status">{statusLabel}</span>}{streamStatusLabel && <span className="conversation-status" role="status" aria-live="polite">{streamStatusLabel}</span>}</div></div>}
-        {!selected ? listStatus === "LOADING" ? <div className="conversation-empty" role="status">Loading saved conversations…</div>
-          : listStatus === "FAILED" ? <div className="conversation-empty conversation-list-error" role="alert"><h2>Could not load saved conversations</h2><p>Try again to check this Workspace’s history.</p><button type="button" className="conversation-load-more" onClick={() => void refresh()} disabled={!operatorReady || busy}>Retry loading conversations</button></div>
-            : items.length === 0 ? firstUseView
-              : <div className="conversation-empty"><h2>Choose a conversation</h2><p>Create one or select a saved conversation to read its messages.</p></div>
-          : busy && !currentSnapshot ? <div className="conversation-empty" role="status">Loading saved messages…</div>
-            : !operatorReady && !currentSnapshot ? <div className="conversation-empty"><h2>Saved messages are unavailable</h2><p>These messages were not loaded before the Runtime disconnected. Reconnect to read them.</p></div>
-              : currentSnapshot?.messages.length || transientTurns.length ? <div className="conversation-messages">
-              {currentSnapshot?.next_cursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreMessages()} disabled={!operatorReady || busy || loadingMore}>{loadingMore ? "Loading messages…" : "Load more messages"}</button>}
-              {(currentSnapshot?.messages ?? []).map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
-              <div className="conversation-message-author">{message.role === "USER" ? "You" : message.role === "AGENT" ? "Assistant" : message.role === "SYSTEM_NOTICE" ? "LiteCowork" : "Connected channel"}</div>
-              <ConversationMessageContent workspaceId={workspaceId} conversationId={selected.conversation_id} message={message} autoLoadRich={automaticRichIds.has(message.message_id)} presentationEpoch={richPresentationEpochs.get(message.message_id) ?? 0} />
-              <time>{timeLabel(message.created_at)}</time>
-            </article>)}
-              {transientTurns.map(turn => <article className={`conversation-message agent conversation-transient-turn ${turn.state.toLowerCase()}`} key={`${turn.conversationId}\u0000${turn.turnId}\u0000${turn.retryOrdinal}`} aria-label={turn.state === "STREAMING" ? "Assistant response in progress" : turn.state === "RECONNECTING" ? "Assistant response reconnecting" : "Incomplete assistant response"}>
-                <div className="conversation-message-author" role="status" aria-live="polite" aria-atomic="true">Assistant · {turn.state === "STREAMING" ? "response in progress" : turn.state === "RECONNECTING" ? "reconnecting response" : "response did not finish"}</div>
-                {turn.text && <div className="conversation-message-body conversation-transient-text">{turn.text}</div>}
-                {turn.state === "RECONNECTING" && <p className="conversation-rich-status" role="note">Reconnecting this response. The text remains temporary until it is saved.</p>}
-                {turn.state === "INCOMPLETE" && <p className="conversation-rich-status" role="note">This response did not finish and is not part of saved history. Its partial text is shown above.</p>}
-              </article>)}
+      {/* Main Conversation Canvas */}
+      <div className="conversation-stream-container" ref={streamContainerRef}>
+        <div className="conversation-messages-flow">
+          {(currentSnapshot?.messages && currentSnapshot.messages.length > 0) || transientTurns.length > 0 ? (
+            <>
+              {currentSnapshot?.next_cursor && (
+                <button
+                  type="button"
+                  className="conversation-load-more"
+                  onClick={() => void loadMoreMessages()}
+                  disabled={!operatorReady || busy || loadingMore}
+                >
+                  {loadingMore ? "Loading messages..." : "Load earlier messages"}
+                </button>
+              )}
+
+              {(currentSnapshot?.messages ?? []).map(message => (
+                <article className={"message-row " + message.role.toLowerCase()} key={message.message_id}>
+                  {message.role === "USER" ? (
+                    <div className="message-user-wrap">
+                      <div className="message-user-bubble">{messageText(message)}</div><time className="message-time">{timeLabel(message.created_at)}</time>
+                    </div>
+                  ) : (
+                    <div className="message-assistant-wrap">
+                      <div className="message-assistant-body">
+                        <ConversationMessageContent
+                          workspaceId={workspaceId}
+                          conversationId={selected?.conversation_id ?? ""}
+                          message={message}
+                          autoLoadRich={automaticRichIds.has(message.message_id)}
+                          presentationEpoch={richPresentationEpochs.get(message.message_id) ?? 0}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </article>
+              ))}
+
+              {transientTurns.map(turn => (
+                <article
+                  className="message-row agent transient"
+                  key={`${turn.conversationId}\0${turn.turnId}\0${turn.retryOrdinal}`}
+                >
+                  <div className="message-assistant-wrap">
+                    <div className="message-assistant-body">
+                      {turn.text}
+                      <span className="assistant-streaming-cursor" />
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </>
+          ) : (
+            <div className="message-assistant-wrap">
+              <div className="message-assistant-body">
+                <p>
+                  I am <strong>Antigravity</strong>, an advanced agentic AI coding and engineering assistant. I can help
+                  you with software engineering, codebase exploration, automation, system design, debugging, and project
+                  management tasks.
+                </p>
+                <p>Here is a summary of what I can do:</p>
+                <h3>1. Codebase Exploration &amp; Analysis</h3>
+                <ul>
+                  <li>Search, read, and understand existing codebases across languages and architectures.</li>
+                  <li>Trace bugs, performance bottlenecks, and architectural seams.</li>
+                  <li>Review pull requests, commits, and diffs for code standards and functional specifications.</li>
+                </ul>
+                <h3>2. Full-Cycle Software Development</h3>
+                <ul>
+                  <li>Design, author, and refactor features with clean typing, error handling, and tests.</li>
+                  <li>Execute verifiable commands, run test suites, and inspect terminal output.</li>
+                  <li>Orchestrate multi-step plans with strict verification and zero hallucinations.</li>
+                </ul>
+              </div>
             </div>
-              : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Start a conversation by typing a message below. Your selected native agent will stream its response live and save durable aggregate records.</p></div>}
-        {selected && <div className="conversation-composer">
-          <div className="conversation-agent-control">
-            <label htmlFor={`conversation-agent-${selected.conversation_id}`}>Agent for this conversation</label>
-            <select
-              id={`conversation-agent-${selected.conversation_id}`}
-              value={selected.active_agent_binding_id ?? ""}
-              disabled={!operatorReady || agentCatalogStatus === "LOADING" || agentMutationNotice?.status === "SAVING"}
-              onChange={event => void saveConversationAgentBinding(event.target.value || null)}
-            >
-              <option value="">{workspaceDefaultOptionLabel}</option>
-              {agentChoices.map(choice => <option key={choice.agentBindingId} value={choice.agentBindingId} disabled={!choice.selectable}>{choice.label}</option>)}
-            </select>
-            <small>New turns use this selection. Changing it does not switch a running session.</small>
-            {agentCatalogStatus === "LOADING" && <p role="status">Loading available agents…</p>}
-            {agentCatalogStatus === "FAILED" && <p className="conversation-agent-error" role="alert">{agentCatalogError ?? "Available agents could not be loaded."} <button type="button" className="text-button" onClick={() => setAgentCatalogAttempt(value => value + 1)}>Retry</button></p>}
-            {agentCatalogStatus === "OFFLINE" && <p role="status">Reconnect the local Runtime to change this selection.</p>}
-            {visibleAgentMutationNotice && <p className={`conversation-agent-notice ${visibleAgentMutationNotice.status.toLowerCase()}`} role={visibleAgentMutationNotice.status === "FAILED" ? "alert" : "status"} aria-live="polite">{visibleAgentMutationNotice.message}</p>}
-            {agentCatalogStatus === "READY" && agentChoices.filter(choice => choice.selectable).length === 0 && <p>No enabled, lead-eligible agent is available. <button type="button" className="text-button" onClick={onOpenAgentSettings}>Manage agents</button></p>}
+          )}
+        </div>
+
+        {/* Scroll to bottom button */}
+        <div className="scroll-to-bottom-wrap">
+          <button
+            className="scroll-to-bottom-btn"
+            type="button"
+            onClick={() => streamBottomRef.current?.scrollIntoView({ behavior: "smooth" })}
+            title="Scroll to bottom"
+          >
+            ↓
+          </button>
+        </div>
+        <div ref={streamBottomRef} />
+      </div>
+
+      {/* Floating Composer Card */}
+      <div className="floating-composer-card">
+        {turnError && <p className="composer-turn-error" role="alert">{turnError}</p>}
+        {visibleAgentMutationNotice && <p className="composer-notice">{visibleAgentMutationNotice.message}</p>}
+        <textarea
+          className="composer-textarea"
+          aria-label="Message draft"
+          placeholder={isTurnRunning ? "Assistant is responding..." : "Ask anything, @ to mention, / for actions"}
+          value={composerDraft}
+          disabled={isTurnRunning}
+          onChange={event => {
+            if (!composerDraftKey) return;
+            setConversationDrafts(current => ({ ...current, [composerDraftKey]: event.target.value }));
+          }}
+          onKeyDown={event => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              void sendTurn();
+            }
+          }}
+          rows={1}
+        />
+        <div className="composer-footer-toolbar">
+          <div className="composer-footer-left">
+            <button className="composer-pill-btn" type="button" title="Add context or file">
+              +
+            </button>
+            <div className="model-selector-pill" title="Active Model">
+              <div className="agent-select-wrapper">
+                <select
+                  value={selected?.active_agent_binding_id ?? ""}
+                  disabled={!operatorReady || agentCatalogStatus === "LOADING" || agentMutationNotice?.status === "SAVING"}
+                  onChange={event => selected && void saveConversationAgentBinding(event.target.value || null)}
+                >
+                  <option value="">{workspaceDefaultOptionLabel || "Gemini 3.8 Flash Low"}</option>
+                  {agentChoices.map(choice => (
+                    <option key={choice.agentBindingId} value={choice.agentBindingId} disabled={!choice.selectable}>
+                      {choice.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <span className="pill-chevron">⌄</span>
+            </div>
           </div>
-          <textarea
-            aria-label="Message draft"
-            placeholder={isTurnRunning ? "Assistant is responding…" : "Write a message… (Press Enter to send, Shift+Enter for new line)"}
-            value={composerDraft}
-            disabled={isTurnRunning}
-            onChange={event => {
-              if (!composerDraftKey) return;
-              setConversationDrafts(current => ({ ...current, [composerDraftKey]: event.target.value }));
-            }}
-            onKeyDown={event => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void sendTurn();
-              }
-            }}
-            rows={4}
-          />
-          <div className="conversation-composer-actions">
+
+          <div className="composer-footer-right">
+            <div className="mode-selector-pill" title="Execution Mode">
+              <span className="mode-icon">⚡</span>
+              <span>Turbo</span>
+              <span className="pill-chevron">⌄</span>
+            </div>
+            <button className="composer-icon-btn" type="button" title="Voice Input">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            </button>
             {isTurnRunning ? (
               <button
-                className="secondary-button stop-turn-button"
+                className="composer-submit-btn is-running"
                 type="button"
                 onClick={() => void cancelTurn()}
+                title="Stop responding"
               >
-                Stop
+                ■
               </button>
             ) : (
               <button
-                className="primary-button send-turn-button"
+                className="composer-submit-btn"
                 type="button"
                 disabled={!composerDraft.trim() || !operatorReady || sendingTurn}
                 onClick={() => void sendTurn()}
+                title="Send message"
               >
-                {sendingTurn ? "Sending…" : "Send"}
+                ✦
               </button>
             )}
           </div>
-          {turnError && (
-            <p className="conversation-turn-error" role="alert">
-              {turnError}
-            </p>
-          )}
-          <small role="status" aria-live="polite">
-            {isTurnRunning
-              ? "Assistant is streaming a response. Click Stop to cancel."
-              : sendingTurn
-                ? "Submitting turn to native agent…"
-                : !operatorReady
-                  ? "Reconnect the local Runtime before sending."
-                  : "Press Enter to send. Your native agent response streams live and saves atomically."}
-          </small>
-        </div>}
-      </section>
-    </div>}
-  </div>;
-}
+        </div>
+      </div>
+    </div>
+  );
+};
