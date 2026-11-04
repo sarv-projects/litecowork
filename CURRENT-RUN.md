@@ -237,3 +237,40 @@ The following blockers and UI truthfulness defects have been remediated and veri
     - Compiled release daemon binary `litecoworkd.exe` (33.3 MB) and copied to `apps/litecowork-ui/src-tauri/binaries/litecoworkd-x86_64-pc-windows-msvc.exe`.
     - Built and linked `apps/litecowork-ui/src-tauri/target/release/litecowork-ui.exe` (15.9 MB) with embedded production bundle and sidecar configuration.
     - Ran `cargo fmt --all -- --check` across the entire workspace (apps/ and crates/): **PASSED (exit code 0)**.
+
+### Phase 8: Deep ZCode Architecture Audit, Left Sidebar Overhaul & Settings Workspace
+
+1. **Deep Source Inspection of ZCode (`repo_take/zcode`)**:
+   - **Settings Triad (`packages/ui/src/settings/settingsPageConfig.ts`)**: Inspected ZCode's 3-group organization (`basics`, `agentCapabilities`, `dataAndStats`).
+   - **Side Pane Keep-Alive (`packages/ui/src/app-shell/WorkspaceShellLayout.tsx` & `sidePaneTerminalSessionRegistry.js`)**: Learned how ZCode preserves resident terminal sessions by `workspaceKey` without killing PTY processes when switching side pane views.
+   - **Project Tree Authority (`packages/ui/src/project-sidebar/CONTRACT.md`)**: Verified how the Host daemon's `projectService.readTree` acts as the single source of truth while the UI manages only view preferences and draft state.
+   - **Two-Stage Consent & Browser vs. Computer Isolation (`packages/ui/src/settings/BrowserSettingsSection.tsx` & `ComputerUseSection.tsx`)**: Inspected the explicit separation between web automation (browser) and OS input injection (computer use), along with granular cache vs. full cookie/data cleanup.
+
+2. **Uncluttered Left Sidebar Navigation (`apps/litecowork-ui/src/App.tsx`, `styles.css`)**:
+   - Implemented a clear Workspace Switcher dropdown (`📂 <workspace> ⌄`) for local folder roots.
+   - Restored primary `+ New Chat` action with `Ctrl N` shortcut badge.
+   - Added clean Recent Chats list with relative timestamps (`now`, `12m`), unread dots, and active conversation highlight.
+   - Preserved all durable domain objects without visual clutter:
+     - `◇ Needs You` (actionable decision inbox with badge count)
+     - `▤ Work` (durable tasks, attempts, deliverables)
+     - `◉ Coworkers` (persistent assistant roster)
+     - `🕒 Automations & Routines` (scheduled triggers & workflows)
+     - `▧ Library` (workspace files & artifacts)
+     - `✧ Discover` (LiteSPM skills & MCP package catalog)
+   - Anchored `⚙ Settings` at the bottom with live local runtime health indicator dot.
+
+3. **Settings Workspace (`apps/litecowork-ui/src/settings/SettingsView.tsx`, `settings-view.css`)**:
+   - Replaced bare 3-card stub with a dedicated 9-category workstation settings application matching `docs/V1-SETTINGS-CONTRACT-LEDGER.md` and ZCode patterns:
+     1. General & Desktop (Appearance, density, text scaling, reduced motion, shortcuts)
+     2. Workspaces & Roots (Inspector, create workspace, `LOCAL_ONLY` policy, immutable instructions editor with byte limit, archiving guard)
+     3. Agent Harnesses & Models (Live socket probes, default lead binding, binding management)
+     4. Browser Use (Built-in browser control toggle, mandatory TLS certificate verification, cache vs. cookies data cleanup)
+     5. Terminal & Shell (Shell engine pwsh/cmd/bash, workspace root directory resolution, Windows Job Object isolation status, buffer limit)
+     6. Permissions & Security (Two-stage consent: always ask vs. project commands, filesystem write guard, Windows Credential Store integration)
+     7. Local Runtime & Diagnostics (Daemon state, Runtime/Incarnation IDs, startup policy, active blocker list with resolution hints)
+     8. Skills & MCP (LiteSPM package manager bridge status, progressive discovery, human review guards)
+     9. Coworker Defaults & Memory (Default assistant persona, workspace-isolated memory retention)
+
+4. **Verification Gates**:
+   - `npm --prefix apps/litecowork-ui run build`: **0 errors** (172 modules transformed cleanly).
+   - `cargo fmt --all -- --check`: **0 diffs**.

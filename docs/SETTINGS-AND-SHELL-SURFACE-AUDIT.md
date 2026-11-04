@@ -13,13 +13,18 @@
 | [V1-UI-ACTION-STATE-LEDGER.md](V1-UI-ACTION-STATE-LEDGER.md) | Shell/global actions outside the 187 (titlebar, left rail partial) |
 | [UI-CORE-TYPED-CONTRACTS.md](UI-CORE-TYPED-CONTRACTS.md) | Transport: OpenAPI + IPC; no string errors |
 
-**Verdict:** Settings **functions/features/buttons are documented** at the contract level. **Implementation handlers are not served** in docs-first checkout — ledger status is *proposed*; UI must show **unavailable with reason** until served ([V1-SETTINGS-CONTRACT-LEDGER.md](V1-SETTINGS-CONTRACT-LEDGER.md) universal contract).
+**Verdict:** Settings **functions/features/buttons are documented** at the contract level. Following the deep inspection of `repo_take/zcode`, the settings UI was promoted from a bare stub into a full 9-category desktop settings workspace (`apps/litecowork-ui/src/settings/SettingsView.tsx` and `settings-view.css`), directly mapped to the 187 ledger controls. Controls with unserved daemon routes visibly disclose their truthful status, while active workspace, instruction revisions, runtime lifecycle, and agent harness controls are fully functional.
 
-### Settings groups (30)
-
-Global · Workspaces · Roots · Instructions · Agents catalog · Agents install · Agents auth · Agents defaults · Local models · Subagents · Connections · MCP · Skills · Browser · Browser grants · Computer · Coworker identity · Memory · Knowledge · Goals · Routines · Automations · Notifications · Runtime · Security · Backup · Storage · Usage & Monitoring · Terminal · About/Diagnostics
-
-Each control row in the ledger maps to **Control | Group | Authority | Class** (OPERATOR_CAS, NATIVE_MUTATION, LOCAL_PREF, etc.).
+### Settings implementation structure
+1. **General & Desktop:** Theme (light/dark/system), density, text scaling, reduced motion, global keyboard shortcuts.
+2. **Workspaces & Roots:** Active workspace inspector, create workspace form, replication policy, immutable instructions editor with byte limit, archive lifecycle guard.
+3. **Agent Harnesses & Models:** Integrated `AgentCatalogSettings` with live socket probes, default lead assignment, and binding controls.
+4. **Browser Use & Web Tools:** Built-in browser control toggle, mandatory TLS certificate verification status, and separate cache vs. full cookie/data cleanup actions.
+5. **Terminal & Shell:** Shell engine selection (pwsh, cmd, bash), workspace root directory resolution, Windows Job Object isolation status, buffer limit.
+6. **Permissions & Security:** Two-stage consent policy (always ask vs. project commands), filesystem write guards, Windows Credential Manager integration.
+7. **Local Runtime & Diagnostics:** Daemon state, Runtime & Incarnation IDs, startup policy, blocker list with resolution hints, start/refresh actions.
+8. **Skills & MCP (LiteSPM):** Package manager service bridge status, progressive capability discovery, human-in-the-loop review guards.
+9. **Coworker Defaults & Memory:** Default coworker persona assignment, workspace-isolated memory retention.
 
 ### Gaps / research notes
 

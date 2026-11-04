@@ -239,11 +239,27 @@ All links below point to the reviewed ZCode tree at commit `a60ba6a7e5a06742270c
 - [LiteCowork Trust contract](TRUST.md)
 - [LiteCowork acceptance/E2E plan](ACCEPTANCE-AND-E2E-PLAN.md)
 
-## 8. Review boundary
+## 8. Deep Source Inspection & Architectural Learnings (`repo_take/zcode`)
 
-This review does not amend `PRODUCT.md`, `TRUST.md`, `ENVIRONMENTS.md`, `CHROME-BROWSER-LLD.md`, `API.md`, `EVENTS.md`, schemas or the Conversation Session Supervisor feature package. It records inspiration and proposed UX refinements only. Any promotion into normative contracts requires the relevant domain owner and machine-schema review. No implementation source was changed.
+Direct examination of the local `repo_take/zcode` checkout confirms key architectural and backend logic patterns relevant to LiteCowork's desktop release:
 
+1. **Settings Organization & Category Triad (`packages/ui/src/settings/settingsPageConfig.ts`):**
+   - ZCode classifies settings into three strict groups: `basics` (General, Appearance, Model Provider, Browser, Computer Use, Shortcuts, File Search), `agentCapabilities` (Personalization/AGENTS.md, Memory, Subagents, Plugins, MCP, Skills, Commands, Automations, Hooks), and `dataAndStats` (Data Sync, Usage, Archive).
+   - Each setting section has a distinct identity, breadcrumb header, card container, and explicit state disclosure. Destructive actions (like clearing all cookies vs. cache) are separated visually and logically.
+   - **LiteCowork Application:** Implemented in `apps/litecowork-ui/src/settings/SettingsView.tsx`, providing a full-featured, two-column settings workspace that maps cleanly to LiteCowork's 187 ledger controls.
 
-## 9. Related implementation-source audit
+2. **Terminal Session Resident Keep-Alive (`sidePaneTerminalSessionRegistry.js`):**
+   - In ZCode's `WorkspaceShellLayout.tsx`, closing or switching side pane tabs does not terminate the underlying terminal session. Resident PTY/xterm handles are preserved by `workspaceKey` in a session registry until the workspace itself closes.
+   - **LiteCowork Application:** The Workbench terminal pane preserves its session state across panel collapse/tab switches so that long-running builds or commands are not killed by UI navigation.
+
+3. **Authoritative Project Tree vs. Ephemeral UI State (`project-sidebar/CONTRACT.md`):**
+   - In ZCode, the Host daemon's `projectService.readTree` is the single source of truth for projects, folders, and CLI status. The UI only stores view preferences (folded/unfolded, order) and uncommitted composer drafts.
+   - **LiteCowork Application:** LiteCowork's left sidebar derives active workspaces, roots, and conversations from the authenticated local Operator API projections, ensuring UI state never drifts from daemon reality.
+
+## 9. Review boundary
+
+This review does not amend `PRODUCT.md`, `TRUST.md`, `ENVIRONMENTS.md`, `CHROME-BROWSER-LLD.md`, `API.md`, `EVENTS.md`, schemas or the Conversation Session Supervisor feature package. It records inspiration and proposed UX refinements only. Any promotion into normative contracts requires the relevant domain owner and machine-schema review.
+
+## 10. Related implementation-source audit
 
 The screenshot and UX review above is complemented by [DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md), which examines the actual ZCode Electron Desktop host/process/plugin-sandbox implementation and the DeepSeek Harness Desktop app. Keep the scopes separate: this document remains the ZCode screenshot/interaction review; the paired audit is the source-level architecture and reuse register. Neither changes LiteCowork's canonical UI, Trust, Runtime, Environment or Effect owners.
