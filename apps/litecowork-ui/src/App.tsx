@@ -74,6 +74,7 @@ import { canOfferLocalRuntimeStart } from "./runtime/runtime-start-readiness";
 import { RuntimeInventoryStreamController, type RuntimeInventoryStreamStatus } from "./runtime/runtime-inventory-stream.ts";
 import { desktopRuntimeInventoryStreamDriver } from "./runtime/desktop-runtime-inventory-stream.ts";
 import { ConversationsPage } from "./conversations/ConversationsPage";
+import { SettingsView } from "./settings/SettingsView";
 import type { ConversationSummary } from "./conversations/conversation-view";
 import { DiscoverPage } from "./discover/DiscoverPage";
 import { desktopDiscoverApi } from "./discover/desktop-discover-api";
@@ -127,7 +128,7 @@ import {
 } from "./workspaces/workspace-onboarding.ts";
 
 type Page = "Home" | "Conversations" | "Work" | "Library" | "Discover" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Notifications" | "Routines" | "Automations" | "Settings";
-type RuntimeStatus = {
+export type RuntimeStatus = {
   state: string;
   runtimeId: string | null;
   localIncarnationId: string | null;
@@ -138,7 +139,7 @@ type RuntimeStatus = {
   daemonAvailable: boolean;
   detail: string | null;
 };
-type RuntimeLifecycleView = {
+export type RuntimeLifecycleView = {
   runtimeId: string;
   startupPolicy: "MANUAL" | "LOGIN_BACKGROUND" | "ALWAYS_ON_SERVICE";
   incarnation: {
@@ -161,7 +162,7 @@ type RuntimeLifecycleView = {
     createdAt: string;
   }>;
 };
-type WorkspaceView = {
+export type WorkspaceView = {
   workspaceId: string;
   name: string;
   replicationPolicy: string;
@@ -170,7 +171,7 @@ type WorkspaceView = {
   status: string;
   version: number;
 };
-type AgentInstallationView = {
+export type AgentInstallationView = {
   agentId: string;
   displayName: string;
   protocolCandidate: string;
@@ -190,7 +191,7 @@ type AgentProfileObservationView = {
   constraints?: Record<string, unknown>;
 };
 type AgentEndpointView = { endpointId: string; agentProfileId: string; protocol: string; topology: string; protocolVersion: string | null; capabilities: Record<string, unknown> };
-type AgentProfileView = {
+export type AgentProfileView = {
   agentProfileId: string;
   providerKey: string;
   displayName: string;
@@ -199,7 +200,7 @@ type AgentProfileView = {
   observations: AgentProfileObservationView[];
 };
 type AgentProfilePageView = { items: AgentProfileView[]; nextCursor: string | null };
-type AgentBindingView = {
+export type AgentBindingView = {
   agentBindingId: string;
   workspaceId: string;
   agentProfileId: string;
@@ -213,7 +214,7 @@ type AgentBindingView = {
   version: number;
 };
 type AgentBindingPageView = { items: AgentBindingView[]; nextCursor: string | null };
-type RuntimeWorkspaceBindingView = {
+export type RuntimeWorkspaceBindingView = {
   runtimeWorkspaceBindingId: string;
   runtimeId: string;
   workspaceId: string;
@@ -326,7 +327,7 @@ type HomeCoworkerSelection = {
   status: "ACTIVE" | "PAUSED" | "ARCHIVED" | "WORKSPACE_DEFAULTS";
   source: "PRIMARY" | "USER" | "DEFAULTS";
 };
-type WorkspaceInstructionView = {
+export type WorkspaceInstructionView = {
   workspaceId: string;
   revision: number;
   parentRevisions: number[];
@@ -2233,20 +2234,19 @@ function App() {
         inert={pendingLibraryNavigation !== null}
       >
         <div className="sidebar-top-bar">
-          <div className="sidebar-brand-icon" title="LiteCowork">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 3L2 21h4.5l2.2-5h6.6l2.2 5H22L12 3z" />
-              <path d="M9.8 13.5h4.4" />
-            </svg>
+          <div className="sidebar-brand-wrap" title="LiteCowork Workspace">
+            <span className="sidebar-brand-icon" aria-hidden="true">◩</span>
+            <span className="sidebar-brand-name">LiteCowork</span>
           </div>
           <div className="sidebar-top-nav-group">
             <button
               className="sidebar-icon-btn"
               type="button"
-              aria-label="Close or collapse sidebar"
+              aria-label="Collapse sidebar"
+              title="Collapse sidebar"
               onClick={() => closeNavigation()}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
                 <path d="M9 3v18" />
               </svg>
@@ -2255,9 +2255,10 @@ function App() {
               className="sidebar-icon-btn"
               type="button"
               aria-label="Back"
+              title="Back"
               onClick={() => window.history.back()}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
             </button>
@@ -2265,32 +2266,42 @@ function App() {
               className="sidebar-icon-btn"
               type="button"
               aria-label="Forward"
+              title="Forward"
               onClick={() => window.history.forward()}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
-            </button>
-            <button
-              className="sidebar-icon-btn"
-              type="button"
-              aria-label="Search resources and files"
-              onClick={() => {
-                requestPageNavigation("Library");
-                if (navigationOpen) closeNavigation(true);
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M21 21l-4.35-4.35" />
               </svg>
             </button>
           </div>
         </div>
 
-        <div className="sidebar-new-action-wrap">
+        {/* 1. Workspace Switcher: Clear dropdown/selector for current local workspace roots */}
+        <div className="sidebar-workspace-switcher">
+          <span className="sidebar-workspace-folder-icon" aria-hidden="true">📂</span>
+          <select
+            className="sidebar-workspace-select"
+            aria-label="Current Workspace Root"
+            value={selectedWorkspaceId}
+            disabled={taskSaving}
+            onChange={(event) => {
+              selectWorkspace(event.target.value);
+              setSelectedConversationId(null);
+            }}
+          >
+            {workspaces.map((ws) => (
+              <option key={ws.workspaceId} value={ws.workspaceId}>
+                {ws.name}
+              </option>
+            ))}
+          </select>
+          <span className="sidebar-workspace-chevron" aria-hidden="true">⌄</span>
+        </div>
+
+        {/* 2. New Chat pill button */}
+        <div className="sidebar-primary-action">
           <button
-            className="sidebar-new-conv-pill"
+            className="sidebar-new-chat-pill"
             type="button"
             disabled={taskSaving}
             onClick={() => {
@@ -2301,135 +2312,139 @@ function App() {
             }}
           >
             <span className="sidebar-plus-glyph" aria-hidden="true">+</span>
-            <span>New Conversation</span>
+            <span>New Chat</span>
+            <span className="sidebar-chat-shortcut">Ctrl N</span>
           </button>
         </div>
 
-        <div className="sidebar-quick-links">
+        {/* 3. Recent Chats list with timestamps/active highlights */}
+        <div className="sidebar-recent-chats-wrap">
+          <div className="sidebar-section-header">
+            <span className="sidebar-section-label">Recent Chats</span>
+            <span className="sidebar-section-count">
+              {(conversationsByWorkspace[selectedWorkspaceId] ?? []).length}
+            </span>
+          </div>
+
+          <div className="sidebar-recent-chat-list">
+            {(conversationsByWorkspace[selectedWorkspaceId] ?? []).length === 0 ? (
+              <div className="sidebar-chat-item-empty">No saved chats yet</div>
+            ) : (
+              (conversationsByWorkspace[selectedWorkspaceId] ?? []).slice(0, 10).map((conv, idx) => {
+                const isSelected = selectedConversationId === conv.conversation_id && page === "Conversations";
+                return (
+                  <button
+                    key={conv.conversation_id}
+                    className={`sidebar-chat-item-row ${isSelected ? "selected" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setSelectedConversationId(conv.conversation_id);
+                      if (page !== "Conversations") requestPageNavigation("Conversations");
+                      if (navigationOpen) closeNavigation(true);
+                    }}
+                  >
+                    <span className="chat-row-title" title={conv.title || "Untitled"}>
+                      {conv.title || "Untitled"}
+                    </span>
+                    {isSelected ? (
+                      <span className="chat-row-now">now</span>
+                    ) : (
+                      <span className={`chat-row-dot ${idx === 0 ? "active" : ""}`} />
+                    )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* 4. Core Objects Nav (Clean & Uncluttered) */}
+        <nav className="sidebar-nav-list" aria-label="Workspace Navigation">
+          <div className="sidebar-section-header">
+            <span className="sidebar-section-label">Workspace</span>
+          </div>
+
+          {/* Needs You: Decision inbox for pending user approvals, credential prompts, blockers */}
           <button
-            className={`sidebar-quick-item ${page === "Automations" ? "selected" : ""}`}
+            className={`sidebar-nav-btn ${page === "Needs You" ? "selected" : ""}`}
+            type="button"
+            onClick={() => {
+              requestPageNavigation("Needs You");
+              if (navigationOpen) closeNavigation(true);
+            }}
+          >
+            <span className="sidebar-nav-icon">◇</span>
+            <span className="sidebar-nav-text">Needs You</span>
+          </button>
+
+          {/* Work: Durable task runs, attempts, and deliverables */}
+          <button
+            className={`sidebar-nav-btn ${page === "Work" ? "selected" : ""}`}
+            type="button"
+            onClick={() => {
+              setOpenedTask(null);
+              requestPageNavigation("Work");
+              if (navigationOpen) closeNavigation(true);
+            }}
+          >
+            <span className="sidebar-nav-icon">▤</span>
+            <span className="sidebar-nav-text">Work</span>
+          </button>
+
+          {/* Coworkers: Persistent coworker profiles and assignments */}
+          <button
+            className={`sidebar-nav-btn ${page === "Coworkers" ? "selected" : ""}`}
+            type="button"
+            onClick={() => {
+              requestPageNavigation("Coworkers");
+              if (navigationOpen) closeNavigation(true);
+            }}
+          >
+            <span className="sidebar-nav-icon">◉</span>
+            <span className="sidebar-nav-text">Coworkers</span>
+          </button>
+
+          {/* Automations & Routines: Scheduled procedures */}
+          <button
+            className={`sidebar-nav-btn ${page === "Automations" || page === "Routines" ? "selected" : ""}`}
             type="button"
             onClick={() => {
               requestPageNavigation("Automations");
               if (navigationOpen) closeNavigation(true);
             }}
           >
-            <span className="sidebar-quick-icon" aria-hidden="true">🕒</span>
-            <span>Automations</span>
+            <span className="sidebar-nav-icon">🕒</span>
+            <span className="sidebar-nav-text">Automations &amp; Routines</span>
           </button>
+
+          {/* Library: Workspace files and knowledge artifacts */}
           <button
-            className={`sidebar-quick-item ${page === "Discover" ? "selected" : ""}`}
+            className={`sidebar-nav-btn ${page === "Library" ? "selected" : ""}`}
+            type="button"
+            onClick={() => {
+              requestPageNavigation("Library");
+              if (navigationOpen) closeNavigation(true);
+            }}
+          >
+            <span className="sidebar-nav-icon">▧</span>
+            <span className="sidebar-nav-text">Library</span>
+          </button>
+
+          {/* Discover: LiteSPM skills and MCP servers catalog */}
+          <button
+            className={`sidebar-nav-btn ${page === "Discover" ? "selected" : ""}`}
             type="button"
             onClick={() => {
               requestPageNavigation("Discover");
               if (navigationOpen) closeNavigation(true);
             }}
           >
-            <span className="sidebar-quick-icon" aria-hidden="true">🗃</span>
-            <span>Customizations</span>
+            <span className="sidebar-nav-icon">✧</span>
+            <span className="sidebar-nav-text">Discover</span>
           </button>
-        </div>
+        </nav>
 
-        <div className="sidebar-projects-section">
-          <div className="sidebar-projects-header">
-            <span className="sidebar-projects-title">Projects</span>
-            <div className="sidebar-projects-actions">
-              <button
-                className="sidebar-mini-icon-btn"
-                type="button"
-                title="Sort projects"
-                aria-label="Sort projects"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="3" y1="6" x2="21" y2="6" />
-                  <line x1="3" y1="12" x2="15" y2="12" />
-                  <line x1="3" y1="18" x2="9" y2="18" />
-                </svg>
-              </button>
-              <button
-                className="sidebar-mini-icon-btn"
-                type="button"
-                title="New workspace or project"
-                aria-label="New workspace or project"
-                onClick={() => {
-                  requestPageNavigation("Home");
-                  if (navigationOpen) closeNavigation(true);
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                  <line x1="12" y1="11" x2="12" y2="17" />
-                  <line x1="9" y1="14" x2="15" y2="14" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          <div className="sidebar-projects-tree" role="tree">
-            {workspaces.map(ws => {
-              const isSelected = ws.workspaceId === selectedWorkspaceId;
-              const currentConvList = isSelected ? (conversationsByWorkspace[ws.workspaceId] ?? []) : [];
-
-              return (
-                <div key={ws.workspaceId} className={`sidebar-project-node ${isSelected ? "is-expanded" : ""}`}>
-                  <button
-                    className={`sidebar-project-folder-row ${isSelected ? "active-folder" : ""}`}
-                    type="button"
-                    onClick={() => {
-                      if (selectedWorkspaceId !== ws.workspaceId) {
-                        selectWorkspace(ws.workspaceId);
-                        setSelectedConversationId(null);
-                      }
-                      if (page !== "Conversations") {
-                        requestPageNavigation("Conversations");
-                      }
-                      if (navigationOpen) closeNavigation(true);
-                    }}
-                  >
-                    <span className="folder-icon" aria-hidden="true">{isSelected ? "📂" : "📁"}</span>
-                    <span className="folder-name" title={ws.name}>{ws.name}</span>
-                  </button>
-
-                  {isSelected && (
-                    <div className="sidebar-project-conv-list">
-                      {currentConvList.length === 0 ? (
-                        <div className="sidebar-project-conv-empty">No conversations yet</div>
-                      ) : (
-                        currentConvList.map((conv, idx) => {
-                          const isConvActive = selectedConversationId === conv.conversation_id;
-                          return (
-                            <button
-                              key={conv.conversation_id}
-                              className={`sidebar-project-conv-row ${isConvActive ? "selected-conv" : ""}`}
-                              type="button"
-                              onClick={() => {
-                                setSelectedConversationId(conv.conversation_id);
-                                if (page !== "Conversations") {
-                                  requestPageNavigation("Conversations");
-                                }
-                                if (navigationOpen) closeNavigation(true);
-                              }}
-                            >
-                              <span className="conv-title" title={conv.title || "Untitled"}>
-                                {conv.title || "Untitled"}
-                              </span>
-                              {isConvActive ? (
-                                <span className="conv-now-pill">now</span>
-                              ) : (
-                                <span className={`conv-dot ${idx === 0 ? "has-unread" : ""}`} />
-                              )}
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
+        {/* 5. Settings: Local runtime, agent harnesses, diagnostics */}
         <div className="sidebar-bottom-bar">
           <button
             className={`sidebar-settings-btn ${page === "Settings" ? "selected" : ""}`}
@@ -2439,11 +2454,12 @@ function App() {
               if (navigationOpen) closeNavigation(true);
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-            <span>Settings</span>
+            <span className="sidebar-nav-icon">⚙</span>
+            <span className="sidebar-nav-text">Settings</span>
+            <span
+              className={`sidebar-runtime-indicator ${runtime?.state === "READY" ? "online" : runtime?.state === "DEGRADED" ? "warning" : ""}`}
+              title={`Local Runtime: ${runtime?.state ?? "Checking"}`}
+            />
           </button>
         </div>
       </aside>
@@ -2618,7 +2634,7 @@ function App() {
             requestPageNavigation("Work");
           }} />
         ) : page === "Settings" ? (
-          <SettingsPage runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).message} agentActionError={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).error} agentActionBusy={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).busy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={async () => { await refreshAgentBindings(selectedWorkspaceId); }} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} onDisableAgentBinding={disableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} workspaceCreatePending={pendingWorkspaceRequest !== null} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} policyRetryPending={workspacePolicyRequests.some(request => request.workspaceId === selectedWorkspaceId && request.expectedVersion === workspaces.find(item => item.workspaceId === selectedWorkspaceId)?.version && request.replicationPolicy === "LOCAL_ONLY")} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
+          <SettingsView runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).message} agentActionError={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).error} agentActionBusy={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).busy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={async () => { await refreshAgentBindings(selectedWorkspaceId); }} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} onDisableAgentBinding={disableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} workspaceCreatePending={pendingWorkspaceRequest !== null} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} policyRetryPending={workspacePolicyRequests.some(request => request.workspaceId === selectedWorkspaceId && request.expectedVersion === workspaces.find(item => item.workspaceId === selectedWorkspaceId)?.version && request.replicationPolicy === "LOCAL_ONLY")} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
         ) : (
           <PlaceholderPage page={page} onSettings={() => requestPageNavigation("Settings")} />
         )}
@@ -3520,7 +3536,7 @@ function localServiceCopy(runtime: RuntimeStatus | null, runtimeError: string | 
   }
 }
 
-function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, onDisableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceListState, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, workspaceCreatePending, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, policyRetryPending, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
+export function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, onDisableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceListState, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, workspaceCreatePending, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, policyRetryPending, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
   const [archiveConfirmationFor, setArchiveConfirmationFor] = useState<string | null>(null);
   useEffect(() => setArchiveConfirmationFor(null), [selectedWorkspaceId]);
   const selectedWorkspace = workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId);
