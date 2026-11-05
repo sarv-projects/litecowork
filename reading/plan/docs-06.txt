@@ -1,0 +1,20 @@
+# bucket docs-06 | 19 files | 445 KB | 5928 lines
+docs/ACCEPTANCE-AND-E2E-PLAN.md	9333	112
+docs/EXPERIENCE.md	76409	1098
+docs/FAILURE-RECOVERY.md	17654	213
+docs/LITESPM-INTEGRATION-PLAN.md	15501	191
+docs/LITESPM-LITECOWORK-INTEROP-LLD.md	20778	209
+docs/LOCAL-OPERATOR-IPC.md	25603	436
+docs/SEMANTIC-SERVED-UI-MAP.md	29631	322
+docs/SPECIFICATION-STANDARD.md	10023	132
+docs/STORAGE.md	97031	1331
+docs/TASK-RUNTIME.md	44089	760
+docs/TESTING.md	44726	517
+docs/V1-DESIGN-INDEX.md	12980	94
+docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md	8099	63
+docs/ZCODE-UI-INSPIRATION-AUDIT.md	34052	265
+docs/adr/0004-runtime-and-environment-are-distinct.md	741	21
+docs/adr/0008-no-generic-provider-layer.md	1286	23
+docs/adr/0009-attempt-free-lead-planning.md	865	16
+docs/adr/0020-runtime-identity-is-installation-scoped.md	2829	50
+docs/superpowers/plans/2026-10-25-automation-starter-templates.md	4158	75

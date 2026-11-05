@@ -1,0 +1,22 @@
+# bucket daemon-01 | 21 files | 783 KB | 21460 lines
+apps/litecoworkd/Cargo.toml	1879	58
+apps/litecoworkd/src/agent_binding_disable_operator_tests.rs	36113	955
+apps/litecoworkd/src/agents/cline.rs	28670	737
+apps/litecoworkd/src/agents/codex_profile_probe.rs	30649	803
+apps/litecoworkd/src/agents/conversation_prompt.rs	10354	274
+apps/litecoworkd/src/agents/mod.rs	42811	1164
+apps/litecoworkd/src/agents/opencode.rs	1123	29
+apps/litecoworkd/src/agents/opencode_profile_probe.rs	32695	869
+apps/litecoworkd/src/conversation_operator_tests.rs	62583	1594
+apps/litecoworkd/src/coworker_operator.rs	22038	663
+apps/litecoworkd/src/environment_computer_use.rs	20378	578
+apps/litecoworkd/src/needs_you_operator.rs	6435	211
+apps/litecoworkd/src/needs_you_operator_tests.rs	21832	500
+apps/litecoworkd/src/notification_operator.rs	13630	390
+apps/litecoworkd/src/operator.rs	351066	9525
+apps/litecoworkd/src/resource_content_gc_operator_tests.rs	15981	450
+apps/litecoworkd/src/runtime_capability_hosts_tests.rs	10877	261
+apps/litecoworkd/src/runtime_process_tests.rs	15873	398
+apps/litecoworkd/src/user_request_operator.rs	49702	1243
+apps/litecoworkd/src/verification_runs_operator.rs	23327	645
+apps/litecoworkd/src/zip_intake_operator.rs	4155	113

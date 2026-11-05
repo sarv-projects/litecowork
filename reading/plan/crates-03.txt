@@ -1,0 +1,27 @@
+# bucket crates-03 | 26 files | 818 KB | 21769 lines
+crates/domain-environment/src/browser_pointer.rs	7483	250
+crates/domain-environment/tests/browser_control.rs	22037	973
+crates/domain-rag/src/limits.rs	5647	164
+crates/domain-rag/src/local_lexical.rs	15016	395
+crates/domain-rag/src/provider.rs	5959	152
+crates/domain-responsibility/src/tests.rs	11867	383
+crates/domain-task/src/execution.rs	38318	990
+crates/domain-task/src/planning.rs	26010	633
+crates/domain-task/src/task_packet_preparation.rs	21041	541
+crates/domain-task/src/worker_selection_decision.rs	13692	330
+crates/local-environment-staging/src/lib.rs	55316	1613
+crates/storage-core/src/delegation_result.rs	1967	60
+crates/storage-core/src/resource_edge.rs	1556	44
+crates/storage-core/src/workspace_root_observations.rs	3648	111
+crates/storage-sqlite/src/artifact_tests.rs	63473	1394
+crates/storage-sqlite/src/backup.rs	91341	2430
+crates/storage-sqlite/src/dependencies.rs	11515	239
+crates/storage-sqlite/src/environment_tests.rs	81702	2111
+crates/storage-sqlite/src/invocation_dispatch_migration_tests.rs	4888	120
+crates/storage-sqlite/src/lead_handoff_boundary.rs	8248	226
+crates/storage-sqlite/src/needs_you_tests.rs	23917	708
+crates/storage-sqlite/src/runtime_binding_tests.rs	46992	1240
+crates/storage-sqlite/src/runtime_offer_tests.rs	9525	244
+crates/storage-sqlite/src/trust.rs	207712	5001
+crates/storage-sqlite/src/user_request_details.rs	42178	1039
+crates/storage-sqlite/src/workspace_root_cleanup.rs	16428	378

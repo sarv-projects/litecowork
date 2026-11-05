@@ -1,0 +1,24 @@
+# bucket daemon-03 | 23 files | 783 KB | 21155 lines
+apps/litecoworkd/src/agent_credentials_routes.rs	18707	508
+apps/litecoworkd/src/agents/acp_registry.rs	13666	356
+apps/litecoworkd/src/agents/codex.rs	911	26
+apps/litecoworkd/src/agents/control_descriptor.rs	42160	1125
+apps/litecoworkd/src/agents/opencode_server.rs	60453	1622
+apps/litecoworkd/src/agents/supervisor.rs	30671	723
+apps/litecoworkd/src/approval_operator.rs	29141	813
+apps/litecoworkd/src/backup_operator.rs	9718	240
+apps/litecoworkd/src/browser_consent.rs	34250	957
+apps/litecoworkd/src/dependency_invalidations_operator.rs	6399	211
+apps/litecoworkd/src/environment_action_batch.rs	21947	652
+apps/litecoworkd/src/environment_isolation.rs	49476	1283
+apps/litecoworkd/src/environment_provider.rs	21635	615
+apps/litecoworkd/src/local_filesystem.rs	106479	2793
+apps/litecoworkd/src/operator_runtime_binding_tests.rs	15056	380
+apps/litecoworkd/src/presentation_operator.rs	148663	3990
+apps/litecoworkd/src/rag_local_model_operator.rs	3717	92
+apps/litecoworkd/src/resource_quick_import_operator_tests.rs	12487	316
+apps/litecoworkd/src/routine_run_operator_tests.rs	33594	873
+apps/litecoworkd/src/runtime.rs	99191	2513
+apps/litecoworkd/src/runtime_recovery_tests.rs	25154	565
+apps/litecoworkd/src/task_lead_handoff_operator.rs	16932	442
+apps/litecoworkd/tests/cli.rs	1866	60

@@ -1,0 +1,23 @@
+# bucket daemon-04 | 22 files | 783 KB | 21224 lines
+apps/litecoworkd/src/agent_control_operator.rs	12810	365
+apps/litecoworkd/src/agent_registry_operator.rs	26827	757
+apps/litecoworkd/src/agents/codex_app_server.rs	57693	1486
+apps/litecoworkd/src/agents/native_cli.rs	13692	427
+apps/litecoworkd/src/agents/planning.rs	5425	125
+apps/litecoworkd/src/attempt_process_scope.rs	17990	506
+apps/litecoworkd/src/automation_operator.rs	117186	3071
+apps/litecoworkd/src/delegation_profiles_operator.rs	43894	1220
+apps/litecoworkd/src/discover_operator.rs	13905	409
+apps/litecoworkd/src/environment_office_qualification.rs	20504	617
+apps/litecoworkd/src/rag_retrieval_operator.rs	33912	889
+apps/litecoworkd/src/resource_dependencies_operator.rs	6768	222
+apps/litecoworkd/src/resource_index_operator_tests.rs	21899	574
+apps/litecoworkd/src/routine_operator.rs	29203	848
+apps/litecoworkd/src/runtime_capability_hosts_operator.rs	6747	217
+apps/litecoworkd/src/runtime_revalidation_tests.rs	37996	893
+apps/litecoworkd/src/runtime_shutdown_tests.rs	3515	99
+apps/litecoworkd/src/runtime_workspace_replay_process_tests.rs	140126	3654
+apps/litecoworkd/src/trust.rs	74078	1891
+apps/litecoworkd/src/workspace_idempotency_key_bounds_operator_tests.rs	22228	551
+apps/litecoworkd/src/workspace_root_scan_operator.rs	64520	1645
+apps/litecoworkd/src/workspace_root_selection_operator_tests.rs	31344	758

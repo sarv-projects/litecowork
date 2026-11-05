@@ -1,0 +1,20 @@
+# bucket docs-05 | 19 files | 445 KB | 6660 lines
+docs/AUTOMATION.md	36483	668
+docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md	6493	64
+docs/COVERAGE-MATRIX.md	24907	174
+docs/COWORKERS-TARGET.md	54525	444
+docs/DESIGN-SYSTEM.md	35484	532
+docs/DESKTOP-SHELL-LLD.md	28896	275
+docs/HOST-GUIDANCE.md	5764	138
+docs/NETWORK-SECURITY.md	21596	312
+docs/PROTOCOLS.md	9204	187
+docs/RICH-RESPONSE.md	16850	318
+docs/SCHEMAS.md	72096	1627
+docs/SERVICES.md	98692	1568
+docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md	15529	70
+docs/V1-UI-ACTION-STATE-LEDGER.md	10810	58
+docs/V1-WORKFLOW-EVENT-LLD.md	13101	116
+docs/adr/0002-task-and-attempt-identity.md	781	21
+docs/adr/0003-litespm-is-independent.md	1408	30
+docs/adr/0013-host-delegation-uses-accepted-plan-steps.md	1123	25
+docs/adr/0022-rich-presentation-is-optional.md	1707	33

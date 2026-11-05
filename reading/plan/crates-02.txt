@@ -1,0 +1,26 @@
+# bucket crates-02 | 25 files | 818 KB | 21518 lines
+crates/domain-environment/tests/browser_pointer.rs	6558	297
+crates/domain-responsibility/src/notification_tests.rs	9125	323
+crates/domain-responsibility/src/occurrences.rs	11521	303
+crates/domain-task/src/delegation_recovery.rs	14790	404
+crates/domain-task/src/delegation_routing_impl.rs	16212	438
+crates/domain-task/src/lead_failover_service.rs	42550	1049
+crates/domain-task/src/lead_handoff.rs	17747	461
+crates/linux-process-scope/src/bin/litecowork-scope-gate.rs	1796	56
+crates/storage-core/src/capability_invocation.rs	7781	199
+crates/storage-core/src/coworker_learning.rs	64226	1711
+crates/storage-core/src/effect_evidence.rs	5881	168
+crates/storage-core/src/needs_you.rs	2847	96
+crates/storage-core/src/trust.rs	10069	328
+crates/storage-core/src/user_request_details.rs	4610	135
+crates/storage-sqlite/src/agent_registry_cache.rs	5155	131
+crates/storage-sqlite/src/automation_host.rs	81895	1833
+crates/storage-sqlite/src/automation_test_run_tests.rs	23448	615
+crates/storage-sqlite/src/delegation_profile_tests.rs	25476	690
+crates/storage-sqlite/src/delegation_profiles.rs	55734	1183
+crates/storage-sqlite/src/invocation_tests.rs	32567	696
+crates/storage-sqlite/src/resource_index.rs	50330	1286
+crates/storage-sqlite/src/resource_upload_gc_tests.rs	273933	7231
+crates/storage-sqlite/src/rich_presentation_tests.rs	38586	992
+crates/storage-sqlite/src/runtime_capability_host_tests.rs	13244	335
+crates/storage-sqlite/src/workspace_root_scan_tests.rs	21239	558

@@ -1,0 +1,21 @@
+# bucket daemon-02 | 20 files | 784 KB | 21117 lines
+apps/litecoworkd/src/agent_credentials_operator.rs	17990	489
+apps/litecoworkd/src/agent_quota_observation_operator.rs	12156	288
+apps/litecoworkd/src/agents/module_registry.rs	21900	638
+apps/litecoworkd/src/artifact_operator.rs	28605	801
+apps/litecoworkd/src/browser_control_service.rs	29944	840
+apps/litecoworkd/src/capability_invocations_operator.rs	20859	584
+apps/litecoworkd/src/conversation_operator.rs	49843	1386
+apps/litecoworkd/src/goal_operator.rs	14965	495
+apps/litecoworkd/src/main.rs	3857	79
+apps/litecoworkd/src/operator_ipc_tests.rs	326140	8035
+apps/litecoworkd/src/resource_archive_operator.rs	34206	882
+apps/litecoworkd/src/resource_archive_worker.rs	22348	630
+apps/litecoworkd/src/resource_dependencies_operator_tests.rs	13113	313
+apps/litecoworkd/src/resource_upload_archive_operator_tests.rs	40077	1063
+apps/litecoworkd/src/runtime_offers_operator.rs	10351	328
+apps/litecoworkd/src/runtime_windows_security_tests.rs	5457	124
+apps/litecoworkd/src/skill_operator.rs	71001	1962
+apps/litecoworkd/src/suggestions_operator.rs	44434	1200
+apps/litecoworkd/src/trust_operator.rs	31833	875
+apps/litecoworkd/src/workspace_root_cleanup_worker.rs	3310	105

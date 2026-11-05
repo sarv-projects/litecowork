@@ -1,0 +1,16 @@
+# bucket docs-01 | 15 files | 445 KB | 6728 lines
+docs/CAPABILITY-FABRIC.md	26928	427
+docs/COMPETITOR-PROMOTED-USE-CASES.md	9571	135
+docs/COWORKER-FLOWS.md	19910	166
+docs/FLOWS.md	311567	4495
+docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md	13728	334
+docs/OBSERVABILITY.md	12029	262
+docs/RENDERING-CONFORMANCE-LLD.md	15755	271
+docs/RESET-AND-ARCHIVE-RECORD.md	4089	65
+docs/SETTINGS-AND-SHELL-SURFACE-AUDIT.md	5834	83
+docs/USER-EXPERIENCE-RESEARCH-AND-MAGNETIC-USE-CASES.md	22526	243
+docs/adr/0006-conversation-task-separation.md	753	16
+docs/adr/0012-native-harness-integrity.md	1890	35
+docs/adr/0018-context-content-is-resource-backed-and-provider-pluggable.md	1649	29
+docs/adr/0019-credential-egress-and-audit-boundaries.md	1098	25
+docs/superpowers/plans/2026-10-15-context-document-purge.md	8168	142

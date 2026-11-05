@@ -1,0 +1,20 @@
+# bucket docs-03 | 19 files | 445 KB | 7470 lines
+docs/BENCHMARKS.md	44360	754
+docs/CONNECTORS-WORKFLOWS.md	36387	907
+docs/DATA-MODEL.md	124950	2679
+docs/EVENTS.md	68201	926
+docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md	14660	139
+docs/IMPLEMENTATION-MASTER-PLAN.md	12139	116
+docs/INTERACTIVE-ARTIFACT-RUNTIME.md	20102	135
+docs/MOTION.md	23274	278
+docs/NATIVE-COMPOSER-LLD.md	27048	297
+docs/PRESENTATION-RUNTIME.md	31100	533
+docs/SECURITY.md	9506	191
+docs/SOURCE-RECONCILIATION.md	16041	179
+docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md	10210	104
+docs/V1-FEATURE-SDD-REGISTER.md	4749	47
+docs/adr/0001-durable-task-core.md	899	23
+docs/adr/0005-replicate-domain-state-not-databases.md	734	21
+docs/adr/0023-host-guidance-is-not-capability-authority.md	1295	27
+docs/adr/README.md	3349	39
+docs/superpowers/plans/2026-10-25-conversation-session-start-reservation.md	6802	75

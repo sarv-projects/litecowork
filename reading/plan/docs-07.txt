@@ -1,0 +1,19 @@
+# bucket docs-07 | 18 files | 444 KB | 6576 lines
+docs/AGENT-CONTROL.md	51719	1313
+docs/CHANNELS.md	15669	274
+docs/COMPETITIVE-RESEARCH.md	81710	608
+docs/ENVIRONMENTS.md	24562	435
+docs/PRODUCT-CONTRACT-INDEX.md	5805	38
+docs/PRODUCT-STRATEGY.md	8258	96
+docs/REPOSITORY-DOCUMENTATION-AUDIT.md	30524	160
+docs/ROUTINES.md	11934	224
+docs/RUNTIME-MESH.md	36171	744
+docs/STATE-MACHINES.md	89146	1427
+docs/TRUST.md	16247	322
+docs/V1-INTEGRATED-TERMINAL-LLD.md	13461	131
+docs/V1-UI-SCREEN-CONTRACT.md	21335	130
+docs/WORLD-RESOURCES.md	37514	529
+docs/adr/0014-versioned-worker-profiles-and-bounded-selection.md	1152	26
+docs/adr/0017-deadline-sensitive-is-best-effort.md	1035	25
+docs/adr/0024-optional-chat-first-coworkers.md	5879	35
+docs/adr/0025-agent-module-registry-and-native-configuration.md	2979	59
