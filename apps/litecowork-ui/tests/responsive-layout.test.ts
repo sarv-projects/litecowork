@@ -32,5 +32,6 @@ test("narrow navigation is a labeled, controlled drawer with keyboard dismissal"
 
 test("narrow content uses compact single-column spacing", () => {
   assert.ok(/@media\s*\(max-width:\s*620px\)[\s\S]*?\.page-content\s*\{[^}]*padding/.test(styles), "page padding compacts on narrow views");
-  assert.ok(/\.conversation-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(conversationStyles), "conversation list stacks above its reader at narrow widths");
+  assert.ok(/@media\s*\(max-width:\s*620px\)[\s\S]*?\.conversation-stream-container\s*\{[^}]*padding/.test(conversationStyles), "conversation canvas uses compact single-column padding at narrow widths");
+  assert.ok(/@media\s*\(max-width:\s*620px\)[\s\S]*?\.floating-composer-card\s*\{[^}]*width:\s*calc\(100%\s*-\s*16px\)/.test(conversationStyles), "composer remains within the narrow viewport");
 });

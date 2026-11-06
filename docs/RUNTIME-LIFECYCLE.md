@@ -44,13 +44,22 @@ RuntimeStartupPolicy = MANUAL | LOGIN_BACKGROUND | ALWAYS_ON_SERVICE
 - `ALWAYS_ON_SERVICE`: a server/VPS service manager starts the daemon under a dedicated
   unprivileged account. A cloud Runtime is normally always on.
 
-Platform integration uses the native service manager: macOS LaunchAgent; Windows per-user
-Scheduled Task or equivalent supported user service; Linux `systemd --user`; server Linux
-system service under a dedicated account. Installation, update, status, and uninstall are
-owned by RuntimeLifecycleService and require the OS permissions appropriate to that scope.
-The Operator is not installed as a privileged service. The scheduler never depends on an
-Automation whose purpose is to start the scheduler; OS/service-manager startup owns daemon
-startup, while Automation triggers create user work.
+**Target platform integration** uses the native service manager: macOS LaunchAgent;
+Windows per-user Scheduled Task or equivalent supported user service; Linux
+`systemd --user`; server Linux system service under a dedicated account. Installation,
+update, status and uninstall are intended to be owned by RuntimeLifecycleService and require
+the OS permissions appropriate to that scope. The Operator is not installed as a privileged
+service. The scheduler never depends on an Automation whose purpose is to start the
+scheduler; OS/service-manager startup owns daemon startup, while Automation triggers create
+user work.
+
+**Current source boundary (2026-11-06):** the desktop Tauri lifecycle adapter integrates a
+marked per-user `systemd --user` service on Linux. On Windows and macOS, `start_runtime`
+launches the daemon directly as a child process and drops the handle after authenticated
+readiness; no Windows Scheduled Task or macOS LaunchAgent registration/install/update/
+uninstall path is implemented in this checkout. The current Runtime startup policy is
+observed, not mutable from Settings. Packaged service-manager installation and restart
+qualification remain open on every declared release OS.
 
 Desktop builds therefore install/register two programs with distinct lifetimes: the
 Operator shell (window/tray/optional global Quick Entry) and `litecoworkd` (headless
@@ -79,21 +88,26 @@ builds natively on `x86_64-pc-windows-msvc` using Visual Studio 2022 Build Tools
 
 The local bootstrap currently holds the single-instance lock, persists Runtime/incarnation
 state, validates the OS-principal binding, opens local storage, and starts the authenticated
-Operator IPC endpoint where a platform transport is implemented. `litecoworkd status` probes the
-lock to distinguish a running daemon from stale state after a crash. Tauri can start the
-separate daemon, display status, and use the local Workspace/Resource Operator routes. The
-Runtime remains `DEGRADED` because Task recovery and execution are not implemented; an
-authenticated Operator response is not execution readiness. Windows IPC and cross-platform
-package install/uninstall integration remain open.
+Operator IPC endpoint on the implemented Unix and Windows transports. `litecoworkd status`
+probes the lock to distinguish a running daemon from stale state after a crash. Tauri can
+start the separate daemon, display status and use the local Workspace/Resource Operator
+routes. The Runtime remains `DEGRADED` because Task recovery and execution are not
+implemented; an authenticated Operator response is not execution readiness. Windows named-
+pipe IPC is source-implemented and the Windows workspace tests pass, but packaged
+cross-user peer-authentication/secret-buffer USER qualification remains open. Windows/macOS
+native service-manager installation, update and uninstall integration also remain open.
 
 On Unix, bootstrap also requires the Runtime state directory and lifecycle files to be owned
 by the current effective user. State and lock files are opened through no-follow file
 descriptors and validated as regular files before reading or locking, so the path check is
 not the security boundary and a final-component symlink swap cannot redirect lifecycle I/O.
 The directory must remain private; these descriptor checks do not defend against arbitrary
-malicious code running as the same OS user. This source hardening has not been built or
-qualified on Linux/macOS. Non-Unix lifecycle-file handling is not a substitute for the
-missing authenticated Windows Operator transport.
+malicious code running as the same OS user. This Unix lifecycle-file hardening remains
+source-only pending Linux/macOS build and OS qualification. Windows lifecycle-file handling
+uses separate non-Unix code paths and must be qualified independently; it does not inherit
+the Unix no-follow descriptor guarantee. Windows Operator IPC is separately
+source-implemented through the protected named-pipe adapter and has its own packaged-peer
+qualification gate.
 
 On Linux, the desktop's current lifecycle slice installs or refreshes a marked, user-owned
 `systemd/user/litecoworkd.service` under Tauri's resolved user configuration directory

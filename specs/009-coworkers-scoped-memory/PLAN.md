@@ -4,10 +4,12 @@
 
 ## Phases
 
-1. Resolve SPEC section 5 blockers with the named owners. No code.
-2. Promote any missing machine-schema field in the canonical owner and `docs/schemas/` together if the locked design needs it.
-3. Implement tasks in dependency order on a recovered source tree after ACCEPTED/LOCKED.
-4. Run the cargo filters in TASKS.md and the desktop USER path in [ACCEPTANCE-AND-E2E-PLAN.md](../../docs/ACCEPTANCE-AND-E2E-PLAN.md).
+1. Resolve SPEC §5 blockers B-24/B-25 with Product, Coworkers, Conversation, Memory and Trust owners. No code before the selected ContextDocument/memory record, purge model and Quick Create binding rule are explicit.
+2. Promote any required machine-schema field in its canonical owner and `docs/schemas/` in the same reviewed change. The current OpenAPI four-kind ContextDocument enum must not be mistaken for current domain acceptance: `domain-workspace` currently accepts only USER/PERSONAL_PROFILE and WORKSPACE/WORKSPACE_NOTES.
+3. Implement Conversation Coworker origin and first-chat flow separately from Task Coworker origin; then implement Coworker owner-scoped ContextDocument and Coworker-filtered retrieval with read/revoke/purge fences. Do not reuse Workspace-only retrieval as if it were Coworker scoped.
+4. Implement the accepted minimal owner-authored memory record first. Automatic learning is explicitly outside this slice; its target pipeline remains in `docs/LEARNING.md` and needs separate storage/provider/service/API/event/UI promotion.
+5. Implement tasks in dependency order on a recovered source tree after ACCEPTED/LOCKED.
+6. Run the cargo filters in TASKS.md, package/contract validators and the desktop USER path in [ACCEPTANCE-AND-E2E-PLAN.md](../../docs/ACCEPTANCE-AND-E2E-PLAN.md).
 
 ## Dependency DAG
 
@@ -18,7 +20,7 @@
 ## Owners and file scope
 
 Owners: Coworkers, Conversation, Memory, Trust, Desktop UI.
-Allowed implementation paths are listed per task. This docs-first checkout has no `apps/` or `crates/` tree; those paths are the future scope, not files to create here.
+Allowed implementation paths are listed per task. The active source tree is in apps/ and crates/. Changes remain limited to the task-owned paths and require package acceptance, a clean selected worktree, and source/contract/UI/test reconciliation.
 
 ## Migration, rollout, rollback
 

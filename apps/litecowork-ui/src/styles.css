@@ -1171,6 +1171,28 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
   font-style: italic;
 }
 
+.sidebar-chat-load-more {
+  align-self: flex-start;
+  margin: 4px 8px 2px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sidebar-chat-load-more:hover:not(:disabled) {
+  color: #0f172a;
+  text-decoration: underline;
+}
+
+.sidebar-chat-load-more:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .sidebar-nav-list {
   display: flex;
   flex-direction: column;

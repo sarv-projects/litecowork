@@ -1,7 +1,7 @@
 # 005 - Safe Task Path
 
 **Status:** DRAFT - review required; does not authorize implementation.
-**Revision:** 0.1 | **Updated:** 2026-11-01
+**Revision:** 0.2 | **Updated:** 2026-11-06
 **Owners to approve:** Task Runtime, Environments, Trust, Storage, Desktop UI.
 
 ## User outcome
@@ -10,7 +10,7 @@ The owner promotes one Conversation outcome into a Task, accepts an immutable pl
 
 ## Current truth
 
-Global owner documents are the interim design authority. This package binds a V1 slice to those documents. The active checkout has no implementation to mark SERVED. Archived source is historical.
+The active checkout contains the Rust daemon, Tauri desktop application and shared crates. This package remains DRAFT and does not authorize implementation until owner decisions and supporting contracts are accepted. Its current implementation boundary is mapped in docs/IMPLEMENTATION-STATUS.md; do not infer qualification from a matching route, type or screen.
 
 ## Package
 

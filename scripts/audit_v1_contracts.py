@@ -1,112 +1,191 @@
-#!/usr/bin/env python3
-"""Read-only V1 design/API/backlog and supplemental acceptance consistency checker."""
+"""Audit current V1 owner, OpenAPI, served-route and UI contract alignment.
+
+This is a deterministic structural check. It does not prove handler semantics,
+provider integration, OS security or USER qualification.
+"""
 from __future__ import annotations
+
 import argparse
-import collections
 import json
 import re
 from pathlib import Path
+
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-def get(name):
-    return (ROOT/name).read_text(encoding="utf-8-sig")
+DOCS = ROOT / "docs"
+SCHEMA = DOCS / "schemas" / "operator-api.openapi.yaml"
+INVENTORY = DOCS / "schemas" / "served-route-inventory.json"
+OUTPUT = DOCS / "audit" / "v1-contract-audit.md"
 
-def main():
+
+def load_yaml(path: Path):
+    return yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+
+
+def canonical(path: str) -> str:
+    return re.sub(r"\{[^}]+\}", "{}", path)
+
+
+def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--write-report", action="store_true")
     parser.add_argument("--strict", action="store_true")
-    args=parser.parse_args()
-    errors=[]
-    notes=[]
-    spec=yaml.safe_load(get("docs/schemas/operator-api.openapi.yaml"))
-    def canonical_path(path):
-        return re.sub(r"\{[^}]+\}", "{}", path)
-    routes={(method.upper(),canonical_path("/v1"+path)):data.get("operationId","")
-            for path,methods in spec["paths"].items()
-            for method,data in methods.items()
-            if method in {"get","post","put","patch","delete"}}
-    catalog=get("docs/V1-FUNCTION-FILE-CATALOG.md")
-    entries=[]
-    for line_number,line in enumerate(catalog.splitlines(),1):
-        match=re.match(r"^\| (GET|POST|PUT|PATCH|DELETE) (/v1/[^\s|]+)",line)
-        if not match: continue
-        method,path=match.groups()
-        exists=(method,canonical_path(path)) in routes
-        identified=("existing" in line.lower() or "canonical" in line.lower())
-        entries.append((method,path,exists,line_number))
-        if exists and not identified:
-            errors.append(f"Catalog line {line_number}: existing route lacks explicit existing/canonical label: {method} {path}")
-        if not exists and identified:
-            errors.append(f"Catalog line {line_number}: claims existing but not in machine OpenAPI: {method} {path}")
-    canonical=[
-        ("GET","/v1/agent-profiles/{agentProfileId}/control-descriptor"),
-        ("POST","/v1/conversations/{id}/turns"),
-        ("POST","/v1/conversations/{id}/turns/{turn_id}/retry"),
-        ("POST","/v1/conversations/{id}/turns/{turn_id}/cancel"),
-        ("GET","/v1/conversations/{id}/presentation"),
-        ("GET","/v1/rich-presentations/{presentation_id}")]
-    for operation in canonical:
-        if (operation[0],canonical_path(operation[1])) not in routes:
-            errors.append(f"Expected existing canonical route missing: {operation}")
-    cover=get("implementation/V1-DESIGN-COVERAGE.md")
-    counts=collections.Counter(int(x) for x in re.findall(r"(?m)^- UIV1-(\d{3})\b",cover))
-    missing=[i for i in range(1,159) if not counts[i]]
-    doubles=[(k,v) for k,v in sorted(counts.items()) if v!=1]
-    if missing: errors.append("Missing individual supplementary test definitions: "+str(missing))
-    if doubles: errors.append("Duplicate supplementary test definitions: "+str(doubles))
-    if not re.search(r"(?m)^\|\s*U01\s*\|",get("implementation/TESTING.md")):
-        errors.append("Existing U01 workflow case missing from implementation/TESTING.md")
-    machine=get("docs/STATE-MACHINES.md")
-    workflow=get("docs/V1-WORKFLOW-EVENT-LLD.md")
-    if "## ConversationTurn" not in machine or "OPEN -> RUNNING" not in machine:
-        errors.append("Canonical ConversationTurn machine unexpectedly changed")
-    for old in ["Conversation: CREATED -> OPEN -> TURN_RUNNING","Automation: DRAFT -> REVIEWED",
-                "Task: READY -> RUNNING/PLANNING"]:
-        if old in workflow: errors.append("Obsolete pseudo-state remains: "+old)
-    backlog=json.loads(get("implementation/backlog.json"))
-    stories={story["id"] for story in backlog["stories"]}
-    source_names=["docs/V1-DESIGN-INDEX.md","docs/NATIVE-COMPOSER-LLD.md",
-                  "docs/CHROME-BROWSER-LLD.md","docs/DESKTOP-SHELL-LLD.md",
-                  "docs/RENDERING-CONFORMANCE-LLD.md","docs/V1-WORKFLOW-EVENT-LLD.md",
-                  "docs/V1-FUNCTION-FILE-CATALOG.md","implementation/V1-DESIGN-COVERAGE.md"]
-    for name in source_names:
-        for id in sorted(set(re.findall(r"\bE\d{2}-S\d{2}\b",get(name)))):
-            if id not in stories: errors.append(f"Nonexistent story {id} referenced by {name}")
-    conv=ROOT/"apps/litecowork-ui/src/conversations/ConversationsPage.tsx"
-    if conv.exists():
-        text=conv.read_text(encoding="utf-8")
-        if "Sending messages is not available yet" in text:
-            notes.append("ConversationsPage explicitly states native message submission is unavailable.")
-        if "readOnly" in text and "disabled" in text:
-            notes.append("ConversationsPage contains readOnly and disabled controls; verify exact JSX and real send execution before release claims.")
-    else:
-        notes.append("ConversationsPage not found at previously observed location; source may have moved.")
-    notes.extend([f"OpenAPI operations specified (not served-route count): {len(routes)}",
-                  f"Supplemental UIV1 explicit acceptance definitions: {len(counts)}",
-                  f"Actual backlog stories: {len(stories)}"])
-    lines=["# V1 Contract Specification and Backlog Audit", "",
-           "Generated by scripts/audit_v1_contracts.py. It is a deterministic structural consistency audit, not a full semantic or runtime qualification.", "",
-           f"Blocking structural findings: {len(errors)}", "",
-           "## Findings", ""]
-    lines.extend("- "+e for e in errors)
-    if not errors: lines.append("No problems detected by these checks.")
-    lines.extend(["","## Source observations",""])
-    lines.extend("- "+n for n in notes)
-    lines.extend(["","## Function catalog operations","",
-                  "This column reports only whether the catalog operation is present in the OpenAPI specification; it does not report whether the daemon mounts a handler.", "",
-                  "| Method | Route | In OpenAPI? | OperationId |",
-                  "|---|---|---|---|"])
-    for method,path,exists,line_number in entries:
-        lines.append(f"| {method} | {path} | {'YES: specified' if exists else 'NO: proposed'} | {routes.get((method,canonical_path(path)),'-')} |")
-    lines.extend(["","## Boundaries","",
-                  "OpenAPI operation counts describe the target contract only. They are not counts of mounted daemon handlers, integrated providers, or qualified product capabilities. See the source-backed [served capability inventory](V1-SERVED-CAPABILITY-INVENTORY.md) for the inspected route examples and separate CODE/SYSTEM/OWNER evidence. Parser verification cannot prove Chrome/WebView equivalence, real harness parity, user acceptance, OS security gates, or all prose semantics. Run real provider/OS tests and owner qualification before a release claim."])
+    parser.add_argument("--write-report", action="store_true")
+    args = parser.parse_args()
+
+    errors: list[str] = []
+    notes: list[str] = []
+    api = load_yaml(SCHEMA)
+    inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
+
+    openapi = {
+        (method.upper(), canonical(path)): operation
+        for path, methods in api.get("paths", {}).items()
+        for method, operation in methods.items()
+        if method in {"get", "post", "put", "patch", "delete"}
+    }
+    served = {
+        (item["method"], canonical(item["openapi_path"]))
+        for item in inventory.get("served", [])
+    }
+    target = {
+        (item["method"], canonical(item["path"]))
+        for item in inventory.get("target_only", [])
+    }
+    outside = inventory.get("served_outside_openapi", [])
+
+    if served & target:
+        errors.append("An operation is listed as both SERVED and target-only.")
+    if served | target != set(openapi):
+        errors.append(
+            "Served + target-only inventory does not partition OpenAPI operations: "
+            f"served_only={len(set(openapi)-served-target)}, "
+            f"unclassified={len(set(openapi)-(served|target))}, "
+            f"unknown={len((served|target)-set(openapi))}"
+        )
+    counts = (len(inventory.get("served", [])), len(outside), len(inventory.get("target_only", [])))
+    if counts != (173, 1, 56):
+        errors.append(f"Route inventory count drift: {counts}; expected (173, 1, 56)")
+    if inventory.get("version") != 3:
+        errors.append(f"Unexpected route inventory version: {inventory.get('version')}")
+
+    required_operations = {
+        ("GET", "/conversations"): "listConversations",
+        ("POST", "/conversations"): "createConversation",
+        ("POST", "/conversations/{conversationId}/turns"): "submitConversationTurn",
+        ("POST", "/conversations/{conversationId}/turns/{turnId}/cancel"): "cancelConversationTurn",
+        ("POST", "/conversations/{conversationId}/turns/{turnId}/retry"): "retryConversationTurn",
+        ("GET", "/needs-you"): "listNeedsYou",
+        ("GET", "/tasks"): "listTasks",
+        ("POST", "/tasks"): "createTask",
+        ("GET", "/tasks/{taskId}/planning-readiness"): "getTaskPlanningReadiness",
+    }
+    for raw_key, operation_id in required_operations.items():
+        key = (raw_key[0], canonical(raw_key[1]))
+        if key not in openapi:
+            errors.append(f"Required OpenAPI operation missing: {raw_key}")
+        elif openapi[key].get("operationId") != operation_id:
+            errors.append(
+                f"Operation ID mismatch for {raw_key}: "
+                f"{openapi[key].get('operationId')} != {operation_id}"
+            )
+        if key not in served:
+            errors.append(f"Required user-facing operation is not registered: {raw_key}")
+
+    ui = (DOCS / "V1-UI-SCREEN-CONTRACT.md").read_text(encoding="utf-8")
+    semantic = (DOCS / "SEMANTIC-SERVED-UI-MAP.md").read_text(encoding="utf-8")
+    coverage = (DOCS / "FEATURE-AND-UI-CONTRACT-COVERAGE.md").read_text(encoding="utf-8")
+    for heading in (
+        "## 2. Conversation and composer",
+        "## 3. Work and Task detail",
+        "## 4. Needs You",
+        "## 5. Coworkers",
+        "## 6. Automations and Routines",
+        "## 7. Discover, LiteSPM and Connections",
+        "## 8. Library and Artifacts",
+        "## 9. Workbench",
+        "## 11. Settings",
+    ):
+        if heading not in ui:
+            errors.append(f"UI screen contract missing section: {heading}")
+    for required in (
+        "submit_conversation_turn",
+        "create_task",
+        "get_task_planning_readiness",
+        "connectOrInstallCapability",
+        "Simulated output",
+        "Component-local useState values",
+        "settleAutomationTriggers",
+    ):
+        if required not in semantic:
+            errors.append(f"Semantic UI map missing implementation trace: {required}")
+    for area in ("Universal Chat", "Bring Your Own Agent", "Persistent Coworkers",
+                 "Real Computer and Workbench", "Capabilities, Plugins, MCP and Connections",
+                 "Real Tasks and Multi-Agent Work", "Routines and Automations",
+                 "Memory, Knowledge and Learning", "Library and Finished Work",
+                 "Desktop Shell, Settings and Runtime"):
+        if area not in coverage:
+            errors.append(f"Feature/UI coverage missing V1 area: {area}")
+
+    feature_register = (DOCS / "V1-FEATURE-SDD-REGISTER.md").read_text(encoding="utf-8")
+    for number in range(1, 12):
+        if not re.search(rf"(?m)^\|\s*{number:03d}\s*\|", feature_register):
+            errors.append(f"Feature register missing SDD {number:03d}")
+    for number in range(1, 12):
+        packages = list((ROOT / "specs").glob(f"{number:03d}-*"))
+        if len(packages) != 1:
+            errors.append(f"Expected one package directory for SDD {number:03d}, found {len(packages)}")
+
+    for item in outside:
+        if item["path"] != "/v1/stream":
+            notes.append(f"Served outside OpenAPI: {item['method']} {item['path']}")
+    notes += [
+        f"OpenAPI operations: {len(openapi)}",
+        f"Composed Operator OpenAPI registrations: {counts[0]}",
+        f"Authenticated local-only registrations: {counts[1]}",
+        f"OpenAPI target-only operations: {counts[2]}",
+        "Route registration is not handler integration or release qualification.",
+    ]
+
+    lines = [
+        "# V1 contract and route/UI audit",
+        "",
+        "Generated by scripts/audit_v1_contracts.py. Structural consistency only; not semantic or runtime qualification.",
+        "",
+        f"- Blocking findings: {len(errors)}",
+        "",
+        "## Findings",
+        "",
+    ]
+    lines.extend("- " + item for item in errors)
+    if not errors:
+        lines.append("No structural mismatch detected by this audit.")
+    lines += ["", "## Source observations", ""]
+    lines.extend("- " + item for item in notes)
+    lines += [
+        "",
+        "## Route-state counts",
+        "",
+        "| Class | Count |",
+        "|---|---:|",
+        f"| Registered OpenAPI operations | {counts[0]} |",
+        f"| Authenticated local-only operations | {counts[1]} |",
+        f"| OpenAPI target-only operations | {counts[2]} |",
+        "",
+        "See docs/IMPLEMENTATION-STATUS.md and docs/SEMANTIC-SERVED-UI-MAP.md for handler and UI behavior. A mounted route may be read-only, fail-closed, pre-execution or provider-unavailable.",
+        "",
+    ]
     if args.write_report:
-        (ROOT/"implementation/V1-CONTRACT-CHECK.md").write_text("\n".join(lines)+"\n",encoding="utf-8")
-    print(f"V1_CONTRACT_AUDIT errors={len(errors)} openapi_operations={len(routes)} ui_cases={len(counts)} stories={len(stories)}")
-    for item in errors[:20]:print("ERROR",item)
-    for item in notes:print("NOTE",item)
+        OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+        OUTPUT.write_text("\n".join(lines), encoding="utf-8")
+    print(
+        f"V1_CONTRACT_AUDIT errors={len(errors)} openapi={len(openapi)} "
+        f"served={counts[0]} outside={counts[1]} target={counts[2]}"
+    )
+    for item in errors[:30]:
+        print("ERROR", item)
     return 1 if errors and args.strict else 0
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     raise SystemExit(main())

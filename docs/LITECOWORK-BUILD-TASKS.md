@@ -1,169 +1,125 @@
-# LiteCowork Build TASKS — From Docs-First to Qualified V1
+# LiteCowork build tasks and release checklist
 
-**Status:** master delivery checklist (docs + engineering); not a git commit plan  
-**Updated:** 2026-11-01  
-**Authority order:** [AGENTS.md](../AGENTS.md), [IMPLEMENTATION-MASTER-PLAN.md](IMPLEMENTATION-MASTER-PLAN.md), [V1-FEATURE-SDD-REGISTER.md](V1-FEATURE-SDD-REGISTER.md), owner contracts.
+This is the working delivery checklist for the active source tree. It is not a Git commit plan. Feature-specific work items belong in specs/NNN-*/TASKS.md. Product semantics remain in owner contracts; current evidence is in IMPLEMENTATION-STATUS.md.
 
-Use this file as the **single follow list** from empty checkout to qualified desktop V1. Feature-level task IDs live in each `specs/NNN-*/TASKS.md` once packages exist.
-
-**USER test catalog:** [COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md)  
-**Viability gaps:** [VIABILITY-VS-COMPETITORS.md](VIABILITY-VS-COMPETITORS.md)
-
----
-
-## Phase 0 — Documentation and recovery truth
+## BT-00 — Current baseline and documentation integrity
 
 | ID | Task | Exit evidence |
 |---|---|---|
-| BT-0.1 | Confirm branch, SHA, ignored archives, preserved worktree boundary | [CURRENT-RUN.md](../CURRENT-RUN.md) |
-| BT-0.2 | Recover implementation source into **clean worktree** (not docs-only main) | Record SHA; `apps/` `crates/` present |
-| BT-0.3 | Re-run structural validators (feature package, links, OpenAPI name reconciliation) | Commands in CURRENT-RUN |
-| BT-0.4 | Complete [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md) for all shell surfaces | Map rows SERVED/TARGET/UNAVAILABLE |
-| BT-0.5 | Pin and refresh rival repos (ZCode, DSH, AionUi, OpenDot, …) per [REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md](REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md) | SHAs in REFERENCE-IMPLEMENTATIONS |
-| BT-0.6 | Lock SDD **001** (resolve B-01–B-10) → IN_REVIEW → ACCEPTED/LOCKED | **COMPLETED** — SDD 001 is ACCEPTED/LOCKED (Rev 1.0) with B-01 through B-10 resolved |
+| BT-00.1 | Record exact branch/SHA/worktree and preserve ignored local archives | CURRENT-RUN.md; no destructive cleanup |
+| BT-00.2 | Keep route inventory generated from composed production router | scripts/audit_served_routes.py --report matches schemas/served-route-inventory.json |
+| BT-00.3 | Reconcile source/status/UI owners and stale references | IMPLEMENTATION-STATUS.md, semantic map, current inventory |
+| BT-00.4 | **Validated** — Windows WorkspaceRoot private-locator route regressions | Six route tests pass on the declared Windows target; production locator validation remains fail-closed |
+| BT-00.5 | Run documentation link and owner-contract guards | Markdown audit and cross-contract validator pass with reviewed exceptions only |
+| BT-00.6 | Run frontend type/build/unit checks and packaged desktop smoke | Exact commands and results recorded |
 
-**Do not start product coding on main while BT-0.2 and BT-0.6 are open.**
+## BT-01 — Conversation dispatch durability (Feature 001)
 
----
-
-## Phase 1 — P1 Real native Conversation (SDD 001)
-
-| ID | Task | Docs / code owners | Test UC-IDs |
-|---|---|---|---|
-| BT-1.1 | Implement supervisor + served Send path per locked 001 | NATIVE-COMPOSER, SERVICES, STORAGE | UC-CHAT-01–05 |
-| BT-1.2 | Operator stream producers for turn delta/settled | PRESENTATION-RUNTIME | UC-CHAT-01 |
-| BT-1.3 | Composer UI wired to typed IPC + OpenAPI | UI-CORE-TYPED-CONTRACTS, ui-behavior 001 | UIV1-016–022 |
-| BT-1.4 | Stop/cancel/retry/idempotency USER tests | FAILURE-RECOVERY | FL01–FL05 |
-| BT-1.5 | Restart mid-turn recovery | STORAGE, EVENTS | UC-CHAT-01 |
-
-**Exit:** P1 gate in IMPLEMENTATION-MASTER-PLAN; CODE+SYSTEM+USER on one harness/OS tuple.
-
----
-
-## Phase 2 — P2 Local files and context (SDD 003)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-2.1 | Author and lock SDD 003 | — |
-| BT-2.2 | WorkspaceRoot select/revoke/scan | UC-FILE-01–02, UC-FILE-06 |
-| BT-2.3 | Context attachment + citation USER | UC-CHAT-06 |
+| BT-01.1 | Make submit admission and dispatch intent recoverable across daemon crash | Durable state/outbox; restart finds committed undispatched turns |
+| BT-01.2 | Make idempotent replay resolve original dispatch state | Same key returns receipt; no duplicate provider prompt |
+| BT-01.3 | Qualify OpenCode v2.0.32 adapter on packaged Windows | Send/stream/cancel/retry/restart USER flow |
+| BT-01.4 | Ensure unsupported agent bindings cannot appear Send-eligible | Exact descriptor + adapter/auth/OS eligibility matrix |
+| BT-01.5 | Verify semantic message, rich presentation and stream resync | Saved transcript authoritative after gap/restart |
+| BT-01.6 | Complete Feature 001 API/UI/error/recovery contract review | Supporting contracts accepted by owners |
 
----
+## BT-02 — Workspace roots and Resources (Feature 003)
 
-## Phase 3 — P3 Agent relay (SDD 004)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-3.1 | Lock SDD 004 | — |
-| BT-3.2 | A→B→A same Conversation USER | IMPLEMENTATION-MASTER-PLAN P3 |
+| BT-02.1 | Audit root selection/create/pause/resume/scan/revoke route parity | Operation inventory + Tauri command + screen control matrix |
+| BT-02.2 | Qualify Windows paths, identity and symlink/reparse-point behavior | Positive and negative platform tests |
+| BT-02.3 | Pin Resource revisions/digests in context and retrieval | Grounded output names exact source revision |
+| BT-02.4 | Qualify first explicit ingestion formats | Format parser, bounds, unsupported behavior, restart and deletion tests |
+| BT-02.5 | Keep ZIP preview separate from extraction/publication | Current unavailable reason and no fake extracted files |
 
-## Phase 4 — P4 Safe Task path (SDD 005)
+## BT-03 — Native agent fidelity and relay (Features 002/004)
 
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-4.1 | Lock SDD 005 | — |
-| BT-4.2 | Plan accept + one Environment + one bounded edit | UC-WORK-01–02, UC-FILE-01 |
-| BT-4.3 | Verification independent of model text | TASK-RUNTIME |
+| BT-03.1 | Align AgentModule installation/auth/descriptor/session states | No collapsed “connected” flag |
+| BT-03.2 | Select second agent only after auth/OS/provider research | Pinned exact version and terms route |
+| BT-03.3 | Qualify A→B→A Conversation continuity from committed state | Explicit per-turn producer and no transcript/credential migration |
+| BT-03.4 | Preserve native model/mode/effort/options and unsupported behavior | Descriptor freshness/conformance tests |
 
----
+## BT-04 — Safe Task execution (Feature 005)
 
-## Phase 5 — P5 Connections + capability (SDD 006)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-5.1 | LiteSPM protocol probe (RV-01) | — |
-| BT-5.2 | Lock SDD 006 | — |
-| BT-5.3 | One Connection read + one approved write | UC-CONN-01–04, UC-MCP-01 |
-| BT-5.4 | Connect-in-chat resume | UC-CONN-01 |
+| BT-04.1 | Implement planning admission and immutable accepted PlanRevision | CAS/version/digest and failure recovery |
+| BT-04.2 | Implement one Environment with real isolation attestation | Filesystem/network/process/resource limits verified on OS |
+| BT-04.3 | Implement one Attempt and fenced execution lease | Duplicate/stale worker denied |
+| BT-04.4 | Wire Trust into the actual mediated execution boundary | Real policy decision in path, not dead module |
+| BT-04.5 | Execute one bounded file edit with CapabilityInvocation/Effect receipt | Timeout-after-effect and idempotent reconciliation |
+| BT-04.6 | Verify independently and present actual evidence | Model self-report is not accepted as verification |
 
----
+## BT-05 — LiteSPM and Connections (Feature 006)
 
-## Phase 6 — P6 Artifacts (SDD 007)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-6.1 | Lock SDD 007 | — |
-| BT-6.2 | One professional format round-trip | UC-FILE-03 |
-| BT-6.3 | DSH/ZCode file handoff patterns if adopted | UC-FILE-05 |
+| BT-05.1 | Pin LiteSPM bridge service/schema/auth version | Published contract and compatibility fixtures |
+| BT-05.2 | Use one LiteSPM package writer and source of inventory | No second package DB/config writer |
+| BT-05.3 | Plan → digest approval → apply → receipt → reconcile one package | Crash/retry/rollback/UNKNOWN tests |
+| BT-05.4 | Keep install, auth, assignment, grant and invocation separate | UI and service state matrix |
+| BT-05.5 | Qualify one first-party Connection read then one write | Secret custody, scopes, approval, idempotency, revoke |
 
----
+## BT-06 — Artifacts and intelligent presentation (Feature 007)
 
-## Phase 7 — P7 Workbench browser/terminal/computer (SDD 008)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-7.1 | Lock SDD 008 | — |
-| BT-7.2 | Takeover/return epochs | UC-BRW-01, UC-CMP-01 |
-| BT-7.3 | Terminal in admitted Environment | UC-TRM-01 |
-| BT-7.4 | Optional Inspector trace | UC-WORK-07 |
+| BT-06.1 | Qualify one professional Artifact format | Create/edit/save/export/reopen/compare round trip |
+| BT-06.2 | Verify exact source/version and Artifact provenance | Hash and revision consistency |
+| BT-06.3 | Validate typed RichPresentation document | Size/depth/node/schema/digest bounds and semantic fallback |
+| BT-06.4 | Add one accessible Intelligent UI component | Restricted state reducer, table fallback, malicious input tests |
+| BT-06.5 | Keep Interactive Artifact in isolated runtime | Separate process, authority and OS qualification |
 
----
+## BT-07 — Workbench providers (Feature 008)
 
-## Phase 8 — P8 Coworkers + memory (SDD 009)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-8.1 | ADR-0024 schema/API promotion | RV-12 |
-| BT-8.2 | Lock SDD 009 | — |
-| BT-8.3 | Quick Create → chat; revoke scope | UC-CHAT-04, UC-MEM-01–03 |
-| BT-8.4 | Organisation-like project (**partial**) | UC-WORK-05 |
+| BT-07.1 | Remove simulated terminal success and sample output | No false success label or exit code |
+| BT-07.2 | Implement daemon-owned PTY/ConPTY session | Stream/resize/detach/reattach/stop/backpressure/restart |
+| BT-07.3 | Replace sample diffs with exact VCS/revision diff | Source identity and actual hunk tests |
+| BT-07.4 | Keep Browser iframe labeled preview until real provider | No Chrome/automation/sandbox claims |
+| BT-07.5 | Implement isolated browser provider and takeover only after security design | Profile, site grants, lease epoch, stale handle, egress tests |
+| BT-07.6 | Add Computer provider only with real OS permissions/consent | Display identity, active window/focus, takeover tests |
 
----
+## BT-08 — Coworker, memory and responsibility (Feature 009)
 
-## Phase 9 — P9 Automations (SDD 010)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-9.1 | Lock SDD 010 | — |
-| BT-9.2 | Schedule + misfire + one Task per occurrence | UC-AUTO-01–08 |
-| BT-9.3 | Routine test-run semantics | UC-AUTO-01 |
+| BT-08.1 | Implement Coworker-owned Conversation admission | Server derives exact origin and immutable revision |
+| BT-08.2 | Define first scoped Memory source/record lifecycle | Provenance, eligibility, correction, revocation, deletion |
+| BT-08.3 | Implement responsibility proposals and reviewed activation | No model text or UI grants authority |
+| BT-08.4 | Qualify Coworker pause/archive/resume with active Task/Automation checks | Conflict/retention/recovery tests |
+| BT-08.5 | Verify no cross-Workspace leakage | USER/SYSTEM privacy fixtures |
 
----
+## BT-09 — Automation and notifications (Feature 010)
 
-## Phase 10 — P2 BYO Agent depth (SDD 002)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-10.1 | Lock SDD 002 | — |
-| BT-10.2 | Second qualified AgentModule | IMPLEMENTATION-MASTER-PLAN P3 precursor |
-| BT-10.3 | Settings agents/auth flows | UC-SET-04, ledger rows |
+| BT-09.1 | Preserve TriggerHost as occurrence scheduler/materializer | One occurrence receipt per source slot |
+| BT-09.2 | Qualify due cursor/occurrence/task-link atomicity | Duplicate, crash, revision update, resume tests |
+| BT-09.3 | Qualify timezone/DST/misfire/overlap/sleep/offline | Explicit blocker and no laptop-off claim |
+| BT-09.4 | Implement notification provider and ambiguity handling | Dedupe and receipt/reconcile |
+| BT-09.5 | Connect Task execution only after Feature 005 is qualified | Materialized READY Task is not shown as completed work |
 
----
+## BT-10 — Shell, Settings and release (Feature 011)
 
-## Phase 11 — P11 Shell, settings, runtime (SDD 011)
-
-| ID | Task | Test UC-IDs |
+| ID | Task | Exit evidence |
 |---|---|---|
-| BT-11.1 | Lock SDD 011 | — |
-| BT-11.2 | All **187** settings controls: served or honest unavailable | SETTINGS-AND-SHELL-SURFACE-AUDIT |
-| BT-11.3 | Daemon start/stop/recovery UX | UC-SET-04 |
-| BT-11.4 | Accessibility/keyboard USER on shell | V1-UI-SCREEN-CONTRACT |
+| BT-10.1 | Remove or implement inert Browser/Terminal/Security Settings controls | No fake persisted settings or success badges |
+| BT-10.2 | Map every visible Settings control to exact owner and receipt | Control-level semantic map |
+| BT-10.3 | Verify Runtime vs Operator vs Task readiness copy | No false “execution ready” indication |
+| BT-10.4 | Complete shell keyboard/focus/reduced-motion tests | Packaged desktop acceptance |
+| BT-10.5 | Run full declared OS/provider release matrix | CODE/SYSTEM/USER and owner sign-off |
 
----
+## Parallel documentation and validation
 
-## Phase 12 — Release qualification (P11 exit)
-
-| ID | Task | Test UC-IDs |
-|---|---|---|
-| BT-12.1 | Run full **UC-*** catalog applicable to declared matrix row | COMPETITOR-PROMOTED-USE-CASES |
-| BT-12.2 | V1 release matrix green per OS/agent/provider | ACCEPTANCE-AND-E2E-PLAN |
-| BT-12.3 | Update evidence ledgers; no TARGET labeled QUALIFIED without USER | BENCHMARKS policy |
-
----
-
-## Ongoing documentation tasks (parallel)
-
-| ID | Task |
-|---|---|
-| BT-DOC-1 | On each SDD lock, add `contracts/ui-behavior.md` + RESEARCH rival SHAs |
-| BT-DOC-2 | On each new OpenAPI route, update SEMANTIC-SERVED-UI-MAP + V1-UI-ACTION-STATE-LEDGER |
-| BT-DOC-3 | On LiteSPM probe, update CAPABILITY-FABRIC + RV-01 |
-| BT-DOC-4 | Quarterly refresh COMPETITIVE-RESEARCH primary rivals index |
-
----
-
-## SDD package creation order (recommended)
-
-1. **001** (in progress) → 2. **011** (shell/IPC/settings) → 3. **002** (BYO) → 4. **003** (context) → 5. **005** (Task) → 6. **006** (connections) → 7. **008** (Workbench) → 8. **009** (Coworkers) → 9. **010** (automations) → 10. **004** (relay) → 11. **007** (artifacts)
-
-Adjust only with owner approval; register changes in [V1-FEATURE-SDD-REGISTER.md](V1-FEATURE-SDD-REGISTER.md).
+- Update owner documents, schemas, UI contract, action ledger and SDD wiring together.
+- Keep the route inventory current after every Operator router/OpenAPI change.
+- Run the served-route validator, Markdown audit and cross-contract validator.
+- Run the feature package validator.
+- Run Rust, frontend, packaged desktop and owner tests for the affected slice.
+- Do not mark a story/SDD VERIFIED because a static script or unit suite passes.

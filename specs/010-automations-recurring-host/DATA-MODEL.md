@@ -30,3 +30,10 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 ## Migration
 
 None in this revision. Blockers in SPEC section 5 must be closed before a migration is designed.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]
+## External workflow references (provider-owned)
+
+Feature 010 does not create Workflow, WorkflowNode, WorkflowEdge, WorkflowRun or WorkflowStep tables. A future qualified adapter may define a provider-scoped workflow reference and normalized input/output mapping for a Routine; no canonical WorkflowRef machine type or production provider adapter currently exists in this checkout. The external graph, revision, node state and provider run identity remain provider-owned; runtime-only external run handles are protected as provider-private data. The LiteCowork CapabilityInvocation and Task/Attempt receipts remain the local durable authority.
+
+No migration is proposed for this reference comparison. A new external authoring capability requires a separate owner decision and provider contract.

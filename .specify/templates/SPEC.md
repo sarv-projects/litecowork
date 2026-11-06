@@ -23,6 +23,9 @@
 |---|---|---|---|
 
 ### Blocking decisions
+
+Allocate each `B-xx` from the globally unique sequence in `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`; do not restart numbering inside a feature package or reuse an ID owned by another feature. Update the owner SPEC, TASKS, traceability and global register together.
+
 | ID | Question | Owner | Required before |
 |---|---|---|---|
 

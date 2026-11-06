@@ -4,27 +4,13 @@
 Supporting documents may add detail but must not contradict it. Decision records in
 `docs/adr/` explain why a boundary exists; they do not silently amend this contract.
 
-> Implementation status note (2026-10-31): this architecture remains the normative target. Embedded source/status observations describe the historical c7e9c05 baseline before the 2026-10-30 docs-first reset. The executable snapshot is in the ignored local archive, not this checkout. Those observations do not prove code is currently present, served or qualified. Re-establish CODE/SERVED/INTEGRATED/QUALIFIED status from a recovered build.
+**Implementation status:** this file defines the normative target architecture. The active executable source is in apps/ and crates/. The exact implementation, route, integration and qualification evidence for this checkout is recorded in [docs/IMPLEMENTATION-STATUS.md](docs/IMPLEMENTATION-STATUS.md); source evidence does not override these domain invariants.
 
-The former ARCH corpus is not present in the active docs-first checkout. The old archives_docs path does not exist. The previous source/build snapshot is locally archived under archives/legacy-codebase-c7e9c05/, and historical implementation evidence is preserved under docs/archive/legacy-implementation-c7e9c05/.
-
-<!-- SHELVED: HorizonCode (2026-10-31)
-HorizonCode was the separately developed first-party long-horizon coding agent in the
-LiteCowork family, intended to be selectable as a native chief or bounded delegated worker
-through the same AgentModule/AgentBinding/DelegationProfile contracts as any external agent.
-It was explicitly NOT privileged Core software — no special orchestration engine, no bypass
-of Trust/Effect/Task authority.
-
-Decision: HorizonCode has been shelved as of 2026-10-31. It will not be developed,
-integrated, or qualified as part of V1 or the near-term roadmap. All active documentation
-references have been removed. The dedicated integration LLD
-(docs/V1-HORIZONCODE-NATIVE-AGENT-LLD.md) has been deleted. Historical references remain
-in docs/archive/legacy-implementation-c7e9c05/ as provenance only.
-
-If HorizonCode development resumes in future, it must be treated as an ordinary
-AgentModule candidate — no Core privileges, same qualification bar as Codex/Claude
-Code/OpenCode — and a fresh SDD package under specs/ is required before any
-implementation begins.
+<!-- HORIZONCODE PRODUCT BOUNDARY
+HorizonCode is not part of the active V1 product or Core architecture. If development is
+resumed, it must be treated as an ordinary AgentModule candidate with no Core privileges,
+no bypass of Trust/Effect/Task authority, and the same exact OS/provider qualification bar
+as every other external agent. A new feature SDD is required before implementation.
 -->
 
 ## 1. Product definition
@@ -317,8 +303,8 @@ durability or runtime coordination.
 
 LiteSPM owns package ecosystem truth and lifecycle. LiteCowork owns only session-scoped
 references, grants, activations, and offers (with Task capability locks for durable
-Tasks). A listing is not trusted code, an installed
-package, an account connection, or an authorization grant. The endpoint distinction is owned by [CAPABILITY-FABRIC](docs/CAPABILITY-FABRIC.md): the previously selected machine-service candidate hostname is unqualified and differs from the verified public catalog hostname. Do not treat them as aliases or claim a contracted LiteCowork API. LiteSPM owns its API, authentication, manifest, package taxonomy and install/activation contract; LiteCowork integrates only through a published and qualified local protocol.
+Tasks). A listing is not trusted code, an installed package, an account connection, or an
+authorization grant. The current user-facing product/catalog UI is [LiteSPM](https://lite-spm-nine.vercel.app/#/); it is not a machine API. LiteCowork selects no HTTP service endpoint and must not treat a public web origin as RPC. Upstream LiteSPM's current source describes a WIRED local MCP stdio bridge, but LiteCowork's own adapter remains unqualified until its exact version, tool schemas, host mapping, peer-auth behavior, approvals, receipts and recovery pass conformance. See [CAPABILITY-FABRIC](docs/CAPABILITY-FABRIC.md) and [LiteSPM interop LLD](docs/LITESPM-LITECOWORK-INTEROP-LLD.md).
 
 ## 5. LiteCowork Capability Gateway
 
@@ -785,7 +771,7 @@ The accepted product decision is documented in [Coworker target](docs/COWORKERS-
 
 ## Connector, workflow, learning and run-continuation extension
 
-The final 2026-10-10 extension keeps existing architecture authority intact.
+This extension composes the established architecture owners without creating new Core authorities.
 
 ~~~text
                        LiteCowork Core
@@ -812,6 +798,6 @@ Exact source-level research/pins are
 [Reference Implementations](docs/REFERENCE-IMPLEMENTATIONS.md). External frameworks never
 replace Task/Plan/Attempt/Effect/Evidence/Trust authority.
 
-## V1 detailed design integration — 2026-10-12
+## V1 product, implementation and UI crosswalk
 
-The desktop/local implementation surface is made explicit by docs/V1-DESIGN-INDEX.md, docs/V1-FUNCTION-FILE-CATALOG.md and implementation/V1-DESIGN-COVERAGE.md. These are subordinate implementer LLDs, not new Core domains. Preserve Task, Attempt, AgentSession, Environment, Effect, Grant and Evidence authority. Conversation and Coworker paths remain one product. A Tauri WebView is not a Google Chrome execution engine; browser automation needs a qualified Chrome provider plus separate presentation and human-control lease. No new endpoint or event is considered served from design documentation alone.
+The V1 delivery crosswalk is [docs/V1-DESIGN-INDEX.md](docs/V1-DESIGN-INDEX.md). Current source evidence and release gates are in [docs/IMPLEMENTATION-STATUS.md](docs/IMPLEMENTATION-STATUS.md). Detailed screen and interaction behavior is owned by [docs/V1-UI-SCREEN-CONTRACT.md](docs/V1-UI-SCREEN-CONTRACT.md), with endpoint and event contracts under docs/schemas/. These indexes do not create new Core domains. Preserve Task, Attempt, AgentSession, Environment, Effect, Grant and Evidence authority. A Tauri WebView is not a Chrome execution engine; browser automation needs a qualified provider, separate browser Environment and human-control lease. No route, event or UI affordance is qualified merely because it appears in a design document.

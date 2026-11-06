@@ -1073,8 +1073,6 @@ the exact blocked Task and revalidates it.
 
 Run detail foregrounds the actual Task result: trigger, Coworker, pinned revisions,
 outputs, blockers and evidence. Actions may include **Continue**, **Run again**, and
-*(target: no run-detail surface exists; the shipped Automation detail offers “Run once”
-and “Create test Task” plus per-occurrence rows)*
 **View activity**. Continue creates/opens the Task's one canonical follow-up Conversation.
 The chat begins with a trusted run-context card, not synthesized old assistant messages.
 Diagnostics may state native session resumed or durable context rebuilt.
@@ -1093,6 +1091,6 @@ Browser/Computer/Terminal remain implementation capabilities in Workbench. Termi
 advanced and never required to use the product. Activity summarizes meaningful outcomes
 first and exposes commands/tool JSON only on inspection.
 
-## V1 detailed design integration — 2026-10-12
+## V1 screen and interaction ownership
 
-Detailed shell Settings/sidebars/Workbench and animation reducers live in DESKTOP-SHELL-LLD.md; native chat / @ model selection in NATIVE-COMPOSER-LLD.md; Chrome modes/profile imports/takeover in CHROME-BROWSER-LLD.md; normalized central rendering and fallbacks in RENDERING-CONFORMANCE-LLD.md. Existing presentation and conversation honesty rules still apply. The owner-approved 2026-10-24 screen contract supersedes that earlier default: new desktop chat shows the right Workbench in compact Start state; restore only a user's visible/collapsed layout preference, not stale object authority. No native Chrome claim from Tauri WebView alone.
+Detailed shell, Settings, sidebar and Workbench behavior is defined in DESKTOP-SHELL-LLD.md and V1-UI-SCREEN-CONTRACT.md. Native chat and model/effort selection are defined in NATIVE-COMPOSER-LLD.md. Browser modes, profile imports and takeover are defined in CHROME-BROWSER-LLD.md. Normalized rendering and fallback behavior are defined in RENDERING-CONFORMANCE-LLD.md. The desktop Workbench is visible by default in the desktop layout; the user may persist a per-Workspace collapsed preference. Restore layout preference only, never stale provider handles, leases or authority. A Tauri WebView preview is not native Chrome automation. Current implementation boundaries are in IMPLEMENTATION-STATUS.md.

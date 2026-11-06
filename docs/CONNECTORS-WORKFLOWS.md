@@ -661,6 +661,118 @@ If the external workflow performs sends/deletes/writes, those operations are not
 reversible. The adapter declares expected effect classes and, where possible, returns
 provider receipts. Cancellation means "requested cancellation"; it does not mean rollback.
 
+## 10.1 Visual workflow authoring and agent-edit boundary
+
+The WorkflowBackendAdapter above is deliberately a **target existing-workflow invocation**
+contract. Once implemented and qualified it will list/read provider-owned workflows,
+validate inputs, invoke a selected workflow and observe/cancel/normalize its run. It does
+not promise graph creation, node editing, graph version management or provider publish. A
+recursive 2026-11-06 source scan found no production WorkflowBackendAdapter implementation
+in active apps/ or crates/; this contract is not a served LiteCowork capability today.
+
+### OpenBot source comparison
+
+The pinned OpenBot reference (version 0.62.0 at commit
+`6759fa3ee857f4f4966865e12de99ae84ab6de07`) implements an independent host-owned graph
+runtime and canvas. The graph includes typed nodes/edges, versions, triggers, runs, steps
+and output-delivery records; each run pins its graph snapshot. Agent tools list/read/edit/
+delete/run workflows using bounded operations, and the canvas visualizes the saved changes.
+Its inspected schema has Trigger, Text, Prompt, Asset, LLM, Agent, Image, Condition,
+Approval, Output, Note and Shape node kinds; there is no dedicated Code node. The
+agent-edit operation omits Asset and Image from the kinds it may add.
+
+This is useful design evidence for graph UX, typed operations, immutable run snapshots and
+transparent change visualization. It does not change the frozen LiteCowork boundary. The
+full pinned source analysis, declared license and security caveats are recorded in
+[OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).
+
+### LiteCowork V1 decision
+
+- **Manual graph creation/editing** occurs in the connected external workflow provider's
+  own editor. LiteCowork may link to that editor only through a reviewed provider-supplied
+  URL. It does not embed or clone a generic editor.
+- **LiteCowork's Automation/Routine UI** selects an existing external workflow, shows its
+  provider identity/reference, maps Routine inputs, validates, invokes and observes the
+  external run through WorkflowBackendAdapter.
+- **Agent assistance** may help formulate the LiteCowork Routine, map values to an
+  existing workflow's input schema, explain validation errors and summarize run receipts.
+  The current adapter does not let an agent create or change a provider graph.
+- **Future direct LiteCowork-Coworker authoring** requires a separate optional
+  WorkflowAuthoringAdapter or narrowly scoped mediated MCP Connection capability for a
+  specific provider. This is not needed for a user to use that provider's own Assistant/MCP
+  directly in its product. Any LiteCowork-exposed create/draft/update/validate/publish/
+  read-version operations need exact graph digest, expected revision, provider validation,
+  effect summary, separate read/mutate/test/publish/run/delete scopes, owner confirmation,
+  idempotent publish and ambiguous-result recovery before the agent tool is exposed. The
+  external system still owns the graph and runtime; LiteCowork must not add a local graph
+  database or second execution engine.
+
+### Code nodes
+
+n8n documents a Code node with JavaScript and Python support:
+https://docs.n8n.io/code/code-node/. This is an external n8n execution capability, not a
+LiteCowork node. A connected n8n Code node runs under that instance's host configuration,
+credentials, filesystem/network access and isolation. A WorkflowBackendAdapter must
+disclose the external execution boundary and declared effects. LiteCowork Trust does not
+automatically intercept internal actions performed by a third-party workflow engine. If
+the provider cannot describe or reconcile an effect adequately, keep that workflow
+unavailable for consequential production use through LiteCowork.
+
+### Reference security and licensing
+
+OpenBot's pinned README labels it a development preview and documents
+`danger-full-access` / `approvalPolicy: never` behavior. Its package manifest declares
+PolyForm Noncommercial 1.0.0. Study its interaction architecture only; do not treat its
+current permission mode as a security recommendation or assume its implementation can
+be copied into LiteCowork.
+
+## 10.2 Provider-native AI workflow authoring and code steps
+
+Manual graph authoring and AI-assisted authoring already coexist in external workflow products. This is the preferred V1 route for users who want n8n/Activepieces-style nodes without making LiteCowork Core another graph engine.
+
+### n8n
+
+n8n announced its Assistant on 2026-09-09. It is a provider-native AI builder: describe an outcome; the Assistant plans and builds on the n8n canvas; asks for credentials when needed; runs, debugs and iterates; and leaves a normal n8n workflow that the owner can inspect/edit by hand. The provider states credential access and workflow activation require explicit confirmation. Availability is limited: n8n Cloud is on by default for new instances (Enterprise Cloud excluded from that default); self-hosted Docker requires n8n 2.36+ plus user-supplied keys/environment configuration; npm self-hosted is not supported; and the feature remains behind a preview flag. The initial launch is single-instance and does not drive the user's computer/browser. See https://blog.n8n.io/introducing-n8n-assistant/. This is distinct from the separately permissioned instance-level MCP server described below.
+
+n8n's official instance-level MCP server allows external MCP clients to create/edit workflows and data tables, validate, test, generate test data and inspect execution logs inside the connected n8n instance: https://n8n.io/mcp/ and https://docs.n8n.io/connect/connect-to-n8n-mcp-server/. The current docs say workflow build/edit has been available since n8n 2.13.0. MCP is not blanket access: an instance owner/admin enables the server; each workflow is separately made available to MCP; clients receive explicit per-client permissions (for example read-only versus create/run); clients share the set of workflows exposed to MCP rather than receiving per-client workflow subsets; and search_workflows returns previews for workflows the user can view, while full read/edit/run requires explicit workflow exposure. execute_workflow runs the published version by default, with a manual mode for the current unpublished version. This is provider-side graph mutation through n8n's own API/MCP and schema/runtime, not a LiteCowork-owned WorkflowGraph.
+
+The n8n Code node supports JavaScript and Python: https://docs.n8n.io/code/code-node/. It can import external modules in self-hosted deployments when configured; cloud behavior differs. The Security Audit also flags nodes that can fetch or run code on the host: https://docs.n8n.io/hosting/securing/security-audit/.
+
+**Security qualification:** GitHub advisory GHSA-9pq8-m8gp-4p53 (published 2026-05-27) describes a Python Task Runner sandbox escape for a workflow containing a Python Code Node when Python Task Runner is enabled. The published patched versions are 1.123.48, 2.21.8 and 2.22.4: https://github.com/n8n-io/n8n/security/advisories/GHSA-9pq8-m8gp-4p53. An n8n connection that permits graph editing, publishing or running must identify the exact instance version and relevant runner configuration and check current advisories. This is a bounded, condition-specific advisory—not a blanket claim that every n8n Code node is vulnerable or that a patched version proves the whole deployment safe.
+
+### Activepieces
+
+Activepieces documents a visual builder with a “Build by Asking” path. Its built-in MCP server lets external AI clients create/manage flows, inspect structures, validate, test, inspect runs and publish through the connected Activepieces project. Enablement and permissions are meaningful: the MCP server is toggled in Settings; discovery tools are always available and read-only; other categories can be enabled/disabled per project. OAuth authenticates the client, operations are scoped to the authenticated project, credentials are not returned by tools, and the setup-guide tool gives the user UI instructions rather than handling secrets. See https://www.activepieces.com/product/workflow-builder, https://www.activepieces.com/docs/mcp/overview and https://www.activepieces.com/docs/mcp/tools.
+
+The documented tool categories are Discovery (read-only), Flow Management, Flow Building, Router & Branching, Annotations, Tables and Testing & Runs. Exact operations include:
+- ap_build_flow — create a trigger plus sequential steps; validate each as added and return the new flow/editor URL and validation status;
+- ap_add_step / ap_update_step — add or change PIECE, CODE, LOOP_ON_ITEMS and ROUTER steps, including code source and dependencies;
+- ap_validate_step_config / ap_validate_flow — validate step settings or graph structure without publishing;
+- ap_read_step_code — inspect the full CODE step source, package dependencies and input mappings;
+- ap_test_flow / ap_test_step — test a full flow or a step path and return step-level results;
+- ap_lock_and_publish — publish the current draft after checking configured steps;
+- ap_change_flow_status — enable or disable a flow;
+- ap_delete_flow — permanently delete a flow and all versions (documented as irreversible).
+Other tools can modify branches, canvas notes and Activepieces Tables. Tool-category access is per-project; do not assume that an MCP connection automatically grants every operation. Also note ap_run_action is a separate one-shot action and has a published 1-credit/call charge, while flow invocations are billed as normal runs.
+
+Activepieces' Agent documentation distinguishes deterministic Flow steps from an Agent that selects tools/steps at each run, can work inside a flow and can be started from a plain-language brief: https://www.activepieces.com/docs/agents. A Flow and an Agent are not the same runtime contract.
+
+CODE steps accept JavaScript/TypeScript source plus package dependency declarations. Activepieces describes an App, Worker, queue, Engine and sandbox pool responsible for process lifecycle/resource limits: https://www.activepieces.com/docs/install/architecture/overview. Worker/container execution isolation and network policy are configurable concerns, not one blanket guarantee. This is Activepieces' own provider boundary; it is not a LiteCowork Environment or a LiteCowork isolation attestation. A code step can use the provider's connections/permissions and may have effects beyond a normal connector action. These must be disclosed at the provider boundary.
+
+### Node-RED
+
+Node-RED provides a Function node that runs JavaScript against flow messages, alongside declarative Change/Switch/Template and other nodes: https://nodered.org/docs/user-guide/writing-functions. A Function node is a provider-specific code execution surface, not a generic node type that LiteCowork can safely import.
+
+### V1 LiteCowork integration decision
+
+These products prove that the user need not choose between manual and AI-created graphs:
+- **Manual:** use the external provider's visual canvas and edit the provider-owned graph directly.
+- **Provider-native AI:** where enabled by the user's connected provider, describe the desired graph to that provider's own assistant/MCP feature; it builds a normal editable provider graph that the user can inspect/refine and publish in the provider.
+- **LiteCowork-assisted Routine:** LiteCowork Coworkers may help define a Routine and map input values to a selected existing workflow. The current LiteCowork adapter contract in §10 is health/list/get/validate/invoke/get/stream/cancel/result-normalization only; there is no create/update/publish or direct graph-authoring capability in the current source tree.
+- **Future direct LiteCowork agent authoring:** only through a separately qualified provider-specific WorkflowAuthoringAdapter or mediated MCP Connection capability. It must define exact provider/instance version, scopes, tool allowlist, graph mutation and publish operations, draft/revision/digest, validation, external effect summary, user approval, audit receipt, idempotency and ambiguous-result recovery. Agent permission to inspect/list must not imply permission to mutate/publish/run.
+
+Core must not persist an imported copy of external nodes/edges or translate provider steps into LiteCowork Task Steps. The parent Task records one external CapabilityInvocation plus provider reference/run observations, declared effects and independent verification. A provider Code node executes under the provider's own host identity, filesystem/network/secret policy and isolation. LiteCowork Trust can govern only the effect boundary it actually mediates.
+
 ## 11. Activepieces compatibility provider
 
 Two distinct modes are allowed.
@@ -905,3 +1017,5 @@ framework code remain in adapter/provider packages, never in Task domain crates.
 ## V1 detailed design integration — 2026-10-12
 
 V1-FUNCTION-FILE-CATALOG.md and DESKTOP-SHELL-LLD.md enumerate connection lifecycle, Settings/Discover state and task-time repair. LiteSPM owns package installation and lifecycle, LiteCowork owns authorized Task-scoped capability; installed/connected/assigned/ready/granted/invoked must display differently. Test one real read/write/trigger provider before broad catalog claims. Existing connection/auth/event relay designs remain normative.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]

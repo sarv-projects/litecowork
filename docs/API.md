@@ -288,7 +288,7 @@ The desktop composer also sends the observed Coworker aggregate version when ava
 the current revision is pinned by the service and rechecked in the Task transaction. A
 direct Operator caller may omit that expected version, but a supplied version must be
 positive and current. Omitting `coworker_id` deliberately creates a Task without Coworker
-origin; the client does not submit an origin revision. **Current ordinary-Conversation route** resolves the explicit Conversation override then Workspace default; it does not yet serve Coworker association. **Accepted Coworker-owned Conversation target:** when immutable owner_coworker_id has a qualified route/handler, resolve explicit Conversation binding override -> that Coworker's current allowed default binding -> Workspace default. The first configured selection is authoritative: unavailable/invalid means AGENT_UNAVAILABLE and an unchanged draft, never a silent lower-priority fallback. A Task sourced from an owned Conversation must inherit that exact Coworker identity unless a separately approved, source-scoped cross-Coworker handoff creates a new destination Task. Server rechecks owner and revision, rather than trusting a caller-supplied different or null coworker_id. These target rules require formal request/schema/route promotion before production.
+origin; the client does not submit an origin revision. **Current ordinary-Conversation route** resolves the explicit Conversation override then Workspace default; it does not yet serve Coworker association; ConversationRecord has no Coworker origin or revision fields. **Accepted Coworker-owned Conversation target:** when immutable owner_coworker_id has a qualified route/handler, resolve explicit Conversation binding override -> that Coworker's current allowed default binding -> Workspace default. The first configured selection is authoritative: unavailable/invalid means AGENT_UNAVAILABLE and an unchanged draft, never a silent lower-priority fallback. A Task sourced from an owned Conversation must inherit that exact Coworker identity unless a separately approved, source-scoped cross-Coworker handoff creates a new destination Task. Server rechecks owner and revision, rather than trusting a caller-supplied different or null coworker_id. These target rules require formal request/schema/route promotion before production.
 
 Create defaults to `LOCAL_ONLY`; `SELECTED_FOLDERS` is unavailable in the create request because roots are Workspace-owned records created afterward. A client may send another supported policy only after the user explicitly selects it; enabling cloud defaults the UI to `ACTIVE_TASK_INPUTS`. The user adds persistent roots, then updates policy with one or more active same-Workspace `replication_scope_root_ids`. Root IDs follow each selected folder's future observed revisions; they do not pin one content snapshot. Root-level replication settings intersect with Workspace policy and cannot broaden it. A replication-policy update applies to future transfers and never silently deletes content already replicated to another Runtime. Archive is accepted only after every Task is terminal and every Automation is disabled. Any persisted AutomationCursor remains active trigger-host ownership and blocks archive until durable host stop removes the cursor; disabling the definition alone is not proof of provider shutdown. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants, CapabilityActivations, SecretLeases, execution/control leases, unresolved Effects, or pending Approvals, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition; while LiteCowork has no durable channel-host drain acknowledgement, any ACTIVE or DRAINING ChannelHostAssignment blocks archive. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. Archived Workspaces remain readable and preserve existing authorized Artifact/Resource downloads, but reject all domain mutations, including Task mutations, capability activation/grants, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel work.
 
@@ -309,25 +309,34 @@ GET  /v1/rich-presentations/{presentation_id}
 GET  /v1/conversations/{id}/usage
 GET  /v1/conversations/{id}/tasks?cursor=
 
-Implementation status (reconciled 2026-10-31). Message append/list and Conversation usage
-operations are **target-only**: they are declared in OpenAPI but no handler is mounted.
+Implementation status (source audit reconciled 2026-11-06). Message append/list and Conversation usage
+operations remain **target-only**: they are declared in OpenAPI but no handler is mounted.
 The mounted Conversation routes include create/list/get, AgentBinding mutation,
 presentation/rich-presentation/tasks, and the three turn routes below.
 
-The context package builder and SQLite turn-prefix reader are implemented and covered by
-storage-core and SQLite tests. They resolve the new turn's binding from its immutable
-creation event and snapshot the same Conversation through the submitted user message.
-However, the turn route does not call this reader: the native session supervisor/dispatcher,
-agent response writer, stream producer, and Conversation usage writer are not connected.
-The package is not yet delivered to a running agent, and no live cross-agent cost total is
-available. A dedicated atomic Conversation session activation storage operation now exists
-in the preserved dirty feature worktree: after exact adapter readiness, it commits ACTIVE
-AgentSession, RUNNING ConversationTurn, snapshots/events and the Runtime-local opaque
-handle binding together. Its focused storage test passed on 2026-10-31. No qualified
-supervisor calls it, no adapter prompt is dispatched, and no final AGENT response/terminal
-turn writer is connected. The full storage package suite passed before the last
-handle-redaction assertions and was not rerun afterward. Send remains fail-closed; this is
-storage-only CODE evidence, not a served or integrated Conversation path.
+The context package builder, SQLite turn-prefix reader, STARTING reservation,
+`activate_conversation_agent_session`, and atomic final-response writer exist in the active
+source. The Operator now calls an OpenCode-only `AgentSessionSupervisor` path: after the
+USER+OPEN transaction commits, a detached Tokio task reserves/activates a session, loads
+and sends bounded context to OpenCode Server v2.0.32, consumes its event stream, and commits
+the final AGENT response/terminal turn. This is **CODE-level integration**, not route
+qualification. The submit transaction has no durable dispatch outbox/claim and exact replay
+returns the receipt without proving dispatch resumed; same-Conversation single-flight is
+not enforced in storage; retry currently transitions the turn to RUNNING before the
+STARTING reservation that requires OPEN; RUNNING cancellation settles without observed
+native stop/quiescence; and startup recovery is not wired. Pre-dispatch supervisor errors
+can also be logged by the detached caller without settling the OPEN turn. Only OpenCode has
+a dispatch branch; no exact Windows/provider/auth/UI route is qualified. Conversation
+usage accounting and a complete correlated native token-stream projection are not wired.
+Keep Send/API eligibility fail-closed until these gaps and CODE/SYSTEM/owner USER gates
+are closed. See `specs/001-conversation-session-supervisor/` for the detailed source audit.
+
+**Single-flight nuance:** `create_conversation_turn` serializes concurrent append transactions
+and assigns the actual next Conversation revision, but that is not a one-active-turn guard.
+The existing regression test `conversation_turn_creation_serializes_appends_from_the_same_stale_snapshot`
+commits two distinct OPEN-turn candidates for one Conversation from the same revision-1
+snapshot and asserts two turns/messages. This is consistent with append serialization, but
+it does not enforce the target B-01 rule that concurrent active turn submissions conflict.
 ```
 
 Conversation creation requires the selected Workspace, a bounded optional title, and an
@@ -525,28 +534,31 @@ A `task.lead_agent.changed.v1` event records `cause=OWNER_REQUEST` or
 the trigger observation when applicable. Lead failover never transfers a Grant, Approval,
 SecretLease, native session handle, or active Attempt.
 
-**Implementation status (2026-10-22) — read before using the three turn routes.** The
-prose in this subsection describes the accepted target contract, not current served
-behavior. Today `submitConversationTurn` first commits the user message and OPEN turn in
-one transaction. Without a qualified native session supervisor, a second transaction then
-settles that turn `OPEN → FAILED` with reason
-`CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`; after that settlement the route returns
-`503 DEPENDENCY_UNAVAILABLE`. If settlement cannot be confirmed, the handler reports its
-typed settlement error and never reports successful admission. The route does not reserve
-or activate a Conversation-scoped session, return an admission receipt, or reach an agent.
-The internal AgentSessionStore now supports turn-pinned Conversation STARTING reservation,
+**Implementation status (source audit 2026-11-06) — read before using the three turn routes.** The
+following route prose defines the target contract; it is not a statement that every
+transition is correctly implemented. The active `submitConversationTurn` handler commits
+the USER message and OPEN turn, then starts a detached `AgentSessionSupervisor` task and
+returns `202` when the supervisor is configured. The current native dispatch branch is
+OpenCode Server v2.0.32 only. The route's exact replay returns the stored 202 receipt
+without re-admitting a worker or proving that dispatch continues.
+
+Several live code paths violate the target contract and are release blockers. Storage does
+not enforce the accepted single-flight rule across concurrent turn submissions. The retry
+handler changes FAILED to RUNNING and pins a new session ID before dispatch, while the
+STARTING reservation path requires an OPEN turn with no current session pointer; this
+combination is inconsistent. The RUNNING cancel handler commits CANCEL_REQUESTED and then
+immediately CANCELLED without asking the native adapter to stop or observing quiescence.
+No daemon-start recovery sweep or durable Conversation dispatch outbox/claim is wired.
+Failures before the supervisor's inner execution error handler can be logged by the
+Operator's detached task while leaving the OPEN turn unsettled. These routes therefore
+provide source-level integration, not a qualified native Conversation journey. Keep
+Send/API eligibility fail-closed until the recovery, concurrency, retry, cancellation,
+provider, Windows packaging and owner USER gates pass.
+
+The internal AgentSessionStore supports turn-pinned Conversation STARTING reservation,
 keyset-paginated recovery enumeration (exclusive `agent_session_id` cursor, pages of 1–100),
-and expected-version LOST settlement. Recovery orders by binary `agent_session_id`; callers
-continue after the last returned ID and restart a sweep from the beginning to discover rows
-inserted behind an existing cursor. The HTTP route does not call these operations; STARTING
-remains non-ready and does not by itself enable Send.
-`retryConversationTurn` and `cancelConversationTurn` are mounted but both always
-return `503 DEPENDENCY_UNAVAILABLE`. The normal agent-run path
-`OPEN → RUNNING → WAITING_USER/WAITING_DEPENDENCY → COMPLETED/FAILED/CANCELLED` is
-unreachable in this build; the fail-closed `OPEN → FAILED` settlement above is live. The
-desktop composer therefore renders Send disabled with a truthful draft-only note.
-E03-S01/S02 own the repair; OpenAPI already advertises the `202` response that the
-implementation must honor.
+and expected-version LOST settlement. Those are storage primitives; the active daemon does
+not yet wire them into a Conversation startup recovery sweep.
 
 `POST /v1/conversations/{id}/turns` first resolves and checks the Conversation override or
 Workspace default AgentBinding/endpoint. If none is eligible, it returns
@@ -1197,7 +1209,7 @@ GET    /v1/coworkers?status=&cursor=&limit=
 POST   /v1/coworkers
 GET    /v1/coworkers/{id}
 GET    /v1/coworkers/{id}/revisions/{revision}
-GET    /v1/coworkers/{id}/presence
+GET    /v1/coworkers/{id}/presence  # mounted, currently returns 503 DEPENDENCY_UNAVAILABLE
 POST   /v1/coworkers/{id}/revisions
 POST   /v1/coworkers/{id}/status     # ACTIVE | PAUSED | ARCHIVED
 POST   /v1/workspaces/{workspace_id}/primary-coworker
@@ -1746,9 +1758,12 @@ absolute selected folder path is never sent to the Operator.
 Folder-derived Resource creation emits `resource.created.v2`; other Resource creation
 retains `resource.created.v1`.
 First-party user-authored context documents may additionally supply typed
-`context_document` metadata; ResourceService validates that the metadata kind matches its
-USER/Workspace/Coworker/Goal owner and that the owner belongs to the selected Workspace.
-The upload session pins this metadata and applies it to the Resource created at commit.
+`context_document` metadata; the upload session pins this metadata and applies it to the
+Resource created at commit. The target owner model names USER, Workspace, Coworker and Goal
+scopes, but the current `domain-workspace` create validator accepts only USER-owned
+PERSONAL_PROFILE and Workspace-owned WORKSPACE_NOTES. COWORKER_NOTES and GOAL_NOTES are
+currently rejected even though the generic OpenAPI enum lists them; do not treat those
+schema values as accepted current create operations.
 The upload-session response echoes `ContextDocumentCreateMetadata` (owner and kind only);
 the committed Resource response exposes full `ContextDocumentMetadata`, initially
 `ACTIVE` without purge fields.

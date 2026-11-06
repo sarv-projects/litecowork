@@ -54,6 +54,25 @@ Never translate a unit pass, mocked UI, schema, catalog row, successful process 
 | E2E-11 | Rich UI response with presentation disabled | Semantic message remains complete; rendered controls cannot forge or settle host state |
 | E2E-12 | Backup/export → restore/import → inspect provenance | Data integrity, secret exclusion, tombstone and evidence preservation |
 
+### Optional future extension — external WorkflowBackend adapter (not a current V1 release gate)
+
+Do not run or report this journey as available until an owner has promoted Feature 010 T05,
+Feature 005 Task/Attempt admission, Feature 006 CapabilityInvocation/Connection integration,
+and a provider-specific adapter. Provider-native AI builders used directly in n8n/Activepieces
+are external-provider functionality and do not constitute this LiteCowork E2E.
+
+| ID | Journey | Minimum end state |
+|---|---|---|
+| E2E-13 (conditional) | Connect a user-owned workflow provider → choose one explicitly MCP-exposed workflow → inspect provider/version/scopes → validate pinned Routine inputs → run one bounded provider workflow inside a LiteCowork Task → inspect/reconcile result → revoke Connection | Exact provider/instance/version and exposed workflow set; least-privilege read/build/run scope; Task/CapabilityInvocation/Effect receipt; timeout-after-dispatch and duplicate replay reconcile the same provider run; provider node states remain external observations; revoked scope blocks later calls; independent Task acceptance is not inferred from provider test/success status |
+
+For a later direct LiteCowork-agent authoring extension (010-T06, deferred and not authorized),
+add a separate journey proving read/list versus draft/mutate versus validate/test versus
+publish/activate versus production-run versus delete permissions. Bind the owner approval to
+the exact provider graph digest/revision, scope/effect summary and operation. Test stale
+revision conflicts, destructive delete denial, MCP revocation, provider advisory/version
+blocking, ambiguous publish, provider restart and audit/receipt preservation. This must not
+be merged into E2E-13 invocation qualification by default.
+
 ## 4. Real UI testing rules
 
 - A Playwright suite that mocks every backend route is a frontend component test, not full-stack E2E.

@@ -1,6 +1,6 @@
 # Reference Implementations and Upstream Design Sources
 
-**Baseline checked:** 2026-10-10. ACP Registry and OpenIntelligentUI references were reviewed on 2026-10-16.
+**Baseline checked:** 2026-10-10. ACP Registry and OpenIntelligentUI references were reviewed on 2026-10-16; OpenBot was added at pinned commit 6759fa3ee857f4f4966865e12de99ae84ab6de07 on 2026-11-06.
 
 This file is a pinned research map for LiteCowork architecture work. It records the exact
 upstream repositories, revisions, files, and the narrow design ideas we intentionally study.
@@ -37,6 +37,7 @@ control plane.
 | REF-BROWSERCODE | [browser-use/browsercode](https://github.com/browser-use/browsercode) | [`b200643fe0eb93ce5a3aadd4bb21cb6cceb2ed04`](https://github.com/browser-use/browsercode/tree/b200643fe0eb93ce5a3aadd4bb21cb6cceb2ed04) | MIT at checked root LICENSE | Study the CDP WebSocket lifecycle, generated protocol bindings, and connection-race tests. Never expose its persistent raw CDP session or arbitrary agent JavaScript execution. |
 | REF-BROWSER-HARNESS | [browser-use/browser-harness](https://github.com/browser-use/browser-harness) | [`a6426f846fc59d16f38cf66f79176bc7793c16b6`](https://github.com/browser-use/browser-harness/tree/a6426f846fc59d16f38cf66f79176bc7793c16b6) | MIT at checked root LICENSE | Candidate LiteSPM-managed shared browser package for compatible agents. Exact reusable files and wrapper requirements are documented below; raw attached-Chrome access is not itself a LiteCowork-qualified capability. |
 | REF-LITESPM | [sarv-projects/LiteSPM](https://github.com/sarv-projects/LiteSPM) | [`9f42b25ddfb1acedce0f2dbf9964f4a7724d622e`](https://github.com/sarv-projects/LiteSPM/tree/9f42b25ddfb1acedce0f2dbf9964f4a7724d622e) | Apache-2.0 at checked root LICENSE | Selected package lifecycle authority. Still in active development; use its published package/host contract when available, and do not invent or duplicate its API. |
+| REF-OPENBOT | [nightly-labs/openbot](https://github.com/nightly-labs/openbot) | [`6759fa3ee857f4f4966865e12de99ae84ab6de07`](https://github.com/nightly-labs/openbot/tree/6759fa3ee857f4f4966865e12de99ae84ab6de07) | PolyForm Noncommercial 1.0.0 at pinned package.json; review before any code reuse | Study compact Task UX, provider-scoped model/effort picker, local usage accounting, visual workflow graph and constrained agent graph tools. Do not adopt its Core graph runtime, broad danger-full-access/approvalPolicy-never mode or code without a separate license/security review. |
 
 ## ACP Registry exact files and boundary
 
@@ -373,8 +374,9 @@ Checked at `7424f0ca0452f9dc9fe4cf6627ecbf0b315ed1e3`.
 - `packages/cli/src/workflows/triggers/non-webhook-trigger-registrar.ts`:
   https://github.com/n8n-io/n8n/blob/7424f0ca0452f9dc9fe4cf6627ecbf0b315ed1e3/packages/cli/src/workflows/triggers/non-webhook-trigger-registrar.ts
 
-**Decision:** support a user-owned n8n deployment through a narrow
-`WorkflowBackendAdapter`. Do not vendor n8n, expose its internal database as LiteCowork
+**Target decision:** a future qualified provider may support a user-owned n8n deployment
+through a narrow `WorkflowBackendAdapter`. No production adapter is present in the active
+source tree as of 2026-11-06. Do not vendor n8n, expose its internal database as LiteCowork
 state, or market embedded n8n functionality without a separate license review.
 
 ## Nango exact files
@@ -457,7 +459,7 @@ OAuth, triggers and workflow backends must function without Composio.
 | Browser/terminal/MCP assembled per agent | CapabilityBroker + LiteSPM + AgentControlDescriptor | Adopt lifecycle/cleanup test patterns. |
 | Huge app ecosystem | LiteSPM ConnectorPackage + optional providers | Direct first-party connectors + community packages + MCP + qualified Activepieces compatibility. |
 | Managed OAuth gateway | ConnectionService/AuthBackendAdapter | Optional external backend. Default desktop can remain local-first. |
-| Existing deterministic workflow engine | WorkflowBackendAdapter | Invoke as a bounded capability; never replace LiteCowork Task Runtime. |
+| Existing deterministic workflow engine | Future qualified WorkflowBackendAdapter | Target: invoke as a bounded capability after adapter/Task/Trust qualification; no production adapter is currently present. Never replace LiteCowork Task Runtime. |
 | Tool catalog kept out of model context | CapabilityBroker progressive discovery | Adopt; load/search/describe/execute only relevant capabilities. |
 
 ## Implementation rule
@@ -701,3 +703,47 @@ The official upstream references and implementation constraints for native OpenC
 A targeted source-level review of the actual desktop clients is now recorded in [DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md). Pins: ZCode `a60ba6a7e5a06742270ca605f5d2cc2766afa7e1` (`packages/desktop`, Apache-2.0 plus root NOTICE) and DeepSeek Harness `ce7073d51254c26cd63b22a60835b8f948deb447` (`apps/desktop`, MIT at root). The review distinguishes their process models, narrow native API boundaries, plugin isolation, update/quit handoff, resource transfer and test-corpus patterns from LiteCowork's Tauri + durable daemon + Core/LiteSPM ownership.
 
 The clones are local ignored research material under `litecowork/repo_take/`; neither upstream was built or tested, and no source was copied. The active LiteCowork checkout has no root LICENSE. That absence does not automatically prohibit private/internal adaptation, but exact-file provenance, dependency licenses and required notices must be reviewed and the intended redistribution posture confirmed before shipping adapted code. Do not treat this research entry as implementation approval or product qualification.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]
+
+## OpenBot exact files and LiteCowork boundary
+
+Repository: [nightly-labs/openbot](https://github.com/nightly-labs/openbot)
+
+Pinned revision: [6759fa3ee857f4f4966865e12de99ae84ab6de07](https://github.com/nightly-labs/openbot/tree/6759fa3ee857f4f4966865e12de99ae84ab6de07), package version 0.62.0 at the inspected package.json. Declared license: PolyForm Noncommercial 1.0.0. The README labels the product a development preview and documents danger-full-access / approvalPolicy never behavior. This is architecture/UI research only; do not reuse code or permission defaults without separate license and security review.
+
+| File | Exact pinned link | What to study | LiteCowork decision |
+|---|---|---|---|
+| README.md | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/README.md | Product scope, development-preview warning, advertised agent/permission behavior | Treat claims as preview status; never adopt danger-full-access as LiteCowork Trust policy |
+| docs/architecture/structure.md | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/docs/architecture/structure.md | Bun workspace, ownership of daemon/provider/renderer/database and local state | Study separation; LiteCowork retains Tauri/Rust Runtime/Operator/domain owners |
+| docs/architecture/agents.md | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/docs/architecture/agents.md | Agent sessions, routine flows, agent communication and task patterns | UX/runtime reference only; LiteCowork Task/Attempt remains authoritative |
+| docs/architecture/analytics.md | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/docs/architecture/analytics.md | Durable local usage records, cumulative counters, provider-specific usage and quota readers | Retain the stricter LiteCowork two-ledger cost/quota and provenance model |
+| packages/ui/src/components/ProviderModelPicker.tsx | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/packages/ui/src/components/ProviderModelPicker.tsx | Searchable provider-specific picker | Adopt compact interaction only; require fresh descriptor and exact Binding scope |
+| packages/ui/src/features/tasks/TasksPage.tsx | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/packages/ui/src/features/tasks/TasksPage.tsx | Task composer, agent selector, grouped list and side panel | Adapt to LiteCowork Task/UserRequest state semantics; no localStorage authority |
+| src/renderer/src/features/usage/AgentUsagePanel.tsx | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/src/renderer/src/features/usage/AgentUsagePanel.tsx | Host-wide and agent-filtered Usage surface | Layout inspiration; API-equivalent estimate is not billed spend |
+| src/backend/workflows/workflow-schema.ts | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/src/backend/workflows/workflow-schema.ts | Provider-independent graph storage and node kinds within OpenBot | Do not add this graph schema/runtime to LiteCowork Core V1 |
+| src/backend/workflows/workflow-tools.ts | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/src/backend/workflows/workflow-tools.ts | Constrained agent list/read/edit/run tools | Evidence of external product graph editing, not evidence of a separate draft/publish gate |
+| packages/ui/src/features/workflows/WorkflowCanvas.tsx | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/packages/ui/src/features/workflows/WorkflowCanvas.tsx | Canvas, node editing, run history, approvals and change visualization | UX reference only; LiteCowork V1 uses external backend's own editor |
+| packages/ui/src/features/workflows/workflow-build.ts | https://github.com/nightly-labs/openbot/blob/6759fa3ee857f4f4966865e12de99ae84ab6de07/packages/ui/src/features/workflows/workflow-build.ts | Before/after graph change plan | Study transparent agent-change visualization only |
+
+The complete source-grounded comparison, observed node kinds, code-node distinction, permission caveat and inspection limitations are in [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md). OpenBot's graph does not establish a generic Code node; n8n's separately documented Code node is an external-provider capability with its own execution security boundary. Neither creates a LiteCowork Core node type.
+
+## External workflow provider AI-authoring and code-step references
+
+These are provider documentation and security references, not LiteCowork runtime dependencies:
+
+| Provider reference | Link | Use | Boundary |
+|---|---|---|---|
+| n8n Assistant | https://blog.n8n.io/introducing-n8n-assistant/ | Natural-language authoring directly onto the n8n canvas; result is a normal editable graph; credential/activation confirmation | Provider-native feature remains preview-flagged; Docker self-hosted 2.36+ and supported availability required; not a LiteCowork agent feature |
+| n8n MCP landing/setup | https://n8n.io/mcp/ · https://docs.n8n.io/connect/connect-to-n8n-mcp-server/ | External AI client can build/edit/validate/test provider workflows and inspect execution logs | Instance owner/admin enablement, per-workflow exposure, per-client permission scope, exact instance/version check; workflows exposed to MCP are shared across connected clients |
+| n8n Code node | https://docs.n8n.io/code/code-node/ | JavaScript/Python workflow step | Executes in provider environment |
+| n8n Security Audit | https://docs.n8n.io/hosting/securing/security-audit/ | Identify risky nodes/host execution surfaces | Must be checked for the connected deployment |
+| n8n Python Task Runner advisory | https://github.com/n8n-io/n8n/security/advisories/GHSA-9pq8-m8gp-4p53 | Python Task Runner sandbox escape condition, affected/patched versions | Apply only under advisory's stated configuration; recheck current version/advisories |
+| Activepieces builder | https://www.activepieces.com/product/workflow-builder | Visual builder + Build by Asking + TypeScript code steps + step tests/run history | User/provider-owned graph |
+| Activepieces Agents | https://www.activepieces.com/docs/agents | Flow vs Agent semantics and agent-generated job definitions | Distinguish deterministic Flow execution from agent decisions |
+| Activepieces MCP overview | https://www.activepieces.com/docs/mcp/overview | OAuth, project scope, discovery read-only tools and per-project tool-category enablement | Connection does not imply all tools; credentials are not returned |
+| Activepieces MCP tools | https://www.activepieces.com/docs/mcp/tools | ap_build_flow, step/branch edits, validation, code review, testing, publish/status/delete | Provider-owned MCP authority; deletion irreversible; no LiteCowork adapter yet |
+| Activepieces architecture/workers | https://www.activepieces.com/docs/install/architecture/overview · https://www.activepieces.com/docs/install/architecture/workers | App, queue, worker, engine, sandbox, resource and network isolation settings | Provider-owned execution boundary; not a LiteCowork Environment |
+| Node-RED Function | https://nodered.org/docs/user-guide/writing-functions | JavaScript function execution in a flow | Provider-owned code runtime |
+
+For the dated source analysis, provider-native AI build path, and LiteCowork non-adoption decision see [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).

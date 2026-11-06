@@ -1,6 +1,7 @@
 # Spec, Build TASKS, and USER Test Traceability
 
-**Updated:** 2026-11-01  
+**Updated:** 2026-11-06
+
 **Purpose:** one crosswalk between **global build tasks** ([LITECOWORK-BUILD-TASKS.md](LITECOWORK-BUILD-TASKS.md)), **feature SDD tasks** (`specs/NNN-*/TASKS.md`), **acceptance IDs** (SPEC EARS), and **competitor USER cases** ([COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md)).
 
 ## Feature 001 — Conversation Session Supervisor
@@ -34,7 +35,7 @@
 
 ## Features 002–011
 
-Each package is a real DRAFT (README, SPEC, PLAN, TASKS, DATA-MODEL, RESEARCH, WIRING, contracts including ui-behavior). Status is not ACCEPTED/LOCKED. Blockers live in that package's SPEC section 5. Task ids are `NNN-T01` through `NNN-T04`.
+Each package is a DRAFT (README, SPEC, PLAN, TASKS, DATA-MODEL, RESEARCH, WIRING, and required contracts). Status is not ACCEPTED/LOCKED. Blockers live in the owning SPEC. Task ids are package-specific; always read the current TASKS.md rather than assume a fixed upper bound. Feature 002 now includes 002-T06 for a descriptor-bound model/effort picker (blocked on exact native dispatch). Feature 010 includes 010-T05 for future qualified external WorkflowBackend Routine mapping (blocked) and 010-T06 for provider-authoring evaluation (deferred; not V1 authorization).
 
 | SDD | Build phase | USER themes | Blockers to close before lock |
 |---|---|---|---|
@@ -43,10 +44,10 @@ Each package is a real DRAFT (README, SPEC, PLAN, TASKS, DATA-MODEL, RESEARCH, W
 | 004 | P3 | UC relay A→B→A | B-15, B-16 |
 | 005 | P4 | UC one safe task edit | B-17, B-18 |
 | 006 | P5 | UC one connection write | B-19, B-20 |
-| 007 | P6 | UC one professional format | B-21 |
-| 008 | P7 | UC browser and terminal | B-22, B-23 |
-| 009 | P8 | UC optional coworker memory | B-24, B-25 |
-| 010 | P9 | UC schedule exactly once | B-26, B-27 |
+| 007 | P6 | UC one professional format, Artifact create and export | B-21, B-30, B-31 |
+| 008 | P7 | UC browser, terminal and optional Computer use | B-22, B-23, B-32 |
+| 009 | P8 | UC optional coworker chat and scoped memory | T01 B-24/B-25; T02 Coworker origin + owner-scoped ContextDocument; T03 retrieval/restart fence; T04 optional New Chat/first Coworker chat |
+| 010 | P9 | UC schedule exactly once; future provider-owned workflow mapping | B-26, B-27; T05 depends on qualified Features 005/006; T06 deferred |
 | 011 | P0–P11 shell | UC settings honesty and health | B-28, B-29 |
 
 When an owner resolves a blocker, edit that SPEC and leave status DRAFT until explicit acceptance.

@@ -1,27 +1,45 @@
 # LiteSPM ↔ LiteCowork — Local Package Management and Invocation Interoperability LLD
 
-**Status:** binding integration **TARGET**. LiteSPM publicly documents a local CLI and MCP stdio bridge; this is a candidate transport, not a LiteCowork-qualified versioned integration.
-**Owners:** LiteSPM owns package/catalog/inventory/config-mutation authority; LiteCowork owns Workspace/Coworker/Task authorization, execution and evidence.  
-**Prerequisites:** Pin a LiteSPM release and qualify its exact MCP server/tool schemas, host-target semantics, plan/approval protocol, operation receipt, idempotency and UNKNOWN recovery before enabling any LiteCowork adapter. The public developer page shows `litespm bridge stdio --host <host-id>` and agent-side `/marketplace`; it does not by itself qualify LiteCowork's local process launch or authorization mapping. Do not scrape CLI output or guess RPC/tool names.
-**References:** [Product](V1-PRODUCT-RELEASE-CONTRACT.md), [Capability Fabric](CAPABILITY-FABRIC.md), [Capability Invocations](CAPABILITY-INVOCATIONS.md), [Agent Control](AGENT-CONTROL.md), [Trust](TRUST.md), [LiteSPM ARCH/33](https://github.com/sarv-projects/LiteSPM/blob/main/ARCH/33-DEPLOYMENT-LEDGER-RECONCILIATION.md), [ARCH/38](https://github.com/sarv-projects/LiteSPM/blob/main/ARCH/38-CLI-PRODUCT-SURFACE.md).
+**Status:** LiteSPM upstream local stdio bridge is **WIRED** in its own repository; LiteCowork integration remains **TARGET / not qualified**.
+**Owners:** LiteSPM owns package/catalog/inventory/config-mutation authority; LiteCowork owns Workspace/Coworker/Task authorization, execution and evidence.
+**Current upstream pin:** `sarv-projects/LiteSPM@111fd9b8e84573f8fce76b6374b4ff9639502539` (main, checked 2026-11-05).
+**Prerequisites:** Pin a LiteSPM release/commit and qualify the exact MCP tool schemas, host-target semantics, peer-auth behavior, plan/approval protocol, operation receipt, idempotency and UNKNOWN recovery before enabling any LiteCowork adapter. The documented launch surface is `litespm bridge stdio --host <host-id>`; host-specific prompt behavior is not uniform. Do not scrape CLI output or guess RPC/tool names.
+**References:** [Product](V1-PRODUCT-RELEASE-CONTRACT.md), [Capability Fabric](CAPABILITY-FABRIC.md), [Capability Invocations](CAPABILITY-INVOCATIONS.md), [Agent Control](AGENT-CONTROL.md), [Trust](TRUST.md), [upstream STATUS.md at pinned commit](https://github.com/sarv-projects/LiteSPM/blob/111fd9b8e84573f8fce76b6374b4ff9639502539/STATUS.md), [upstream AGENTS.md host UX](https://github.com/sarv-projects/LiteSPM/blob/d7dada2b5447a5f4a97f0018b0d901411409e123/AGENTS.md).
 
-## Current public product and source evidence (checked 2026-10-24)
+## Current product-site and upstream bridge evidence (checked 2026-11-05)
 
-The [LiteSPM developer page](https://litespm.sarveshbh-2022.workers.dev/docs/) documents
-a local CLI for setup, catalog sync/search, host selection, install/list/remove and a
-stdio MCP bridge. The [upstream README](https://github.com/sarv-projects/LiteSPM) says
-agent-side `/marketplace` can search and prepare a plan but cannot approve it; a
-single-use approval token comes from the human-controlled `litespm approve` path. This
-confirms that local CLI/MCP integration is a viable candidate. It does not establish that
-the bridge is safe to launch for every host, that its target ID means the selected
-AgentBinding, or that it supplies the durable receipts/idempotency guarantees LiteCowork
-requires. Those are release-pinned source and conformance questions.
+The current user-facing catalog UI referenced by the product owner is
+[LiteSPM](https://lite-spm-nine.vercel.app/#/). It is a browser site, not an RPC endpoint.
+The upstream README/STATUS snapshot still names a legacy Cloudflare Pages origin; that
+deployment reference is not a separate service API. LiteCowork selects no machine HTTP
+endpoint and does not call, scrape or infer API routes from the catalog UI.
 
-The upstream README also distinguishes catalog size from installability: at the time
-checked, it reported 69,376 listings and 26,554 one-command installs, with the remaining
-listings discovery-only. It reported 50 MCP host targets and 81 skill targets. These
-counts change and are research snapshots, not V1 promises; the UI must consume current
-capability evidence and display installability per package/host/scope.
+At upstream commit `111fd9b8e84573f8fce76b6374b4ff9639502539`, STATUS.md marks
+`internal/bridge` (the 13-tool stdio shim) **WIRED**. The upstream status describes
+`request_install` reaching `install.execute` for supported skills, MCP servers and
+pinned-source plugins, and `get_invocation`/`cancel_invocation` reaching the invocation
+registry. The bridge is launched as a host subprocess via
+`litespm bridge stdio --host <host-id>`; it is a thin local client of the LiteSPM daemon.
+The status also describes automatic daemon cold-start and retry after a dead-socket
+handshake. These are upstream implementation assertions, not LiteCowork integration
+evidence.
+
+The host UX is version-specific. The upstream notes identify OpenCode v2.2.5 as exposing
+the prompt under `/litespm:marketplace`, while Qwen Code 0.14.4 does not map MCP prompts
+to slash commands and instead exposes the MCP tools under `/mcp`. Do not promise a
+universal `/marketplace` interaction across native agents.
+
+The upstream local IPC contract distinguishes transport permissions from independently
+verified peer identity. Its status says Windows uses an owner-only Named Pipe DACL as
+the OS boundary but reports `peerAuth.verified=false` with a reason because no separate
+peer credential query is performed. Linux/macOS credential-query behavior is distinct.
+LiteCowork must inspect and enforce the exact handshake result for each supported OS; it
+must never promote an owner-only DACL into a claim of verified application-level identity.
+
+The upstream README lists dynamic catalog and host figures, but counts are time-bound and
+must not become LiteCowork promises. The UI consumes current package-level installability,
+provenance and per-host compatibility evidence; listing volume is not installation
+coverage or security qualification.
 
 ## 1. Problem and ownership
 
@@ -89,7 +107,9 @@ Define a versioned **authenticated local** LiteSPMServiceDescriptor (protocol ve
 
 LiteSPM must own the final published wire method names, schemas, error vocabulary and version negotiation. This document must be reconciled with that upstream publication before a real client is marked integrated. Version-incompatible clients fail closed.
 
-## 5b. Observed upstream package model — pinned 2026-10-22
+## 5b. Historical upstream package-taxonomy observation — pinned 2026-10-22
+
+This subsection preserves the package taxonomy and installability observations captured at the cited October commit. It is not the current LiteSPM bridge-status snapshot; use the 2026-11-05 pinned STATUS/AGENTS evidence above for current bridge wiring and host UX. Recheck the current upstream schema before relying on any package-kind or installability enum.
 
 Section 5 requires this document to be reconciled with LiteSPM's own publication before a
 client is marked integrated. The upstream repository was read (not modified) at commit

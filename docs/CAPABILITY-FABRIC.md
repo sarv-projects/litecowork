@@ -54,45 +54,76 @@ authorization grant, activation record, invocation policy, provenance, and revoc
 edge. LiteSPM owns the package ecosystem and package lifecycle. LiteCowork does not implement a registry, marketplace,
 installer, package verifier, or plugin manager of its own.
 
-The repository's previously selected LiteSPM candidate endpoint remains
-`https://litepsm.sarveshbh-2022.workers.dev/`; it is preserved as an unqualified
-integration setting, not verified here as a machine API.
-The public catalog/product site checked in the inbuilt browser on 2026-10-24 is
-`https://litespm.sarveshbh-2022.workers.dev/`; it presents a searchable marketplace and
-agent/package guidance. Its [How LiteSPM works](https://litespm.sarveshbh-2022.workers.dev/how-it-works/)
-page documents a local CLI flow (`litespm setup`, package install/list/remove) with a
-reviewable installation plan, configuration backup, and managed-entry removal. The
-[Developer docs](https://litespm.sarveshbh-2022.workers.dev/docs/) also publish
-`litespm catalog sync`, host list/setup, and `litespm bridge stdio --host codex`; they
-describe agent-side `/marketplace` as search/plan with human approval kept outside the
-agent. This confirms an MCP-stdio integration candidate, not a LiteCowork-qualified
-launch target, stable tool schema or permission mapping. The agent host ID, target config
-scope, plan digest, owner approval, one-use approval token and receipt must be qualified
-before a LiteCowork UI can mutate package state. Its
-[Security page](https://litespm.sarveshbh-2022.workers.dev/security/) says installed
-capabilities run with the user's permissions and are not sandboxed; publisher/source
-labels and compatibility are not security audits. These are product-site statements, not a security qualification of a particular package
-or a substitute for LiteCowork's release-pinned tool-schema, host-target, approval and
-receipt conformance. The verified public site is a browser UI, not a contracted
-machine API. The previously selected machine-service candidate endpoint
-`https://litepsm.sarveshbh-2022.workers.dev/` remains unqualified and differs from the
-verified public catalog hostname; do not treat the two hosts as aliases or imply that
-either is a contracted LiteCowork endpoint. V1 uses LiteSPM's inbuilt/local management
-surface only through a published and qualified local protocol (for example a supported
-CLI or stdio MCP bridge); this document
-does not specify its method names, authentication, schemas or transport. Do not call the
-public site as an RPC endpoint, scrape its UI, or invent an HTTP API. A catalog listing,
-agent compatibility label, successful install, or visible package is not a LiteCowork
-Connection, CapabilityAssignment, Grant, runtime, or authorization to invoke. Any change
-to the selected service endpoint requires an explicit endpoint decision and qualification.
+The current user-facing LiteSPM catalog/browser UI referenced by the product owner is
+[https://lite-spm-nine.vercel.app/#/](https://lite-spm-nine.vercel.app/#/). This is a
+browser UI, not a machine API. Do not call it as RPC, scrape its rendered pages, or infer
+an API hostname from the website domain. The upstream repository's README and STATUS
+snapshot still contain a legacy Cloudflare Pages origin; that historical deployment
+reference is not an additional LiteCowork service endpoint. The site URL and the local
+machine protocol are separate concerns.
 
-This architecture records the service selection and system boundary only. The LiteSPM
-API, authentication, manifests, package taxonomy, plugin composition, MCP discovery,
-installation, update, and upstream process/health operations are intentionally deferred
-to LiteSPM's own authority. Do not infer or duplicate those wire contracts here. This
-document does define LiteCowork's normalized per-Runtime provider-host view and scoped
-Activation-use accounting; the Broker/Supervisor will adapt these requirements to the
-contract LiteSPM exposes.
+### Current upstream bridge evidence
+
+The upstream repository [sarv-projects/LiteSPM](https://github.com/sarv-projects/LiteSPM)
+was checked at main commit
+`111fd9b8e84573f8fce76b6374b4ff9639502539` (2026-11-05). Its STATUS.md describes
+the 13-tool local MCP stdio bridge as **WIRED**. The documented launch surface is
+`litespm bridge stdio --host <host-id>`; the bridge is a thin local client of the
+LiteSPM daemon, not a public HTTP API. The upstream status claims that read/capability/
+invoke tools resolve; `request_install` reaches `install.execute` for supported skill,
+MCP-server and pinned-source plugin paths; and `get_invocation` / `cancel_invocation`
+reach the invocation registry. It also describes cold-starting the daemon and retrying
+a dead-socket handshake. These are upstream-owned implementation claims, not proof
+that LiteCowork's adapter or UI is integrated.
+
+The host interaction is not uniform. The current upstream notes say OpenCode v2.2.5
+registers the MCP prompt as `/litespm:marketplace`; Qwen Code 0.14.4 does not expose
+MCP prompts as slash commands, so the user sees the server through `/mcp` and can call
+its tools or paste the prompt. LiteCowork must not promise a universal `/marketplace`
+command across agents.
+
+The upstream IPC status also distinguishes transport boundary from verified peer identity:
+on Windows, an owner-only Named Pipe DACL is the stated OS boundary, while
+`peerAuth.verified` is reported false with the reason because the implementation does
+not perform an independent peer-credential query. LiteCowork must inspect the exact
+handshake and platform result; it must not promote an owner-only DACL into an application-
+level verified principal. Linux/macOS credential verification and Windows pipe ACL
+qualification are separate cases.
+
+### LiteCowork integration status and requirements
+
+The LiteCowork client remains TARGET and is not release-qualified. Before enabling package
+mutation, it must pin a compatible LiteSPM release/commit and qualify:
+
+1. Exact MCP tool names, input/output JSON Schemas, error taxonomy and protocol version.
+2. Bridge process launch, executable resolution, environment, cold daemon start, reconnect,
+   stop, timeouts, bounded stdio framing and stderr/log redaction.
+3. Exact host ID mapping to the LiteCowork AgentModule, installed version, OS, user/project
+   scope and the selected native config target. A host ID is not an AgentBinding.
+4. Peer-auth result handling on each OS. If the handshake does not provide a verified
+   principal, LiteCowork must rely only on the separately documented OS boundary and
+   must not claim stronger identity verification.
+5. Read-only inventory/describe and host-compatibility behavior before mutations.
+6. Plan digest, exact target/pre-image, user approval identity, one-use approval binding,
+   idempotency key, durable operation receipt, cancellation and UNKNOWN reconciliation.
+7. Host-specific UX: show the actual prompt/tool entry point supported by that host; do not
+   assume slash-command parity.
+8. Negative cases: unsupported listing/installability, incompatible host, stale target,
+   denied approval, partial plugin install without consent, daemon unavailable, bridge
+   restart, timeout-after-write, duplicate replay and user-config drift.
+
+Do not duplicate LiteSPM's catalog, package inventory, resolver, installers or host-config
+writer. LiteSPM owns package lifecycle and package mutation. LiteCowork owns Workspace/
+Coworker assignment, Connection references, execution grants, mediated invocation and
+evidence. A package listing, installed entry, host prompt or successful upstream install
+does not itself create a LiteCowork Connection, CapabilityAssignment, Grant, Runtime,
+Effect or authorization to invoke.
+
+No machine HTTP endpoint is selected or assumed here. The actual LiteCowork integration
+contract is local protocol only after the exact upstream version and platform behavior
+are pinned and qualified. This document defines LiteCowork's normalized per-Runtime
+provider-host view and scoped Activation-use accounting; it does not redefine LiteSPM's
+wire protocol.
 
 ## Capability records
 
@@ -410,9 +441,7 @@ ActivepiecesPieceProvider. Qualification includes exact source/license path, dig
 dependency/install behavior, descriptor translation, isolation and fixtures. A Piece is
 not a Grant and an update creates a new digest requiring compatibility/requalification.
 
-WorkflowBackendAdapter exposes workflows from a user-owned backend as discoverable bounded
-capabilities. Workflow execution is a CapabilityInvocation; external run IDs remain
-provider-private/Runtime-local and external node progress is observation only.
+**Target contract only:** a future qualified WorkflowBackendAdapter may expose workflows from a user-owned backend as discoverable bounded capabilities. Workflow execution would be one CapabilityInvocation; external run IDs would remain provider-private/Runtime-local and external node progress would be observation only. No production WorkflowBackendAdapter implementation exists in the active source tree as of 2026-11-06, so this is not a served capability today.
 
 Optional Nango/Arcade/Composio providers fit behind the same capability/connection
 boundaries. The catalog must remain useful when none is configured.

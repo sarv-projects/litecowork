@@ -1,3 +1,5 @@
+[Reading 303 lines from start (total: 303 lines, 0 remaining)]
+
 # V1 Observability, Token/Cost Accounting, Cache, Health and Connection Resilience LLD
 
 Status: **normative desktop-V1 design target**, not a report of implemented handlers. This refines OBSERVABILITY, AGENT-FABRIC, TASK-RUNTIME, TRUST, STORAGE, EVENTS, RUNTIME-LIFECYCLE and DESKTOP-SHELL-LLD. Existing canonical domain models and event schemas remain authoritative. New proposal events/routes/tables MUST be promoted through existing schema migrations/service owners in one cohesive story before exposure.
@@ -278,6 +280,52 @@ Tauri command, served-route inventory regeneration and contract tests. Until the
 must not render a usage table that claims measured totals; the honest empty state from the
 dashboard contract above still applies.
 
+## OpenBot usage-dashboard comparison and V1 UI decision — 2026-11-06
+
+Repository reference: nightly-labs/openbot@6759fa3ee857f4f4966865e12de99ae84ab6de07 (package 0.62.0, checked 2026-11-06). Relevant source: `docs/architecture/analytics.md`, `src/renderer/src/features/usage/AgentUsagePanel.tsx`, provider usage readers, `packages/ui` Usage report components, and `src/backend/provider-drivers.ts`.
+
+This is a source/document comparison, not runtime or billing qualification. The pinned README labels OpenBot a development preview, and the package manifest declares PolyForm Noncommercial 1.0.0. Its README also describes danger-full-access/approvalPolicy-never behavior; do not copy that security posture. The full source pin and inspection limits are in [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).
+
+### What the reference implementation actually does
+
+- The Usage report is a host-wide historical report with optional agent filter. It groups accepted usage by day, model, agent/harness and provider; desktop can open the host report, and Agent settings opens the same report with an agent filter.
+- Its main quick periods are 7, 30, 90 days or custom; it is not the Today/7D/1M/3M/1Y/All set requested for LiteCowork.
+- The reference uses durable local numeric usage records, cumulative counter checkpoints and activity counts. Usage is separate from conversation deletion; agent deletion removes usage/checkpoint/activity records with the agent.
+- Usage ingestion differs by provider: Codex cumulative counters require last-value/checkpoint arithmetic; Claude uses per-model query counters; ACP usage is optional/session-scoped and provider-specific. Missing values stay unknown.
+- Separate provider rate-limit readers expose account quotas for selected providers (including Codex/Claude or provider-specific paths where available, Cursor, Kimi, OpenCode Go and Antigravity). These are live quota observations, not historical token/cost rows.
+- The UI labels money as a USD API-equivalent estimate, not a subscription charge. Unknown/managed pricing remains unpriced. Price sources and verification date are recorded; a model rate change is applied based on when the turn started. Tool/media fees are outside the estimate.
+- Host-wide machine resource analytics (CPU/memory/process sampling) is a different diagnostic surface from token/cost usage and should not be silently added into usage spend totals.
+
+### LiteCowork decision (canonical model remains stricter)
+
+Retain the two-ledger design already specified above: (1) immutable inference usage leaves with provenance and cost basis; (2) separate quota snapshots. Do not copy the reference's API-equivalent estimate as the only cost representation. LiteCowork keeps `PROVIDER_API` billed amount, `LIST_PRICE_ESTIMATE`, `SUBSCRIPTION_INCLUDED` and `UNKNOWN` separate, with no conversion of entitlement/quota into dollars.
+
+### V1 Usage screen contract
+
+Quick ranges: Today, Last 7 days, Last 1 month, Last 3 months, Last 1 year and All time. Advanced options include YTD and Custom. Each is an exact half-open range based on the viewer timezone; store event time in UTC and resolve DST from the timezone identifier, not a fixed offset.
+
+Primary scope defaults to selected Workspace. User may choose All Workspaces only through an explicit authorized scope selector. Agent/harness, AgentBinding, model, provider, Coworker, Conversation/session, Task, Attempt, lead/subagent, Runtime, source/confidence and outcome are composable filters. Group by Day, Session, Coworker, Task, Agent, Model or Provider.
+
+Header metrics: accepted inference requests; input/output tokens; cached input and cache write where reported; provider-billed money by currency; API-list-price equivalent estimate; coverage and unknown-row count. Provider quota cards show plan/window/used or remaining/reset/source/observed-at separately. Never display quota as spend.
+
+Charts show daily requests/tokens and estimated equivalent cost only where the basis supports it. Model/agent comparison rows expose cost share, token totals and request count with completeness. A sortable virtualized table remains the accessible source for exact values. Every number opens rows or leaf observations with provenance (source, provider response/session identity, model, pricing snapshot, confidence and observed time), never prompts, completions or reasoning text.
+
+Empty/partial/unsupported states must be per harness and source. For example, Claude Code local JSONL may provide per-response counters but not plan-limit utilization; Cursor or Copilot may not expose authoritative local token totals; Codex counters are cumulative and must be checkpointed rather than summed; OpenCode subscription pricing may explicitly be unavailable. Do not turn missing numbers into zero, and do not claim a single global coverage percentage without showing the included/excluded source set.
+
+Refresh is an observation read. Export is a bounded user-initiated local redacted file. Usage filters, refreshes and chart interactions cannot mutate budgets, plan quota, provider auth or pricing. A separate resource/health diagnostic view may show process usage and runtime health without conflating it with model inference usage.
+
+### Provider/account usage readers
+
+Readers must be provider-specific adapters registered by the exact AgentModule/Runtime, not generic scans of arbitrary home folders. Each adapter declares supported version range, exact source paths/API permission, data fields, counter semantics (delta vs cumulative), session/account identity, query side effects, freshness, quota capability, limitations and privacy review. A usage-only local reader is opt-in and extracts counters, model, response/session IDs and timestamps only. A quota API probe is a separate read with its own auth scope, bounded timeout and refresh cadence. When a provider has no supported source, present `Not reported by this agent`.
+
+### UI layout guidance from OpenBot
+
+Use the reference's compact dark dashboard hierarchy as a layout pattern: thin filter bar (scope, range, grouping, refresh), left summary/provider breakdown, right daily trend, a compact totals strip, then a detailed breakdown table. On narrower width, stack summary, trend and table; keep filters in a single overflowable row/drawer. Avoid repeating one huge card per provider. Show selected Agent filter in the header when opened from Agent profile. A small persistent main app rail is preferable to a wide secondary sidebar.
+
+## Source-level evidence boundary
+
+These UI decisions are grounded in current OpenBot main source and docs, not claims that OpenBot exposes every provider's true billing. Its documented view calls the cost an API-equivalent estimate and records missing fields as unknown. LiteCowork's own usage route remains target-only until the ingestion/storage/OpenAPI/Operator/Tauri/UI chain is implemented.
+
 ## Acceptance and adversarial tests
 
 - One lead calling two subagents and a gateway: 3 distinct inference IDs, deduped even if gateway+native observation both arrive; rollup never counts parent twice.
@@ -301,3 +349,5 @@ dashboard contract above still applies.
 - OpenTelemetry GenAI conventions: https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/client-inference.md
 
 Borrow the source-proven separation of request phases, billable usage, account/model outage classes, and dashboard drilldown. Do **not** adopt OmniRoute's replacement provider gateway, invasive native session extraction, web-login proxy techniques, generic provider auth store, or prompt replay as LiteCowork Core features. Its code/docs versions and route counts may diverge; pin a revision before copying an algorithm, and review license/security independently.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]

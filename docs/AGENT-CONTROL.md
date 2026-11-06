@@ -1106,6 +1106,40 @@ There is no separate global Providers page.
 Settings > Local models is inventory only. A local endpoint/model appears in an Agent
 Model picker only when that agent adapter exposes it as a valid native/session option.
 
+### 14.4 Provider-scoped model and effort picker
+
+The composer model picker is a compact control attached to one selected AgentProfile and
+its active AgentBinding/account. It is not a global provider/model router. The trigger
+identifies the selected agent/profile; its popover contains a searchable catalog returned
+by that exact adapter/AgentControlDescriptor, one selected option, a provider-declared
+default marker where supplied, and a secondary Effort/Reasoning row only when the selected
+model descriptor exposes supported values.
+
+The descriptor is the source of truth for model IDs, display labels, default selection,
+effort values, model capabilities and option revision. UI does not infer model capabilities
+or create generic Low/Medium/High levels. Provider-specific modes remain separate controls
+and appear only when the exact adapter declares them. Account changes are explicit; models
+from a different account/provider are never silently mixed into the current list.
+
+A selection is stored as an exact provider model identifier plus descriptor revision and
+scoped AgentBinding/profile reference. The adapter validates it again when admitting the
+next Conversation turn or Task Attempt. A selection changes future admissions/new
+sessions only; it cannot rewrite a running native session or provider-wide native config.
+If the descriptor is stale, unavailable or incompatible, preserve the draft and previous
+committed selection, disable the stale option, and offer a qualified refresh path.
+
+For Task creation, the user first selects an eligible Coworker/AgentBinding; any model or
+effort override is subordinate to that binding and its descriptor. A last-used local
+preference may preselect but is not authority. Task admission still checks the current
+Workspace, enabled binding, descriptor freshness, eligibility, grants and Runtime.
+
+The exact OpenBot comparison is pinned in
+[OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).
+It is a profile-specific picker reference, not evidence that LiteCowork's descriptor or
+send path is implemented. Feature 002 currently has descriptor read/refresh gaps and
+provider execution mismatch; do not surface an active picker until an exact native
+Conversation/Task path is qualified.
+
 ## 15. Failure and recovery
 
 | Failure | Required behavior |

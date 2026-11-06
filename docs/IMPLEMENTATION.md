@@ -1,5 +1,5 @@
 # Implementation Architecture
-**Status after the 2026-10-30 docs-first reset:** this document is a TARGET architecture and proposed source-layout map, not a claim that these directories/files exist in the active checkout. The executable source snapshot is preserved in the ignored local `archives/legacy-codebase-c7e9c05/` tree. Recover a selected slice into a clean worktree and revalidate its exact revision/state before implementation. Current repository status is in [CURRENT-RUN](../CURRENT-RUN.md) and the [Repository Documentation Audit](REPOSITORY-DOCUMENTATION-AUDIT.md).
+**Status:** architecture and implementation-boundary reference. The active Rust/Tauri source is present under apps/ and crates/. This document describes dependency direction and source ownership; exact current implementation and release evidence is maintained in [IMPLEMENTATION-STATUS](IMPLEMENTATION-STATUS.md). Its proposed layouts are boundaries to preserve, not a requirement to create every possible crate or provider.
 
 ## Repository shape
 

@@ -11,7 +11,9 @@ fn help_is_available_without_starting_runtime_services() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 help output");
     assert!(stdout.contains("USAGE:"));
-    assert!(stdout.contains("does not accept work"));
+    assert!(stdout.contains("A configured native Conversation adapter may dispatch"));
+    assert!(stdout.contains("Runtime READY reports startup and recovery health only"));
+    assert!(stdout.contains("Task planning, Attempt admission"));
     assert!(stdout.contains("OS-authenticated local IPC"));
     assert!(!stdout.contains("Unix IPC"));
     assert!(output.stderr.is_empty());

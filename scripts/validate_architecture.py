@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
 import sqlite3
 import sys
@@ -12,14 +13,17 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import jsonschema
-import openapi_spec_validator
+try:
+    import openapi_spec_validator
+except ImportError:  # optional full OpenAPI meta-schema validator
+    openapi_spec_validator = None
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
-IMPLEMENTATION = ROOT / "implementation"
 ERRORS: list[str] = []
+WARNINGS: list[str] = []
 SHA256_PATTERN = r"^sha256:[a-f0-9]{64}$"
 
 
@@ -1321,10 +1325,16 @@ def check_openapi() -> None:
         fail(f"operator-api.openapi.yaml: invalid/duplicate-key YAML: {exc}")
         return
     check_digest_encodings(api, "operator-api.openapi.yaml")
-    try:
-        openapi_spec_validator.validate(api, base_uri=path.resolve().as_uri())
-    except Exception as exc:  # noqa: BLE001 - include the schema path and exact failure
-        fail(f"operator-api.openapi.yaml: OpenAPI validation failed: {exc}")
+    if openapi_spec_validator is None:
+        WARNINGS.append(
+            "operator-api.openapi.yaml: openapi-spec-validator package is not installed; "
+            "YAML uniqueness, local refs, JSON Schema and route consistency checks still run"
+        )
+    else:
+        try:
+            openapi_spec_validator.validate(api, base_uri=path.resolve().as_uri())
+        except Exception as exc:  # noqa: BLE001 - include the schema path and exact failure
+            fail(f"operator-api.openapi.yaml: OpenAPI validation failed: {exc}")
     paths = api.get("paths", {})
     components = api.get("components", {})
     api_schemas = components.get("schemas", {})
@@ -2699,11 +2709,33 @@ def check_gateway_and_names() -> None:
             fail(f"Gateway tool names outside frozen litecowork.* namespace: {wrong}")
         if len(names) != len(set(names)):
             fail("Gateway tool list contains duplicates")
+    excluded_dirs = {
+        ".git", ".agent-worktrees", ".worktrees", ".zwork", ".superpowers",
+        "archive", "archives", "archive_code", "archives_docs", "ARCHIVE",
+        "target", "node_modules", "__pycache__", ".venv", "reading",
+        "repo_take", "audit", "dist", "build", "coverage", ".next",
+        ".cache", "vendor", "out", ".turbo",
+    }
+    text_suffixes = {".md", ".json", ".yaml", ".yml", ".sql"}
     root_markdown = [path for path in ROOT.glob("*.md") if path.is_file()]
-    for md in [*root_markdown, *DOCS.rglob("*.md")]:
+    active_files: list[Path] = []
+    for folder, directories, filenames in os.walk(ROOT):
+        directories[:] = [name for name in directories if name not in excluded_dirs]
+        for filename in filenames:
+            candidate = Path(folder) / filename
+            if candidate.suffix.lower() not in text_suffixes:
+                continue
+            if candidate.parent == ROOT and candidate.suffix.lower() == ".md":
+                continue
+            active_files.append(candidate)
+    docs_markdown = [path for path in active_files if path.suffix.lower() == ".md"]
+    for md in [*root_markdown, *docs_markdown]:
         if "AgentCowork" in md.read_text(encoding="utf-8"):
             fail(f"{md.relative_to(ROOT)}: stale product name AgentCowork")
-    scanned = [*root_markdown, *DOCS.rglob("*.md"), *DOCS.rglob("*.json"), *DOCS.rglob("*.yaml"), *DOCS.rglob("*.sql")]
+    scanned = [
+        *root_markdown,
+        *(path for path in active_files if path.suffix.lower() in {".md", ".json", ".yaml", ".yml", ".sql"}),
+    ]
     stale_protocol = re.compile(r"(?<![A-Za-z0-9_])litecow\.[a-z][a-z0-9_.]*")
     for path in scanned:
         for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -2711,31 +2743,30 @@ def check_gateway_and_names() -> None:
             if match:
                 fail(f"{path.relative_to(ROOT)}:{line_number}: stale protocol namespace {match.group(0)}; use litecowork.*")
 
-    endpoint = "https://litepsm.sarveshbh-2022.workers.dev/"
+    catalog_url = "https://lite-spm-nine.vercel.app/#/"
     endpoint_docs = {
         ROOT / "ARCHITECTURE.md",
         DOCS / "CAPABILITY-FABRIC.md",
     }
     for endpoint_doc in endpoint_docs:
-        if endpoint not in endpoint_doc.read_text(encoding="utf-8"):
-            fail(f"{endpoint_doc.relative_to(ROOT)}: selected LiteSPM endpoint changed without an explicit endpoint decision")
+        content = endpoint_doc.read_text(encoding="utf-8")
+        if catalog_url not in content:
+            fail(f"{endpoint_doc.relative_to(ROOT)}: current LiteSPM product-site reference is missing")
+    capability_fabric = (DOCS / "CAPABILITY-FABRIC.md").read_text(encoding="utf-8")
+    if "No machine HTTP endpoint is selected or assumed here" not in capability_fabric:
+        fail("CAPABILITY-FABRIC.md: must explicitly state that no machine HTTP endpoint is selected")
 
     historical_source_path = "docs/adr/0002-litepsm-independent.md"
     stale_product_name = re.compile(r"(?<![A-Za-z0-9_])(?:LitePSM|litepsm)(?![A-Za-z0-9_])")
-    excluded_dirs = {".git", ".agent-worktrees", "archive_code", "archives_docs", "ARCHIVE", "archives", "target", "node_modules", "__pycache__"}
     text_suffixes = {".md", ".json", ".yaml", ".yml", ".sql", ".py", ".toml"}
     naming_files = [
-        candidate for candidate in ROOT.rglob("*")
-        if candidate.is_file()
-        and candidate.suffix in text_suffixes
-        and not any(part in excluded_dirs for part in candidate.relative_to(ROOT).parts)
+        candidate for candidate in active_files
+        if candidate.suffix.lower() in text_suffixes
     ]
     for candidate in naming_files:
         if candidate == Path(__file__).resolve():
             continue  # This validator must contain the retired spelling to detect it.
         content = candidate.read_text(encoding="utf-8")
-        if candidate in endpoint_docs:
-            content = content.replace(endpoint, "")
         if candidate == DOCS / "SOURCE-RECONCILIATION.md":
             content = content.replace(historical_source_path, "")
         match = stale_product_name.search(content)
@@ -2749,33 +2780,45 @@ def check_gateway_and_names() -> None:
 
 def check_markdown_links() -> None:
     pattern = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
-    for md in [*ROOT.glob("*.md"), *DOCS.rglob("*.md"), *IMPLEMENTATION.rglob("*.md")]:
-        text = md.read_text(encoding="utf-8")
-        fence_char = None
-        fence_length = 0
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
-            if not match:
+    excluded_dirs = {
+        ".git", ".agent-worktrees", ".worktrees", ".zwork", ".superpowers",
+        "archive", "archives", "archive_code", "archives_docs", "ARCHIVE",
+        "repo_take", "reading", "audit", "node_modules", "target", "__pycache__",
+        ".venv", "dist", "build", "coverage", ".next", ".cache", "vendor",
+        "out", ".turbo",
+    }
+    for folder, directories, filenames in os.walk(ROOT):
+        directories[:] = [name for name in directories if name not in excluded_dirs]
+        for filename in filenames:
+            md = Path(folder) / filename
+            if md.suffix.lower() != ".md":
                 continue
-            marker, suffix = match.groups()
-            if fence_char is None:
-                fence_char = marker[0]
-                fence_length = len(marker)
-            elif marker[0] == fence_char and len(marker) >= fence_length and not suffix.strip():
-                fence_char = None
-                fence_length = 0
-        if fence_char is not None:
-            fail(f"{md.relative_to(ROOT)}: unclosed Markdown fence")
-        for raw in pattern.findall(text):
-            target = raw.strip().split()[0].strip("<>")
-            if not target or target.startswith(("https://", "http://", "mailto:", "#")):
-                continue
-            target = unquote(target.split("#", 1)[0])
-            if not target:
-                continue
-            resolved = (md.parent / target).resolve()
-            if not resolved.exists():
-                fail(f"{md.relative_to(ROOT)}: broken local link {raw}")
+            text = md.read_text(encoding="utf-8")
+            fence_char = None
+            fence_length = 0
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+                if not match:
+                    continue
+                marker, suffix = match.groups()
+                if fence_char is None:
+                    fence_char = marker[0]
+                    fence_length = len(marker)
+                elif marker[0] == fence_char and len(marker) >= fence_length and not suffix.strip():
+                    fence_char = None
+                    fence_length = 0
+            if fence_char is not None:
+                fail(f"{md.relative_to(ROOT)}: unclosed Markdown fence")
+            for raw in pattern.findall(text):
+                target = raw.strip().split()[0].strip("<>")
+                if not target or target.startswith(("https://", "http://", "mailto:", "#")):
+                    continue
+                target = unquote(target.split("#", 1)[0])
+                if not target:
+                    continue
+                resolved = (md.parent / target).resolve()
+                if not resolved.exists():
+                    fail(f"{md.relative_to(ROOT)}: broken local link {raw}")
 
 
 def check_runtime_routine_contract() -> None:
@@ -3452,8 +3495,9 @@ def check_rich_presentation_contract() -> None:
         fail("Host Guidance must remain explicit zero-authority context, separate from capabilities")
     if "semantic answer is committed and exposed first" not in runtime_doc:
         fail("Presentation Runtime must preserve semantic-first publication")
-    if "E08-S08" not in (IMPLEMENTATION / "ROADMAP.md").read_text(encoding="utf-8"):
-        fail("implementation roadmap must include RichPresentation desktop/local V1 delivery")
+    delivery_plan = (DOCS / "IMPLEMENTATION-MASTER-PLAN.md").read_text(encoding="utf-8")
+    if "P10 — Intelligent UI and media" not in delivery_plan:
+        fail("implementation master plan must include the semantic-first Intelligent UI delivery gate")
 
 
 def main() -> int:
@@ -3480,6 +3524,8 @@ def main() -> int:
     check_canonical_concepts()
     check_gateway_and_names()
     check_markdown_links()
+    for warning in WARNINGS:
+        print(f"WARNING: {warning}", file=sys.stderr)
     if ERRORS:
         for error in ERRORS:
             print(f"ERROR: {error}", file=sys.stderr)
@@ -3490,7 +3536,9 @@ def main() -> int:
         r"Minimum v1 registry:\s*```\s*(.*?)```", registry_text, re.S
     )
     event_count = len(re.findall(r"^([a-z][a-z0-9_.-]+\.v\d+)(?:\s*(?:#|—).*)?$", registry_block.group(1), re.M))
-    print(f"Architecture validation passed: JSON Schemas, {event_count} typed events, error codes, OpenAPI, SQLite, Gateway names, canonical concepts, product naming, and Markdown links.")
+    print(f"Architecture validation passed: JSON Schemas, {event_count} typed events, error codes, OpenAPI structure, SQLite, Gateway names, canonical concepts, product naming, and active Markdown links.")
+    if WARNINGS:
+        print(f"Architecture validation completed with {len(WARNINGS)} warning(s).")
     return 0
 
 

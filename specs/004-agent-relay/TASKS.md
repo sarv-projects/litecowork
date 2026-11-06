@@ -2,7 +2,7 @@
 
 **Feature:** 004 | **Status:** DRAFT - do not execute before SPEC is ACCEPTED/LOCKED.
 
-**Spec revision:** 0.1
+**Spec revision:** 0.2
 
 ## 004-T01 - Lock portable context contract
 
@@ -12,7 +12,7 @@
 - **Allowed paths:** this package
 - **Contract:** SPEC §5
 - **Change intent:** Resolve B-15 and B-16.
-- **Acceptance:** Written schema bound and second module id. Criteria discussed include AC-001 AC-002.
+- **Acceptance:** Conversation and Agent Runtime owners approve B-15's portable-context schema, message/resource/artifact reference policy and size/retention bounds; Feature 002 owner records the exact second AgentModule ID, OS/version/auth route and qualification evidence for B-16. No schema or provider identity is inferred from current implementation constants or probe code.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
 - **Stop:** stop if a blocker in SPEC section 5 is unresolved or a contract change lacks owner promotion.
 
@@ -35,7 +35,7 @@
 - **Owner:** Agent Runtime
 - **Allowed paths:** supervisor turn admission
 - **Contract:** 001 supervisor plus this SPEC
-- **Change intent:** New session per switched binding.
+- **Change intent:** After T01 is accepted, execute A→B→A on one Conversation using a new durable Conversation AgentSession per turn and a distinct qualified native adapter for B; reconcile Feature 001 admission/settlement dependencies first.
 - **Acceptance:** AC-001, AC-003, AC-004, AC-006. Criteria discussed include AC-001 AC-002.
 - **Command:** `cargo test -p litecoworkd --locked conversation_agent_relay`
 - **Stop:** stop if a blocker in SPEC section 5 is unresolved or a contract change lacks owner promotion.

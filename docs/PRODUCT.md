@@ -228,8 +228,9 @@ archive/legacy-implementation-c7e9c05/UI.md.
 
 LiteCowork should feel integrated without becoming a workflow-engine clone. Highest-value
 apps can have direct first-party ConnectorPackages; MCP/community packages extend breadth;
-qualified Activepieces compatibility may add connectors; existing external workflows can
-be invoked through optional WorkflowBackendAdapters. None is mandatory.
+qualified Activepieces compatibility may add connectors; a future qualified
+WorkflowBackendAdapter may invoke an existing external workflow as one bounded capability.
+No production workflow adapter is currently present in the active source tree. None is mandatory.
 
 Credential custody is visible. Supported desktop public-client flows keep tokens in local
 SecretStore; a hosted auth provider is named when selected. Event delivery while the
@@ -243,6 +244,12 @@ The product remains one cowork shell. Code task is a convenience preset; users d
 enter a separate Cowork/Code universe and lose history, files, Workbench, Automations or
 native agent controls when task type changes.
 
-## V1 detailed design integration — 2026-10-12
+## V1 interaction and implementation crosswalk
 
-The V1 user-facing promised experience and precise gaps are indexed in V1-DESIGN-INDEX.md and archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md. Native agent controls, functional Chrome side browser, reliable takeover, rich result rendering and end-to-end automation must be qualified before marketed as supported. A simple Conversation never requires Coworker creation.
+The product promise and release boundary are translated into screens and journeys by [V1-UI-SCREEN-CONTRACT.md](V1-UI-SCREEN-CONTRACT.md) and [V1-DESIGN-INDEX.md](V1-DESIGN-INDEX.md). The active source and qualification state are recorded separately in [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md). Native agent controls, real browser/computer use, safe Task execution, professional Artifact workflows and end-to-end Automations must be qualified before being marketed as supported. A simple Conversation never requires Coworker creation.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]
+
+## External workflow authoring boundary — 2026-11-06
+
+The OpenBot source comparison demonstrates a visual graph editor plus agent tools for graph editing. n8n Assistant/MCP and Activepieces Build by Asking/MCP further demonstrate that provider-native AI authoring can produce a normal provider-owned graph that remains visually inspectable and manually editable. LiteCowork's product boundary remains: manual and provider-native AI authoring happen inside the connected provider; no native graph editor/runtime is added to LiteCowork Core. The target LiteCowork integration is to discover, validate, map, invoke and observe existing workflows through a future qualified WorkflowBackendAdapter as one bounded CapabilityInvocation inside a Task. That adapter is not implemented in the active source tree, so no workflow selection or invocation is currently served. Coworkers may draft LiteCowork Routines and map inputs; direct LiteCowork-agent graph mutation requires a future provider-specific authoring capability and explicit owner/security approval. Provider Code nodes remain provider-side execution and do not inherit LiteCowork Environment/Trust guarantees. See [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md) and [CONNECTORS-WORKFLOWS.md](CONNECTORS-WORKFLOWS.md) §10.

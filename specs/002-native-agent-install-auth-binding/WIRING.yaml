@@ -1,62 +1,118 @@
 feature_id: "002"
 status: "DRAFT"
 nodes:
-  - id: "ui"
-    owner: Desktop UI
+  - id: "catalog-ui"
+    owner: Settings Agent Catalog and profile UI
     kind: component
   - id: "operator"
     owner: authenticated Operator
     kind: service
-  - id: "owner"
-    owner: domain owner service
+  - id: "registry"
+    owner: AgentRegistryService
+    kind: service
+  - id: "lifecycle"
+    owner: AgentLifecycleService
+    kind: service
+  - id: "profile"
+    owner: AgentProfile and descriptor owner
+    kind: service
+  - id: "binding"
+    owner: AgentBindingService
     kind: service
   - id: "storage"
-    owner: Storage
+    owner: Runtime-local and Workspace-scoped stores
     kind: store
-  - id: "native"
-    owner: native AgentLifecycleAdapter
+  - id: "native-module"
+    owner: trusted AgentModule / AgentLifecycleAdapter
     kind: external
+  - id: "os-auth"
+    owner: native agent auth / OS credential broker
+    kind: external
+  - id: "conversation"
+    owner: Feature 001 Conversation supervisor
+    kind: service
 edges:
   - id: "e-ui-op"
-    from: "ui"
+    from: "catalog-ui"
     to: "operator"
-    kind: command
-  - id: "e-op-owner"
+    kind: command-and-scoped-read
+  - id: "e-op-registry"
     from: "operator"
-    to: "owner"
-    kind: request
-  - id: "e-owner-storage"
-    from: "owner"
+    to: "registry"
+    kind: discovery-request
+  - id: "e-registry-store"
+    from: "registry"
     to: "storage"
-    kind: transaction
-  - id: "e-storage-ui"
+    kind: cached-metadata
+  - id: "e-op-lifecycle"
+    from: "operator"
+    to: "lifecycle"
+    kind: lifecycle-command
+  - id: "e-lifecycle-native"
+    from: "lifecycle"
+    to: "native-module"
+    kind: bounded-module-call-outside-transaction
+  - id: "e-native-observation"
+    from: "native-module"
+    to: "lifecycle"
+    kind: version-auth-config-readiness-observation
+  - id: "e-lifecycle-store"
+    from: "lifecycle"
+    to: "storage"
+    kind: runtime-local-observation-and-receipt
+  - id: "e-op-profile"
+    from: "operator"
+    to: "profile"
+    kind: profile-and-descriptor-read
+  - id: "e-profile-auth"
+    from: "profile"
+    to: "os-auth"
+    kind: native-login-or-secure-slot-broker
+  - id: "e-op-binding"
+    from: "operator"
+    to: "binding"
+    kind: workspace-cas-command
+  - id: "e-binding-store"
+    from: "binding"
+    to: "storage"
+    kind: transaction-and-idempotency-receipt
+  - id: "e-conversation"
+    from: "binding"
+    to: "conversation"
+    kind: future-admission-binding-reference
+  - id: "e-store-ui"
     from: "storage"
-    to: "ui"
-    kind: projection
-  - id: "e-owner-native"
-    from: "owner"
-    to: "native"
-    kind: probe
-  - id: "e-native-owner"
-    from: "native"
-    to: "owner"
-    kind: observation
+    to: "catalog-ui"
+    kind: scoped-projection
 transactions:
-  - id: "tx-observation"
-    owner: Agent Runtime
-    atomic_records: ["installation_observation"]
+  - id: "tx-registry-observation"
+    owner: AgentRegistryService
+    atomic_records: ["registry_cache_snapshot"]
+    external_calls_inside: false
+  - id: "tx-install-operation"
+    owner: AgentLifecycleService
+    atomic_records: ["lifecycle_operation_intent", "lifecycle_operation_receipt", "installation_observation"]
+    external_calls_inside: false
+  - id: "tx-profile-observation"
+    owner: AgentProfileService
+    atomic_records: ["profile_observation", "control_descriptor"]
     external_calls_inside: false
   - id: "tx-binding"
     owner: AgentBindingService
-    atomic_records: ["agent_binding"]
+    atomic_records: ["agent_binding", "domain_event", "idempotency_receipt", "audit_record"]
     external_calls_inside: false
 external_boundaries:
-  - id: "outside-sqlite"
-    owner: domain owner
-    input_trust: untrusted
+  - id: "native-lifecycle"
+    owner: trusted AgentModule
+    input_trust: validated-module-request-only
     timeout: bounded
     retry: reconcile-before-retry
+  - id: "native-auth"
+    owner: native harness or OS credential broker
+    input_trust: descriptor-declared-method-and-slot-only
+    timeout: bounded
+    retry: never-replay-secret; reconcile-auth-observation
 recovery:
-  owner: domain owner
-  source_of_truth: durable-owner-records
-  restart_action: reload-last-commit-and-reconcile
+  owner: Agent Runtime and Workspace binding owners
+  source_of_truth: last-committed-runtime-observation-and-workspace-binding-receipt
+  restart_action: re-probe-runtime-incarnation-and-install-auth-descriptor-independently; preserve-binding; reconcile-in-flight-lifecycle-before-new-side-effect

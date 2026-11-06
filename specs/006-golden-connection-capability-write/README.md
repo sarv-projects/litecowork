@@ -1,7 +1,7 @@
 # 006 - Golden Connection and One Capability Write
 
 **Status:** DRAFT - review required; does not authorize implementation.
-**Revision:** 0.1 | **Updated:** 2026-11-01
+**Revision:** 0.3 | **Updated:** 2026-11-06
 **Owners to approve:** Connectors, Capability Fabric, Security, LiteSPM boundary, Desktop UI.
 
 ## User outcome
@@ -10,7 +10,7 @@ The owner completes one real account Connection, performs one authorized read, t
 
 ## Current truth
 
-Global owner documents are the interim design authority. This package binds a V1 slice to those documents. The active checkout has no implementation to mark SERVED. Archived source is historical.
+The active checkout serves Discover projections, fail-closed connect-or-install/test routes, exact Approval list/get/resolve and a narrow Task-planning Resource-read grant. Connect-or-install returns 503 without a receipt or grant; test returns UNKNOWN without contacting a provider. Account Connection/OAuth routes are not mounted; CapabilityInvocation is read-only; Trust/Effect provider dispatch and reconciliation are not wired. The Approval UI records an exact action decision but does not execute it. This package remains DRAFT; no golden provider read/write journey is qualified.
 
 ## Package
 

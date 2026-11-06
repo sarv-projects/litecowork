@@ -635,9 +635,33 @@ Connection grant or mint a Task. TriggerCoordinator still authenticates/deduplic
 source and creates the canonical AutomationOccurrence/Task under existing cursor and
 idempotency rules.
 
-A Routine may invoke an existing external deterministic workflow through a qualified
-WorkflowBackendAdapter, but that invocation is an ordinary capability operation inside the
-Task. The external engine does not become the Automation scheduler or Task state machine.
+**Target integration:** a Routine may invoke an existing external deterministic workflow
+through a future qualified WorkflowBackendAdapter, but that invocation remains one ordinary
+CapabilityInvocation inside the Task. The external engine does not become the Automation
+scheduler or Task state machine. No production WorkflowBackendAdapter implementation is
+present in the active source tree; do not present this integration as currently available.
+
+### Manual versus agent-assisted workflow authoring
+
+Automation owns the When/Occurrence lifecycle, and Routine owns the reusable Do
+contract. Neither is a visual graph engine. In the target integration, when a Routine
+selects an existing external workflow, the provider owns its graph, node palette, revisions
+and internal run state; LiteCowork will invoke it through WorkflowBackendAdapter as one
+CapabilityInvocation inside the Task once that adapter is implemented and qualified.
+Manual graph authoring remains in that provider's own editor. The current source has no
+production adapter, so this is not a served user journey.
+
+A user may use a provider-native AI assistant/MCP tool to create a graph in the provider
+when that feature is available and enabled (n8n Assistant/MCP and Activepieces Build by
+Asking/MCP are documented examples). That graph remains provider-owned and is inspected,
+refined and published in the provider. A LiteCowork Coworker may help draft the LiteCowork
+Routine and map its inputs; there is no production provider adapter or graph-authoring tool
+in the active source tree. Future direct LiteCowork agent authoring requires a separately
+qualified provider capability with draft/validate/version/digest/effect summary, explicit
+owner publish confirmation and ambiguous-result recovery. This does not add WorkflowGraph
+tables or graph execution to Core. See
+[OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md)
+for the pinned OpenBot comparison and external-provider evidence.
 
 ### Run history and Continue
 
@@ -663,6 +687,20 @@ turn may reuse it. Otherwise LiteCowork rebuilds bounded context from durable Ta
 selected Artifacts, Evidence and unresolved blockers. Continue never reruns the Automation,
 changes its cursor, or grants new authority.
 
+## Current implementation boundary — 2026-11-06
+
+The active daemon starts `AutomationTriggerHostWorker` from `OperatorServer::start`, before the local Operator endpoint reports ready. The worker polls persisted cursors every 30 seconds, checks the Runtime's current trigger-host Workspace bindings and settles supported recurring Schedule triggers. The module header in `apps/litecoworkd/src/automation_operator.rs` is stale where it says recurring hosting and `/resume` remain unavailable; the route and worker are served. The Automations page's Pause success message also still says trigger execution is unavailable, which is stale.
+
+Current trigger support is Manual and locally valid recurring Schedule. One-shot, webhook and connector-event hosting are unavailable; the UI disables One time and documents the unsupported trigger types. A Manual Run creates a canonical occurrence plus a READY Task. Create test Task is a separate test-only path that creates a READY Task without an occurrence/cursor. Neither path starts planning, an Attempt or an agent. Due schedules also materialize ordinary READY Tasks only. Local recurrence requires the Runtime to remain available; no laptop-off/cloud host guarantee exists.
+
+The editor persists `retry_policy` and `wake_policy`, but no production daemon consumer applies either field. The TriggerHost does consume concurrency/overlap and schedule/misfire decisions; placement/budget are copied into Task inputs but do not create an execution worker or cloud placement. External WorkflowBackendAdapter remains a target contract, not an active provider integration.
+
+Notification outcome settlement may insert a `PENDING` delivery record in the same transaction as the persisted outcome. The source has no production delivery sender/consumer or status-transition writer for `SENDING`, `SENT`, `FAILED`, `AMBIGUOUS` or `SUPPRESSED`. The Notifications Operator reads history and writes preferences; it does not send notifications. The Workspace preference's `preferred_channels` values are stored but not read by the outcome producer, which chooses the first active ChannelBinding or treats an active Runtime Workspace binding as a local channel. `ON_CONDITION` currently means only `DEPENDENCY_BLOCKED`; it is not a named condition. Quiet hours are evaluated if present but cannot be edited in the current Notifications UI.
+
+The Automation detail page reads only the first occurrence-history page and discards `next_cursor`, although the API is paginated. Definition list pagination does expose Load more. Pending Manual Run/Test Task and Routine command envelopes are held only in process memory; closing the app loses unresolved retry identities/payloads.
+
 ## V1 detailed design integration — 2026-10-12
 
 The cross-surface V1 implementation sequence and required functions for Routine->Automation->Trigger->Occurrence->Task->Continue are in V1-WORKFLOW-EVENT-LLD.md and V1-FUNCTION-FILE-CATALOG.md. Enablement requires source/grants/host readiness and consent. Missed local offline slots and DST folds/gaps must be recorded honestly; Run now never enables recurrence. Notification content reflects persisted status, not an agent sentence.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]

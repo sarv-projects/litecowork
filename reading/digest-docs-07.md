@@ -102,7 +102,7 @@ Files: 18 read / 18 listed | Lines read: 6,576 | Bytes: 455,100 (444 KiB)
 - OSC 633 shell integration; escape markers are "UI hints, NEVER proof of Task/Effect success"; 11 proposed functions (`createTerminalSession`, `requestTerminalTakeover`, `stopTerminalProcess`, `deriveCommandMarks`…) unpromoted; 10-row scenario table; VS Code sources.
 
 ### docs/V1-UI-SCREEN-CONTRACT.md (130)
-- Normative UX **TARGET**; 2026-10-31 reset provenance: executable UI tree gone, 10-22/24/25 "current implementation" notes are pre-reset history.
+- Normative UX TARGET. The executable UI tree is present under apps/litecowork-ui; any older per-screen source observations in this digest are non-normative and must be checked against current components and docs/IMPLEMENTATION-STATUS.md.
 - Historical gaps named: turn route "always returns 503" with disabled Send; no conversation mutate route; memory routes unimplemented; work controls target-only; no Browser/Computer/Terminal provider; no PDF/Office generation; no streamed frames; no global search.
 - 10-surface sidebar table (New Chat, Recent Chats & Search, Coworkers, Needs You, Work, Automations, Library, Discover, Agents, Settings); three-pane shell, dock/undock/collapse, drawer+focus trap on narrow widths, layout per Workspace only.
 - Composer `[+][Agent][Model?][Reasoning?][Native / @][Send]`; Agent explicit when >1 lead-eligible; conflicts invalidated, never silently dropped; `Run as Task`/`Schedule`/`Save as Routine` are reviewed flows.
@@ -146,7 +146,7 @@ Files: 18 read / 18 listed | Lines read: 6,576 | Bytes: 455,100 (444 KiB)
 - Consequence: original-harness capability retained; updates isolate to one module + fixtures; Core stays brand-agnostic; install/auth/config readiness separate; per-agent real-provider qualification required.
 
 ## Cross-cutting observations
-- Uniform doc shape: normative target + explicit served/current boundary + dated addenda (2026-10-12, 10-24, 10-25, 10-31). The 2026-10-31 reset header is the only reliable currency cutoff.
+- The active UI authority is V1-UI-SCREEN-CONTRACT.md plus the relevant domain owner. Use the current source map rather than treating dated appendices in older digests as a currency cutoff.
 - Most repeated invariant: **discovery/listing ≠ readiness**, and installed ≠ connected ≠ authenticated ≠ assigned ≠ granted ≠ activated ≠ invoked (AGENT-CONTROL §2, CONTRACT-INDEX, UI contract Discover, TRUST, WORLD-RESOURCES, audit §4.9).
 - Second: **opacity of secrets/handles** — secret bytes, native session handles, PTY/OS handles, provider URLs, ingress cursors, fencing credentials, locators stay Runtime-local, incarnation-scoped, excluded from events/snapshots/projections/logs/backups.
 - Third: **epoch/fence everywhere** — `ExecutionLease.epoch`, EnvironmentControlLease owner epoch, `host_epoch`, `claim_epoch`, `control_version`; stale claimants rejected, never resolved by wall clock.

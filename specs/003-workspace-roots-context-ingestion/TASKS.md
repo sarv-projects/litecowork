@@ -2,7 +2,7 @@
 
 **Feature:** 003 | **Status:** DRAFT - do not execute before SPEC is ACCEPTED/LOCKED.
 
-**Spec revision:** 0.1
+**Spec revision:** 0.2
 
 ## 003-T01 - Lock ingestion formats and watcher policy
 

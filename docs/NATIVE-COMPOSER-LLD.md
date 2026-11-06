@@ -3,22 +3,29 @@
 > **Canonical V1 entry:** ordinary Conversation Send must run through a
 > qualified native AgentSession **without** mandatory Task/Coworker creation.
 > Agent selection determines valid native model/effort/commands, not a
-> duplicated LiteCowork-wide model router. Current source deliberately
-> disables Send until real agent-session admission; this is TARGET, not live.
+> duplicated LiteCowork-wide model router. The active daemon has a partial
+> OpenCode-only dispatch path, but Send must remain disabled until lifecycle,
+> recovery, concurrency, cancellation and exact route qualification pass.
 > See [final screen contract](V1-UI-SCREEN-CONTRACT.md).
 
 Status: NORMATIVE TARGET, not evidence of implemented Operator endpoints. Owners: E03-S01/S02/S06–S11, E08-S01/S04/S06 and E04-S06. Authority: AGENT-CONTROL, AGENT-FABRIC, TASK-RUNTIME, API, SCHEMAS, STATE-MACHINES, TRUST, EXPERIENCE. This document defines UI/local orchestration algorithms; machine endpoints/events must be promoted atomically to API/OpenAPI/Events/schema/storage and tested before serving.
 
-## Current implementation boundary (reconciled 2026-10-31; source evidence dated 2026-10-31)
+## Current implementation boundary (source audit reconciled 2026-11-06)
 
-The served Conversation submit route first commits the USER message and OPEN turn in
-one transaction. While no qualified native session supervisor is connected, a second
-transaction settles that turn `OPEN → FAILED` with reason
-`CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`, then the route returns
-`503 DEPENDENCY_UNAVAILABLE`. A settlement error is returned as a typed failure; the
-handler never reports successful admission. Runtime inventory (ONLINE, incarnation READY,
-and Workspace EXECUTOR) is not a native SESSION_READY handshake. No caller may create a
-STARTING session and mark the turn RUNNING or report 202 from those inventory facts alone.
+The active Conversation submit route commits USER+OPEN, then starts a detached per-turn
+supervisor task and returns 202 when that supervisor is configured. Only the OpenCode
+Server v2.0.32 provider branch is wired. This is CODE-level integration, not a qualified
+native Send route. The route currently lacks durable dispatch intent/claim and commit-to-
+spawn recovery; exact replay returns the stored 202 receipt without proving the dispatcher
+is alive or re-admitting it. Storage does not enforce the target strict single-flight rule;
+retry moves FAILED to RUNNING before the reservation path that requires OPEN; RUNNING cancel
+settles without observed adapter interruption/quiescence; pre-dispatch supervisor failures
+can leave OPEN turns unsettled; and no daemon-start Conversation recovery sweep is wired.
+Runtime inventory (ONLINE, incarnation READY, Workspace EXECUTOR) is still not native
+SESSION_READY evidence. Keep Send disabled until the complete lifecycle and exact OS,
+provider, auth and owner USER route are qualified.
+
+**Current UI gate mismatch:** the mounted ConversationsPage still enables Send when the draft is non-empty and its local isTurnRunning predicate is false. It does not require a qualified AgentBinding/provider route or Operator readiness; with no Workspace default binding it can still submit and rely on the backend error. The only daemon dispatch branch is OpenCode. This UI does not meet the disabled-until-qualified target gate and must not be described as a qualified Send experience.
 
 The internal AgentSessionStore now exposes typed
 start_conversation_agent_session, list_starting_conversation_agent_sessions, and
@@ -28,59 +35,55 @@ revision-1 conversation.turn.created.v2 authority, and rechecks the event-pinned
 endpoint offer, Runtime/Workspace EXECUTOR enrollment, and current Runtime incarnation in
 one immediate transaction. It atomically stores the Conversation-scoped STARTING snapshot,
 event, and principal-scoped request receipt. An exact request replay returns its original
-receipt before mutable host eligibility is re-evaluated. Recovery lists Conversation
-STARTING rows in binary `agent_session_id` order, with an exclusive `after_agent_session_id`
-cursor and a 1–100 page bound. The supervisor advances to the last returned ID, repeats until
-an empty page, and starts another sweep at the beginning to discover later reservations whose
-IDs sort before the prior cursor. Expected-version LOST settlement does not alter the turn.
+receipt before mutable host eligibility is re-evaluated. Storage exposes keyset-paginated enumeration of Conversation STARTING rows in binary
+`agent_session_id` order, with an exclusive `after_agent_session_id` cursor and a 1–100
+page bound, plus expected-version LOST settlement that does not alter the turn. The
+specified sweep algorithm (advance to last returned ID, repeat until empty, then restart
+from the beginning) is a recovery-coordinator requirement; no active daemon startup caller
+for these Conversation storage operations was found in this audit.
 
-The preserved feature worktree now also contains a dedicated
-`activate_conversation_agent_session` storage operation. After the exact native adapter
-readiness handshake is observed outside SQLite, it rechecks the principal/Workspace, pinned
-turn binding, session and turn versions, endpoint offer, current Runtime incarnation,
-Workspace EXECUTOR enrollment, and eligible host. One immediate transaction commits the
-AgentSession ACTIVE state, ConversationTurn RUNNING state, corresponding snapshots/events,
-and the Runtime-local AgentSessionHostBinding. The opaque native handle is skipped by
-Serde, redacted from Debug to a presence boolean, and excluded from committed response,
-events and snapshots. Generic OPEN-to-RUNNING transition remains forbidden.
+The active source contains a dedicated
+`activate_conversation_agent_session` storage operation. After the native OpenCode session
+is created outside SQLite, the supervisor rechecks the principal/Workspace, pinned turn
+binding, session and turn versions, endpoint offer, current Runtime incarnation, Workspace
+EXECUTOR enrollment, and eligible host. One immediate transaction commits the AgentSession
+ACTIVE state, ConversationTurn RUNNING state, corresponding snapshots/events, and the
+Runtime-local AgentSessionHostBinding. The opaque native handle is skipped by Serde,
+redacted from Debug to a presence boolean, and excluded from committed response, events
+and snapshots. Generic OPEN-to-RUNNING transition remains forbidden.
 
-This activation operation has no qualified supervisor caller. It does not launch an
-adapter, dispatch a prompt, append a final AGENT message, settle a terminal Conversation
-turn, or enable the served route. The focused storage activation test passed on 2026-10-31;
-the broader storage package suite passed before the final handle-redaction-only changes and
-was not rerun afterward. These are storage-only CODE evidence, not served/integrated/
-qualified native Send.
+The active Operator calls an OpenCode-only per-turn supervisor after USER+OPEN admission.
+That branch creates the OpenCode Server v2.0.32 session, activates it, loads/sends bounded
+context, consumes SSE events and calls the atomic SQLite final-response writer. This is
+CODE-level integration, not a qualified native Send route. It does not establish the target
+AgentTurnCoordinator/AgentHostSupervisor ownership split. The commit-to-detached-spawn gap,
+missing startup recovery, missing transactional single-flight guard, retry's RUNNING-versus-
+OPEN reservation mismatch, immediate RUNNING cancellation without native quiescence, and
+pre-dispatch errors that can leave OPEN turns unsettled all remain release blockers.
 
 The SQLite schema represents a Conversation-scoped AgentSession pinned to exactly one
 turn, enforces one active session per turn, and keeps opaque host/session bindings local.
-resolve_conversation_session_host_for_turn(principal, workspace, conversation, turn)
+`resolve_conversation_session_host_for_turn(principal, workspace, conversation, turn)`
 uses the same immutable turn-created authority and current host eligibility. It never
 consults the later Conversation selector or Workspace default. The reservation transaction
 repeats those checks atomically; a read-only host lookup is not readiness evidence.
-A supervisor must still invoke the native adapter outside the transaction and activate only
-after its exact readiness handshake and host/incarnation revalidation. Until that
-activation operation and qualified supervisor exist, Send remains fail-closed.
 
-The canonical context package builder and SQLite turn-prefix reader now exist and have
-unit/storage tests. The load_conversation_context_for_turn operation derives its target
-AgentBinding from the immutable turn-created event, reads only the same owner's same-
-Workspace Conversation messages through that turn's user message, and strips native
-session handles. No session supervisor or turn route consumes this package yet.
-The Codex App Server and OpenCode transports now expose context-aware request helpers. Each
-projects the exact ordered package into one bounded JSON-escaped text input, keeps source
-AgentBinding provenance, and refuses unmaterialized Resource blocks or over-limit input
-without truncation. These helpers are not called by the route; the transports remain staged,
-and no native readiness, Conversation response persistence/stream, or usage ingestion is
-connected. This proves context preparation and wire serialization, not delivery to a running
-agent. Send stays disabled until the full path is connected.
+The canonical context package builder and SQLite turn-prefix reader now exist and are
+consumed by the OpenCode supervisor path. The builder derives its target AgentBinding from
+the immutable turn-created event, reads only the same owner's same-Workspace Conversation
+messages through that turn's user message, and strips native session handles. The active
+supervisor sends the bounded package to OpenCode; Codex transport helpers remain staged and
+are not wired to this route. The active Operator does not emit a complete correlated native
+token-delta stream or usage ingestion. Keep Send disabled until the full lifecycle and exact
+route are qualified.
 
 For an exact idempotent submit replay, the route checks the authenticated principal's
 payload-digest receipt before consulting the current AgentBinding selection. It reuses the
 binding recorded in the committed turn-created event, so a later disable/change cannot
-turn a lost-response retry into `AGENT_UNAVAILABLE`. If the original request persisted an
-OPEN turn but was interrupted before failure settlement, replay can continue that same
-settlement; it cannot create another message or turn. A different payload under the same
-key remains a conflict. This receipt path is implemented and does not enable native Send.
+turn a lost-response retry into `AGENT_UNAVAILABLE`. It returns the original 202 receipt;
+it does not prove that a detached dispatcher is still running or re-admit a missing worker.
+A different payload under the same key remains a conflict. This receipt path is implemented
+but does not solve commit-to-spawn recovery or enable qualified native Send.
 
 Distinct submits with different idempotency keys are append operations, not compare-and-swap
 updates from a client snapshot. The serialized storage transaction assigns each

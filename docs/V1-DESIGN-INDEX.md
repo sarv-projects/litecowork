@@ -1,94 +1,76 @@
-# LiteCowork Desktop V1 — Detailed Design Authority Index
 
-Design baseline: 2026-10-22. These are normative TARGET design and implementation-oriented contracts, **not** evidence that an endpoint, provider, UI control, platform, installer, or behavior is implemented or qualified. **Repository reset note (2026-10-31):** the executable source tree and implementation tooling were moved out of the active checkout into the ignored local archive. This index remains useful as a target-design crosswalk, but proposed source paths and script commands below are historical landing-zone references, not files or runnable commands in the current checkout. See [CURRENT-RUN](../CURRENT-RUN.md), [Repository Documentation Audit](REPOSITORY-DOCUMENTATION-AUDIT.md) and [Acceptance/E2E Plan](ACCEPTANCE-AND-E2E-PLAN.md) for current status and evidence.
+# V1 design, implementation and UI index
 
-## Final 2026-10-22 product and integration LLDs
+This index connects the complete V1 target to the active implementation and its user-visible surfaces. The target is defined by V1-PRODUCT-RELEASE-CONTRACT.md and its domain owners. Current implementation status is defined by IMPLEMENTATION-STATUS.md. This index is a navigation and coverage artifact; it does not create new domain semantics.
 
-- [Ten-area V1 product/release contract](V1-PRODUCT-RELEASE-CONTRACT.md)
-- [Chat-first shell and every V1 screen](V1-UI-SCREEN-CONTRACT.md)
-- [LiteSPM inventory/adoption/plan/apply integration](LITESPM-LITECOWORK-INTEROP-LLD.md)
-- [Real product acceptance crosswalk](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md)
+## Product areas and current delivery state
 
-These are **TARGET** contracts. They do not supersede durable Task,
-Trust, AgentSession, Effect, Evidence or Environment domain authority,
-and they must not be interpreted as a working native provider.
+| V1 area | Normative target | Current source-backed state | Primary user interface | Feature SDD |
+|---|---|---|---|---|
+| 1. Universal Chat | PRODUCT.md, EXPERIENCE.md, NATIVE-COMPOSER-LLD.md, STATE-MACHINES.md | Conversation CRUD/pagination and OpenCode-only submit exist; Send is enabled despite target disabled-until-qualified gate; no strict single-flight/outbox/restart recovery; Stop ineffective, retry UI absent, attachment/voice/more-options inert, empty state uses Antigravity placeholder | New Chat, Recent Chats, Load more, composer, agent picker, message/history, Stop/Retry and static empty state | 001 |
+| 2. Bring Your Own Agent | AGENT-FABRIC.md, AGENT-CONTROL.md, AGENT-ACCOUNT-ROUTE-MATRIX.md, V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md, DELEGATION.md | 15 curated/ACP metadata and bounded version probes; auth UNKNOWN/readiness NOT_PROBED. Codex/OpenCode probes only; OpenCode incompatible, Codex not dispatched. No install/native sign-in; descriptor/credential routes 503; enable misses fresh AC-004 descriptor gate; no Usage projection/model picker | Agent catalogue, bounded probes, Workspace bindings/default lead, subagent profile/history/performance/quota; install/auth/model/Usage target-only | 002; Delegation owner contracts |
+| 3. Persistent Coworkers | COWORKERS-TARGET.md, COWORKER-FLOWS.md, LEARNING.md, RESPONSIBILITIES.md | Coworker definition/revision/status/primary persist; editor saves lead/delegation/profile/interaction/failover/context/notification preferences with incomplete consumers; pause gating is partial and Task composer blocks paused Coworkers; Quick Create does not open a chat; Conversation has no Coworker origin; context policy is not enforced; ContextDocument owner validator rejects Coworker/Goal kinds; learning gates are not a LearningService; presence returns 503 | Roster/editor/status/primary and Task-origin selection are served; chat, Coworker Memory browser, scoped retrieval, Learning Inbox, true proactive pause and full responsibility enforcement remain target UI/behavior | 009 |
+| 4. Real Computer and Workbench | DESKTOP-SHELL-LLD.md, ENVIRONMENTS.md, CHROME-BROWSER-LLD.md, V1-INTEGRATED-TERMINAL-LLD.md | Files Resource projection/preview; Browser iframe only; Terminal fabricates success and ConPTY/Job Object claims without process; Diffs synthetic; Activity not rendered; Computer provider unavailable. No browser/terminal/computer route/provider | Workbench Files, embedded preview, simulated Terminal, synthetic Diffs; no Activity or Computer surface | 008 |
+| 5. Capabilities, Plugins, MCP and Connections | CAPABILITY-FABRIC.md, CAPABILITY-INVOCATIONS.md, LITESPM-LITECOWORK-INTEROP-LLD.md | Discover projection; connect/test fail closed; Approval resolve real; narrow Resource-read grant and read-only Invocation history; no account Connection/OAuth, provider dispatch or Effect reconciliation | Discover Explore/Installed/Managed/Connections; Needs You ApprovalDetail; no connected account/read/write lifecycle | 006 |
+| 6. Real Tasks and Multi-Agent Work | TASK-RUNTIME.md, ENVIRONMENTS.md, TRUST.md, DELEGATION.md | Task records/spec revisions/readiness exist; plan/Attempt dispatch, mediated effects and worker orchestration unavailable | Work list, Task detail, planning-readiness, future Plan/Activity/Workers | 005 |
+| 7. Routines and Automations | ROUTINES.md, AUTOMATION.md, RESPONSIBILITIES.md, CONNECTORS-WORKFLOWS.md | Local 30-second TriggerHost settles supported schedules and materializes READY Tasks only. Occurrence history UI drops next_cursor; retry/wake policies have no consumer. Notification records remain PENDING with no sender; channel preferences are ignored, ON_CONDITION is only DEPENDENCY_BLOCKED and quiet hours are not editable. External WorkflowBackendAdapter is target-only; no Core graph runtime/canvas | Automations/templates/editor/health/first-page Runs; Routine editor/run; Notifications history/preferences | 010 |
+| 8. Memory, Knowledge and Learning | CONTEXT.md, LEARNING.md, WORLD-RESOURCES.md | ResourceService accepts Personal Profile/Workspace Notes; desktop Library creates Workspace Notes only. Workspace/Resource lexical search and grounded-retrieval endpoint exist, but retrieval is read-only and not wired to Conversation; no ContextAttachment/Context Used surface. Coworker/Goal ContextDocument create is rejected; Coworker retrieval policy is not wired; no LearningService or Coworker-private memory persistence. WorkspaceRoot scan is metadata-only; Windows add/scan unavailable; ZIPs remain opaque and unindexed | Resource picker/Library, Workspace Notes, lexical search are served; Context Used, Coworker Memory/Knowledge, review/revoke UI and learning inbox remain target | 003, 009 |
+| 9. Library and Finished Work | ARTIFACTS-EVIDENCE.md, PRESENTATION-RUNTIME.md | Immutable Artifact reads, bounded text/plain append, promote/archive, safe preview and exact-version local Save As; no create route/UI, professional engine or ExportReceipt; Office files are Resources, Task outputs have no producer | Saved/Task outputs/Archived Library and ArtifactWorkbench; no create/import-convert | 007 |
+| 10. Desktop Shell, Settings and Runtime | RUNTIME-LIFECYCLE.md, LOCAL-OPERATOR-IPC.md, DESKTOP-SHELL-LLD.md | Tauri shell, daemon and OS-authenticated local Operator IPC exist; mounted SettingsView exposes four categories only, with exact Workspace/Agent/Runtime operations mapped in SETTINGS-AND-SHELL-SURFACE-AUDIT; 16-category IA/187 controls remain target-only; release not qualified | Sidebar, Workspace selector, Settings (General/Workspaces/Agents/Runtime), runtime diagnostics, right Workbench | 011 |
 
-## Source of truth and precedence
+## Vertical journey crosswalk
 
-1. ARCHITECTURE.md and PRODUCT.md define product scope, invariants and owners. A new feature may never bypass Core Trust/Effect/Evidence/Task authority.
-2. Domain contracts (DATA-MODEL, STATE-MACHINES, AGENT-CONTROL, AGENT-FABRIC, TASK-RUNTIME, DELEGATION, AUTOMATION, ENVIRONMENTS, CONNECTORS-WORKFLOWS, PRESENTATION-RUNTIME, TRUST, etc.) own durable semantics.
-3. docs/schemas, docs/API.md, EVENTS.md, SERVICES.md and STORAGE.md own **promoted and served** wire/transaction contracts. No target LLD silently inserts an API/event or changes an existing canonical enum.
-4. The detailed V1 LLD documents below own implementation-specific UI reducers, function responsibility, algorithms, browser/display distinctions and test expectations **within** domain authority.
-5. CURRENT-RUN.md is the active handoff/status record. The backlog, epics and acceptance snapshots under archive/legacy-implementation-c7e9c05/ are historical records; they are not the live implementation backlog. The executable source snapshot is in the ignored local archive, not in this checkout.
-6. All external references are version-sensitive. A URL is guidance to revalidate APIs against exact pinned harness/OS build; no speculative operation is permitted merely because vendor docs describe it.
+| Journey | UI entry | Backend/service path | Durable truth | Release gate |
+|---|---|---|---|---|
+| Plain Conversation | New Chat → composer → Send | Tauri command → authenticated Operator → Conversation service → native supervisor | User message, turn, receipt, agent message and terminal settlement | Real native agent, stream/reconnect, stop/retry, crash recovery |
+| Workspace context | Resource picker/Library → attach | Resource upload/index/search and authorization | exact Resource/revision/hash/scope | Format parser, path boundary, stale/revoke, source-grounded prompt |
+| Coworker setup | Coworkers → Create/Edit | Coworker Operator/service and revision store | Coworker identity/revision/assignment | first chat, scoped memory, authority boundaries and restart |
+| Durable Task | Conversation action → Run as Task | Task service → plan/attempt admission → Environment/Trust/Effect | Task spec/plan/attempt/effect/evidence | complete one safe Task, not just create a record |
+| Scheduled work | Automations → preview → enable | Automation revision + TriggerHost + occurrence materialization | exact occurrence and Task link | host sleep/offline/misfire/restart and notification behavior |
+| Capability use | Discover → LiteSPM plan → authorize | LiteSPM bridge + capability gateway + grant/effect | package operation receipt and invocation receipt | pinned bridge, compatibility, approval, idempotency, rollback |
+| Workbench action | Workbench view | provider-specific environment/session | actual process/browser/diff/artifact identity | real provider, policy, lease, cancellation, recovery |
+| Artifact delivery | Library/Task output | artifact service + format handler | committed artifact revision, hash and provenance | one complete format, reopen/export/compare |
 
-## V1 LLD owners
+## Cross-cutting design boundaries
 
-| Coverage | Detailed normative document | Working implementer |
-|---|---|---|
-| Agent selection, model/options, /, @, custom native commands, chat send/stop/resume, drafts and parity | [NATIVE-COMPOSER-LLD.md](NATIVE-COMPOSER-LLD.md) | E03-S01/S02/S06–S11, E08 |
-| Managed real Chrome, user profiles/import, connect existing Chrome, side browser, takeover and control epochs | [CHROME-BROWSER-LLD.md](CHROME-BROWSER-LLD.md) | E07-S02/S05, E08 |
-| Settings, left and right sidebars, responsive geometry, Workbench, focus, all controls and animations | [DESKTOP-SHELL-LLD.md](DESKTOP-SHELL-LLD.md) | E02/E08/E09/E10 |
-| Normalization and reliable rendering of arbitrary native-agent outputs, rich fallback and interactive Workbench | [RENDERING-CONFORMANCE-LLD.md](RENDERING-CONFORMANCE-LLD.md) | E03-S11, E08-S06/S07/S08 |
-| Conversation/Task/Plan/Step/Attempt/Effect, delegation, workflows, automation, events and recovery | [V1-WORKFLOW-EVENT-LLD.md](V1-WORKFLOW-EVENT-LLD.md) | E03/E04/E05/E09/E10 |
-| Exhaustive function ownership, file landing zones and machine contract promotion | [V1-FUNCTION-FILE-CATALOG.md](V1-FUNCTION-FILE-CATALOG.md) | all V1 implementers |
-| User flow acceptance/negative testing and real-code gap classification | [archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md](archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md) | all implementation gates |
-| Mechanical all-Markdown-file line/hash/link inventory | [archive/legacy-implementation-c7e9c05/V1-AUDIT-INVENTORY.md](archive/legacy-implementation-c7e9c05/V1-AUDIT-INVENTORY.md) | Historical script `scripts/audit_v1_markdown.py` is not present in the active checkout; see the dated inventory report for its scope. |
-| Settings: each named control, authoritative scope/owner, result and failure/repair state | [V1-SETTINGS-CONTRACT-LEDGER.md](V1-SETTINGS-CONTRACT-LEDGER.md) | E02/E03/E04/E08/E09/E10 |
-| Every shell/central/right-pane/overlay interaction and UI state transitions | [V1-UI-ACTION-STATE-LEDGER.md](V1-UI-ACTION-STATE-LEDGER.md) | E02/E03/E07/E08 |
-| Every proposed function signature and minimum pre/post/error/race gate | [V1-FUNCTION-CONTRACT-LEDGER.md](V1-FUNCTION-CONTRACT-LEDGER.md) | E01–E10/E13; historical generator `scripts/build_v1_function_contract_ledger.py` is not present in the active checkout. |
-| Full end-to-end admission/event/recovery handoffs and adverse interleavings | [V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md](V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md) | E03/E04/E05/E07/E08/E09/E10 |
-| Cross-agent usage, token/cost, logging, cache, health, transport resilience, diagnostics | [V1-TELEMETRY-USAGE-RESILIENCE-LLD.md](V1-TELEMETRY-USAGE-RESILIENCE-LLD.md) | E04/E05/E08/E13 |
-| Native-agent-invoked scoped memory, caching, retrieval latency and injection policy | [V1-AGENT-MEMORY-FAST-PATH-LLD.md](V1-AGENT-MEMORY-FAST-PATH-LLD.md) | E04/E08/E10 |
-| Agent auto-discovery, bundled logos, install/auth/readiness status cards and manual-path fallback | [V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md](V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md) | E03/E08 |
-| Right Workbench PTY terminal, shell profiles, WSL, tab sessions and OS process ownership | [V1-INTEGRATED-TERMINAL-LLD.md](V1-INTEGRATED-TERMINAL-LLD.md) | E07/E08/E13 |
-| Source-linked OmniRoute/OmniRush/VS Code reference evaluation | [V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md](V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md) | E02/E03/E08 |
-| Additional test ledger for usage, native detection, memory and terminal | [archive/legacy-implementation-c7e9c05/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md](archive/legacy-implementation-c7e9c05/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md) | CODE/SYSTEM/USER gates |
-| Cross-owner semantic reconciliation and simulated actual request paths | [archive/legacy-implementation-c7e9c05/V1-DESIGN-DRYRUN-AND-RECONCILIATION-2026-10-13.md](archive/legacy-implementation-c7e9c05/V1-DESIGN-DRYRUN-AND-RECONCILIATION-2026-10-13.md) | Coworker/Memory/Task/Native/Effect/Recovery; historical validator `scripts/validate_design_owner_consistency.py` is not present in this active checkout. |
+### Agent architecture
 
-## Specific owning reference documentation (do not replace)
+BYOA is the primary model. Native agent harnesses own their reasoning, authentication, prompt/context strategy, private session and native tools. LiteCowork owns Workspace/Conversation/Task truth, cross-agent authorization, presentation and recovery. A direct provider-key agent is a separate optional execution model that requires LiteCowork to own a full model/tool loop; adding a credential field alone is not an implementation.
 
-- Product/IA: [EXPERIENCE](EXPERIENCE.md), [DESIGN-SYSTEM](DESIGN-SYSTEM.md), [MOTION](MOTION.md), [archive/legacy-implementation-c7e9c05/UI](archive/legacy-implementation-c7e9c05/UI.md).
-- Agent native control: [AGENT-CONTROL](AGENT-CONTROL.md), [AGENT-FABRIC](AGENT-FABRIC.md), [DELEGATION](DELEGATION.md), ADR-0025.
-- Durable work: [TASK-RUNTIME](TASK-RUNTIME.md), [DATA-MODEL](DATA-MODEL.md), [SERVICES](SERVICES.md), [STATE-MACHINES](STATE-MACHINES.md), [FAILURE-RECOVERY](FAILURE-RECOVERY.md).
-- Output: [PRESENTATION-RUNTIME](PRESENTATION-RUNTIME.md), [RICH-RESPONSE](RICH-RESPONSE.md), [ARTIFACTS-EVIDENCE](ARTIFACTS-EVIDENCE.md).
-- Browser OS and policy: [ENVIRONMENTS](ENVIRONMENTS.md), [TRUST](TRUST.md), [NETWORK-SECURITY](NETWORK-SECURITY.md), [SECURITY](SECURITY.md).
-- Workflow and integration: [AUTOMATION](AUTOMATION.md), [ROUTINES](ROUTINES.md), [CONNECTORS-WORKFLOWS](CONNECTORS-WORKFLOWS.md), [CAPABILITY-FABRIC](CAPABILITY-FABRIC.md), [CAPABILITY-INVOCATIONS](CAPABILITY-INVOCATIONS.md), [LEARNING](LEARNING.md).
-- Promoted machine definitions: [API](API.md), [EVENTS](EVENTS.md), [SCHEMAS](SCHEMAS.md), [STORAGE](STORAGE.md), [Operator OpenAPI](schemas/operator-api.openapi.yaml), [domain event schema](schemas/domain-event.schema.json). These remain canonical at runtime after implementing the LLD.
+### Trust and delegation
 
-## Design completion matrix
+Tool descriptions and MCP affordances tell an agent what may be requested; they do not authorize it. Core Trust must evaluate trusted server-side context at every mediated execution boundary. A Gateway cannot govern native shell/filesystem/subagent actions that bypass it. A delegate request is a proposal; a child Attempt requires an accepted parent Task/Plan Step, eligible worker, bounded scope, lease, Environment and admission.
 
-A human can find a named contract, proposed file, algorithm, errors and test case for each V1 area through the crosswalk. This is **design-level coverage**, not mathematical proof of literally all future functions/OS edge cases. Previously accepted contract details not repeated by an LLD remain in their original owners. Unexpected cases discovered in implementation must be added with code, tests and documentation in one change.
+### LiteSPM
 
-The following gaps are known TODAY: normal provider-backed Conversation Send absent; no fully qualified desktop native adaptive composer; unified right Workbench shell incomplete; true Chrome side browser/profile import/takeover absent; production browser Environment qualification absent; rich renderer coverage partial; no proven complete long-horizon delegation/automations across all supported agents/OS. Neither source probing nor documentation erases these gaps.
+LiteSPM is the single cross-agent package lifecycle owner. Discovery level, compatibility, host installation, native Connection, Coworker assignment, Task grant, capability invocation and verified effect are separate. Do not create a second package manager or an always-running LiteSPM daemon without a qualified upstream requirement.
 
-## Future implementer handoff: canonical contract first, after source recovery
+### External workflows
 
-Before implementation, read AGENTS.md, CURRENT-RUN.md, the active feature package index, the accepted/locked feature package, owning domain contracts, this index and the matching LLD. The archived backlog/epics are historical snapshots, not an active queue. No material feature starts while its SDD is DRAFT/IN_REVIEW or a blocking owner decision remains unresolved. Recover only the selected implementation source into a clean isolated worktree and verify its revision/hash before editing. If new endpoints/events are required, land typed service and OpenAPI/SQLite/event contracts under their single owning domain first, with compatibility fixtures. After the contract is accepted, disjoint UI, backend/provider, test and adversarial-review work may proceed in parallel only where file/owner boundaries do not overlap. Run narrow tests per module, contract tests at integration points, and full regression/security/OS USER gates at milestone/release. Historical script paths in this index must not be invoked unless those tools are deliberately recovered, reviewed and validated.
+Workflow graphs remain external/provider-owned in V1. The target is for a Routine to pin an existing provider workflow reference and input/output/verification requirements, then invoke it as one CapabilityInvocation inside an admitted Task once a qualified WorkflowBackendAdapter exists. No production adapter is currently present. Provider node/run state remains external observation, not LiteCowork Task Step state. The OpenBot source study is a UX/architecture reference, not a decision to add an in-Core graph canvas/runtime. See CONNECTORS-WORKFLOWS.md and OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md.
 
-## External documentation — versioned references
+### Cloud and mobile
 
-| Interface | URL | Use/constraint |
-|---|---|---|
-| OpenCode command/native slash | https://docs.opencode.ai/docs/commands/ | built-in/custom collision and args; fetch current exact harness |
-| OpenCode @ agents | https://docs.opencode.ai/docs/agents/ | primary/subagent semantics |
-| OpenCode server/API | https://docs.opencode.ai/docs/server/ | sessions, events, health, auth |
-| OpenCode permissions | https://docs.opencode.ai/docs/permissions/ | native permission rules |
-| Codex | https://developers.openai.com/codex/ | locate exact App Server versioned endpoints |
-| ACP | https://agentclientprotocol.com/ | only use where faithful to native |
-| MCP | https://modelcontextprotocol.io/specification/ | Tasks, elicitation, permissions versioning |
-| Tauri webview | https://v2.tauri.app/reference/webview-versions/ | platform-specific engine, not Chrome |
-| Chrome debugging security | https://developer.chrome.com/blog/remote-debugging-port | Chrome 136+ default profile restriction |
-| Chrome existing profile attach | https://developer.chrome.com/docs/devtools/agents/use-cases/auto-connect | Chrome 144+ consent-required path |
-| Playwright browser profiles | https://playwright.dev/docs/api/class-browsertype | persistent isolated contexts; default Chrome profile unsupported |
-| Chrome CDP Target | https://chromedevtools.github.io/devtools-protocol/tot/Target/ | versions + process/session ownership |
+Cloud continuation is V2 Task rehydration: portable Task specification and committed checkpoints, effect reconciliation, Hub-owned lease fencing, a new Attempt and a new Runtime/Environment. A live native process/session does not teleport. Local resources, OS credentials and unsupported tools remain placement blockers. Remote mobile control is a separate authenticated remote gateway integration; it is not implied by a generic MCP server or a native mobile app.
 
-This is documentation only; no API key, paid backend, or tool installation is required to read it.
+### Intelligent UI and Mission Control
 
-## Audit interpretation
+Typed declarative UI is validated against a bounded schema and rendered from registered components. No arbitrary code execution in the chat surface. Interactive app artifacts need isolated execution. Mission Control is a view over real Task/Step/Attempt/Effect/Artifact/Evidence records inside Work/Task detail, not a decorative graph or second orchestration engine.
 
-Mechanical all-file audit inventory records what was read and hashed from the current working tree; contextual owner assessment lives in the dedicated LLDs plus archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md. A heading/link/regex hit is not an end-to-end proof; a green plan validator is not production behavior. Do not claim zero risk or no missing functions by mere doc volume.
+## Active machine and UI contracts
 
-## Source-grounded mechanical contract gate (2026-10-12)
+- Machine route state: schemas/served-route-inventory.json
+- UI action/state IDs: V1-UI-ACTION-STATE-LEDGER.md
+- Settings operations: V1-SETTINGS-CONTRACT-LEDGER.md
+- Function owner contracts: V1-FUNCTION-CONTRACT-LEDGER.md
+- Feature packages: ../specs/README.md
+- Screen contract: V1-UI-SCREEN-CONTRACT.md
+- End-to-end release gates: ACCEPTANCE-AND-E2E-PLAN.md
 
-The historical command `scripts/audit_v1_contracts.py --strict --write-report` was used for the 2026-10-12 contract check; that script is not present in the active checkout after the docs-first reset and must not be treated as a runnable current validator. Its saved results are in `archive/legacy-implementation-c7e9c05/V1-CONTRACT-CHECK.md` and semantic corrections in `archive/legacy-implementation-c7e9c05/V1-SEMANTIC-MD-FINDINGS-2026-10-12.md`. Those reports are historical structural evidence, not runtime/OS qualification and do not certify every prose field line by line.
+No design-depth, route-count or SDD-structure report replaces exact integration and USER evidence.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]
+
+## Pinned reference study
+
+- [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md): OpenBot's model picker, Tasks page, Usage analytics and visual/agent-edited workflow graph. The current LiteCowork adoption boundary is provider-owned external workflows; no Core graph runtime is part of V1.

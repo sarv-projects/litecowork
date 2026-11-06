@@ -1,8 +1,20 @@
 # LiteCowork Coworkers — Consolidated Product, UX & Architecture Specification
 
-**Status:** Accepted Coworker target design, reconciled 2026-10-24. Update history retained in git. **Not an assertion of implemented functionality.**
+**Status:** Accepted Coworker target design, reconciled 2026-11-06. Update history retained in git. **Not an assertion of implemented functionality.**
 **Authority:** This target UX/domain proposal supplements `ARCHITECTURE.md` and the owning contracts linked from `docs/COVERAGE-MATRIX.md`. Existing implemented schemas and APIs remain authoritative until explicitly revised; proposed definitions below are not already-running endpoints or storage.
 **Purpose:** Single handoff contract for product design, desktop experience, domain modelling, integrations, long-running autonomy, memory, safety/permissions, events, and implementation testing.
+
+## Current implementation checkpoint — 2026-11-06
+
+This document remains the accepted Coworker target, not an implementation claim. The active checkout currently serves Workspace-scoped Coworker CRUD, immutable revisions, status and Workspace primary selection. The Home Quick Create card creates a general Assistant and may set primary, but does not open a Coworker chat. Conversation records have no immutable Coworker origin/revision; Task records separately pin Coworker origin and revision. The Coworker presence route is mounted but returns 503 because the required Task/UserRequest/Attempt/Runtime projection is unavailable.
+
+CoworkerRevision persists CoworkerContextPolicy, but current retrieval does not enforce allowed kinds, max retrieved items or Task-summary retention. The Resource ContextDocument create validator currently accepts USER-owned PERSONAL_PROFILE and WORKSPACE-owned WORKSPACE_NOTES only; COWORKER_NOTES and GOAL_NOTES appear in the generic OpenAPI enum and Coworker Settings UI but are rejected by the domain owner validator. Retrieval remains Workspace/explicit-Resource lexical search, not Coworker-scoped. The deterministic Coworker learning module has no production evaluation/persistence caller; its redaction helper is reused by SkillProposal intake only. There is no LearningService, Coworker-private MemoryRecord store, Learning Inbox or Coworker Memory browser.
+
+The active Coworker editor also persists default lead, delegation strategy, worker-profile allowlist, interaction defaults, lead-failover preferences and notification preferences. Only default lead is consumed by Task creation; lead-failover is copied into TaskSpec but no production fallback dispatcher is wired; interaction, notification and delegation strategy have no production consumer. The worker-profile allowlist and budget are read by a SQLite child-Attempt admission primitive, but no daemon/Operator caller invokes that primitive. Avatar selection, delegation-budget editing and delegation-policy-source selection are not exposed by the current editor.
+
+Coworker PAUSED is only partially enforced: Automation enable checks Coworker active at enable time, but the status transition can pause a Coworker while an Automation remains enabled and the TriggerHost does not re-check Coworker status at occurrence settlement. The origin-status helper has no production caller. Task creation storage rejects ARCHIVED, not PAUSED, while the Task composer separately blocks PAUSED Coworkers for owner Tasks. The current UI copy that pause stops new proactive/scheduled work is stronger than the implemented fence; the canonical target remains authoritative.
+
+The exact source/route/UI evidence and current blockers are maintained in [CONTEXT.md](CONTEXT.md), [LEARNING.md](LEARNING.md), [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md), and the DRAFT [Feature 009 package](../specs/009-coworkers-scoped-memory/SPEC.md). Do not downgrade the accepted target semantics based on implementation gaps, and do not present target routes, owner scopes or UI as currently served.
 
 ## 0. Decisions — frozen
 

@@ -1,15 +1,25 @@
 # Coworker Learning, Memory, Instruction, and Skill Revision
 
-**Status:** accepted target architecture, not a claim that suggested
-`learning-candidates` endpoints or new target crates already exist.
-Use the actual `domain-responsibility`, `domain-rag`,
-`storage-core`/`storage-sqlite`, `apps/litecoworkd` and UI
-owners, and require separately reviewed boundaries for any new crates.
-Current release state: [acceptance matrix](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+**Status:** Accepted target architecture; this is not a claim that the proposed
+`learning-candidates` endpoints, LearningService, SQLite learning store or new target
+crates already exist. The target must land in the actual `domain-responsibility`,
+`domain-rag`, `storage-core`/`storage-sqlite`, `apps/litecoworkd` and UI owners,
+with separately reviewed boundaries for any new crates.
 
-**Status:** accepted target architecture. This document defines how a Coworker can improve
-from corrections and successful work without allowing the model to silently widen authority
-or rewrite arbitrary persistent configuration.
+**Current implementation checkpoint (2026-11-06):** `storage-core/src/coworker_learning.rs`
+exports candidate/policy types and deterministic eligibility, redaction, conflict and
+auto-commit gates. The deterministic learning evaluation/policy path has no production
+caller, candidate persistence or LearningService. Its `redact_sensitive_content` helper
+is reused by `storage-core/src/skill.rs` for SkillProposal intake; that shared redactor
+does not mean SkillProposal is being fed by a live LearningCandidate pipeline. There is
+no SQLite learning store/migration, learning Operator route/event producer, Coworker
+Memory browser or Learning Inbox. Coworker ContextDocument creation and retrieval are
+also not Coworker-scoped today. The current implementation crosswalk is maintained in
+[CONTEXT.md](CONTEXT.md) and [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md).
+
+This document defines how a Coworker can improve from corrections and successful work
+without allowing the model to silently widen authority or rewrite arbitrary persistent
+configuration.
 
 It extends [Coworkers](COWORKERS-TARGET.md), [Responsibilities](RESPONSIBILITIES.md),
 [Context](CONTEXT.md), [Trust](TRUST.md), [Routines](ROUTINES.md), and
@@ -738,17 +748,23 @@ Do **not** create a second `crates/application/`, `crates/ports/` or
 Those paths do not exist in the current workspace. The domain policy, transition
 algorithms and classifier interfaces belong to the existing responsible owners:
 
-| Role | Current existing landing zones / integration decision |
+| Role | Current source location / implementation status |
 |---|---|
-| Coworker learning policy, candidates and eligibility | `crates/domain-responsibility/` and existing `storage-core`/`storage-sqlite` |
-| Revisions, memory and retrieval scope | existing `domain-rag`, Resource/Context and scoped storage owners |
-| Authenticated commands, candidate generation and revocation | `apps/litecoworkd/` existing operator/service contracts; add typed ports only where required |
-| User-facing learning/memory and feedback | `apps/litecowork-ui/src/` Coworker/Resources/conversation modules |
-| Isolated skill tests and publication | E10 SkillProposal / LiteSPM boundary; do not invent `crates/ports/skill_test_runner.rs` as implemented |
+| Coworker configuration policy | `crates/domain-responsibility/src/models.rs` owns the persisted `CoworkerContextPolicy` configuration type (allowed context kinds, max items, Task-summary-retention flag and legacy memory-confirmation field). CoworkerService persists this JSON as part of CoworkerRevision. It is not the separate `CoworkerLearningPolicy` described in this document. |
+| Deterministic learning data types and gates | `crates/storage-core/src/coworker_learning.rs` defines `CoworkerLearningPolicy`, `LearningCandidate`, payload/metadata types, source eligibility, secret-shaped redaction, sensitivity/conflict/auto-commit decisions and event-payload shape. It is a pure deterministic module; its own module header says it does not classify free text, call a model or persist anything. Module tests exercise these deterministic functions. The `redact_sensitive_content` helper is reused at `crates/storage-core/src/skill.rs` in SkillProposal intake. |
+| Learning classification/provider | **Not implemented in active production source.** No production caller of `evaluate_learning_candidate`, `classify_learning_conflict` or the Coworker learning policy was found in `apps/` or other crates, and no qualified agent-backed classifier exists. The SkillProposal redactor call is a shared sensitivity scan, not a LearningCandidate producer. |
+| Candidate and MemoryRecord persistence | **Not implemented.** No `storage-sqlite` learning module, LearningCandidate/MemoryRecord migration or table, candidate payload Resource commit path, policy revision store or transactional auto-commit service was found. |
+| Learning commands and events | **Not implemented.** No LearningService, Operator routes for learning policy/candidate/memory, or production learning event producer is mounted. Proposed API/event shapes in §§11, 18–19 remain target contracts and must be promoted with schemas, storage and routes together. |
+| ContextDocument and retrieval | Existing Resource/ContextDocument and `domain-rag` owners implement Workspace/Resource-scoped lexical retrieval and Resource status/revoke/purge behavior. They do not implement Coworker-owned ContextDocument creation or Coworker-specific retrieval policy. |
+| User-facing learning/memory and feedback | Coworker Settings currently persists the Coworker context-policy configuration and explicitly discloses that automatic quiet learning is inactive. No Learning Inbox, candidate review/dismiss, memory list/editor or memory revoke control for Coworker-private records was found in the active UI. |
+| Isolated skill tests and publication | E10 SkillProposal / LiteSPM boundary; do not invent `crates/ports/skill_test_runner.rs` as implemented. |
 
-Classifier implementations may be replaceable; deterministic domain rules retain
-one canonical owner. New crate extraction requires a migration/ownership ADR,
-source implementation, tests and removal of duplicate writers.
+The table records current source placement, not acceptance of a complete learning architecture.
+Classifier implementations may be replaceable; deterministic domain rules retain one
+canonical owner. New persistence/services or crate extraction require a migration/ownership
+ADR, source implementation, tests and removal of duplicate writers. Until that chain
+exists, this document remains the target learning contract; a deterministic eligibility
+function is not a candidate pipeline or a committed MemoryRecord.
 
 ## V1 detailed design integration — 2026-10-12
 

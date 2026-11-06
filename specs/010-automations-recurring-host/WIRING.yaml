@@ -8,13 +8,19 @@ nodes:
     owner: authenticated Operator
     kind: service
   - id: "owner"
-    owner: domain owner service
+    owner: Automation / Routine domain owner
     kind: service
   - id: "storage"
     owner: Storage
     kind: store
   - id: "clock"
     owner: local clock and Runtime wake
+    kind: external
+  - id: "capability-invocation"
+    owner: Capability Fabric / CapabilityInvocation owner
+    kind: service
+  - id: "external-workflow"
+    owner: optional target-only external WorkflowBackendAdapter (not implemented in this checkout)
     kind: external
 edges:
   - id: "e-ui-op"
@@ -41,6 +47,18 @@ edges:
     from: "owner"
     to: "clock"
     kind: cursor
+  - id: "e-owner-invocation"
+    from: "owner"
+    to: "capability-invocation"
+    kind: request
+  - id: "e-invocation-backend"
+    from: "capability-invocation"
+    to: "external-workflow"
+    kind: external-call
+  - id: "e-backend-observation"
+    from: "external-workflow"
+    to: "capability-invocation"
+    kind: observation
 transactions:
   - id: "tx-occurrence"
     owner: TriggerHost
@@ -56,7 +74,19 @@ external_boundaries:
     input_trust: untrusted
     timeout: bounded
     retry: reconcile-before-retry
+  - id: "workflow-backend"
+    owner: target-only WorkflowBackendAdapter; no production implementation exists
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
+    result_owner: CapabilityInvocation
 recovery:
   owner: domain owner
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
+
+# TARGET ONLY: there is no WorkflowBackendAdapter implementation or route in apps/ or crates/.
+# Do not interpret the edge above as a currently served execution path.
+# If implemented, the external workflow graph, graph revisions, provider nodes and provider
+# run/step states remain provider-owned. LiteCowork stores only its Routine reference and
+# CapabilityInvocation/Task/Attempt/Effect receipts authorized by their owner services.

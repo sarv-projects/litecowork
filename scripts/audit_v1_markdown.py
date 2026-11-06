@@ -1,27 +1,24 @@
-#!/usr/bin/env python3
-"""Read every first-party Markdown line, inventory/hash/cross-reference all Markdown sources.
+"""Mechanical first-party Markdown inventory and relative-link audit.
 
-Mechanical documentation coverage is NOT a semantic line-by-line or runtime conformance proof.
-Runs without network, deletes nothing, modifies only generated implementation/V1-MARKDOWN-INVENTORY.csv
-and implementation/V1-AUDIT-INVENTORY.md.
+This is a finite parser-based check, not a semantic audit or release qualification.
+Generated outputs are written only under docs/audit/.
 """
 from __future__ import annotations
 import csv
 import hashlib
+import os
 import re
 from pathlib import Path
 from urllib.parse import unquote
 
-ROOT = Path(__file__).resolve().parent.parent
-# Local owner/agent planning artifacts are not first-party product documentation.
-SKIP = {".git", "node_modules", "target", ".venv", ".pytest_cache", ".agent-worktrees",
-        ".superpowers", "superpowers",
-        "archive_code", "archives_docs", "ARCHIVE", "archives",
-        ".code-intelligence", ".playwright-mcp", "dist", "build", "coverage", ".next"}
-EXCLUDED = {
-    "implementation/V1-AUDIT-INVENTORY.md",
-    # Including this report would make it hash the Markdown inventory that hashes it.
-    "implementation/V1-DESIGN-DEPTH-AUDIT.md",
+ROOT = Path(__file__).resolve().parents[1]
+DOCS = ROOT / "docs"
+OUTPUT = DOCS / "audit"
+SKIP_DIRS = {
+    ".git", "node_modules", "target", ".venv", ".pytest_cache",
+    ".agent-worktrees", ".worktrees", ".zwork", ".superpowers", "reading", "staging_tar",
+    "archives", "archive", "repo_take", "dist", "build", "coverage",
+    ".next", ".cache", "vendor", "out", ".turbo",
 }
 LINK = re.compile(r'(?<!!)\[[^\]]+\]\(([^)]+)\)')
 CATEGORY_KEYWORDS = {
@@ -32,106 +29,115 @@ CATEGORY_KEYWORDS = {
     "workflow/recovery": re.compile(r"Automation|Trigger|Task|Attempt|Effect|recovery|outbox", re.I),
     "trust/security": re.compile(r"credential|permission|trust|grant|redact|secret", re.I),
 }
-def included(path: Path) -> bool:
-    return path.suffix.lower() in {".md", ".mdx"} and not (set(path.parts) & SKIP)
 
-def is_local_link(dest: str) -> bool:
-    return not dest.startswith(("#", "http:", "https:", "mailto:", "data:", "javascript:", "file:", "app:"))
+def is_included(path: Path) -> bool:
+    rel = path.relative_to(ROOT)
+    return (
+        path.suffix.lower() in {".md", ".mdx"}
+        and not (set(rel.parts) & SKIP_DIRS)
+        and rel.parts[:2] != ("docs", "audit")
+    )
 
-def read_all():
+def is_local_link(destination: str) -> bool:
+    return not destination.startswith((
+        "#", "http:", "https:", "mailto:", "data:", "javascript:", "file:", "app:"
+    ))
+
+def inventory():
     records = []
     broken = []
-    # Prune dependency/build directories before traversal; filtering after rglob
-    # still visits huge node_modules/target trees and can stall UNC/WSL mounts.
-    import os
-    candidates = []
     for folder, dirs, names in os.walk(ROOT):
-        dirs[:] = [name for name in dirs if name not in SKIP]
+        dirs[:] = [name for name in dirs if name not in SKIP_DIRS]
         for name in names:
-            if Path(name).suffix.lower() in {".md", ".mdx"}:
-                candidates.append(Path(folder) / name)
-    for path in sorted(candidates):
-        rel = path.relative_to(ROOT)
-        if not included(rel) or str(rel) in EXCLUDED:
-            continue
-        data = path.read_bytes()
-        decoded = data.decode("utf-8-sig", errors="replace")
-        lines = decoded.splitlines()
-        topics = [key for key, pattern in CATEGORY_KEYWORDS.items() if any(pattern.search(line) for line in lines)]
-        for line_no, line in enumerate(lines, 1):
-            for match in LINK.finditer(line):
-                target = match.group(1).split('"', 1)[0].strip()
-                target = unquote(target.split("#")[0].split("?", 1)[0])
-                if not target or not is_local_link(target):
-                    continue
-                resolved = (path.parent / target).resolve()
-                if not resolved.exists():
-                    broken.append((str(rel), line_no, match.group(1)))
-        records.append({
-            "file": str(rel).replace("\\", "/"),
-            "lines": len(lines),
-            "bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "categories": ";".join(topics) or "misc",
-            "has_heading": any(line.startswith("# ") for line in lines),
-        })
+            path = Path(folder) / name
+            if not is_included(path):
+                continue
+            data = path.read_bytes()
+            decoded = data.decode("utf-8-sig", errors="replace")
+            lines = decoded.splitlines()
+            rel = path.relative_to(ROOT).as_posix()
+            categories = [
+                key for key, pattern in CATEGORY_KEYWORDS.items()
+                if any(pattern.search(line) for line in lines)
+            ]
+            for line_no, line in enumerate(lines, 1):
+                for match in LINK.finditer(line):
+                    raw = match.group(1).split('"', 1)[0].strip()
+                    target = unquote(raw.split("#", 1)[0].split("?", 1)[0])
+                    if not target or not is_local_link(target):
+                        continue
+                    resolved = (path.parent / target).resolve()
+                    if not resolved.exists():
+                        broken.append((rel, line_no, raw))
+            records.append({
+                "file": rel,
+                "lines": len(lines),
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "categories": ";".join(categories) or "misc",
+                "has_heading": any(line.startswith("# ") for line in lines),
+            })
+    records.sort(key=lambda row: row["file"])
     return records, broken
 
 def emit(records, broken):
-    target = ROOT / "implementation"
-    target.mkdir(exist_ok=True)
-    csv_path = target / "V1-MARKDOWN-INVENTORY.csv"
-    with csv_path.open("w", encoding="utf-8", newline="") as output:
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    csv_path = OUTPUT / "V1-MARKDOWN-INVENTORY.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(
-            output,
-            fieldnames=list(records[0]) if records else
-            ["file", "lines", "bytes", "sha256", "categories", "has_heading"],
+            stream,
+            fieldnames=["file", "lines", "bytes", "sha256", "categories", "has_heading"],
             lineterminator="\n",
         )
         writer.writeheader()
         writer.writerows(records)
+
     total_lines = sum(row["lines"] for row in records)
     total_bytes = sum(row["bytes"] for row in records)
-    content = [
-        "# V1 First-Party Markdown Mechanical Inventory",
+    report = [
+        "# First-party Markdown mechanical audit",
         "",
-        "This script read every line of every included first-party Markdown file and checked "
-        "literal Markdown relative link targets. **Mechanical coverage does not imply that "
-        "each statement was semantically audited, implemented or runtime-qualified.**",
+        "Generated by scripts/audit_v1_markdown.py. This audit inventories included Markdown files,",
+        "hashes their bytes and checks literal relative Markdown links. It does not establish",
+        "semantic correctness, implementation, integration or release qualification.",
         "",
         f"- Files read: {len(records)}",
         f"- Lines read: {total_lines}",
         f"- Bytes read: {total_bytes}",
-        f"- Broken relative links: {len(broken)}",
-        "- Excluded: dependency/cache/output worktrees and generated audit reports; "
-        "CSV inventory includes SHA-256 for every read Markdown source.",
+        f"- Broken relative targets: {len(broken)}",
+        "- Excluded: archives, reference clones, generated audit outputs, dependency/build/cache directories and local run worktrees.",
+        "- Per-file SHA-256 values: V1-MARKDOWN-INVENTORY.csv",
         "",
-        "## Per-file line and topical inventory",
+        "## Per-file inventory",
         "",
-        "| File | Lines | SHA-256 prefix | Keyword categories |",
+        "| File | Lines | SHA-256 prefix | Categories |",
         "|---|---:|---|---|",
     ]
     for row in records:
-        label = row["file"]
-        content.append(f"| {label} | {row['lines']} | {row['sha256'][:12]} | {row['categories']} |")
-    content += ["", "## Broken local targets", ""]
-    if broken:
-        content.extend(f"- {name}:{number}: {link}" for name, number, link in broken)
-    else:
-        content.append("None detected by this limited Markdown link parser.")
-    content += [
-        "", "## Semantic/source qualification still required", "",
-        "The normative target docs and implementation/V1-DESIGN-COVERAGE.md require "
-        "owner-specific CODE, SYSTEM and USER evidence. Keyword categories do not "
-        "certify intent or correctness, and link checking is not an external URL status check.",
+        report.append(f"| {row['file']} | {row['lines']} | {row['sha256'][:12]} | {row['categories']} |")
+    report += ["", "## Broken relative targets", ""]
+    report += (
+        [f"- {name}:{line}: {target}" for name, line, target in broken]
+        if broken else ["None detected by this limited parser."]
+    )
+    report += [
+        "",
+        "## Qualification boundary",
+        "",
+        "Link validity and complete file ingestion do not prove that a statement is current,",
+        "that a service is wired, or that a user journey is qualified. Use owner contracts,",
+        "docs/schemas/served-route-inventory.json, docs/IMPLEMENTATION-STATUS.md and",
+        "docs/ACCEPTANCE-AND-E2E-PLAN.md for those separate questions.",
         "",
     ]
-    (target / "V1-AUDIT-INVENTORY.md").write_text("\n".join(content), encoding="utf-8")
-    print(f"mechanical markdown audit: files={len(records)} lines={total_lines} "
-          f"bytes={total_bytes} broken_links={len(broken)}")
-    for name, n, link in broken[:30]:
-        print(f"BROKEN {name}:{n}: {link}")
+    (OUTPUT / "V1-MARKDOWN-AUDIT.md").write_text("\n".join(report), encoding="utf-8")
+    print(
+        f"markdown audit: files={len(records)} lines={total_lines} "
+        f"bytes={total_bytes} broken_links={len(broken)}"
+    )
+    for name, line, target in broken[:40]:
+        print(f"BROKEN {name}:{line}: {target}")
     return len(broken)
 
 if __name__ == "__main__":
-    raise SystemExit(bool(emit(*read_all())))
+    raise SystemExit(bool(emit(*inventory())))

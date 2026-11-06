@@ -88,6 +88,28 @@ Events use existing envelope, registry, correlation/causation, version and Works
 9. Continue on completed/blocked automation opens exact Task follow-up, preserving current Workspace/Coworker and source references.
 10. Notifications use actual changed status, quiet hours and dedup; mute does not delete Needs You entry.
 
+## External workflow graph ownership and authoring modes
+
+This implementation map does not introduce a new LiteCowork workflow graph runtime.
+The source-of-truth contract is [CONNECTORS-WORKFLOWS.md](CONNECTORS-WORKFLOWS.md):
+the future invocation of a selected external workflow is one provider-owned capability
+invocation inside an admitted Task. Routine pins its reference and input/output/verification
+requirements. The provider owns graph structure, node revisions, internal runs, retries and
+step state. LiteCowork must record only an authorized CapabilityInvocation, Task/Attempt
+linkage, normalized provider observations, Effect receipts and independent verification.
+No production WorkflowBackendAdapter has been found in the active source tree; this is a
+target contract, not a served V1 path.
+
+Manual graph authoring takes place in the provider's own editor. Where the provider has
+an AI assistant/MCP builder, the user may prompt it there and then inspect/edit/publish the
+same provider-owned graph. LiteCowork's target UI would discover/inspect workflows, map
+Routine inputs, validate and invoke when the target adapter is implemented. A LiteCowork
+agent can draft the Routine and explain/map inputs, but there is no production adapter or
+graph-authoring tool in the active source tree. Any future direct authoring adapter requires
+provider-side draft/validate/publish, exact graph digest/version, explicit owner confirmation
+and ambiguous publish recovery. Do not add local WorkflowNode/WorkflowRun state machines
+or map provider nodes to LiteCowork Steps.
+
 ## Failure/race catalog
 
 Lost return receipt; duplicated trigger; stale CAS; provider token revocation; network partition after external send; crash before/after outbox; Runtime incarnation replacement; sleep through schedule; DST fall-back duplicate slot/spring-forward nonexistent slot; clock skew; task accepted with later revoked Workspace; source revised after pin; file delete while renderer active; Worker profile updated mid-Attempt; session compaction/context overflow; provider quota changes; orphan browser process; extension install drift; owner denies approval after queued action; unauthorized cross-Workspace handoff; user edits before takeover returns; ambiguous Artifact publication; Agent model fallback mismatch; no resources ready; malicious tool output prompting escalation. Each maps to blocking state, safe retry or reconciliation; every repair action is backed by a real API and tested crash boundary.
@@ -114,3 +136,5 @@ Implementation follows the existing backlog, not an unversioned alternate roadma
 ## Flow and failure/interleaving coverage owner
 
 The source-pinned UI → Operator → service → durable receipt/event/outbox → native/provider observation → recovery → UI chains and competing interleavings are enumerated in [V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md](V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md). It contains 25 flow chains and 24 explicit race/partial-failure gates. A proposed chain is not a verified implementation, and canonical State Machine/Effect/Automation transition rules remain authoritative.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]

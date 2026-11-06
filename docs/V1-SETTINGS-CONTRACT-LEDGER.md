@@ -1,6 +1,8 @@
 # V1 Settings Per-Control Authority Ledger
 
-Status: proposed implementation design. Not evidence that a source handler or public API exists. This maps every Settings control specified by DESKTOP-SHELL-LLD to an authority and failure contract.
+Status: normative target control contract. Not evidence that a source handler or public API exists. This maps the 187 Settings controls specified by DESKTOP-SHELL-LLD to an authority and failure contract.
+
+Current-source mapping is in [SETTINGS-AND-SHELL-SURFACE-AUDIT.md](SETTINGS-AND-SHELL-SURFACE-AUDIT.md) and [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md). The current Settings screen implements a smaller subset; controls without an owner operation must not appear enabled or imply a persisted policy.
 
 ## Universal before/after/failure contract
 

@@ -1,47 +1,50 @@
-# V1 Feature SDD Register
 
-**Status:** planning register for docs-first checkout  
-**Updated:** 2026-11-01  
-**Rule:** no material implementation until the row’s SDD is **ACCEPTED/LOCKED** ([SPECIFICATION-STANDARD.md](SPECIFICATION-STANDARD.md)). Until then, global owner docs below are **interim design authority** only.
+# V1 feature specification register
 
-Engineering checklist (domain, API, events, flows, UI wiring, tests, research): [FEATURE-AND-UI-CONTRACT-COVERAGE.md](FEATURE-AND-UI-CONTRACT-COVERAGE.md). Typed UI↔Core wire index: [UI-CORE-TYPED-CONTRACTS.md](UI-CORE-TYPED-CONTRACTS.md).
+This register tracks package lifecycle, ownership and V1 release-area mapping. Package status is a design/approval state; it is not implementation status. Current code, route, integration and qualification evidence is recorded in IMPLEMENTATION-STATUS.md.
+
+## Lifecycle rule
+
+DRAFT → IN_REVIEW → ACCEPTED/LOCKED → IMPLEMENTING → VERIFIED. BLOCKED and SUPERSEDED are explicit. A feature is not ACCEPTED/LOCKED until its SPEC and required supporting contracts have owner approval. A passing structural validator establishes only package shape.
 
 ## Register
 
-| ID | Working name | V1 release area ([contract](V1-PRODUCT-RELEASE-CONTRACT.md) §3) | Master plan gate | SDD status | Interim global docs (until SDD) | Planned `contracts/ui-behavior.md` |
-|---|---|---|---|---|---|---|
-| **001** | Conversation Session Supervisor | 1 Universal Chat | P1 Real native Conversation | **ACCEPTED/LOCKED** (Rev 1.0) — [specs/001](../specs/001-conversation-session-supervisor/README.md) | API, NATIVE-COMPOSER-LLD, SERVICES, STORAGE, EVENTS | **Present** |
-| **002** | Native agent install, auth, binding | 2 BYO Agent | P1 / agent matrix | **DRAFT** — [specs/002](../specs/002-native-agent-install-auth-binding/README.md) | AGENT-CONTROL, AGENT-FABRIC, AGENT-ACCOUNT-ROUTE-MATRIX | **Present** |
-| **003** | Workspace roots and context ingestion | 2–3 files/context | P2 | **DRAFT** — [specs/003](../specs/003-workspace-roots-context-ingestion/README.md) | WORLD-RESOURCES, CONTEXT, STORAGE, API | **Present** |
-| **004** | Agent relay (A→B→A) | 2–3 continuity | P3 | **DRAFT** — [specs/004](../specs/004-agent-relay/README.md) | DELEGATION, NATIVE-COMPOSER-LLD, FLOWS | **Present** |
-| **005** | Safe Task path (plan, env, one edit) | 6 Tasks | P4 | **DRAFT** — [specs/005](../specs/005-safe-task-path/README.md) | TASK-RUNTIME, ENVIRONMENTS, TRUST, DELEGATION | **Present** |
-| **006** | Golden Connection + one capability write | 5 Capabilities | P5 | **DRAFT** — [specs/006](../specs/006-golden-connection-capability-write/README.md) | CONNECTORS-WORKFLOWS, CAPABILITY-FABRIC, NETWORK-SECURITY | **Present** |
-| **007** | Professional Artifacts (one format) | 9 Library | P6 | **DRAFT** — [specs/007](../specs/007-professional-artifacts/README.md) | ARTIFACTS-EVIDENCE, PRESENTATION-RUNTIME | **Present** |
-| **008** | Workbench browser/terminal/computer | 4 Workbench | P7 | **DRAFT** — [specs/008](../specs/008-workbench-browser-terminal-computer/README.md) | DESKTOP-SHELL-LLD, ENVIRONMENTS, CHROME-BROWSER-LLD, V1-INTEGRATED-TERMINAL-LLD | **Present** |
-| **009** | Coworkers + scoped memory (minimal) | 3, 8 | P8 | **DRAFT** — [specs/009](../specs/009-coworkers-scoped-memory/README.md) | COWORKERS-TARGET, RESPONSIBILITIES, LEARNING, ADR-0024 | **Present** |
-| **010** | Automations (recurring host) | 7 | P9 | **DRAFT** — [specs/010](../specs/010-automations-recurring-host/README.md) | AUTOMATION, ROUTINES | **Present** |
-| **011** | Desktop shell, IPC, settings, runtime health | 10 | P0–P11 | **DRAFT** — [specs/011](../specs/011-desktop-shell-ipc-settings-runtime/README.md) | RUNTIME-LIFECYCLE, LOCAL-OPERATOR-IPC, DESKTOP-SHELL-LLD, V1-SETTINGS-CONTRACT-LEDGER | **Present** |
+| ID | Feature | V1 area | Primary owner domain | Package state | Current source evidence |
+|---|---|---|---|---|---|
+| 001 | Conversation session supervisor and native turn execution | 1 Universal Chat | Conversation, Agent Runtime, Storage, Operator, UI, Trust | IN_REVIEW. Core decisions B-01–B-10 locked; API/UI/error recovery subcontracts remain DRAFT | Cursor-paginated Conversation UI/API and OpenCode dispatch code path exist; Send remains visibly enabled despite target qualification gate; no strict single-flight/outbox/restart recovery; Stop ineffective for OpenCode, retry UI absent, composer affordances inert and empty state is Antigravity placeholder; other providers not turn-capable |
+| 002 | Native agent installation, authentication and binding | 2 BYO Agent | Agent Runtime, Security/Trust, UI | DRAFT | 15 curated candidates/ACP metadata and bounded version observations; auth UNKNOWN/readiness NOT_PROBED. Codex/OpenCode profile probes only; OpenCode offer incompatible, Codex not dispatched by Conversation supervisor. Install/update/auth-begin/native-config are absent/target; descriptor and credential routes 503; binding enable lacks fresh AC-004 descriptor gate. No Usage projection or qualified model/effort picker |
+| 003 | Workspace roots and context ingestion | 2, 4, 8 | Workspace, Resources, Context, Storage | DRAFT | Root list/status/scan/observation routes exist; private root add works only Linux/macOS and Windows returns 503; scan is Linux-only metadata census and non-Linux returns 501; root scan does not ingest content. Resource upload/index/lexical retrieval exist separately. ZIP originals remain opaque; source preview worker is development-feature-only and absent from release sidecars. No ContextAttachment/Context Used UI or Conversation retrieval wiring |
+| 004 | Agent relay | 1, 2, 6 | Agent Fabric, Conversation, Delegation | DRAFT | Per-Conversation binding switch is served and per-turn producer identity is persisted/projected, but UI type/parser drops producer/session IDs; picker filters Workspace/enabled/lead eligibility but not dispatchable adapter or descriptor/auth freshness. Only OpenCode dispatches, its current offer cannot be newly bound, Codex has no Conversation dispatch branch, and no A→B→A pair exists. Resource materialization is unsupported; B-15/B-16 remain open |
+| 005 | Safe Task path | 6 Tasks | Task Runtime, Environment, Trust, Storage | DRAFT | Task record/spec revision/readiness exists; accepted-plan dispatch and Attempt/Effect execution unavailable. Workspace DelegationProfile CRUD/history/performance and SQLite child-admission policy primitives exist, but no daemon/Operator caller or delegated worker execution path is connected |
+| 006 | Golden Connection and capability write | 5 Capabilities | LiteSPM, Capability Fabric, Connections, Trust | DRAFT | Discover projections and truthful fail-closed package connect/test; Approval list/get/resolve real; narrow Task Resource-read grant and read-only Invocation history. No account Connection/OAuth routes, provider read/write dispatch, Trust/Effect admission or reconciliation; connect-or-install 503 and test UNKNOWN |
+| 007 | Professional Artifacts | 9 Library | Artifact, Presentation, Resource | DRAFT | Artifact list/version/content, text/plain append, promote/archive, safe preview and exact managed-blob local Save As exist. No served Artifact create route, no create UI, no professional format engine/round-trip and no durable ExportReceipt; Task outputs are read-only and have no live producer |
+| 008 | Workbench browser, terminal and computer | 4 Workbench | Desktop Shell, Environment, Browser, Trust | DRAFT | Files is Resource projection/preview; Browser is iframe preview; Terminal fabricates command success/ConPTY/Job Object claims without process; Diffs are synthetic; Activity union has no UI branch; Computer-use provider unavailable. No BrowserSession, PTY or Computer routes/providers |
+| 009 | Coworkers and scoped memory | 3, 8 | Coworker, Context, Learning, Responsibility | DRAFT | Coworker CRUD/revisions/status/primary persist; editor saves lead/delegation/profile/interaction/failover/context/notification policy with incomplete consumers; pause does not fence already-enabled Automation occurrences and Task composer rejects PAUSED Coworkers for owner Tasks; Quick Create does not open chat; Conversation has no Coworker origin; ContextDocument create rejects Coworker/Goal owner kinds; CoworkerContextPolicy is not enforced by retrieval; no learning service/storage/UI; presence returns 503 |
+| 010 | Automations and recurring host | 7 Automations | Automation, Routine, TriggerHost, Task, Notifications | DRAFT | Local 30-second TriggerHost settles supported schedules and materializes READY Tasks only. retry_policy/wake_policy have no consumer; occurrence history UI drops next_cursor. Notifications creates PENDING rows only with no sender/status consumer; preferred_channels ignored; ON_CONDITION maps only to DEPENDENCY_BLOCKED; quiet hours not editable. Pause success copy and module header are stale. External WorkflowBackendAdapter remains target-only |
+| 011 | Desktop shell, IPC, settings and Runtime | 10 Desktop | Runtime Lifecycle, IPC, Storage, Desktop UI | DRAFT | Daemon/Tauri shell and OS-authenticated Unix/Windows IPC source exist; T02 source implemented but packaged peer/OS qualification remains open. Mounted SettingsView has four categories only; target 16-category IA/187 controls are not shipped; appearance selectors and shortcut labels are inert/display-only. Windows/macOS native service-manager integration and full Settings error/recovery UI remain open |
 
-## What “complete documentation” means here
+## Required package contents
 
-| Layer | Complete for V1 design? | Complete for implementation handoff? |
-|---|---|---|
-| Global domain + OpenAPI + events + flows | **Yes** (TARGET; semantic handler map open) | Partial |
-| UI ledger + screen contract + typed wire index | **Yes** (TARGET) | Partial |
-| Competitor research (rivals list) | **Yes** (dated; refresh before lock) | N/A |
-| **Per-row SDD package** | **DRAFT** — 001–011 exist and structurally validate | **No** — none are ACCEPTED/LOCKED; blockers remain in each SPEC §5 |
+Every package under specs/ contains README.md, SPEC.md, PLAN.md, TASKS.md, DATA-MODEL.md, RESEARCH.md, WIRING.yaml and contracts/README.md, contracts/api-events.md, contracts/errors-recovery.md and contracts/ui-behavior.md.
 
-Packages **001–011** are DRAFT and structurally valid. They are not accepted. Creating them did not lock owner decisions; each SPEC §5 lists blockers. Copy [.specify/templates](../.specify/templates/) only when a new ID is added.
+Each feature contract must cover:
 
-## Research obligation per new SDD
+- User outcome and explicit non-goals.
+- HLD, LLD, ownership and trusted boundaries.
+- Domain identities, lifecycle, data, revision and transaction rules.
+- Exact API operation IDs and event/schema mapping.
+- Authentication, authorization, leases, idempotency and effects.
+- Errors, crash windows, timeout-after-effect and recovery.
+- UI screens, exact controls, eligibility, loading/empty/stale/denied/error states and recovery actions.
+- Tests by layer: unit, storage, Operator, provider, desktop UI, OS/system and owner acceptance.
+- Pinned research and copy/prototype/reject decisions.
 
-Each new package `RESEARCH.md` must include:
+## Implementation and qualification
 
-1. Pinned SHAs for any studied repo ([REFERENCE-IMPLEMENTATIONS.md](REFERENCE-IMPLEMENTATIONS.md)).  
-2. Dated vendor doc URLs for named rivals relevant to that slice.  
-3. Explicit **copy / prototype / reject** decision vs LiteCowork invariants ([ARCHITECTURE.md](../ARCHITECTURE.md)).  
-4. Open questions with named owner and gate (not silent TBD in code).
+Do not equate a package lifecycle with code status. Use the evidence scale in IMPLEMENTATION-STATUS.md. An implementation task must update the global owner, machine schema, UI action/screen contract, wiring, traceability and tests in the same reviewed change. Feature completion requires a real journey rather than schema counts or component presence.
 
-## Tests per feature
+Validation command: python .specify/scripts/validate_feature_package.py
 
-Global layers: [TESTING.md](TESTING.md). Each SDD `TASKS.md` must name executable commands and evidence paths. Each `contracts/ui-behavior.md` must cite `UIV1-*` and feature AC IDs. USER/E2E: [ACCEPTANCE-AND-E2E-PLAN.md](ACCEPTANCE-AND-E2E-PLAN.md).
+## Reference comparison and scope note
+
+OpenBot's pinned source review is recorded in [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md). It informs compact Task, model-picker and Usage UX, while its native WorkflowGraph engine remains an external architecture reference. Feature 010 continues to own Automation/Occurrence/Routine-to-Task behavior; workflow graphs stay with connected providers under CONNECTORS-WORKFLOWS.md.

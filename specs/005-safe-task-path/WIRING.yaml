@@ -60,3 +60,13 @@ recovery:
   owner: domain owner
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
+
+# Current source boundary checked 2026-11-06
+# The graph above is the target sequence, not currently integrated execution wiring.
+# In the active checkout, create_task commits only Task + TaskSpecRevision.
+# get_task_planning_readiness prepares a read-only preflight and returns dispatch_available=false;
+# LocalPlanningPreflight::require_dispatch remains dead-code and fails closed.
+# No production daemon caller of admit_step_attempt was found. Attempt process-scope
+# journaling is staged/dead-code. Plan submission, Attempt, Effect and Environment
+# provision/control routes are target-only. Do not mark the env/effect edges INTEGRATED
+# or QUALIFIED until the real provider and end-to-end write/reconciliation tests exist.

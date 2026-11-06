@@ -282,6 +282,15 @@ references are released and its lifetime policy allows cleanup.
 
 ## ConversationTurn
 
+**Implementation status (source audit 2026-11-06):** The following is the normative
+state-machine contract, not proof that the active daemon enforces every edge. The current
+Operator has an OpenCode-only detached dispatch path, but the storage admission transaction
+does not enforce single-flight per Conversation; retry sets FAILED to RUNNING before the
+STARTING reservation path (which requires OPEN); and RUNNING cancellation commits
+CANCELLED without observed native interrupt/quiescence. No startup Conversation recovery
+sweep or durable dispatch outbox/claim is wired. See `specs/001-conversation-session-supervisor/`
+for the source-backed discrepancy and remediation gates.
+
 ```text
 OPEN -> RUNNING -> WAITING_USER -> WAITING_DEPENDENCY -> RUNNING
           |  |          |                 |              +-> WAITING_USER

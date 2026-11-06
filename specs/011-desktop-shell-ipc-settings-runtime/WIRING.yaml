@@ -1,62 +1,96 @@
 feature_id: "011"
 status: "DRAFT"
 nodes:
-  - id: "ui"
-    owner: Desktop UI
+  - id: "settings-ui"
+    owner: SettingsView and category panels
     kind: component
+  - id: "ipc"
+    owner: authenticated Tauri local IPC
+    kind: external
   - id: "operator"
     owner: authenticated Operator
     kind: service
   - id: "owner"
-    owner: domain owner service
+    owner: canonical domain owner services
     kind: service
-  - id: "storage"
-    owner: Storage
+  - id: "runtime"
+    owner: Runtime lifecycle and native OS bridge
+    kind: service
+  - id: "local-preferences"
+    owner: target desktop presentation preference store; current SettingsView uses component-local React state only
     kind: store
-  - id: "ipc"
-    owner: local IPC peer check
-    kind: external
+  - id: "usage"
+    owner: Observability UsageIngestor/projections (target only)
+    kind: service
+  - id: "usage-store"
+    owner: immutable inference and quota stores (target only)
+    kind: store
 edges:
-  - id: "e-ui-op"
-    from: "ui"
-    to: "operator"
-    kind: command
-  - id: "e-op-owner"
-    from: "operator"
-    to: "owner"
-    kind: request
-  - id: "e-owner-storage"
-    from: "owner"
-    to: "storage"
-    kind: transaction
-  - id: "e-storage-ui"
-    from: "storage"
-    to: "ui"
-    kind: projection
-  - id: "e-ui-ipc"
-    from: "ui"
+  - id: "e-settings-ipc"
+    from: "settings-ui"
     to: "ipc"
-    kind: frame
-  - id: "e-ipc-operator"
+    kind: authenticated-command-or-read-frame
+  - id: "e-ipc-op"
     from: "ipc"
     to: "operator"
     kind: authenticated-request
+  - id: "e-op-owner"
+    from: "operator"
+    to: "owner"
+    kind: scoped-owner-request
+  - id: "e-settings-local-preference"
+    from: "settings-ui"
+    to: "local-preferences"
+    kind: local-presentation-preference-target-only-no-domain-authority
+  - id: "e-settings-runtime"
+    from: "operator"
+    to: "runtime"
+    kind: lifecycle-and-os-probe
+  - id: "e-runtime-op"
+    from: "runtime"
+    to: "operator"
+    kind: verified-status-observation
+  - id: "e-usage-read"
+    from: "settings-ui"
+    to: "operator"
+    kind: usage-projection-read-target-only
+  - id: "e-operator-usage"
+    from: "operator"
+    to: "usage"
+    kind: scoped-usage-query-target-only
+  - id: "e-usage-data"
+    from: "usage"
+    to: "usage-store"
+    kind: immutable-inference-and-quota-projection-target-only
 transactions:
-  - id: "tx-health"
+  - id: "tx-runtime-lifecycle"
     owner: Runtime
-    atomic_records: ["runtime_incarnation"]
+    atomic_records: ["runtime_incarnation", "drain_state"]
     external_calls_inside: false
-  - id: "tx-pref"
-    owner: Desktop UI local store
-    atomic_records: ["local_preference"]
+  - id: "tx-local-preference"
+    owner: target desktop preference store (not implemented by current SettingsView)
+    atomic_records: ["local_display_preference"]
+    external_calls_inside: false
+  - id: "tx-domain-setting"
+    owner: canonical domain service
+    atomic_records: ["owner_aggregate", "event", "idempotency_receipt", "audit_record"]
+    external_calls_inside: false
+  - id: "tx-usage-ingest-target"
+    owner: Observability UsageIngestor
+    atomic_records: ["usage_leaf", "dedupe_identity", "price_snapshot_reference", "quota_snapshot_if_observed"]
     external_calls_inside: false
 external_boundaries:
-  - id: "outside-sqlite"
-    owner: domain owner
-    input_trust: untrusted
+  - id: "os-actions"
+    owner: native desktop OS bridge
+    input_trust: authenticated-local-owner-and-typed-enum
     timeout: bounded
-    retry: reconcile-before-retry
+    retry: verify-current-assertion-before-retry-and-release-on-drain
+  - id: "usage-readers"
+    owner: exact AgentModule usage-only adapter
+    input_trust: user-opted-in-approved-path-and-schema
+    timeout: bounded
+    retry: idempotent-read-and-dedupe-by-response-identity
 recovery:
-  owner: domain owner
-  source_of_truth: durable-owner-records
-  restart_action: reload-last-commit-and-reconcile
+  owner: Runtime lifecycle and canonical domain owners
+  source_of_truth: committed-owner-records-plus-fresh-native-os-observations
+  restart_action: reload target persisted preferences when that store is implemented (current SettingsView values reset with component state); re-probe-runtime-and-os-assertions; clear-stale-ephemeral-assertion; reconcile-domain-mutations; usage-read-from-durable-leaves-without-double-counting

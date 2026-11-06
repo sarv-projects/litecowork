@@ -1,7 +1,7 @@
 # LiteCowork Viability vs Competitors (Local Desktop V1)
 
 **Status:** product viability assessment from **design authority** and **dated research** — not implementation proof  
-**Updated:** 2026-11-01  
+**Updated:** 2026-11-06
 **Scope:** compare **local desktop** capability intent to named rivals. **Cloud execution** (laptop-off continuation, hosted agent computers, multi-device sync) is **explicitly out of scope** for this parity table unless noted as V2.
 
 **Related:** [V1-PRODUCT-RELEASE-CONTRACT.md](V1-PRODUCT-RELEASE-CONTRACT.md), [COMPETITIVE-RESEARCH.md](COMPETITIVE-RESEARCH.md), [COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md), [IMPLEMENTATION-MASTER-PLAN.md](IMPLEMENTATION-MASTER-PLAN.md).
@@ -122,6 +122,21 @@ Legend:
 
 ---
 
+### OpenBot (nightly-labs/openbot)
+
+Reference pin: `6759fa3ee857f4f4966865e12de99ae84ab6de07` (package 0.62.0, checked 2026-11-06). Its package manifest declares PolyForm Noncommercial 1.0.0; its README describes the product as a development preview and documents a broad danger-full-access / approvalPolicy-never agent mode. Treat it as a source/UI comparison, not an assumption of production security or reusable code. Full details: [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).
+
+| Promoted capability | LiteCowork verdict | Notes |
+|---|---|---|
+| Compact local-first multi-agent desktop and persistent agent profiles | **PARTIAL / TARGET UX** | Learn profile identity, slim rail, provider-scoped settings; LiteCowork retains its own daemon/Runtime and BYOA model |
+| Agent-specific model picker and effort controls | **TARGET** | Compact searchable picker only from exact fresh AgentControlDescriptor; no universal model router; Feature 002 currently descriptor reads return 503 and exact send route remains unqualified |
+| Tasks composer, grouped work list and side panel | **TARGET UX** | Adopt list + side detail pattern; map Needs You/Working/Waiting/Ready/Done from LiteCowork owner projections, not OpenBot's enums |
+| Provider-specific historical usage and quota readers | **TARGET** | Study per-provider counter semantics, host report and quota separation; LiteCowork keeps its stricter inference/cost-basis and quota ledgers; dashboard remains target-only |
+| In-Core visual workflow graph and graph runtime | **NO for V1 Core** | Conflicts with PRODUCT-STRATEGY and CONNECTORS-WORKFLOWS. User authors graphs in external provider UI; LiteCowork invokes existing graphs as a bounded CapabilityInvocation inside Task |
+| Agent-edited workflow graph | **EXTERNAL PROVIDER NOW / LITE COWORK DEFERRED** | n8n and Activepieces document provider-native AI/MCP tools to build/edit/test/publish provider-owned graphs. LiteCowork has no production WorkflowBackendAdapter in the source tree; direct LiteCowork Coworker graph mutation remains a future provider-specific authoring capability with separate Trust/approval |
+| JavaScript/Python/TypeScript workflow code | **EXTERNAL PROVIDER ONLY** | OpenBot graph schema has no Code node; n8n supports JS/Python, Activepieces CODE steps accept JS/TS and Node-RED Function nodes execute JS. These run under the external provider's own host/credential/network/isolation boundary, not LiteCowork Environment or automatic Core Trust mediation. Check the n8n Python Task Runner advisory GHSA-9pq8-m8gp-4p53 when applicable |
+| OpenBot permission model / direct full-access agent execution | **NO** | Development-preview danger-full-access / approvalPolicy-never behavior is incompatible with LiteCowork's Trust, Grant and Environment boundary |
+
 ## LiteCowork cannot match (documented non-goals or V2)
 
 1. **Cloud agent computer runs while the user's laptop is off** (Grok, Dots, Muse VM, Manus cloud).  
@@ -137,20 +152,22 @@ Legend:
 
 ## Research / Engineering Gates & Architectural Resolutions
 
-| ID | Topic | Architectural Resolution & Design Contract | Status & Owner Docs |
+This table is a research/design register. **LOCKED DESIGN** means an owner has chosen an architectural contract; it does not mean code is wired or release-qualified. See [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) for current source evidence and the CODE/SERVED/INTEGRATED/QUALIFIED vocabulary.
+
+| ID | Topic | Architectural Resolution & Design Contract | Current evidence / owner docs |
 |---|---|---|---|
-| RV-01 | LiteSPM IPC/auth/schema | Local OS-authenticated framed JSON-RPC over named pipe / Unix domain socket; pinned protocol v1 with single-use plan tokens, ACSR consent, and 12 MCP bridge tools. | **LOCKED DESIGN** — [LITESPM-INTEGRATION-PLAN.md](LITESPM-INTEGRATION-PLAN.md), [CAPABILITY-FABRIC.md](CAPABILITY-FABRIC.md) |
-| RV-02 | First GA harness/OS/auth tuple and readiness handshake | Windows 11 / 10 (`x86_64-pc-windows-msvc`) + Claude Code CLI & OpenCode CLI v1.0.0. CLI-managed native auth pass-through. Handshake: probe -> session reservation -> SQLite atomic activation CAS. | **LOCKED DESIGN** — [specs/001-conversation-session-supervisor/SPEC.md](../specs/001-conversation-session-supervisor/SPEC.md) (B-02/B-03) |
-| RV-03 | Atomic turn completion write | `commit_conversation_agent_response` SQLite Immediate Transaction committing AGENT message, SETTLED turn, CLOSED session, events, and idempotency receipt atomically. | **LOCKED DESIGN** — [STORAGE.md](STORAGE.md), [specs/001-conversation-session-supervisor/SPEC.md](../specs/001-conversation-session-supervisor/SPEC.md) (B-04) |
-| RV-04 | Chrome/browser computer-use per OS | Chromium CDP connected to isolated profile directory (`user-data-dir`); takeover and return mediated by atomic CAS over `control_epoch`. Stale agent CDP commands fenced immediately upon human takeover. | **LOCKED DESIGN** — [CHROME-BROWSER-LLD.md](CHROME-BROWSER-LLD.md), P7 |
-| RV-05 | Environment isolation attestation | Windows: Win32 Job Object with restricted token, no-network loopback, and memory/CPU limits. Linux: transient cgroup-v2 + mount/PID unshare. Isolation attested before Attempt admission. | **LOCKED DESIGN** — [ENVIRONMENTS.md](ENVIRONMENTS.md), P4 |
-| RV-06 | Teach-to-skill from recording | Action recorder capturing DOM selector/keystroke sequences into declarative Routine JSON drafts; user reviews and approves before Routine registration. | **DESIGNED SPEC** — [ROUTINES.md](ROUTINES.md) (V1.1 extension) |
-| RV-07 | Dot Links / inter-Coworker message policy | Scoped Agent Relay via committed `ConversationMessage` envelopes with cryptographic provenance headers (A -> B -> A). Transcripts and private harness context are never leaked across workers. | **LOCKED DESIGN** — [DELEGATION.md](DELEGATION.md), P3 |
-| RV-08 | Voice realtime agent | Local audio pipeline (Whisper STT + Piper TTS) or WebRTC media stream; scoped as an optional multimodal channel. | **DEFERRED TO V2** — [CHANNELS.md](CHANNELS.md), V1 Release Contract |
-| RV-09 | Semantic served-handler ↔ UI map | Comprehensive mapping of all 229 OpenAPI operations to UI triggers and local reducer states in `SEMANTIC-SERVED-UI-MAP.md`. | **LOCKED DESIGN** — [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md) |
-| RV-10 | Stop/update drain with Effect reconciliation | Bounded 60s shutdown drain: stops new admissions, drains active handlers, checkpoints state, and marks unsettled external effects `AMBIGUOUS` with reconciliation tokens before daemon exit. | **LOCKED DESIGN** — [RUNTIME-LIFECYCLE.md](RUNTIME-LIFECYCLE.md), [FAILURE-RECOVERY.md](FAILURE-RECOVERY.md) |
-| RV-11 | Interactive Artifact OS isolation profile | Dedicated OS WebView running in a isolated worker process with strict CSP (no network, no remote scripts), local framed IPC message protocol, and zero host filesystem access. | **LOCKED DESIGN** — [INTERACTIVE-ARTIFACT-RUNTIME.md](INTERACTIVE-ARTIFACT-RUNTIME.md) |
-| RV-12 | Coworker ADR-0024 schema/API | Optional Coworker aggregate with scoped instructions, pinned default AgentBinding, dedicated ContextAttachments, and per-Coworker audit ledger. | **LOCKED DESIGN** — [COWORKERS-TARGET.md](COWORKERS-TARGET.md), ADR-0024 |
+| RV-01 | LiteSPM IPC/auth/schema | Upstream current-main 13-tool local MCP stdio bridge; host-specific prompt/tool entry points; Windows owner-only Named Pipe DACL with `peerAuth.verified=false`; LiteCowork still needs pinned schema, identity, approval, receipt and UNKNOWN-recovery qualification. | **UPSTREAM WIRED / LITE COWORK TARGET NOT QUALIFIED** — [LITESPM-LITECOWORK-INTEROP-LLD.md](LITESPM-LITECOWORK-INTEROP-LLD.md), [LITESPM-INTEGRATION-PLAN.md](LITESPM-INTEGRATION-PLAN.md) |
+| RV-02 | First native harness/OS/auth route and readiness handshake | Current supervisor dispatches OpenCode through the v2.0.32 server/session path. The earlier Claude Code/Codex first-GA tuple remains a design choice, not current execution evidence. Session reservation/activation/final settlement must be exercised through the real supervisor. | **OpenCode CODE path only; not QUALIFIED** — [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md), [specs/001-conversation-session-supervisor/SPEC.md](../specs/001-conversation-session-supervisor/SPEC.md) |
+| RV-03 | Atomic turn completion write | The OpenCode supervisor has a final response/turn-settlement write path. It must atomically preserve the committed semantic message, terminal turn, session and idempotency provenance; crash/restart and ambiguous dispatch still need end-to-end proof. | **CODE / recovery qualification open** — [STORAGE.md](STORAGE.md), [specs/001-conversation-session-supervisor/SPEC.md](../specs/001-conversation-session-supervisor/SPEC.md) |
+| RV-04 | Chrome/browser computer-use per OS | Target: isolated Chrome profile/CDP, policy and takeover lease with stale-command fencing. Current Workbench Browser is an iframe/WebView preview, not Chrome automation. | **TARGET; provider not integrated** — [CHROME-BROWSER-LLD.md](CHROME-BROWSER-LLD.md), [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) |
+| RV-05 | Environment isolation attestation | Target: platform-specific process/filesystem/network isolation before Attempt admission. A Job Object constrains process lifetime but is not, by itself, a complete filesystem/network/credential sandbox. Current environment/isolation modules are not wired to a qualified Task execution path. | **CODE/TARGET; not qualified** — [ENVIRONMENTS.md](ENVIRONMENTS.md), [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) |
+| RV-06 | Teach-to-skill from recording | Target: opt-in action recorder produces a reviewable declarative Routine/Skill proposal; never silently enables it or records secrets/PII. | **DESIGNED SPEC / later slice** — [ROUTINES.md](ROUTINES.md), Feature 010 |
+| RV-07 | Dot Links / inter-Coworker message policy | Target: scoped Agent Relay via committed ConversationMessage envelopes and provenance; no private harness transcript/session transfer and no authority inheritance down a delegation tree. | **TARGET / not qualified** — [DELEGATION.md](DELEGATION.md), Feature 004 |
+| RV-08 | Voice realtime agent | Optional local audio pipeline or WebRTC media channel, behind its own privacy/permission/provider contract. | **DEFERRED** — [CHANNELS.md](CHANNELS.md), V1 Release Contract |
+| RV-09 | Semantic served-handler ↔ UI map | The current semantic map covers the principal user journeys and identifies exact routes/commands where verified; it does not claim that every one of the 229 OpenAPI operations has a UI control. The 173/1/56 route registration counts are separate from UI coverage. | **Documentation traceability, not qualification** — [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md), [served-route-inventory.json](schemas/served-route-inventory.json) |
+| RV-10 | Stop/update drain with Effect reconciliation | Target: bounded shutdown drain, admission stop, effect reconciliation and explicit UNKNOWN outcomes. Confirm the exact handler/process behavior for each daemon shutdown path before claiming a 60-second guarantee. | **TARGET; not fully qualified** — [RUNTIME-LIFECYCLE.md](RUNTIME-LIFECYCLE.md), [FAILURE-RECOVERY.md](FAILURE-RECOVERY.md) |
+| RV-11 | Interactive Artifact OS isolation profile | Target: dedicated isolated execution context with bounded IPC and no host filesystem/network authority. CSP alone is not an isolation boundary; current full interactive Artifact runtime is not release-qualified. | **TARGET; not qualified** — [INTERACTIVE-ARTIFACT-RUNTIME.md](INTERACTIVE-ARTIFACT-RUNTIME.md), [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) |
+| RV-12 | Coworker ADR-0024 schema/API | Optional Coworker aggregate with scoped instructions, pinned default AgentBinding, dedicated ContextAttachments, and per-Coworker audit ledger. Current Coworker CRUD/revision/primary records exist, but scoped learning, Coworker-owned Conversation and responsibility execution are not fully integrated. | **TARGET / PARTIAL CODE; NOT QUALIFIED** — [COWORKERS-TARGET.md](COWORKERS-TARGET.md), ADR-0024, [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) |
 
 ---
 
@@ -160,4 +177,6 @@ Legend:
 
 **Not pursuing parity:** cloud-only differentiators, mobile-first channels, shared cloud computers, subscription tier emulation, and orchestration stacks that violate LiteCowork invariants.
 
-**Implementation today:** **none** of the above is QUALIFIED in the active checkout; viability here means **architecture + contracts allow** building and testing UC-* journeys when SDDs complete and source is recovered.
+**Implementation today:** the active checkout contains the Rust daemon, Tauri/React desktop UI and shared crates, with partial Conversation, Workspace/Resource, Coworker, Automation, Artifact and Operator route implementations. None of the broad competitor-parity journeys is release-qualified as a complete V1 product path. See [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) for the source-backed boundary; no source recovery from archives is required to begin work.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]

@@ -1,174 +1,75 @@
 # LiteCowork
 
-**Your agents. Your workspace. Conversations, real work, and capabilities you control.**
+**One workspace for the AI agents you already use.**
 
-LiteCowork is a **local-first, chat-first AI workspace** for everyday conversation,
-files, websites, office documents, research, automation and coding. Select a qualified
-native agent such as Codex, Claude Code or OpenCode. Keep the agent's account, subscription, models and native behavior.
-Start with a normal conversation—no mandatory Coworker or Task. Durable Tasks
-preserve managed execution, activity, evidence and results when required.
+LiteCowork is a local-first, chat-first desktop AI workspace built around native agent harnesses. It brings Conversations, persistent Coworkers, durable Tasks, local resources, capabilities, Automations, Artifacts and evidence into one coherent desktop experience without replacing the selected native agent's reasoning engine.
 
-> **Release status:** LiteCowork is in pre-release development. This README describes the
-> intended product; a capability is available only after its release gate and provider
-> qualification are complete.
+**Release posture: pre-release development. V1 is not release-qualified.** The application and daemon source are present in this repository. The current implementation boundary, test results and blockers are documented in docs/IMPLEMENTATION-STATUS.md.
 
-## Complete V1 product and family
+## Product principles
 
-**LiteCowork** is the product people open: Chat, Workbench, Coworkers, Tasks,
-Memory, Library and local Automations. **LiteSPM** is the independent manager
-for eligible *existing and new* cross-agent skills, MCP, plugins and capability
-packages, with truthful observed/adopted/managed ownership.
+- **BYOA first:** preserve native agent behavior, authentication, models, prompts, tools, private sessions and agent-owned controls.
+- **Conversation first:** ordinary chat does not require a Task or Coworker.
+- **Durable work:** outcome-oriented work may become an explicit Task whose state survives replaceable workers and daemon restarts.
+- **Honest completion:** agent self-report is not verification. Effects, artifacts and acceptance evidence determine whether work is complete.
+- **Local ownership:** V1 execution is local to the user's desktop unless the user explicitly connects a provider. Laptop-off cloud continuation is later scope.
+- **Shared capabilities:** LiteSPM is the package lifecycle authority across compatible agent hosts; LiteCowork separately governs assignment, grants and mediated use.
+- **One workspace:** chat, files, work, Coworkers, Routines, Automations and deliverables share one Workspace and history model.
+- **Progressive disclosure:** plain-language outcomes are primary; agent options, policy, process and evidence are inspectable when needed.
 
-**V1 covers all ten local desktop areas** in [Product Release Contract](docs/V1-PRODUCT-RELEASE-CONTRACT.md)
-and [Final Screen Contract](docs/V1-UI-SCREEN-CONTRACT.md).
-[LiteSPM integration](docs/LITESPM-LITECOWORK-INTEROP-LLD.md)
-is specified but **not yet production qualified**; an installation is not an
-invocation grant. The requirement is **free core local LiteCowork functionality
-without a mandatory LiteCowork subscription or hosted account**; external
-agent/API/provider costs remain separate. Cloud LiteCowork Runtime, multi-device
-continuation and teamwork are V2. Historical baseline acceptance snapshot (not current
-release status): [c7e9c05 acceptance matrix](docs/archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+## Main product objects
 
-## What LiteCowork is for
+| Object | Meaning |
+|---|---|
+| Workspace | Ownership, resource and authorization boundary |
+| Conversation | Human-facing chat history and turns; may use different native agents over time |
+| Coworker | Persistent assistant identity, instructions, scoped context and approved responsibilities; not a resident process |
+| Task | Durable outcome-oriented work with accepted plan, steps, attempts, effects, artifacts and evidence |
+| AgentModule / AgentBinding | Native harness integration and Workspace-specific selection |
+| Capability / Connection | A package or external service; installation, authentication, assignment and invocation remain separate |
+| Resource / Artifact | Pinned source material or committed output with revision and provenance |
+| Automation / Routine | Triggered or reusable work definition; local trigger hosting does not imply Task execution |
 
-Start with an ordinary conversation, a plain-language request, local files, a browser task,
-a document, or a software project. A Coworker is optional: create one when you want a
-persistent named specialist with its own scoped memory, connections, and approved
-responsibilities; one-off conversations do not require it. Your selected native chief
-agent remains itself, with its own harness and supported tools. When enabled and allowed,
-the chief can use native subagents, delegate bounded work to another LiteCowork worker
-profile, or invoke a deterministic capability. You can see who handled each part, inspect
-outputs and evidence, and decide what to accept.
+## Architecture
 
-LiteCowork is designed for broad desktop knowledge work: research and reports, local-file
-organization, spreadsheet and document workflows, recurring reviews, browser/app work,
-software projects, and reusable procedures. External providers and
-the current machine determine which of these capabilities are available in a given setup.
+- Rust workspace and local daemon: apps/litecoworkd
+- Tauri v2 / React desktop application: apps/litecowork-ui
+- Domain, storage, runtime and IPC crates: crates/
+- Normative product and domain contracts: docs/
+- Feature SDD packages: specs/
+- Specification templates and validators: .specify/
 
-## The finished product
+The desktop Operator is not the Runtime. The daemon owns durable operations and lifecycle; the native agent owns its own reasoning and private state; LiteSPM owns package lifecycle. A route, package listing, probe or UI affordance is not proof of a qualified product flow.
 
-- **One desktop workspace.** A calm composer, active work, items needing your attention,
-  verified outputs and scheduled responsibilities. Detailed agent/runtime diagnostics stay
-  in the Inspector until you need them.
-- **Optional persistent Coworkers.** Give a specialist a name, purpose, scoped memory,
-  connections, and approved responsibilities when you want continuity; ordinary chats do
-  not require one. Its identity can continue when you change the chief agent.
-- **Your native agents remain native.** LiteCowork coordinates supported harnesses without
-  replacing their native configuration or claiming ownership of their internal subagents.
-  Host-delegated work gets a separate task attempt, scope, environment and result record.
-- **Reviewable work.** A Task survives agent and process changes. Attempts, changes,
-  artifacts and verification evidence remain inspectable. A worker report alone does not
-  mark work complete.
-- **More help when useful.** Select worker profiles for cost, quality or latency goals.
-  Verification can trigger a bounded retry or escalation. Usage that a provider does not
-  report stays unknown; LiteCowork does not invent savings or quota remaining.
-- **Files and knowledge.** Add files, folders and ZIPs, see what parsed and indexed, and
-  use source-linked retrieval. Resource scope, revision, provider placement and deletion
-  remain visible. Local files do not automatically become cloud inputs.
-- **Local work first.** The desktop Operator and the `litecoworkd` Runtime have separate
-  lifecycles. Start with local files and agents; keep durable work when the window closes.
-- **Cloud, then remote.** Cloud continuation starts a new Attempt from portable Task state
-  after effect reconciliation and lease fencing. A remote machine runs the same Runtime
-  contract. A live process or private agent session is never assumed to teleport.
-- **Human authority stays clear.** Browse, prepare, draft, review or verify according to
-  policy. Consequential changes can pause for approval or hand control to you. An agent
-  cannot grant itself authority.
-- **Useful artifacts, not just chat.** Review code changes and qualified documents,
-  spreadsheets, reports and other outputs with their revisions and provenance.
-- **Repeat work safely.** Turn reviewed work into a Routine; Automations schedule ordinary
-  Tasks. Test and review before enabling a recurring responsibility.
+## Product and engineering documentation
 
-## How work is organized
+Read in this order:
 
-```text
-You / Workspace
-├── Conversation                         ordinary chat; Coworker optional
-│   └── Task?                            durable intent and execution history when needed
-│       ├── Plan and Steps
-│       ├── Lead agent session
-│       ├── Delegated Attempts          bounded, replaceable workers
-│       ├── Effects and Artifacts
-│       └── Evidence and verification
-└── Coworker?                             optional persistent specialist
-    ├── Conversations
-    ├── scoped Memory / Knowledge / Connections
-    └── approved Responsibilities → ordinary Tasks
-```
+1. [Product contract](docs/PRODUCT.md)
+2. [V1 product release contract](docs/V1-PRODUCT-RELEASE-CONTRACT.md)
+3. [System architecture](ARCHITECTURE.md)
+4. [Current implementation and release status](docs/IMPLEMENTATION-STATUS.md)
+5. [V1 desktop screen and interaction contract](docs/V1-UI-SCREEN-CONTRACT.md)
+6. [Domain owner contracts and machine schemas](docs/README.md)
+7. [Feature SDD register](docs/V1-FEATURE-SDD-REGISTER.md) and [specifications](specs/README.md)
+8. [Acceptance and E2E plan](docs/ACCEPTANCE-AND-E2E-PLAN.md)
 
-A conversation can be an ordinary chat and does not create a Task unless work is made
-durable. A Coworker can own multiple conversations and approved responsibilities, but it
-is not required for ordinary sessions and never replaces Task execution truth. Attempts, agent sessions, Runtimes and Environments can change while the Task
-remains the source of execution history. LiteCowork mediates shared effects and records
-what it can verify; external providers still control their own models, quotas, tools and
-native features.
+Useful engineering indexes:
 
-## Desktop-first delivery
-
-V1 targets a complete, production-qualified desktop/local product for the finalized
-local feature set, not a demo that substitutes mock workers for real provider integrations.
-Cloud continuation and remote Runtime are post-V1 releases.
-
-The intended use is broad desktop cowork: ask questions, work with files and documents,
-research through qualified browser/app capabilities, prepare reports and spreadsheets,
-organize local work, automate approved recurring responsibilities, and use coding agents
-for software work when that is the job.
-Provider account requirements, model quality, local hardware, site rules and operating-
-system support set practical limits; supported capabilities will be published against
-tested versions.
-
-## Architecture and development
-
-- [Product architecture](ARCHITECTURE.md)
-- [Specification Standard](docs/SPECIFICATION-STANDARD.md) and [feature SDD index](specs/README.md)
-- [Current run / engineering handoff](CURRENT-RUN.md)
-- [Implementation master plan](docs/IMPLEMENTATION-MASTER-PLAN.md)
+- [V1 design index](docs/V1-DESIGN-INDEX.md)
+- [Contradiction and alignment register](docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md)
+- [Semantic served-handler to UI map](docs/SEMANTIC-SERVED-UI-MAP.md)
+- [Feature and UI-core coverage](docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md)
 - [Repository documentation audit](docs/REPOSITORY-DOCUMENTATION-AUDIT.md)
-- [Contract map](docs/COVERAGE-MATRIX.md)
-- [Product contract](docs/PRODUCT.md)
-- [User experience](docs/EXPERIENCE.md)
-- [Testing contract](docs/TESTING.md)
-- [Historical research sources](docs/archive/legacy-implementation-c7e9c05/SOURCES.md)
-- [Decision records](docs/adr/)
+- [Active corpus inventory](docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md)
+- [Served-route inventory](docs/schemas/served-route-inventory.json)
 
-LiteSPM is the selected external package/capability ecosystem. It owns package discovery
-and lifecycle; LiteCowork owns Task-scoped use. Its LiteCowork wire integration remains
-subject to the verified service contract. Its selected service endpoint and the
-boundary are recorded in [Capability Fabric](docs/CAPABILITY-FABRIC.md). No package API
-or authentication behavior is assumed before its service contract is available.
+## Development
 
-## Coworkers target evolution
+The Rust workspace is rooted at Cargo.toml. The desktop package uses pnpm and is under apps/litecowork-ui. Use the package scripts and Rust workspace configuration in the repository; do not infer the supported build matrix from a developer machine alone.
 
-The accepted desktop Coworker design is described in [docs/COWORKERS-TARGET.md](docs/COWORKERS-TARGET.md): optional chat-first persistent assistants, no connector ceiling on configured integrations, natural-language approved responsibilities, quiet scoped memory learning and honest background execution. This is a target design, NOT a claim that UI, memory, trigger or native agent execution are already complete. The previous c7e9c05 implementation status is historical; re-establish current truth using docs/ACCEPTANCE-AND-E2E-PLAN.md and fresh runtime evidence.
+Before claiming a feature works, trace its screen/action to the typed Tauri command, authenticated Operator route, service owner, storage/effect transaction, provider integration, stream/projection and recovery behavior. Record CODE, SERVED, INTEGRATED and QUALIFIED separately.
 
+## Current delivery truth
 
-### Native agent philosophy
-
-LiteCowork is designed around full native agent harnesses rather than a universal model
-wrapper. Agent-specific install/update, sign-in/API-key setup, models/session options,
-slash commands, references and native configuration are exposed through modular
-AgentModules. LiteSPM owns the cross-agent connector/MCP/plugin/skill package ecosystem;
-LiteCowork owns scoped authorization and durable work around their use. See
-docs/AGENT-CONTROL.md.
-
-
-## 2026-10-10 connector, automation, and learning architecture
-
-The finalized design now includes:
-
-- local-first direct connector/auth architecture and optional external auth backends;
-- first-party app bundles without making MCP setup mandatory;
-- external deterministic workflow backends as capabilities rather than a second Task engine;
-- event relay separated from credential custody;
-- typed Coworker learning: memory vs instruction vs skill vs routine vs automation;
-- Automation run history with on-demand follow-up Conversations;
-- one unified chat/work architecture: Code task is a preset, not a top-level product fork.
-
-Read:
-[Connectors & Workflows](docs/CONNECTORS-WORKFLOWS.md),
-[Learning](docs/LEARNING.md), and
-[Reference Implementations](docs/REFERENCE-IMPLEMENTATIONS.md).
-These are accepted target contracts; the old epics/roadmap is preserved as historical material under docs/archive/legacy-implementation-c7e9c05/. The current checkout status and preservation boundary are recorded in CURRENT-RUN.md and docs/REPOSITORY-DOCUMENTATION-AUDIT.md; release claims require fresh CODE/SYSTEM/USER evidence under docs/ACCEPTANCE-AND-E2E-PLAN.md.
-
-## V1 detailed design integration — 2026-10-12
-
-Implementation detail and acceptance crosswalk: docs/V1-DESIGN-INDEX.md and the historical coverage snapshot at docs/archive/legacy-implementation-c7e9c05/V1-DESIGN-COVERAGE.md. Native agent / and @ parity, browser profile security, right Workbench and event rendering are design targets pending actual end-to-end qualification; do not advertise a disabled composer, a browser screenshot or an agent registry probe as shipped features.
+Conversation CRUD and an OpenCode-only code-level dispatch path exist, but the visible Send control violates the disabled-until-qualified gate, Stop is ineffective for OpenCode, failed-turn Retry has no UI affordance, and no packaged provider USER journey is qualified. The local 30-second Automation TriggerHost settles supported schedules and materializes READY Tasks but does not execute them. Notification outcomes can create PENDING delivery records, but no outbound sender advances them to delivered states. Task planning/Attempt admission, a qualified mediated Effect path, LiteSPM lifecycle integration, a real process-backed terminal, a controlled browser, Computer use and the full Coworker/memory experience are not release-qualified. The recorded Windows Rust workspace suite passed 359 daemon tests (0 failed, 1 ignored) and exited 0 overall; frontend production build and focused Conversation/responsive tests passed, while the full serial frontend suite remains incomplete and packaged desktop/provider E2E is unqualified. The precise evidence and ordered blockers are maintained in [IMPLEMENTATION-STATUS.md](docs/IMPLEMENTATION-STATUS.md).

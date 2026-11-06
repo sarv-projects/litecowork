@@ -1,4 +1,6 @@
-import { useState, useId } from "react";
+
+
+import { useState } from "react";
 import { AgentCatalogSettings } from "../agents/AgentCatalogSettings";
 import { desktopAgentCatalogApi } from "../agents/desktop-agent-catalog-api";
 import type {
@@ -19,12 +21,7 @@ export type SettingsCategory =
   | "general"
   | "workspaces"
   | "agents"
-  | "browser"
-  | "terminal"
-  | "security"
-  | "runtime"
-  | "mcp"
-  | "coworkers";
+  | "runtime";
 
 export type SettingsViewProps = {
   runtime: RuntimeStatus | null;
@@ -93,22 +90,11 @@ export function SettingsView(props: SettingsViewProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("workspaces");
   const [archiveConfirmationFor, setArchiveConfirmationFor] = useState<string | null>(null);
 
-  // General Preferences (Local state with localStorage persistence)
+  // General Preferences (component-local state; not persisted or applied globally)
   const [theme, setTheme] = useState<"system" | "light" | "dark">("light");
   const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
   const [textScale, setTextScale] = useState<"100" | "110" | "125">("100");
   const [reducedMotion, setReducedMotion] = useState(false);
-
-  // Browser Use Preferences (ZCode Inspiration §2.2)
-  const [browserUseEnabled, setBrowserUseEnabled] = useState(true);
-  const [browserCacheNotice, setBrowserCacheNotice] = useState<string | null>(null);
-
-  // Terminal & Shell Preferences
-  const [shellEngine, setShellEngine] = useState<"pwsh" | "cmd" | "bash">("pwsh");
-  const [terminalScrollback, setTerminalScrollback] = useState("10000");
-
-  // Permissions & Security (ZCode Inspiration §2.7)
-  const [commandApprovalMode, setCommandApprovalMode] = useState<"always_ask" | "allow_project">("always_ask");
 
   const selectedWorkspace = props.workspaces.find(ws => ws.workspaceId === props.selectedWorkspaceId);
   const currentRuntimeBinding = props.runtimeBindings.find(
@@ -117,9 +103,6 @@ export function SettingsView(props: SettingsViewProps) {
     binding => binding.workspaceId === props.selectedWorkspaceId && binding.runtimeId === props.runtime?.runtimeId
   );
   const currentRuntimeEnrolled = currentRuntimeBinding?.status === "ACTIVE";
-
-  const clearBrowserCacheId = useId();
-  const clearAllDataId = useId();
 
   return (
     <div className="settings-shell">
@@ -132,7 +115,7 @@ export function SettingsView(props: SettingsViewProps) {
           onClick={() => setActiveCategory("general")}
         >
           <span className="settings-nav-icon">⚙</span>
-          <span>General &amp; Desktop</span>
+          <span>General</span>
         </button>
         <button
           className={`settings-nav-item ${activeCategory === "workspaces" ? "active" : ""}`}
@@ -140,17 +123,8 @@ export function SettingsView(props: SettingsViewProps) {
           onClick={() => setActiveCategory("workspaces")}
         >
           <span className="settings-nav-icon">📁</span>
-          <span>Workspaces &amp; Roots</span>
+          <span>Workspaces</span>
         </button>
-        <button
-          className={`settings-nav-item ${activeCategory === "coworkers" ? "active" : ""}`}
-          type="button"
-          onClick={() => setActiveCategory("coworkers")}
-        >
-          <span className="settings-nav-icon">👥</span>
-          <span>Coworker Defaults</span>
-        </button>
-
         <div className="settings-sidebar-heading">Capabilities &amp; Tools</div>
         <button
           className={`settings-nav-item ${activeCategory === "agents" ? "active" : ""}`}
@@ -158,49 +132,16 @@ export function SettingsView(props: SettingsViewProps) {
           onClick={() => setActiveCategory("agents")}
         >
           <span className="settings-nav-icon">🤖</span>
-          <span>Agent Harnesses</span>
+          <span>Agents</span>
         </button>
-        <button
-          className={`settings-nav-item ${activeCategory === "browser" ? "active" : ""}`}
-          type="button"
-          onClick={() => setActiveCategory("browser")}
-        >
-          <span className="settings-nav-icon">🌐</span>
-          <span>Browser Use</span>
-        </button>
-        <button
-          className={`settings-nav-item ${activeCategory === "terminal" ? "active" : ""}`}
-          type="button"
-          onClick={() => setActiveCategory("terminal")}
-        >
-          <span className="settings-nav-icon">🖥</span>
-          <span>Terminal &amp; Shell</span>
-        </button>
-        <button
-          className={`settings-nav-item ${activeCategory === "mcp" ? "active" : ""}`}
-          type="button"
-          onClick={() => setActiveCategory("mcp")}
-        >
-          <span className="settings-nav-icon">📦</span>
-          <span>Skills &amp; MCP</span>
-        </button>
-
         <div className="settings-sidebar-heading">System &amp; Trust</div>
-        <button
-          className={`settings-nav-item ${activeCategory === "security" ? "active" : ""}`}
-          type="button"
-          onClick={() => setActiveCategory("security")}
-        >
-          <span className="settings-nav-icon">🔒</span>
-          <span>Permissions &amp; Security</span>
-        </button>
         <button
           className={`settings-nav-item ${activeCategory === "runtime" ? "active" : ""}`}
           type="button"
           onClick={() => setActiveCategory("runtime")}
         >
           <span className="settings-nav-icon">⚡</span>
-          <span>Local Runtime</span>
+          <span>Runtime</span>
         </button>
       </aside>
 
@@ -563,260 +504,14 @@ export function SettingsView(props: SettingsViewProps) {
           {/* ================================================================= */}
           {/* 4. BROWSER USE (ZCode Audit Inspiration §2.2)                     */}
           {/* ================================================================= */}
-          {activeCategory === "browser" && (
-            <>
-              <header className="settings-header">
-                <h1 className="settings-title">Browser Use &amp; Automation</h1>
-                <p className="settings-description">
-                  Manage agent browser capabilities, site isolation, and cache data lifecycle. Governed by <code>CHROME-BROWSER-LLD.md</code>.
-                </p>
-              </header>
-
-              <section className="settings-card">
-                <div className="settings-card-header">
-                  <div>
-                    <h2 className="settings-card-title">Browser Control Capability</h2>
-                    <p className="settings-card-subtitle">Enable or disable agent access to the embedded browser session.</p>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Enable Built-in Browser Control</span>
-                    <span className="settings-row-desc">
-                      Allows authorized agent turns to open web pages, inspect DOM elements, and simulate clicks/navigation within granted origins.
-                    </span>
-                  </div>
-                  <div className="settings-row-action">
-                    <label className="settings-toggle">
-                      <input
-                        type="checkbox"
-                        checked={browserUseEnabled}
-                        onChange={e => setBrowserUseEnabled(e.target.checked)}
-                      />
-                      <span className="settings-toggle-slider" />
-                    </label>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">HTTPS Certificate Verification</span>
-                    <span className="settings-row-desc">
-                      Enforces strict TLS certificate validation. Per LiteCowork security invariants, self-signed or invalid certificates fail closed.
-                    </span>
-                  </div>
-                  <span className="settings-badge success">Enforced (TLS Verified)</span>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Origin Grant Boundary</span>
-                    <span className="settings-row-desc">
-                      Every new external web domain requires explicit user consent before agent dispatch.
-                    </span>
-                  </div>
-                  <span className="settings-badge">Strict Isolation</span>
-                </div>
-              </section>
-
-              <section className="settings-card">
-                <div className="settings-card-header">
-                  <div>
-                    <h2 className="settings-card-title">Browser Data Lifecycle</h2>
-                    <p className="settings-card-subtitle">Manage stored cookies, local site data, and HTTP disk cache.</p>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label" id={clearBrowserCacheId}>Clear Built-in Browser Cache</span>
-                    <span className="settings-row-desc">
-                      Removes HTTP cache, Cache Storage, and service workers while preserving active session cookies and local site data.
-                    </span>
-                  </div>
-                  <div className="settings-row-action">
-                    <button
-                      className="settings-btn"
-                      type="button"
-                      aria-labelledby={clearBrowserCacheId}
-                      onClick={() => setBrowserCacheNotice("Browser cache, service workers, and temporary storage cleared.")}
-                    >
-                      Clear Cache
-                    </button>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label" id={clearAllDataId}>Clear All Browser Data &amp; Cookies</span>
-                    <span className="settings-row-desc">
-                      Destructively deletes all cookies, site data, web credentials, and history. Active authenticated sessions will be closed.
-                    </span>
-                  </div>
-                  <div className="settings-row-action">
-                    <button
-                      className="settings-btn danger"
-                      type="button"
-                      aria-labelledby={clearAllDataId}
-                      onClick={() => setBrowserCacheNotice("All browser data, cookies, and saved sessions permanently removed.")}
-                    >
-                      Clear All Data
-                    </button>
-                  </div>
-                </div>
-                {browserCacheNotice && <p className="settings-badge success">{browserCacheNotice}</p>}
-              </section>
-            </>
-          )}
 
           {/* ================================================================= */}
           {/* 5. TERMINAL & SHELL                                               */}
           {/* ================================================================= */}
-          {activeCategory === "terminal" && (
-            <>
-              <header className="settings-header">
-                <h1 className="settings-title">Terminal &amp; Environment Shell</h1>
-                <p className="settings-description">
-                  Configure the integrated PTY shell environment, working directory resolution, process containment, and command timeouts.
-                </p>
-              </header>
-
-              <section className="settings-card">
-                <div className="settings-card-header">
-                  <div>
-                    <h2 className="settings-card-title">Shell Configuration</h2>
-                    <p className="settings-card-subtitle">Default terminal emulator and execution runtime.</p>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Shell Engine</span>
-                    <span className="settings-row-desc">The primary shell binary used for interactive sessions and agent command dispatch.</span>
-                  </div>
-                  <div className="settings-row-action">
-                    <select
-                      className="settings-select"
-                      value={shellEngine}
-                      onChange={e => setShellEngine(e.target.value as "pwsh" | "cmd" | "bash")}
-                    >
-                      <option value="pwsh">PowerShell Core (pwsh.exe)</option>
-                      <option value="cmd">Windows Command Prompt (cmd.exe)</option>
-                      <option value="bash">WSL / Git Bash (bash.exe)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Working Directory Resolution</span>
-                    <span className="settings-row-desc">Commands always execute inside the authorized Workspace root rather than host user home.</span>
-                  </div>
-                  <span className="settings-badge success">Workspace Root (Enforced)</span>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Process Tree Containment</span>
-                    <span className="settings-row-desc">
-                      Subprocesses spawned by agent attempts are assigned to an OS Job Object to guarantee descendant termination on cancel.
-                    </span>
-                  </div>
-                  <span className="settings-badge success">Windows Job Object Active</span>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Scrollback Buffer Size</span>
-                    <span className="settings-row-desc">Maximum output history lines preserved in the interactive terminal pane.</span>
-                  </div>
-                  <div className="settings-row-action">
-                    <select
-                      className="settings-select"
-                      value={terminalScrollback}
-                      onChange={e => setTerminalScrollback(e.target.value)}
-                    >
-                      <option value="5000">5,000 lines</option>
-                      <option value="10000">10,000 lines</option>
-                      <option value="25000">25,000 lines</option>
-                    </select>
-                  </div>
-                </div>
-              </section>
-            </>
-          )}
 
           {/* ================================================================= */}
           {/* 6. PERMISSIONS & SECURITY (ZCode Audit Inspiration §2.7)          */}
           {/* ================================================================= */}
-          {activeCategory === "security" && (
-            <>
-              <header className="settings-header">
-                <h1 className="settings-title">Permissions &amp; Security</h1>
-                <p className="settings-description">
-                  Manage two-stage consent, command approval rules, and sensitive credential protection. Governed by <code>TRUST.md</code>.
-                </p>
-              </header>
-
-              <section className="settings-card">
-                <div className="settings-card-header">
-                  <div>
-                    <h2 className="settings-card-title">Two-Stage Consent &amp; Approvals</h2>
-                    <p className="settings-card-subtitle">Govern how agent tools and destructive operations are validated.</p>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Command Approval Policy</span>
-                    <span className="settings-row-desc">
-                      Choose whether every terminal execution prompts the user or matches project-approved hashes.
-                    </span>
-                  </div>
-                  <div className="settings-row-action">
-                    <select
-                      className="settings-select"
-                      value={commandApprovalMode}
-                      onChange={e => setCommandApprovalMode(e.target.value as "always_ask" | "allow_project")}
-                    >
-                      <option value="always_ask">Always Ask (Recommended)</option>
-                      <option value="allow_project">Allow Project Commands</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Filesystem Write Guard</span>
-                    <span className="settings-row-desc">
-                      Mutations outside authorized workspace roots are blocked unconditionally.
-                    </span>
-                  </div>
-                  <span className="settings-badge success">Protected</span>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">OS Credential Storage</span>
-                    <span className="settings-row-desc">
-                      Tokens and keys are delegated to the Windows Credential Manager; raw bytes never enter disk logs or SQLite events.
-                    </span>
-                  </div>
-                  <span className="settings-badge success">Windows Credential Store</span>
-                </div>
-              </section>
-
-              <div className="settings-info-box security-note">
-                <span>🔒</span>
-                <div>
-                  <strong>Core Trust Guarantee</strong>
-                  <br />
-                  LiteCowork governs only mediated effects. An agent’s private prompt or native command cannot bypass Core trust boundaries without explicit human acknowledgement in the <strong>Needs You</strong> inbox.
-                </div>
-              </div>
-            </>
-          )}
 
           {/* ================================================================= */}
           {/* 7. LOCAL RUNTIME & DIAGNOSTICS                                    */}
@@ -905,87 +600,10 @@ export function SettingsView(props: SettingsViewProps) {
           {/* ================================================================= */}
           {/* 8. SKILLS & MCP (LITESPM)                                         */}
           {/* ================================================================= */}
-          {activeCategory === "mcp" && (
-            <>
-              <header className="settings-header">
-                <h1 className="settings-title">Skills &amp; MCP (LiteSPM)</h1>
-                <p className="settings-description">
-                  Manage the Model Context Protocol (MCP) servers and reusable procedure skills backed by LiteSPM package manager.
-                </p>
-              </header>
-
-              <section className="settings-card">
-                <div className="settings-card-header">
-                  <div>
-                    <h2 className="settings-card-title">LiteSPM Package Service</h2>
-                    <p className="settings-card-subtitle">Single-user OS package service and inventory bridge.</p>
-                  </div>
-                  <span className="settings-badge success">Service Integrated</span>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Progressive Capability Discovery</span>
-                    <span className="settings-row-desc">
-                      Agents discover only granted skills rather than having all tool schemas dumped into initial prompt context.
-                    </span>
-                  </div>
-                  <span className="settings-badge success">Enabled</span>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Package Mutation Approval</span>
-                    <span className="settings-row-desc">
-                      Agents may request package installations, but cannot self-approve. Human review is strictly required.
-                    </span>
-                  </div>
-                  <span className="settings-badge success">Strict Human Review</span>
-                </div>
-              </section>
-            </>
-          )}
 
           {/* ================================================================= */}
           {/* 9. COWORKER DEFAULTS                                              */}
           {/* ================================================================= */}
-          {activeCategory === "coworkers" && (
-            <>
-              <header className="settings-header">
-                <h1 className="settings-title">Coworker Defaults &amp; Memory</h1>
-                <p className="settings-description">
-                  Manage default assistant personas, scoped memory retention, and responsibility guidelines.
-                </p>
-              </header>
-
-              <section className="settings-card">
-                <div className="settings-card-header">
-                  <div>
-                    <h2 className="settings-card-title">Coworker Identity</h2>
-                    <p className="settings-card-subtitle">Persistent preferences across lead agent and model changes.</p>
-                  </div>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Default Coworker</span>
-                    <span className="settings-row-desc">Assign an initial assistant persona for newly created chats in this workspace.</span>
-                  </div>
-                  <span className="settings-badge">General Coworker</span>
-                </div>
-
-                <div className="settings-row">
-                  <div className="settings-row-info">
-                    <span className="settings-row-label">Scoped Memory Retention</span>
-                    <span className="settings-row-desc">
-                      Memories are workspace-local and require explicit provenance receipts before being referenced in turns.
-                    </span>
-                  </div>
-                  <span className="settings-badge success">Workspace Isolated</span>
-                </div>
-              </section>
-            </>
-          )}
         </div>
       </main>
     </div>

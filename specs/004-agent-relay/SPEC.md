@@ -3,8 +3,8 @@
 **ID:** 004
 **Status:** DRAFT
 **Owners:** Conversation, Agent Runtime, Product
-**Updated:** 2026-11-01
-**Revision:** 0.1
+**Updated:** 2026-11-06
+**Revision:** 0.2
 **Target release:** V1 local desktop
 **Dependencies:** root ARCHITECTURE.md, docs/V1-PRODUCT-RELEASE-CONTRACT.md, docs/IMPLEMENTATION-MASTER-PLAN.md, and the owner documents named in RESEARCH.md. Feature 001 remains the Conversation send authority.
 
@@ -29,7 +29,20 @@ Observable outcome: On one Conversation the owner runs a committed turn on agent
 
 ## 4. Current evidence
 
-This checkout is documentation-first. The behavior below is **TARGET**. Archived source and historical CODE notes are evidence of past work, not SERVED or QUALIFIED status on this tree. No owner has locked this package.
+The active checkout has partial Conversation binding-switching and text-only portable-context infrastructure, but no qualified A→B→A relay. The following is a source/route/UI crosswalk, not owner acceptance or release qualification.
+
+| Capability | Current source evidence | Limitation / release meaning |
+|---|---|---|
+| Per-Conversation agent selection | CODE/SERVED: `PATCH /v1/conversations/{conversationId}/agent-binding`; desktop persists the selected binding for future turns and reports that an already-running session keeps its current agent | This changes the binding used for later turns; it does not prove the selected provider can execute. |
+| Per-turn producer pinning | `conversation.turn.created.v2` pins `agent_binding_id`; the backend message projection carries `agent_binding_id` and `agent_session_id` | The desktop `ConversationMessageView` type omits both fields and `parseConversationSnapshot` reconstructs each message without them; the transcript therefore cannot resolve or render the producing agent. AC-005 is not implemented in the UI. |
+| Portable context package | CODE: `ConversationContextPackage` is derived from committed messages through the exact USER-message event revision; SYSTEM_NOTICE is excluded; prior AGENT messages carry `source_agent_binding_id`; no native session ID/handle is serialized into the prompt | Internal code schema exists, but B-15 remains owner-open; no separately accepted portable-context schema contract. Bounds are 1,024 messages / 4 MiB package and 256 KiB native text prompt. |
+| Native session isolation | CODE: `AgentSessionSupervisor` reserves and activates a fresh Conversation AgentSession per admitted turn; the OpenCode path creates a new native session | Fresh-session behavior is implemented for the one wired provider; no cross-provider relay is qualified. |
+| Provider dispatch | Active supervisor dispatch match supports `provider_key = opencode` only. `CodexAppServer` has a context-aware turn-start method and tests, but its module is used by the Codex profile probe and is not wired into `AgentSessionSupervisor` | No second native adapter. OpenCode's profile probe marks its offer incompatible, so the UI cannot create a new OpenCode binding. Codex can produce a compatible/startable binding but the supervisor returns unsupported for Codex. A→B→A is not possible through the current user flow. |
+| Agent picker and descriptor gate | `ConversationsPage` uses `buildConversationAgentChoices`, which filters by Workspace, `enabled` and `leadEligible`. `conversation-agent-surface.ts` implements descriptor/auth checks but has no production import/call site. | The picker does not gate choices by actual supervisor adapter support or fresh descriptor/auth readiness. A Codex binding can appear selectable despite lacking a Conversation dispatch adapter; the descriptor route itself currently returns 503 (see Feature 002). |
+| Selected Resources | Domain context package carries `resource_refs`, but `encode_conversation_context_prompt` rejects nonempty refs and RESOURCE blocks with `ResourceMaterializationRequired` | No resource materializer is wired into relay. The composer’s “Add context or file” button is inert. Only text-only committed history can reach the native prompt path. |
+| Task separation | Binding selection uses Conversation state/events only; no Task/Attempt/DelegationProfile/Environment/lease is created by changing the Conversation binding | This invariant is reflected in the current route boundary; it does not establish relay availability. |
+
+Code or a passing helper test alone does not qualify the A→B→A user journey. This package remains DRAFT until B-15/B-16 and the exact second adapter are owner-accepted and the cross-provider path is qualified.
 
 ## 5. LOCKED and FLEXIBLE decisions
 
@@ -47,12 +60,13 @@ This checkout is documentation-first. The behavior below is **TARGET**. Archived
 
 ### Open decisions
 
-- Portable context budget and which resource kinds the second adapter accepts.
+- B-15: owner-approved portable context schema, size/retention policy, treatment of CHANNEL content, and the exact allowed Resource/artifact reference kinds. The code currently has internal bounds of 1,024 source messages / 4 MiB for the context package and 256 KiB for native text prompt encoding; these implementation constants do not close the decision.
+- B-16: the second AgentModule identity and exact supported OS/version/auth route. Codex has profile-probe/App Server code but no Conversation supervisor dispatch branch; OpenCode has the only dispatch branch, while its current profile offer is deliberately incompatible for new binding creation.
 
 ### Blockers
 
-- B-15: portable context schema and size bound.
-- B-16: second AgentModule identity, depends on 002.
+- B-15: portable context schema and size/retention policy must be accepted by Conversation and Agent Runtime owners and reflected in canonical contracts before implementation.
+- B-16: a second AgentModule must be selected and qualified under Feature 002, then wired into the Conversation supervisor; no current A→B→A provider pair is available.
 
 ## 6. High-level design
 
@@ -127,7 +141,7 @@ Further gates after ACCEPTED/LOCKED are the cargo filters named in TASKS.md. The
 
 Each blocker has the owners named above. Resolution gate: owner decision recorded in this SPEC before status leaves DRAFT. Implementation tasks: 004-T01, 004-T02, 004-T03, 004-T04.
 
-## 7a. Owner facts incorporated 2026-11-01
+## 7a. Owner facts and implementation crosswalk checked 2026-11-06
 
 Read from DELEGATION, STATE-MACHINES, and CONTEXT.
 
@@ -136,9 +150,13 @@ Read from DELEGATION, STATE-MACHINES, and CONTEXT.
 - enabled=false denies a new Conversation session. lead_eligible=false cannot be the Conversation lead. A disabled binding leaves an already admitted session to ordinary settlement.
 - A stale session option returns AGENT_SESSION_OVERRIDE_UNSUPPORTED or AGENT_NATIVE_CONFIG_CHANGED. Quota exhaustion returns AGENT_QUOTA_EXHAUSTED. Every other unavailable binding returns AGENT_UNAVAILABLE with no substitute.
 - Switching the Conversation binding does not emit task.lead_agent.changed.v1 and does not build a LeadHandoffPacket.
-- Cite setConversationAgentBinding, submitConversationTurn, retryConversationTurn. Events: conversation.agent_binding.changed.v1, conversation.turn.created.v2, agent.session.starting.v1, agent.session.started.v1.
-
-
+- `setConversationAgentBinding` is served; it uses `If-Match` and `Idempotency-Key`, commits `conversation.agent_binding.changed.v1`, and affects future turns only. `submitConversationTurn` and `retryConversationTurn` remain Feature 001 operations; this feature adds no relay-only route.
+- `conversation.turn.created.v2` pins the binding selected for that turn. Conversation message projections include `agent_binding_id` and `agent_session_id`, but the desktop transcript does not currently display a producer label.
+- The active supervisor dispatches only `opencode`. Codex App Server profile-probe code is not a Conversation adapter. Feature 002 marks OpenCode's profile offer incompatible for new binding creation, so there is no current selectable A→B pair.
+- The UI picker filters Workspace, enabled and lead eligibility but not adapter dispatchability or fresh descriptor/auth readiness. The descriptor-aware composer helper is not used in production UI.
+- The context package builder is internal code, not an owner-approved portable-context contract. It carries message source binding identity, excludes SYSTEM_NOTICE and is bounded at 1,024 messages / 4 MiB; native text encoding is bounded at 256 KiB and rejects RESOURCE/nonempty resource refs until materialized.
+- `Add context or file` is a currently inert control. No Resource/Artifact materialization or Context Used receipt is connected to Conversation send.
+- No Task/Attempt/DelegationProfile/Environment/lease/grant or Task lead-handoff event is created by ordinary Conversation agent switching.
 
 ## 19. Requirement traceability
 

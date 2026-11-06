@@ -866,16 +866,21 @@ native child activity or exact usage.
 
 ## External workflow versus delegated worker
 
-An existing deterministic workflow selected through WorkflowBackendAdapter is a
+**Target extension, not currently served:** if a production WorkflowBackendAdapter is
+qualified, an existing deterministic workflow selected through it would be a
 DETERMINISTIC_CAPABILITY option, not a delegated Agent worker. One external workflow run
-does not create a child Attempt for each provider node. The parent Step retains its
+would not create a child Attempt for each provider node. The parent Step would retain its
 acceptance criteria and the workflow Invocation/Effects must reconcile before the Step can
-settle.
+settle. A 2026-11-06 scan found no production adapter implementation in apps/ or crates/.
 
 CAMEL/Eigent decomposition is a reference for bounded parallel work, not authority to bypass
 the accepted PlanRevision/Step rules above. See
 [Reference Implementations](REFERENCE-IMPLEMENTATIONS.md) and
 [Connectors & Workflows](CONNECTORS-WORKFLOWS.md).
+
+## Current source boundary — 2026-11-06
+
+Workspace DelegationProfile CRUD/revision/duplicate/disable/archive, immutable revision history, profile performance projections and per-binding quota observation are exposed through the Agent Settings surface. New profiles are created disabled; ENABLED means eligible for policy selection, not a running worker. The editor's fixed safety defaults are descriptive profile constraints, not proof of a live Trust/Environment boundary. The SQLite child-Attempt admission primitive reads the Coworker-pinned enabled-profile allowlist and delegation budget, but no production daemon/Operator caller invokes child-Attempt admission. No child worker dispatcher or Attempt execution path is available. Coworker delegation_strategy is stored without a production selector consumer; delegation_policy_source is not exposed by the current Coworker mutation schema. See [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md), [SETTINGS-AND-SHELL-SURFACE-AUDIT.md](SETTINGS-AND-SHELL-SURFACE-AUDIT.md) and Feature 009 for the cross-owner/UI mapping.
 
 ## V1 detailed design integration — 2026-10-12
 

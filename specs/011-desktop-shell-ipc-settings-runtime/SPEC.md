@@ -1,10 +1,12 @@
+[Reading 162 lines from start (total: 162 lines, 0 remaining)]
+
 # 011 - Desktop Shell IPC Settings and Runtime Health
 
 **ID:** 011
 **Status:** DRAFT
 **Owners:** Runtime, Operator IPC, Desktop UI, Product
-**Updated:** 2026-11-01
-**Revision:** 0.1
+**Updated:** 2026-11-06
+**Revision:** 0.2
 **Target release:** V1 local desktop
 **Dependencies:** root ARCHITECTURE.md, docs/V1-PRODUCT-RELEASE-CONTRACT.md, docs/IMPLEMENTATION-MASTER-PLAN.md, and the owner documents named in RESEARCH.md. Feature 001 remains the Conversation send authority.
 
@@ -30,7 +32,11 @@ Observable outcome: The owner launches the desktop, reaches a real local Runtime
 
 ## 4. Current evidence
 
-This checkout is documentation-first. The behavior below is **TARGET**. Archived source and historical CODE notes are evidence of past work, not SERVED or QUALIFIED status on this tree. No owner has locked this package.
+The active source tree is present in apps/ and crates/. The behavior below is the normative feature target; source, served-route and UI evidence for this checkout is recorded in docs/IMPLEMENTATION-STATUS.md and docs/SETTINGS-AND-SHELL-SURFACE-AUDIT.md. Code or a route alone does not qualify the feature. This package remains DRAFT until its named owners accept the decisions and supporting contracts.
+
+### Current source crosswalk — 2026-11-06
+
+The active App.tsx Settings route mounts `SettingsView.tsx`, with four visible categories only: General, Workspaces, Agents and Runtime. The 16-category IA later in this SPEC is the V1 target, not current navigation. The mounted view currently exposes Workspace selection/refresh/create, immutable Workspace instruction revision editing, archive, bounded Agent catalogue/profile probes and binding operations, and Runtime start/refresh/lifecycle observation. It does not expose WorkspaceRoot management, Workspace rename/policy mutation, Runtime enrollment, Runtime stop/drain or startup-policy mutation. General appearance controls are ephemeral component state and do not apply/persist preferences; the source comment claiming localStorage persistence is inaccurate. Shortcut labels are not wired to key handlers. There is no Settings search or responsive category drawer in the active component. The Workspaces & Roots heading overstates the visible operations; the panel shows replication policy read-only and does not expose roots or policy changes. The Agents heading mentions OpenCode, Codex, Claude Code and Gemini, but active probes are only Codex and OpenCode; the 15 curated candidates/ACP distributions are catalogue metadata, not detected/installed/turn-capable agents. The alternate exported `SettingsPage` in App.tsx is unmounted. Earlier nine-category and Browser/cache/TLS/Shell Engine/approval/Credential Store claims are stale; Browser/Terminal are Workbench surfaces owned by Feature 008. The current UI's “Connected (Localhost)” copy is inaccurate for OS-local socket/named-pipe IPC. The mounted component also fails to render Runtime error/loading props, Workspace-create pending-journal retry state and Workspace-instruction conflict recovery controls that are passed into it. App bootstrap separately attempts auto-start when no daemon process is running and the daemon executable is available. See the source audit for exact controls and limitations.
 
 ## 5. LOCKED and FLEXIBLE decisions
 
@@ -160,3 +166,56 @@ Read from LOCAL-OPERATOR-IPC and RUNTIME-LIFECYCLE.
 | AC-006 | EARS acceptance | canonical owner docs cited in this SPEC | 011-T03 | AC-006 |
 | AC-007 | EARS acceptance | canonical owner docs cited in this SPEC | 011-T04 | AC-007 |
 | AC-008 | EARS acceptance | canonical owner docs cited in this SPEC | 011-T04 | AC-008 |
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]
+## V1 Settings screen map and control behavior — 2026-11-06
+
+Feature 011 owns the shell/navigation and Settings host. Each category continues to defer to its existing domain owner and [V1 Settings Per-Control Authority Ledger](../../docs/V1-SETTINGS-CONTRACT-LEDGER.md). This section selects the V1 information architecture and makes explicit that the target categories do not mean all underlying controls are served.
+
+### Shell layout
+Persistent category navigation on the left, focused content panel on the right. Compact Settings heading and local search at top. Categories are grouped, not rendered as dozens of top-level tabs. Category selection preserves Workspace/Runtime scope and search query. Narrow windows use a focus-managed category drawer and detail back navigation. Local category layout/search preferences do not persist grants, credentials, auth or active process handles.
+
+### V1 categories in order
+1. General — appearance, language, density, text scale, reduced motion, keyboard shortcuts.
+2. Notifications — sound, OS notification delivery, quiet hours, local preview.
+3. Workspaces — selection, create, rename, roots, instructions, archive, default lead.
+4. Agents — Catalog, Installed, Profiles, Workspace bindings/defaults, Usage shortcut.
+5. Connections & Tools — Discover/LiteSPM package lifecycle and Connections only where their owner operations are qualified.
+6. Local Models — Runtime-specific local-server observation and exact AgentModule compatibility; no global model router.
+7. Coworkers & Subagents — Coworker defaults/delegation, worker profiles, concurrency and budget settings under their owners.
+8. Runtime — daemon health, readiness, startup policy, recovery, active environments.
+9. Terminal — shell profiles, terminal preferences, retention and health; no interactive service controls unless daemon-owned PTY is qualified.
+10. Browser & Computer — managed profiles/permissions/session and OS control only when a real qualified provider exists.
+11. Memory & Knowledge — scoped sources, memory policies and revocation only when memory/context owner operations exist.
+12. Security & Privacy — grants, secret presence, egress, retention, revocation.
+13. Storage & Backup — usage report, safe cleanup preview, backup/export/import/restore.
+14. Usage & Monitoring — usage summaries/drilldown, quota observations, latency/failure and source coverage.
+15. Advanced — OS keep-awake assertions, restart/recovery policy and advanced diagnostics.
+16. About & Diagnostics — version/build, redacted logs, provider diagnostics, support docs/bundle.
+
+Search searches settings labels/help and only the currently available configuration surface. It must not expose secrets or let a text match enable an unavailable control. Every setting row shows its scope (Global, Workspace, Coworker, AgentBinding, Runtime or local OS) and whether saved state is local, native-observed, Operator-committed, read-only or unavailable.
+
+### Notifications tab
+Use four mutually exclusive delivery combinations: Sound + notification; Sound only; Notification only; Neither. Quiet hours show explicit timezone and selected notification classes. "Try it" plays a local sound preview and may request an OS notification only if the OS notification provider is implemented; its result reports each channel separately. Notification delivery queue is not Needs You: Needs You reflects unresolved actionable UserRequests/approvals, not all unseen notifications. No "Off" summary may hide which channel is disabled.
+
+Buttons: select each delivery combination; edit quiet-hours start/end and timezone; choose supported classes; Try it; Reset to defaults. Each is LOCAL_PREF unless an OS notification delivery operation is explicitly owned and served. Preview never creates a domain event or external delivery receipt.
+
+### Advanced tab
+Keep-awake choices: Off; While agents/work run (including battery); While agents/work run on power only. These require native OS power assertions and must expose unsupported/unavailable state per OS; do not infer behavior from a selected radio option. "Resume agents after restart" is not generic process resurrection: it applies only to LiteCowork-owned jobs with durable admission and a qualified recovery contract. It does not restore arbitrary third-party native CLI TTY/session state. Runtime startup policy (MANUAL, LOGIN_BACKGROUND, ALWAYS_ON_SERVICE) is independent from resume policy. Any control affecting active work must show the effective boundary, pending/restart-required status and what it cannot resume.
+
+Buttons: keep-awake option, resume admitted jobs toggle, Inspect recovery, Start runtime/refresh status where served, Preview stop/drain, Stop safely only when lifecycle owner admits. No hardcoded checkmarks or locally flipped "On" state for OS/Runtime actions.
+
+### Agents tab
+See Feature 002's full Agent catalog/profile contract. Settings shows a searchable catalogue and independent lifecycle chips; installed agents and available distributions are separate lists; selected item opens a profile with Overview, Installation, Authentication, Capabilities, Workspace bindings and Diagnostics. No global "Provider" page or generic model dropdown. Native account/login/model configuration is harness-owned; LiteCowork records redacted observations and scoped binding/default choices.
+
+### Usage & Monitoring tab
+Use the canonical telemetry LLD. The top-level quick ranges are Today, Last 7 days, Last 1 month, Last 3 months, Last 1 year and All time; YTD and Custom are expanded options. Primary filters include agent/harness, model, provider, AgentBinding, Coworker, Conversation/session, Task, Attempt, lead/subagent, Runtime, source/confidence and outcome. Grouping supports day/session/Coworker/Task/agent/model/provider. Scope defaults to selected Workspace; all-workspace totals require explicit scope.
+
+Display requests and input/output/cached tokens with coverage; estimated list-price equivalent separate from provider-billed amount; currency partitions; quota snapshots and reset windows only where reported; latency/failure and source coverage. Detail table opens to leaf inference records and provenance, never prompt/response text. Refresh is a read operation. Export is a user-initiated bounded, redacted local file. No billing account management, price editing, budget enforcement or quota reset is implied.
+
+The canonical telemetry LLD owns the data model and explicitly states that current dashboard projections are target-only. Therefore V1 Settings must show an honest unavailable/empty-with-coverage message until the complete Operator + SQLite + schema + UI projection exists. Missing usage is UNKNOWN, never zero. Provider-reported/billed, native/gateway reported, tokenizer estimate and unknown remain distinguished. Flat-plan included use is not $0 API spend.
+
+### Other Settings controls
+Every row/action remains subject to the per-control ledger. Appearance and layout controls may be local preferences. Workspace operations are versioned Operator mutations. Profile/binding actions use Feature 002. Connection install/use uses LiteSPM and Trust. Runtime actions use Runtime lifecycle. Keep-awake uses OS integration. Terminal actions require TerminalSessionService. Browser/Computer settings require qualified native providers. Storage cleanup and restore require preview + exact impact + version/receipt. Diagnostics are scoped reads or explicit redacted exports.
+
+Do not surface all target controls in V1 as active UI. A control with no served operation is absent or visibly unavailable with a concrete missing prerequisite; no fake toggle, inert ellipsis menu, success toast before receipt, or state derived from a click.

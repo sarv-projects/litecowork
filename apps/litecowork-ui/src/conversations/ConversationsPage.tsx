@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
 import type { PresentationStreamState, TransientTurn } from "../presentation/presentation-stream";
-import { appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
+import { appendConversationListPage, appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
 import { buildConversationAgentChoices, type ConversationAgentBindingOption, type ConversationAgentProfileOption } from "./conversation-agent-selection";
 import "./conversations-page.css";
@@ -145,6 +145,8 @@ export function ConversationsPage({
   selectedConversationId: externalSelectedId = null,
   onSelectConversation,
   onConversationsLoaded,
+  onRegisterLoadMoreConversations,
+  onConversationListPaginationChange,
   onToggleWorkbench,
   workbenchOpen = false,
 }: {
@@ -158,11 +160,14 @@ export function ConversationsPage({
   selectedConversationId?: string | null;
   onSelectConversation?: (id: string | null) => void;
   onConversationsLoaded?: (items: ConversationSummary[]) => void;
+  onRegisterLoadMoreConversations?: (handler: (() => void) | null) => void;
+  onConversationListPaginationChange?: (workspaceId: string, hasMore: boolean, loading: boolean) => void;
   onToggleWorkbench?: () => void;
   workbenchOpen?: boolean;
 }) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
-  const [, setListCursor] = useState<string | null>(null);
+  const [listCursor, setListCursor] = useState<string | null>(null);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedConversationId = useRef<string | null>(selectedId);
@@ -180,7 +185,7 @@ export function ConversationsPage({
   const [busy, setBusy] = useState(false);
   const [_listStatus, setListStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
   const [createJournalStatus, setCreateJournalStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
-  const [createJournalAttempt, _setCreateJournalAttempt] = useState(0);
+  const [createJournalAttempt, setCreateJournalAttempt] = useState(0);
   const [, setPendingCreateRequests] = useState<PendingConversationCreate[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -278,11 +283,13 @@ export function ConversationsPage({
   const refresh = useCallback(async (preserveCurrent = false) => {
     const current = requests.current.beginList();
     activeListEpoch.current = current;
+    setLoadingMoreConversations(false);
     if (!operatorReady || !workspaceId) {
       setBusy(false);
       if (!workspaceId) {
         setItems([]);
         setListCursor(null);
+        setLoadingMoreConversations(false);
         setSnapshot(null);
         setSnapshotLoadedKey(null);
         setSelectedId(null);
@@ -305,6 +312,7 @@ export function ConversationsPage({
       setItems(page.items);
       onConversationsLoaded?.(page.items);
       setListCursor(page.next_cursor);
+      setLoadingMoreConversations(false);
       if (!externalSelectedId) {
         setSelectedId(page.items[0]?.conversation_id ?? null);
       }
@@ -316,6 +324,45 @@ export function ConversationsPage({
       }
     } finally { if (activeWorkspace.current === workspaceId && requests.current.isCurrentList(current)) setBusy(false); }
   }, [operatorReady, workspaceId]);
+
+  const loadMoreConversations = useCallback(async () => {
+    const cursor = listCursor;
+    const current = activeListEpoch.current;
+    if (!cursor || !operatorReady || loadingMoreConversations || current === null
+      || !requests.current.isCurrentList(current)) return;
+
+    const requestWorkspaceId = workspaceId;
+    setLoadingMoreConversations(true);
+    try {
+      const value = await invoke<unknown>("list_conversations", { workspaceId: requestWorkspaceId, cursor });
+      if (activeWorkspace.current !== requestWorkspaceId || !requests.current.isCurrentList(current)) return;
+      const page = parseConversationListPage(value, requestWorkspaceId);
+      if (page.next_cursor === cursor) {
+        throw new Error("Conversation list did not advance its pagination cursor.");
+      }
+      const merged = appendConversationListPage({ items, next_cursor: cursor }, page);
+      setItems(merged.items);
+      onConversationsLoaded?.(merged.items);
+      setListCursor(page.next_cursor);
+    } catch (cause) {
+      if (activeWorkspace.current === requestWorkspaceId && requests.current.isCurrentList(current)) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    } finally {
+      if (activeWorkspace.current === requestWorkspaceId && requests.current.isCurrentList(current)) {
+        setLoadingMoreConversations(false);
+      }
+    }
+  }, [items, listCursor, loadingMoreConversations, onConversationsLoaded, operatorReady, workspaceId]);
+
+  useEffect(() => {
+    onRegisterLoadMoreConversations?.(loadMoreConversations);
+    return () => onRegisterLoadMoreConversations?.(null);
+  }, [loadMoreConversations, onRegisterLoadMoreConversations]);
+
+  useEffect(() => {
+    onConversationListPaginationChange?.(workspaceId, listCursor !== null, loadingMoreConversations);
+  }, [listCursor, loadingMoreConversations, onConversationListPaginationChange, workspaceId]);
 
   useEffect(() => {
     const reconnecting = !previousOperatorReady.current && operatorReady;
@@ -767,6 +814,23 @@ export function ConversationsPage({
           </button>
         </div>
       </header>
+
+      {createJournalStatus === "FAILED" && (
+        <div className="conversation-create-journal-error" role="alert">
+          <p>Pending Conversation requests could not be checked. New Chat is paused to avoid duplicating an uncertain create request.</p>
+          <button
+            className="quiet-button"
+            type="button"
+            disabled={!operatorReady}
+            onClick={() => {
+              setCreateJournalStatus("LOADING");
+              setCreateJournalAttempt(current => current + 1);
+            }}
+          >
+            Retry checking pending Conversation requests
+          </button>
+        </div>
+      )}
 
       {/* Main Conversation Canvas */}
       <div className="conversation-stream-container" ref={streamContainerRef}>

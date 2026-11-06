@@ -6,10 +6,22 @@ Identities and lifecycles stay in the canonical owner documents. This file lists
 
 ## Records
 
-- Coworker id and revision.
-- Scoped ContextDocument.
-- Conversation coworker origin.
-- Purge tombstone without payload bytes.
+### Present in the current source tree
+
+- Coworker head and immutable CoworkerRevision, including the persisted CoworkerDefinition and CoworkerContextPolicy JSON.
+- Workspace `primary_coworker_id`.
+- Task `origin_coworker_id` and `origin_coworker_revision` pins.
+- Resource-owned ContextDocument metadata/status and local purge-plan/receipt state for the currently accepted owner scopes (Personal Profile and Workspace Notes).
+- Conversation ID, Workspace ID, title, active AgentBinding/session, version and timestamps. The current Conversation record has no Coworker origin/revision.
+
+### Target records, not currently persisted as Coworker-scoped records
+
+- Coworker-owned ContextDocument / Coworker-private MemoryRecord metadata and the Resource revision/body that it references.
+- Immutable Coworker origin on a Coworker-owned Conversation.
+- LearningCandidate and CoworkerLearningPolicy revision records. The deterministic Rust types in `storage-core` are not SQLite records or a storage contract.
+- A Coworker-scoped retrieval/ContextAttachment receipt linking the actual Coworker context to a specific Conversation turn or Task packet.
+
+The generic ContextDocument schema names PERSONAL_PROFILE, COWORKER_NOTES, WORKSPACE_NOTES and GOAL_NOTES. Current domain creation validation accepts only the first and third kinds with the corresponding USER and WORKSPACE owner_ref; it rejects Coworker and Goal ownership. Do not model a Coworker ContextDocument as present merely because an enum, Settings option or target record is defined.
 
 ## Relations
 
@@ -29,4 +41,4 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 
 ## Migration
 
-None in this revision. Blockers in SPEC section 5 must be closed before a migration is designed.
+None in this DRAFT revision. No LearningCandidate/MemoryRecord migration or Coworker-owned ContextDocument table exists. Blockers in SPEC §5 must be closed before a migration is designed; any accepted owner-scoped records must be added through the canonical Resource/Coworker/Conversation owners rather than a second memory database.

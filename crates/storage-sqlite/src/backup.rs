@@ -2385,35 +2385,37 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_backup_leaves_no_usable_archive() {
+    fn a_failed_backup_leaves_no_usable_archive_or_staging_area() {
         let installation = install();
         create_workspace(&installation.store);
         let service = LocalBackupService::new(installation._directory.path());
         let backup_directory = installation._directory.path().join("backups");
-        fs::create_dir_all(&backup_directory).expect("create the backup directory");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&backup_directory, fs::Permissions::from_mode(0o500))
-                .expect("make the backup directory read only");
-        }
-        let result = service.create_backup(&FixedKeys, &request("unwritable"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&backup_directory, fs::Permissions::from_mode(0o700))
-                .expect("restore the backup directory permissions");
-        }
-        assert!(result.is_err(), "an unwritable backup directory fails");
+        let mut failed_request = request("failed-container");
+        // Force container-key derivation to fail after the database snapshot and
+        // referenced blobs have been staged. This is deterministic on every OS and
+        // still exercises the failure cleanup path without relying on Unix chmod.
+        failed_request.passphrase = BackupPassphrase::new("");
+        let result = service.create_backup(&FixedKeys, &failed_request);
+
         assert!(
-            !backup_directory.join("unwritable.lcbbackup").exists(),
-            "a failed backup leaves no archive"
+            result.is_err(),
+            "an invalid container passphrase fails backup creation"
+        );
+        assert!(
+            !backup_directory.join("failed-container.lcbbackup").exists(),
+            "a failed backup leaves no published archive"
+        );
+        assert!(
+            !backup_directory
+                .join("failed-container.lcbbackup.partial")
+                .exists(),
+            "a failed backup leaves no partial archive"
         );
         assert!(
             !installation
                 ._directory
                 .path()
-                .join(".backup-staging-unwritable")
+                .join(".backup-staging-failed-container")
                 .exists(),
             "a failed backup leaves no staging area"
         );

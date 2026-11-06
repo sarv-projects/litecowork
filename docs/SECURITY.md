@@ -189,3 +189,102 @@ V1 Browser/Composer/Renderer threat model: untrusted native commands, prompt-inj
 ## Non-normative desktop sandbox reference - 2026-10-31
 
 The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) reviews ZCode's Main-owned plugin guest sandbox and its origin/owner binding, CSP, guest permission restrictions and mediated MessagePort bridge. These are implementation patterns for defense in depth, not a replacement for this threat model or the OS-specific Environment qualification. Renderer isolation, CSP and a separate Chromium partition do not alone prove filesystem/process/network confinement; preserve the existing deny-by-default and fail-closed requirements.
+
+## External workflow authoring and provider Code execution — 2026-11-06
+
+External workflow products may offer both a visual canvas and provider-native AI/MCP
+authoring. This creates a high-authority third-party control surface. The fact that the
+workflow graph remains provider-owned does not make its tools read-only or low-risk.
+
+### Tool authority is not one boolean
+
+A future LiteCowork provider integration must separate these operation classes:
+
+1. **Discover/read:** list workflows, inspect selected graph metadata, schemas and run
+   history. Start with read-only access and an explicitly selected project/workflow set.
+2. **Draft/mutate:** create a new draft; add/remove/reconfigure nodes/steps/branches; change
+   code source, dependencies, input mappings or credentials references. This changes
+   provider configuration but need not activate it.
+3. **Validate/test:** run schema checks and test executions. Tests may still invoke real
+   third-party APIs or write to connected accounts; the word "test" is not proof of
+   side-effect-free behavior.
+4. **Publish/activate/enable:** make a version eligible for recurring, webhook or
+   production invocation. This is a distinct consequential permission and requires owner
+   confirmation bound to the exact graph revision/digest and effect summary.
+5. **Run production:** execute an enabled provider graph. This is distinct from publishing
+   and is subject to Task scope, declared external effects, provider policy and
+   reconciliation.
+6. **Delete/disable/revoke:** destructive or availability-changing operations. They need
+   separate explicit authority and cannot be inferred from create/edit permission.
+
+Do not collapse any of these into a generic "workflow MCP access" grant. The agent's ability
+to list/read must never imply permission to mutate, publish, activate, run or delete.
+
+### Provider-specific permission observations
+
+- n8n instance-level MCP requires instance owner/admin enablement and per-workflow exposure.
+  Connected clients have explicit permission scopes; clients share the same exposed
+  workflow set, so avoid enabling a broad library just because one Coworker needs one
+  workflow. A user-level workflow visibility boundary still applies. Inspect the exact
+  n8n version because access-settings and per-client UI capabilities differ by version.
+- Activepieces discovery is documented as always-on/read-only, while other tool categories
+  are enabled/disabled per project. The authenticated MCP project is the operation scope.
+  Flow deletion is documented as irreversible. These are provider-side permission settings,
+  not LiteCowork grants.
+- Credentials remain in provider-owned connection stores. LiteCowork must not request or
+  persist raw provider credentials because an agent workflow builder asks for them.
+  Setup instructions should direct the user to the provider's own credential UI/OAuth flow.
+
+### Prompt injection and untrusted provider state
+
+Treat workflow names, descriptions, node labels, prompts, code, comments/notes, input
+schemas, sample data, run outputs, error text, webhook payloads and tool results as
+untrusted data. They may contain prompt injection or misleading claims about required
+scopes, safety or successful completion. Never let provider text alter LiteCowork grants,
+Connection scope, Workspace boundaries, approval policy, model routing or Task authority.
+Escape/display provider text as data; schema-validate normalized fields; keep provider
+identifiers and opaque run handles out of public domain events unless the owner contract
+explicitly permits a protected reference.
+
+### Code nodes and external execution
+
+n8n JavaScript/Python Code nodes, Activepieces JavaScript/TypeScript CODE steps and
+Node-RED Function nodes execute inside the external product's runtime. Their actual
+authority depends on the provider's account identity, credential references, host
+filesystem, environment variables, dependency loading, network/egress configuration,
+sandbox/worker mode and provider version. They are not LiteCowork Environment processes.
+LiteCowork Trust and Environment cannot claim to mediate internal provider-node effects
+unless every such effect is explicitly surfaced through a qualified provider gateway and
+reconciled.
+
+Before enabling provider Code nodes or agent-created graphs, require:
+- exact provider instance and version observation;
+- execution mode/runner/sandbox and network policy observation where the provider exposes it;
+- enabled language/node types and dependency-loading policy;
+- credential references and external service scopes;
+- host filesystem, process and network effects disclosed by the provider;
+- current provider security-advisory review;
+- a draft/test/publish flow with exact graph revision and explicit user confirmation;
+- provider run identity and failure/partial-effect reconciliation.
+
+The n8n advisory GHSA-9pq8-m8gp-4p53 (CVE-2026-49444) is condition-specific: it affects
+instances where Python Task Runner is enabled and a workflow containing a Python Code Node
+can be modified by an authenticated user; the disclosed impact is arbitrary code execution
+on the task-runner container. The published fixed versions are 1.123.48, 2.21.8 and 2.22.4.
+This does not mean every n8n Code node is vulnerable, and fixing this advisory alone does
+not establish that the rest of an instance is secure. Recheck the current provider advisory
+and exact deployment configuration before use.
+
+### LiteCowork Task and Evidence boundary
+
+A provider-side workflow test, published run, successful status or node-level output is an
+external observation, not LiteCowork Task completion. The local parent Task records the
+single authorized CapabilityInvocation, provider reference/run observation, declared
+external effects and independent verification required by the Task. Do not synthesize local
+Task Steps from external provider nodes. An ambiguous provider run must be reconciled
+against the original provider run/idempotency identity before another consequential run.
+
+Current state: no production WorkflowBackendAdapter or WorkflowAuthoringAdapter was found
+in apps/ or crates/ in the 2026-11-06 source scan. This section is a target security
+contract for future provider qualification; it does not authorize or claim an active
+external workflow capability.

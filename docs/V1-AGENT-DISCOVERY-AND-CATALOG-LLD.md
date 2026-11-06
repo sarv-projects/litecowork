@@ -1,3 +1,5 @@
+[Reading 114 lines from start (total: 114 lines, 0 remaining)]
+
 # V1 Agent Discovery, Detection, Status Cards, Icons and Setup LLD
 
 Status: normative target, complementary to AGENT-CONTROL and AGENT-FABRIC; no claim all agent binaries are currently probed. The native AgentModule/AgentLifecycleAdapter owns probes and authenticated capabilities. ACP Registry is distribution metadata only, never trusted executable authority. LiteSPM owns its own integration catalog. An agent able to consume a gateway is not necessarily ACP-spawnable or a supported LiteCowork native adapter.
@@ -62,6 +64,40 @@ type AgentCatalogProjection = {
 
 Mapping example: DETECTED + INSTALLED + UNCONFIGURED + SIGN_IN_REQUIRED + NOT_TESTED displays "Detected · Needs setup" (NOT "Ready"). MISSING+NOT_DETECTED displays "Not detected · Install guide". UPDATED version with stale descriptor is "Rechecking", never "Current ready". A working model catalog from gateway cannot imply a native agent binary is installed.
 
+## Provider-specific model picker and effort selection — 2026-11-06
+
+Reference reviewed: nightly-labs/openbot@6759fa3ee857f4f4966865e12de99ae84ab6de07 (package 0.62.0). Files: `packages/ui/src/features/conversation/AgentSettingsPanel.tsx`, `ProviderModelPicker`, provider-account helpers, `src/backend/provider-drivers.ts`, `provider-runtime.ts`, `agent/provider-models.ts`, and Tasks composer model/agent selection. The visible picker is attached to a selected Agent profile/account. It is not a global model router. The README labels this a development preview and documents danger-full-access/approvalPolicy-never behavior; package.json declares PolyForm Noncommercial 1.0.0. Study UX only; no source or permission model is copied. See [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).
+
+### LiteCowork V1 picker behavior
+
+- The Conversation composer header presents the selected Agent/AgentBinding and the currently selected model as one compact trigger; effort is a secondary compact control only when the provider exposes it.
+- Opening the trigger shows a compact profile/account header (provider identity, installed version/runtime and profile/account label), a searchable list of models discovered for that exact native profile/account, a selected checkmark, and an optional provider-declared default label.
+- If the catalog is long, the list is scrollable with stable grouping/search. Do not show models from another provider/account or stale profile. Provider-owned labels/icons may be used only from reviewed local assets.
+- The bottom row exposes Effort/Reasoning only if the fresh descriptor defines a nonempty enumeration for that selected model or profile. Render exact supported values/labels (for example Low/Medium/High only when the descriptor returns them); do not invent a generic enum.
+- Provider-specific additional options (fast mode, service tier, approval mode, context window, image setting) are separate rows only when declared by the exact descriptor and owned by the module. Advanced options remain inside a collapsed/secondary area, not mixed into the model radio list.
+- Switching model or effort updates the current draft selection with a descriptor revision and applies to the next admission/new session only. It does not mutate an already-running Conversation/Attempt or silently rewrite the native CLI's account-wide config.
+- A model may belong to a different provider account/profile only if that change is an explicit, separately rendered account switch supported by the module and the owner approves its impact. No cross-provider implicit switch.
+
+### Model/effort state contract
+
+Each option is `{optionId, displayName, providerModelId, modelFamily?, availability, supportsEffort, allowedEfforts[], defaultEffort?, capabilities[], descriptorRevision, observedAt}`. UI identity is optionId; providerModelId is preserved exactly for the adapter. The provider module validates it again at admission. `availability` is AVAILABLE, UNAVAILABLE, UNKNOWN or STALE. A stale descriptor disables selection and offers Refresh; a provider outage preserves the last committed choice but marks the list stale.
+
+Model discovery is read-only metadata except where the exact provider requires a qualified list request. If model list is expensive, rate-limited or billable, disclose before probing and cache with source/age. Do not infer support from model names. Hidden/deprecated models and provider plan entitlements are not shown as selectable without authoritative module evidence.
+
+Selecting a model is a versioned Workspace AgentBinding preference for future work; provider-account/model-native defaults stay provider-owned. A descriptor revision change invalidates an uncommitted stale option and requires refresh/reselection. The composer preserves typed text and attachments across refresh/conflict.
+
+### Tasks composer agent picker
+
+Keep Task agent selection distinct from ordinary Conversation Agent/model selection. A Task requires one eligible Coworker/lead binding under Feature 005; user selects a Coworker/AgentBinding for a new Task. If that binding supports one or more model options, model/effort is a nested secondary option after selecting the agent. Persist the choice against the exact admission snapshot. Do not store the Task agent choice only in localStorage as authority. A local convenience default may preselect, but server-side admission validates the current enabled binding, descriptor, grant and Workspace.
+
+### UI density and interaction
+
+Copy the reference's compact popover rather than a large modal: provider rail/selector only when the user has multiple profiles, search input, list with single-line model names, selected check, small default marker, and bottom effort row. The popover anchors to the composer trigger, has keyboard search/focus, arrow/enter/escape, scroll containment and screen-reader selected/disabled states. Avoid duplicate provider icons, verbose model descriptions in the list or showing every provider in a horizontal tab row.
+
+### Current implementation boundary
+
+Current Feature 002 has Codex/OpenCode profile probe observations, but the ControlDescriptor read/refresh endpoints return 503. Therefore model/effort picker and descriptor-bound options are still target-only. Current Codex binding can exist without the current supervisor dispatching Codex; OpenCode is marked incompatible by its profile probe. Do not render model/effort controls as active until a compatible exact adapter, fresh descriptor and Conversation/Task send path are qualified.
+
 ## Logo, icon and name policy
 
 Each trusted module provides optional official logo asset identity with shipped/offline bundled vector/PNG from reviewed license and upstream attribution. Version/mode/badges are text, not color-only. Never load arbitrary remote SVG from metadata into privileged WebView or allow SVG script/external URI. Sanitize static local assets and their filenames; use initials or neutral terminal icon when official brand logo cannot be redistributed. The registry record may provide a safe link to official homepage but no inferred endorsement. Icon set and display text are reviewed on upgrade, no fetching favicons during every render. High contrast, reduced motion, accessible labels and correct icon per agent required.
@@ -112,3 +148,5 @@ Tests: PATH + npm/nvm/pipx/uv/winget/brew + standalone binary detection; Windows
 ## External reference and use boundary
 
 OmniRoute reference: https://github.com/ourines/omniroute/blob/main/docs/reference/CLI-TOOLS.md — its batch status includes installed/runnable, config status and per-tool error with cached multi-tool detection. See also https://github.com/ourines/omniroute/blob/main/docs/guides/CLI-INTEGRATIONS.md . Borrow the detection/state-card pattern only. A CLI consuming OmniRoute is not identical to a native agent that LiteCowork can manage/spawn through Agent Fabric. ACP Registry remains metadata; registered LiteCowork AgentModule defines safe execution authority.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]

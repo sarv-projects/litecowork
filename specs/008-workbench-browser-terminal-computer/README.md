@@ -1,7 +1,7 @@
 # 008 - Workbench Browser Terminal and Computer
 
 **Status:** DRAFT - review required; does not authorize implementation.
-**Revision:** 0.1 | **Updated:** 2026-11-01
+**Revision:** 0.3 | **Updated:** 2026-11-06
 **Owners to approve:** Desktop shell, Environments, Browser provider, Trust, Desktop UI.
 
 ## User outcome
@@ -10,7 +10,7 @@ The owner uses the right Workbench to finish real browser and terminal work, tak
 
 ## Current truth
 
-Global owner documents are the interim design authority. This package binds a V1 slice to those documents. The active checkout has no implementation to mark SERVED. Archived source is historical.
+The active Workbench Files pane is a Resource projection/preview, not a live filesystem. Browser is a sandboxed iframe preview, not Chrome or a browser-control provider. Terminal launches no process or IPC: built-in commands print samples and arbitrary commands display a fabricated successful exit code while the UI claims ConPTY/Job Object containment. Diffs are synthetic; Activity has no rendered branch; Computer capture/input is unavailable. No BrowserSession, PTY or Computer route/provider exists. The terminal's fabricated-success and containment claims are a UI truthfulness defect to remove, not a capability to qualify by documentation. This package remains DRAFT.
 
 ## Package
 

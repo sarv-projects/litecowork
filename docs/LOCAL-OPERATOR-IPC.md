@@ -5,15 +5,19 @@ process and the local `litecoworkd` Runtime. It is a transport adapter for the l
 Operator operations in `API.md`; it does not change their authorization, idempotency,
 Workspace scoping, or response semantics.
 
-## Implementation status (2026-10-10)
+## Implementation status (source checked 2026-11-06)
 
 The daemon and Tauri source share bounded framed IPC dispatch on Linux/macOS and Windows.
-Unix continues to compare kernel peer credentials with the validated installation
-binding. Windows has a native local named-pipe adapter whose protected DACL grants the current
-logon SID and SYSTEM, rejects remote clients, and is installed before frame parsing; the
-Runtime persists a keyed logon-SID binding. Both platform adapters feed the same Axum
-handlers, authorization middleware, response allowlist, body budget, and bounded drain.
-The Tauri bearer/loopback descriptor client has been removed. 
+Unix compares kernel peer credentials with the validated installation binding. Its endpoint
+requires an owner-only (`0700`) data directory and owner-only (`0600`) socket, validates
+socket ownership/identity, rejects unsafe stale paths and checks the peer UID before frame
+processing. Windows creates a local named pipe with a protected DACL for the current logon
+SID and SYSTEM, rejects remote clients, and installs the ACL before frame parsing; the
+Runtime persists a keyed logon-SID binding. Both adapters feed the same Axum handlers,
+authorization middleware, response allowlist, body budget and bounded drain. The Tauri
+bearer/loopback descriptor client has been removed. The Windows workspace run recorded
+36 `windows-local-security` tests and 18 `operator-ipc` tests passing; these are source/test
+evidence, not packaged cross-user OS-peer qualification or a complete desktop USER journey.
 
 ### Windows Native Build & Toolchain Contract
 Native Windows builds and packaging target `x86_64-pc-windows-msvc`. The required build toolchain
@@ -110,11 +114,12 @@ transport library. The daemon independently derives the same endpoint from its
 - Derive and persist the Runtime's OS logon identity through a narrowly isolated,
   reviewed Windows identity adapter. `interprocess` exposes a peer PID on Windows but
   PID lookup is race-prone and is not an authorization check.
-- The workspace currently forbids unsafe Rust globally. If Windows token APIs require
-  unsafe calls, place them in one small platform-security crate with audited unsafe
-  blocks and change the workspace lint from `forbid` to `deny`, so other crates remain
-  unable to opt in accidentally. Never scatter `allow(unsafe_code)` through daemon or
-  UI modules.
+- The workspace Rust lint sets `unsafe_code = "deny"`. The narrowly scoped
+  `windows-local-security` crate is the sole reviewed exception and applies
+  `#![allow(unsafe_code)]` at crate scope for its Win32 token, security-descriptor and
+  handle operations. The unsafe implementation remains isolated from the daemon, IPC
+  framing crate and UI. Do not add local unsafe allowances to other crates or scatter
+  unsafe Win32 calls through application modules.
 - If the per-logon DACL cannot be created, do not start an unauthenticated pipe or fall
   back to loopback bearer auth.
 
@@ -401,9 +406,10 @@ macOS, and Windows versions:
 - folder grants use the separate native picker/bookmark/handle flow and cannot be
   inferred from IPC peer authentication.
 
-Until those gates pass, the source-integrated Unix IPC path is not production-qualified.
-There is no desktop loopback HTTP/bearer fallback. Unsupported platforms remain unavailable
-until their authenticated transport is implemented and qualified.
+The Linux/macOS Unix-socket and Windows named-pipe transports are source-integrated, but
+neither is production-qualified until its platform-specific OS-peer, packaged desktop/daemon,
+restart, secret-buffer and owner USER gates pass. There is no desktop loopback HTTP/bearer
+fallback. Targets without an implemented authenticated transport remain unavailable.
 
 
 ## Confidential agent credential submission
@@ -427,8 +433,10 @@ transport profile than ordinary JSON configuration:
 Native-agent-owned sign-in/API keys do not use this route; LiteCowork launches/surfaces the
 adapter-declared native flow instead.
 
-Windows named-pipe support must demonstrate the same no-fallback peer-authentication and
-secret-buffer behavior before this path is enabled there.
+The Windows named-pipe transport is source-implemented with the current-logon-SID/SYSTEM
+DACL and remote-client rejection. The confidential credential-submission operation remains
+unavailable there until packaged peer-authentication and one-shot secret-buffer behavior are
+qualified, and until the AgentControlDescriptor/SecretStore owner path itself is enabled.
 
 
 ## Non-normative desktop IPC comparison - 2026-10-31

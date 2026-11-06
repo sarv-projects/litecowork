@@ -1,116 +1,168 @@
-# LiteCowork — Implementation Master Plan
+# LiteCowork implementation master plan
 
-**Status:** active dependency-aware delivery plan derived from Revision 9 §30, Appendices AI/AJ and the V7 competitive engineering audit.  
-**Authority:** this plan orders work; owner-domain contracts, accepted ADRs and docs/schemas remain authoritative.
+**Authority:** This plan orders delivery. Root ARCHITECTURE.md, PRODUCT.md, V1-PRODUCT-RELEASE-CONTRACT.md, domain owner contracts, accepted ADRs and docs/schemas remain normative. Current source evidence is maintained in IMPLEMENTATION-STATUS.md.
 
 ## 1. Delivery rule
 
-**Master task list:** [LITECOWORK-BUILD-TASKS.md](LITECOWORK-BUILD-TASKS.md). **USER parity tests:** [COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md). **Viability:** [VIABILITY-VS-COMPETITORS.md](VIABILITY-VS-COMPETITORS.md).
+Build complete vertical user journeys, not isolated capability counts. A design, schema, type, mock, unit test, catalogue item, mounted route or visible screen is not a qualified user journey.
 
-Build complete vertical user journeys, not isolated capability count. Freeze load-bearing invariants now; promote only the contracts needed by the next slice. Do not invent missing contract edges locally. A design, schema, stub, mock, unit test, catalog entry or mounted route is not a qualified user journey.
+Each delivery slice identifies the user outcome, owning domains, request/response/event schemas, state preconditions, authorization, transaction owner, durable event/receipt, projection, UI component, error/recovery behavior, tests and exact OS/provider qualification.
 
-Every slice names its user outcome, owner contracts, request/response/event schemas, state preconditions, authority, transaction owner, durable event, projection, UI, failure/recovery path, fixtures and exact OS/provider qualification.
+The active implementation is in apps/ and crates/. Do not start by recovering the old archive or creating duplicate source trees. Inspect the current revision/worktree, preserve ignored/local material, and make a narrowly scoped branch/worktree choice for each implementation slice.
 
-## 2. Two coordinated delivery lanes
+## 2. Product sequence
 
-**Product critical path:** native Conversation → local Resources/context → cross-agent continuity → safe Task/Environment → golden Connection/capability → professional Artifact → Workbench/browser/computer → Coworker/memory → Automation → intelligent presentation/media → platform release.
+The sequence below is dependency-aware, not a claim that work is absent or already complete. Current implementation state for each step is in IMPLEMENTATION-STATUS.md.
 
-**LiteSPM lane:** current-source reconciliation → stable IPC contract → shared daemon lifecycle → ACSR/consent → health/doctor → Marketplace → plan/apply lifecycle → bridges/invocation → portability/provenance → per-host conformance. It may proceed alongside independent Conversation work; package install or a Marketplace page is not LiteSPM integration acceptance.
+### P0 — Evidence and release baseline
 
-## 3. Product sequence and exit gates
+- Keep TARGET, CODE, SERVED, INTEGRATED and QUALIFIED separate.
+- Maintain schemas/served-route-inventory.json from the composed production router.
+- Preserve the six passing Windows WorkspaceRoot route regressions; separately qualify Windows folder scanning, which remains unsupported/not implemented.
+- Run architecture/schema, documentation, frontend, daemon, packaged desktop and owner acceptance gates.
+- Select the exact GA OS/build and first native agent/version/auth route.
 
-### P0 — Re-establish implementation truth
-Record exact main SHA, active branch, dirty state, registered worktrees and ignored local data. Reconcile root ARCHITECTURE.md, docs/PRODUCT.md, V1 Product Release Contract, owner contracts, ADRs and docs/schemas. Re-run acceptance, served-route and qualification inventories; c7e9c05 reports are historical, not fresh evidence. Choose the first native desktop OS for GA and one first native agent route with exact version/auth/session support.
+**Exit:** reproducible green baseline and explicit release matrix. The current baseline is not green; see IMPLEMENTATION-STATUS.md.
 
-**Exit:** reviewed baseline/gap matrix with exact SHA, OS, agent route and TARGET/CODE/SERVED/INTEGRATED/QUALIFIED evidence.
+### P1 — Durable native Conversation
 
-### P1 — Real native Conversation
-Implement fresh Workspace → selected AgentBinding → Conversation → send → stream → stop/cancel → persist → reload. Use a per-Conversation serialized turn lane, idempotent admission and durable USER/AGENT messages. Keep native session handles Runtime-local and preserve semantic history. Show the selected agent/model/effort and only supported native controls. Preserve drafts when a binding is unavailable.
+- Close the commit-before-dispatch crash window with durable dispatch admission/outbox or equivalent recoverable state.
+- Make duplicate replay prove whether dispatch was admitted, dispatched, completed or remains ambiguous.
+- Qualify the OpenCode v2.0.32 route end-to-end through packaged desktop, local IPC, daemon, provider, persistence and reconnect.
+- Preserve native auth/private session semantics; add other AgentModules independently and only when their exact adapter/OS/auth matrix is ready.
+- Keep unsupported bindings non-sendable with preserved drafts and honest repair copy.
 
-**Exit:** owner sends through the desktop UI, streams and stops, reloads and restarts the daemon mid-turn; no lost/duplicated messages or false completion.
+**Exit:** send, stream/resync, stop, retry, restart and crash-after-commit tests on the declared OS/provider build with no duplicate prompt or stranded OPEN turn.
 
-### P2 — Local files and context
-Implement explicit WorkspaceRoot selection/revocation, bounded Resource ingestion, exact revisions/digests and deterministic retrieval for qualified formats. Expose Context Used from actual ContextAttachments and retrieval receipts. Search snippets are not implicit attachments; the machine is never scanned wholesale.
+### P2 — Workspace roots and context
 
-**Exit:** attach a folder, ask a grounded question with exact citations, revoke the root and verify that future retrieval is fenced.
+- Complete the WorkspaceRoot lifecycle and platform path contract.
+- Qualify root select, pause, resume, rescan, revoke, resource invalidation and safe deletion.
+- Pin exact Resource revisions and digests; validate same-Workspace access at use time.
+- Finish bounded ingestion/index/retrieval for a first explicit format set; preserve source provenance in Context Used.
+- Treat ZIP preview/readiness as separate from extraction, child-Resource publication and Task context.
 
-### P3 — Agent Relay
-Qualify a second native AgentModule. Implement A → B → A on the same Conversation using bounded portable context from committed messages, selected Resources and durable Task/Artifact/Evidence references. Never transfer private transcripts, provider credentials or hidden reasoning.
+**Exit:** owner attaches a selected root/resource, receives grounded retrieval with exact source references, revokes access and proves future retrieval is fenced.
 
-**Exit:** three-turn A → B → A owner journey with exact per-turn producer and no continuity loss.
+### P3 — Native Agent completeness and relay
 
-### P4 — One safe Task path
-Promote an outcome explicitly from Conversation. Qualify isolated planning; accept immutable PlanRevision and Steps atomically. Implement one Environment provider with real isolation attestation for read/write roots, network, process tree and resource limits. Atomically admit Attempt, lease, grant, invocation/effect intent and idempotency receipt. Execute one bounded file edit, reconcile ambiguous writes and independently verify.
+- Complete the AgentModule contract for install observation, auth state, descriptor freshness, native options, session admission and turn support.
+- Qualify a second native agent route only after provider terms/auth/OS/version checks.
+- Implement A→B→A over one human-facing Conversation using committed messages and explicitly selected Resources/Artifacts, not private transcript/session migration.
+- Preserve per-turn binding, model/mode/effort, provenance and failure state.
 
-**Exit:** one real Task edits one approved file inside qualified isolation and survives timeout/restart/cancel with a durable receipt and independent verification. A working directory or git worktree alone is not a sandbox.
+**Exit:** multi-agent continuity test with exact producing agent and no hidden context or credential transfer.
 
-### P5 — Golden Connection and capability
-Complete one first-party account Connection. GitHub is a natural first developer workflow; Google Workspace or Microsoft 365 follows target-user demand. Implement SecretStore custody, supported OAuth/PKCE, exact scopes, serialized refresh and revoke/fence behavior. Start with one read, then one consequential write with approval, idempotency and reconciliation. Add progressive discovery and a qualified LiteSPM agent bridge.
+### P4 — One safe Task vertical slice
 
-**Exit:** real account read succeeds; one write uses exact approval and a reconciled receipt; revoke blocks future use.
+- Explicitly promote an outcome to a Task.
+- Produce and accept an immutable PlanRevision with pinned Steps and criteria.
+- Admit one Attempt with fenced lease, eligible agent and exact Environment.
+- Wire Trust evaluation into the actual execution boundary.
+- Execute one bounded file mutation through the Core Gateway with idempotency, Effect and durable receipt.
+- Reconcile timeout-after-effect, cancellation, restart and unknown results; independently verify the result.
 
-### P6 — Professional Artifacts
-Implement Artifact identity, immutable versions, provenance, Library visibility and one genuinely editable professional format with round-trip/export/reopen. Validate layout, formulas and content independently. Executable interactive artifacts remain a separately isolated runtime.
+**Exit:** one user-approved file edit in a qualified isolated environment, survives restart/cancel/ambiguous receipt and has independent evidence. A working directory or git worktree alone is not a sandbox.
 
-**Exit:** owner creates/revises/exports/reopens a deliverable and reviews source provenance and version differences.
+### P5 — LiteSPM and a golden Connection
 
-### P7 — Useful Workbench and browser/computer
-Ship one context-aware right Workbench integrated with Conversation/Task. Add Activity, Files, Diffs, Terminal, Browser, Computer and Artifact panels as providers qualify. Browser/computer require explicit consent, session epochs, takeover/return and stale-handle revocation. Terminal binds to admitted Environment/process-tree lifecycle. Needs You links directly to approvals, questions, blockers and failed work.
+- Pin LiteSPM service version, bridge schema, authentication and host compatibility.
+- Use one LiteSPM package inventory/configuration writer; do not add a duplicate package manager.
+- Implement exact plan preview, digest-bound approval, apply, durable receipt, rollback and UNKNOWN reconciliation.
+- Keep install, native Connection auth, Coworker assignment, Task grant, activation and invocation separate.
+- Qualify one first-party Connection: a bounded read first, then one approved write with idempotency and reconciliation.
 
-**Exit:** owner completes real browser and terminal work through UI, takes over/returns safely and proves stale handles cannot act.
+**Exit:** a package lifecycle operation and one account operation each complete with correct scope, receipt and revocation behavior.
 
-### P8 — Coworkers, memory and responsibilities
-Coworkers remain optional. Deliver Quick Create → first usable chat; scope Conversation ownership, ContextDocuments, memory, capability assignments and Connections. Start with owner-authored context and deterministic retrieval. Automatic learning waits for provenance, consent eligibility, third-party privacy, contradiction, revocation and deletion contracts. Goals are passive intent; Suggestions are proposals; neither grants authority.
+### P6 — Professional Artifact
 
-**Exit:** create optional Coworker, chat, attach/revoke scoped context, restart and prove no cross-scope leakage.
+- Qualify Artifact identity, immutable versions, provenance and Workspace scope.
+- Deliver one genuinely editable professional format with round-trip, save, export, reopen and validation.
+- Compare exact revisions; preserve conflict and recovery behavior.
+- Treat interactive applications as a separate isolated Runtime, not as rich chat markup.
+
+**Exit:** user creates/revises/exports/reopens one professional deliverable and verifies source provenance and version differences.
+
+### P7 — Real Workbench providers
+
+- Keep the default right Workbench visible in compact Start state.
+- Replace simulated terminal with daemon-owned PTY/ConPTY sessions, process identity, bounded output/backpressure, detach/reattach and stop/recovery.
+- Replace iframe-only Browser label with a truthful preview until a real isolated browser provider exists.
+- Qualify real Browser profile/session, site grants, epochs, takeover/return and stale-handle revocation.
+- Add Computer use only with exact OS permission, display/session identity and human takeover.
+- Compute diffs from real VCS or exact revision pairs; remove demo/sample success states.
+
+**Exit:** real terminal/browser work from the UI with audit/effect semantics, safe takeover and crash/restart proof.
+
+### P8 — Coworkers, learning and responsibilities
+
+- Keep Coworker optional and distinct from Conversation, Task and a resident process.
+- Qualify Coworker-owned Conversation admission and exact Task origin provenance.
+- Complete scoped Memory/Knowledge source lifecycle, policy, provenance, correction, revocation and deletion.
+- Implement responsibilities only as proposals/admitted routines or Automations under their owners.
+- Ensure worker assignment and connection state never confer grants.
+
+**Exit:** create optional Coworker, chat, attach/revoke scoped context, restart, and prove no cross-Workspace leakage or hidden standing authority.
 
 ### P9 — Automations and notifications
-Implement durable schedule/event/poll/monitor AutomationOccurrences. TriggerHost observes an occurrence; ordinary Task admission selects execution Runtime. Cover timezone/DST, misfire, overlap, dedupe, cursor durability, offline/sleep, provider outage, notification ambiguity and recovery.
 
-**Exit:** scheduled and event-triggered runs create exactly one Task each and settle with truthful history/notification status after restart.
+- Preserve the current local TriggerHost as scheduler/materializer, not a Task executor.
+- Qualify due slot dedupe, cursor/occurrence atomicity, host restart, schedule revision, timezone/DST, misfire and overlap.
+- Only claim a Task is executing after Task admission and worker dispatch actually occur.
+- Qualify notification eligibility, delivery provider, dedupe and ambiguous delivery separately.
+- Local recurrence requires awake/available Runtime; cloud/laptop-off continuation is post-V1.
+- Do not add a native WorkflowGraph schema, canvas, graph-run engine or generic Code-node runtime to Core. Automation/Routine remains the reusable schedule-to-Task path.
+- External workflow invocation is an optional future provider integration, not a prerequisite for Automations V1. The current WorkflowBackendAdapter is target-only and no production implementation/route exists in apps/ or crates/.
+- Where a user connects a supported external provider, the user may use the provider's own visual editor and, when available/enabled, the provider-native AI builder/MCP. These create/edit provider-owned graphs; they are not LiteCowork Coworker authoring features.
+- LiteCowork Coworkers may help author a Routine and map inputs. Direct LiteCowork-agent graph mutation requires a separately approved provider-specific authoring capability with distinct read/draft/test/publish/run/delete scopes, provider version/digest, owner confirmation and ambiguous-result recovery. This is deferred and not V1 authorization.
 
-### P10 — Intelligent UI, media and persistent surfaces
-Render semantic-first safe rich presentation: facts/citations/warnings/actions remain in committed semantic content. Add bounded tables, charts, forms, diff summaries, cards and host actions over authorized projections. Add image/audio/voice routes only when qualified. Dashboard/widgets are projections over existing state, not new aggregates.
+**Exit:** one occurrence produces exactly one Task with accurate history; subsequent Task execution and notification claims require their own proof. Optional external workflow integration has a separate exit only after Feature 005/006, provider adapter, Trust/Effect/reconciliation and exact provider USER E2E qualify.
 
-**Exit:** Conversation remains complete with rich rendering disabled; untrusted presentation cannot forge host state or actions.
+### P10 — Intelligent UI and media
 
-### P11 — Portability, privacy and release
-Complete export/import/backup/restore, deletion/revocation UX, diagnostics, accessibility, performance, crash recovery, upgrade/rollback and exact OS/agent/provider conformance for every marketed feature row. WSL2 is not native Windows or native Linux evidence. Unsupported cells remain explicitly unavailable.
+- Preserve semantic ConversationMessage as authoritative answer.
+- Validate typed rich presentation documents, component allowlist, digest binding, size/depth/node bounds and accessible fallback.
+- Use restricted AST for safe calculations; render accessible table fallback for charts.
+- Keep generated media as provenance-bearing Artifacts.
+- Keep arbitrary HTML/JS, eval, script imports and host API calls out of chat WebView.
+- Qualify isolated Interactive Artifact Runtime separately.
 
-**Exit:** declared V1 release matrix is green on declared platforms; only then schedule cloud Runtime/mobile/remote V2.
+**Exit:** semantic answer remains complete when rendering is disabled; malicious presentation cannot mint host state or authority.
 
-## 4. LiteSPM integrated-service sequence
+### P11 — Platform release and portability
 
-Follow Revision 9 Appendix AI.19:
-0. Re-read current LiteSPM HEAD/STATUS/ARCH/schemas/methods/tests and current LiteCowork routes/migrations.
-1. Freeze and publish IPC handshake, generated client contract and protocol negotiation.
-2. Implement typed LiteSpmClient, peer authentication and compatibility fixtures.
-3. Implement one shared per-OS-user daemon: signed install/update/rollback, cold start, attach, health, restart and Windows stale-lock recovery.
-4. Implement ACSR after agent discovery/install/update/remove, gated by one-time explicit auto-connect consent.
-5. Add doctor, host/provider health, Marketplace on the same canonical catalog.
-6. Qualify preview → exact planHash approval → single-use token → apply → receipt → reconcile for install/update/remove.
-7. Preserve the 12 MCP bridge tools and /marketplace affordance; agents request but never self-approve.
-8. Add grants/invocation, schema drift re-review, lockfile portability and per-host conformance.
+- Complete backup/export/import/restore, deletion and revocation UX, diagnostics, accessibility, performance and crash/upgrade/rollback testing.
+- Run exact OS/provider/auth conformance for every marketed feature.
+- WSL2 is not evidence for native Windows or native Linux desktop behavior.
+- Unsupported combinations remain explicitly unavailable.
+- Cloud Runtime, laptop-off continuation, remote/mobile control and multi-user organization are post-V1.
 
-The detailed LSI-001–LSI-040 scenarios are in LITESPM-INTEGRATION-PLAN.md. LiteSPM remains owner of package state; Core remains owner of authorization and mediated use.
+**Exit:** declared local-desktop release matrix is green with CODE/SYSTEM/USER evidence and owner approval.
 
-## 5. Do not build before the gates
+## 3. LiteSPM integration lane
 
-Do not build a universal model router, hidden lead switch, 25+ unqualified agent logos, generic workflow-graph engine, embedded Activepieces/Nango runtime, broad arbitrary native plugins, second package manager, cloud Runtime/laptop-off continuation, mobile collaboration, duplicate Project aggregate, separate coding universe or memory database. Avoid badges that infer readiness from installation, route registration, tests or catalog presence.
+The LiteSPM lane may proceed alongside independent Conversation and Resource work, but cannot substitute for it:
 
-## 6. Execution discipline
+1. Re-read pinned LiteSPM source/version, current bridge schema and conformance tests.
+2. Freeze protocol version, peer identity, service lifecycle and typed IPC.
+3. Implement/review the client against generated/published contracts, not guessed CLI output.
+4. Add one qualified host compatibility profile and inventory observation.
+5. Add consent-controlled plan/apply/reconcile for one package kind/host.
+6. Preserve LiteSPM-owned package state; Core owns assignment, grants, invocation and mediated effects.
+7. Add repair/update/unmanage/remove only after receipt and rollback semantics are proven.
 
-Phase numbers express product dependency, not a requirement to serialize every file. Independent UI shell, schemas, adapter fixtures, accessibility and test harness work may run in parallel after owner contracts freeze. Every story records dependency edges and an exit bundle. An epic is not complete because one representative screen exists.
+docs/LITESPM-LITECOWORK-INTEROP-LLD.md and docs/LITESPM-INTEGRATION-PLAN.md own this boundary. A Marketplace screen or mounted connect-or-install route does not qualify integration.
 
-## 7. Immediate next sprint
+## 4. Execution discipline
 
-1. Keep main docs-first. When implementation is authorized, create a clean isolated worktree from the chosen Git baseline (c7e9c05) rather than building from this docs-only checkout.
-2. Inspect the preserved feature/conversation-session-supervisor worktree as a separate dirty candidate. Reconcile its Conversation activation changes before merging or recovering any part of it.
-3. Execute the focused Conversation activation test recorded in the preserved 2026-10-26 plan; it was written but not run. Follow with storage, event rollback, stale-version, host/incarnation and recovery tests. A cargo check is compile evidence, not execution evidence.
-4. Complete the missing native supervisor path: observed adapter readiness outside SQLite → atomic activation → bounded context load → native prompt dispatch → streamed/committed result. Keep Send fail-closed until the full route is proven.
-5. Select the first GA OS and first native agent route; deliver one real Send/Stop/reload UI journey with actual daemon, IPC, storage, provider and owner USER evidence.
-6. Run LiteSPM current-source/protocol reconciliation in parallel without blocking native Conversation work.
+- Preserve unrelated user files, archives, local configuration and ignored worktrees.
+- Do not reset, clean, stash, delete archives or stage local secrets.
+- Implement the smallest complete vertical slice and update owner prose, machine schemas, UI, Tauri bridge, route inventory, feature SDD and tests together.
+- The UI is not an authority. No local React state may masquerade as a persisted permission, install, connection, process or policy.
+- Do not claim an action succeeded until the owner returns a committed receipt or qualified external observation.
+- Run narrow tests for each change, then cross-contract, frontend, workspace and packaged desktop tests.
+- Inspect the full diff and generated outputs. Do not commit or push unless requested.
 
-## 8. Owner contracts referenced
+## 5. Current implementation and immediate work
 
-Root ARCHITECTURE.md; PRODUCT.md; V1-PRODUCT-RELEASE-CONTRACT.md; AGENT-FABRIC.md; AGENT-CONTROL.md; PROTOCOLS.md; CONTEXT.md; TASK-RUNTIME.md; ENVIRONMENTS.md; TRUST.md; STATE-MACHINES.md; CONNECTORS-WORKFLOWS.md; LITESPM-LITECOWORK-INTEROP-LLD.md; DESKTOP-SHELL-LLD.md; V1-UI-SCREEN-CONTRACT.md; AUTOMATION.md; ARTIFACTS-EVIDENCE.md; PRESENTATION-RUNTIME.md; TESTING.md; and schemas under docs/schemas/.
+The current release posture is pre-release and not qualified. The current implementation record, exact route inventory, test outcomes and release blockers live in IMPLEMENTATION-STATUS.md. The immediate engineering priorities are the Windows WorkspaceRoot failures, Conversation commit-to-dispatch recovery, honest Workbench Terminal/Diffs/Browser behavior, and one complete Task execution slice.

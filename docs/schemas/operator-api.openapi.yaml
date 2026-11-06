@@ -8157,6 +8157,7 @@ components:
       type: object
       additionalProperties: false
       required: [kind, owner_ref]
+      description: Current domain-workspace create validation accepts only PERSONAL_PROFILE with a USER owner_ref matching the authenticated principal, and WORKSPACE_NOTES with a WORKSPACE owner_ref matching the selected Workspace. COWORKER_NOTES and GOAL_NOTES remain target enum values and are rejected by the current create validator until their authoritative owner aggregates and resource authorization are implemented.
       properties:
         kind: {type: string, enum: [PERSONAL_PROFILE, COWORKER_NOTES, WORKSPACE_NOTES, GOAL_NOTES]}
         owner_ref: {$ref: '#/components/schemas/ContextOwnerRef'}

@@ -391,3 +391,36 @@
 }
 
 .message-time { display: none; }
+
+
+@media (max-width: 620px) {
+  .conversation-top-breadcrumbs {
+    padding: 10px 14px;
+    gap: 6px;
+  }
+
+  .conversation-stream-container {
+    width: 100%;
+    padding: 14px 14px 28px;
+  }
+
+  .conversation-messages-flow {
+    width: 100%;
+    gap: 18px;
+  }
+
+  .message-user-bubble {
+    max-width: 90%;
+  }
+
+  .floating-composer-card {
+    width: calc(100% - 16px);
+    margin: 0 8px;
+    bottom: 8px;
+  }
+
+  .composer-footer-toolbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+}

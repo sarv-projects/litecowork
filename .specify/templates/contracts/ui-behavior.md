@@ -2,7 +2,7 @@
 
 **Status:** DRAFT  
 **Normative UI indexes:** [V1-UI-SCREEN-CONTRACT.md](../../../docs/V1-UI-SCREEN-CONTRACT.md), [V1-UI-ACTION-STATE-LEDGER.md](../../../docs/V1-UI-ACTION-STATE-LEDGER.md), [DESKTOP-SHELL-LLD.md](../../../docs/DESKTOP-SHELL-LLD.md).  
-**Wire:** [LOCAL-OPERATOR-IPC.md](../../../docs/LOCAL-OPERATOR-IPC.md) → OpenAPI in [api-events.md](api-events.md).
+**Wire:** [LOCAL-OPERATOR-IPC.md](../../../docs/LOCAL-OPERATOR-IPC.md) → machine API in [operator-api.openapi.yaml](../../../docs/schemas/operator-api.openapi.yaml) and [SCHEMAS.md](../../../docs/SCHEMAS.md).
 
 UI renders authoritative projections and stream frames; sends typed Operator commands. No English-string error parsing.
 
@@ -39,7 +39,7 @@ Include: empty, loading, error, partial, offline, long-running; plus domain stat
 
 ## 6. Error shapes
 
-Link [SCHEMAS.md](../../../docs/SCHEMAS.md) codes and [errors-recovery.md](errors-recovery.md).
+Link [SCHEMAS.md](../../../docs/SCHEMAS.md) for canonical error codes and [FAILURE-RECOVERY.md](../../../docs/FAILURE-RECOVERY.md) for recovery semantics.
 
 ## 7. Tests
 

@@ -211,9 +211,39 @@ pins the normalized capability/workflow reference and input/output/verification
 requirements. Each run re-resolves eligible Connection, SecretLease, provider health and
 Trust policy.
 
-An external workflow executes through WorkflowBackendAdapter as one
-CapabilityInvocation. Provider progress can be shown in Activity, but provider node states
-are observations; they do not become LiteCowork Steps.
+**Target execution contract:** once qualified, an external workflow is invoked through
+WorkflowBackendAdapter as one CapabilityInvocation inside the Task. Provider progress can
+be shown in Activity, but provider node states are observations; they do not become
+LiteCowork Steps. The current active source tree does not yet contain a production
+WorkflowBackendAdapter implementation, so this path is not presently served or qualified.
+
+**Manual authoring:** the user authors or edits the graph in the external workflow
+provider's own editor. The target LiteCowork flow is to discover the workflow, inspect its
+supported input/output schema, validate the Routine mapping, pin the exact provider
+reference/version and invoke it through the adapter. That is a target experience only:
+there is no production WorkflowBackendAdapter in the active source tree, so LiteCowork
+cannot currently discover or invoke these workflows. LiteCowork does not host a general
+node canvas.
+
+**Provider-native AI:** where an external provider offers an Assistant/MCP graph builder,
+the user may use that provider's own AI surface to construct a provider-owned graph, then
+inspect/refine/publish it in the provider. n8n and Activepieces document these capabilities;
+see the provider research in [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).
+
+**LiteCowork agent assistance:** an agent may help express the Routine and map values to
+an existing workflow input schema. There is no production WorkflowBackendAdapter in the
+active source tree, and the target adapter contract has no graph create/update/publish
+operations. A LiteCowork agent must not claim to have built or changed a provider graph.
+A future provider-specific authoring adapter requires a separate owner decision,
+provider-side draft/validation, version/digest fencing, explicit user publish confirmation
+and ambiguous-publish reconciliation. It does not add graph storage or a new execution
+engine to LiteCowork Core.
+
+Code nodes, where supported by external backends such as n8n's JavaScript/Python Code
+node or Activepieces' JavaScript/TypeScript CODE step, execute under that backend's own
+host permissions and isolation. They are not LiteCowork Environment processes, and
+LiteCowork Trust does not automatically mediate internal provider effects. See [OPENBOT reference study](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md)
+for the pinned graph-builder comparison and its non-adoption rationale.
 
 Missing connection creates a durable blocker with **Connect**, then revalidates the
 original Task after authentication. A new account, scope or connector revision cannot
@@ -222,3 +252,5 @@ silently rewrite the pinned RoutineRevision.
 ## V1 detailed design integration — 2026-10-12
 
 V1-WORKFLOW-EVENT-LLD.md provides the end-to-end routine reuse, version pinning, manual occurrence, trigger, notification and follow-up journey. Reviewable Routine/Automation is distinct from executing Task; a saved routine is inert until invoked or independently enabled as a qualified automation. Keep runtime receipts and stale revision guards.
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]

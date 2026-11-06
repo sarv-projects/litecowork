@@ -1356,8 +1356,8 @@ mod route_tests {
                         display_name: None,
                     },
                     runtime_version: "0.1.0-scan-route".to_owned(),
-                    platform: "linux".to_owned(),
-                    architecture: "x86_64".to_owned(),
+                    platform: std::env::consts::OS.to_owned(),
+                    architecture: std::env::consts::ARCH.to_owned(),
                     roles: vec!["OPERATOR_ENDPOINT".to_owned()],
                     trust_zone: "PERSONAL_DEVICE".to_owned(),
                     availability: "RECOVERING".to_owned(),
@@ -1414,7 +1414,40 @@ mod route_tests {
         let marker = "scan-route-root-identity";
         let identity_digest = format!("sha256:{}", hex::encode(Sha256::digest(marker.as_bytes())));
         let file_identity_digest = hex::encode(Sha256::digest(marker.as_bytes()));
-        let path = URL_SAFE_NO_PAD.encode(b"/tmp/litecowork-scan-route");
+        let platform_kind = if cfg!(target_os = "windows") {
+            "WINDOWS_VOLUME_FILE_ID_128"
+        } else if cfg!(target_os = "macos") {
+            "MACOS_DEVICE_INODE"
+        } else {
+            "LINUX_DEVICE_INODE"
+        };
+        let private_locator = {
+            #[cfg(windows)]
+            {
+                let path = "C:\\Users\\Owner\\LiteCowork\\ScanRouteRoot";
+                let bytes = path
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect::<Vec<_>>();
+                format!("windows-path-u16le-b64:{}", URL_SAFE_NO_PAD.encode(bytes))
+            }
+            #[cfg(unix)]
+            {
+                let path = b"/tmp/litecowork-scan-route";
+                format!("unix-path-b64:{}", URL_SAFE_NO_PAD.encode(path))
+            }
+        };
+        let (raw_filesystem_instance_id, raw_file_id) = if cfg!(target_os = "windows") {
+            (
+                "0123456789abcdef".to_owned(),
+                "0123456789abcdef0123456789abcdef".to_owned(),
+            )
+        } else {
+            (
+                "scan-route-device".to_owned(),
+                "scan-route-inode".to_owned(),
+            )
+        };
         WorkspaceRootService::new(store.clone())
             .add_root(AddWorkspaceRoot {
                 workspace_id: WORKSPACE.to_owned(),
@@ -1428,23 +1461,23 @@ mod route_tests {
                     "volume_id": null,
                     "file_id": format!("sha256:{file_identity_digest}"),
                     "generation": null,
-                    "platform_kind": "LINUX_DEVICE_INODE",
+                    "platform_kind": platform_kind,
                 }),
                 location_id: "location-scan-route".to_owned(),
                 locator_ref_id: "locator-ref-scan-route".to_owned(),
                 workspace_root_id: ROOT.to_owned(),
                 runtime_id: RUNTIME.to_owned(),
                 runtime_incarnation_id: INCARNATION.to_owned(),
-                private_locator: format!("unix-path-b64:{path}"),
+                private_locator,
                 file_identity_binding: LocalFileIdentityBindingRecord {
                     location_id: "location-scan-route".to_owned(),
                     runtime_id: RUNTIME.to_owned(),
                     runtime_incarnation_id: INCARNATION.to_owned(),
-                    raw_filesystem_instance_id: "scan-route-device".to_owned(),
+                    raw_filesystem_instance_id,
                     raw_volume_id: None,
-                    raw_file_id: "scan-route-inode".to_owned(),
+                    raw_file_id,
                     raw_generation: None,
-                    platform_kind: "LINUX_DEVICE_INODE".to_owned(),
+                    platform_kind: platform_kind.to_owned(),
                     observed_at: NOW.to_owned(),
                 },
                 display_name: "Scan route root".to_owned(),
@@ -1583,7 +1616,14 @@ mod route_tests {
             .await
             .expect("scan route responds");
 
-        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let expected_status = if cfg!(windows) {
+            // The Windows picker/reopen contract is implemented, but folder scanning
+            // remains unavailable on Windows until its provider is qualified.
+            StatusCode::NOT_IMPLEMENTED
+        } else {
+            StatusCode::CONFLICT
+        };
+        assert_eq!(response.status(), expected_status);
         assert_no_store(&response);
     }
 

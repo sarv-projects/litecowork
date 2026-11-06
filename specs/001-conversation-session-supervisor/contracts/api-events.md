@@ -7,7 +7,7 @@
 
 `POST /v1/conversations/{id}/turns` accepts bounded `content[]` (at most 256 blocks, 1 MiB and 256 ResourceRefs) and optional `presentation_preference: AUTO | SIMPLE | RICH`. Submission uses principal-scoped `Idempotency-Key`; expected Conversation version is validated according to the API owner contract. The USER message and OPEN ConversationTurn are persisted before supervisor admission.
 
-**Current mounted behavior:** while the native supervisor is unavailable, the server settles the turn FAILED with `CONVERSATION_SESSION_ADMISSION_UNAVAILABLE` and returns `503 DEPENDENCY_UNAVAILABLE`. This is not a successful send and must not be rendered as one. The feature must not change that behavior to a 202/accepted status until real supervisor and result writer are connected.
+**Current active-source behavior:** when `ConversationApiState` has a supervisor, the Operator commits USER+OPEN and returns `202 Accepted` after starting detached `dispatch_turn`; exact replay returns the stored receipt. When the supervisor is absent, the admission-unavailable path settles FAILED and returns `503 DEPENDENCY_UNAVAILABLE`. A 202 currently means the turn was durably admitted, not that a provider prompt was accepted or that a native response will complete. The detached-dispatch crash window and logged-error paths remain unresolved.
 
 Existing routes also include:
 - `PATCH /v1/conversations/{id}/agent-binding` with If-Match and Idempotency-Key; affects future turns.
@@ -39,15 +39,15 @@ Reuse events already defined in EVENTS.md / schemas:
 
 The exact event payload fields are governed by EVENTS.md and `docs/schemas/`. Do not invent new names or alter payloads only in this feature file. The activation storage update is not a separate public route.
 
-## 4. Proposed final response commit
+## 4. Implemented final response commit and remaining gaps
 
-B-04 requires a storage contract to atomically write:
+B-04's storage operation exists in storage-core/SQLite and is called by the OpenCode supervisor. Its current transaction attempts to atomically write:
 1. one immutable AGENT ConversationMessage with exact Conversation/Turn/AgentSession/AgentBinding provenance;
 2. `conversation.message.added.v1` with committed revision;
 3. terminal ConversationTurn projection and `conversation.turn.settled.v1`;
 4. both aggregate snapshots and the response idempotency receipt.
 
-The current ConversationTurnStore port does not expose this final-response commit. The proposed operation and payload shape in SPEC.md are not current API. Storage must verify event versions/payloads and the existing tables before approving exact fields.
+The current `ConversationTurnStore` exposes `commit_conversation_agent_response`, and the OpenCode supervisor invokes it. The typed request does not yet carry explicit retry ordinal/provider-response identity, and author JSON is passed through from the caller; verify/strengthen these provenance checks. Existing tests do not establish all rollback, conflicting-replay, wrong-scope and crash-window cases. This is CODE, not QUALIFIED.
 
 ## 5. Presentation and streaming
 

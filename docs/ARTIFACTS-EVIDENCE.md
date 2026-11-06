@@ -364,3 +364,15 @@ External workflow node logs are never imported wholesale as trusted Evidence. No
 only bounded exact receipts/output refs required by the Task. Unknown/partial provider
 outcome remains ambiguous and cannot be upgraded because the workflow engine displayed
 green.
+
+## Current implementation crosswalk checked 2026-11-06
+
+This section records what the active source actually serves; it does not weaken the normative ArtifactStore contract above.
+
+- Served: list artifacts, list saved-only Library, get Artifact, get exact ArtifactVersion, get managed version bytes, read text-edit head, append a bounded text version, promote/archive Library state, and list Task Artifact outputs.
+- Not served: initial Artifact create, general binary/provider/generated Artifact publication, format-specific editor/export, durable ExportReceipt. `artifact.created.v1` is registered but no active producer emits it.
+- The current write store supports only user-authored UTF-8 `text/plain` append to an already existing managed Artifact, <=1 MiB. It creates a new immutable ArtifactVersion and paired ResourceRevision with digest verification, aggregate CAS, events and idempotent receipt. It does not create the first Artifact.
+- Current UI preview formats include plain text, Markdown, CSV/TSV, JSON, XML and YAML variants, <=1 MiB. The edit/write route is narrower: `text/plain` only. Preview is not editability.
+- Native Save As is an exact-version managed-blob local write <=10 MiB with native picker, digest/type/size checks and atomic staged replacement. It creates no Artifact/Resource version, domain event or durable ExportReceipt. It is distinct from the target export-receipt flow.
+- DOCX/XLSX/PPTX/PDF upload creates Resources; Office qualification is a runtime capability probe, not an editor/parser/export engine. ZIP intake does not publish extracted files as Artifacts. Linked external content remains provider-unavailable for content reads/download.
+- `ArtifactLibrary` and `ArtifactWorkbench` consume committed Artifact records; the Library has no Artifact creation entry point. `TaskArtifactOutputs` is read-only and depends on Task execution/publication, which remains unavailable in Feature 005.

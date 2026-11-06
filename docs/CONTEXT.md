@@ -106,24 +106,49 @@ embedding, ranking, or autonomous extraction. Provider-returned context is untru
 content and carries source references, scope, version/digest where available, and retrieval
 time. A provider cannot change a TaskSpec, policy, grant, Approval, or SecretLease.
 
-User-authored profile, Coworker, Workspace, and Goal notes are versioned Resources with
-`context_document: ContextDocumentMetadata` identifying their kind and owner. They use
-normal Resource identity, access, freshness, retention, and deletion behavior. Edits use
-Resource revision concurrency; conflicting offline edits require rebase/merge and never
-use last-writer-wins.
+The target design treats user-authored profile, Coworker, Workspace and Goal notes as
+versioned Resources with `context_document: ContextDocumentMetadata` identifying kind
+and owner. `CoworkerContextPolicy` is separately persisted in CoworkerRevision, but current
+retrieval has no production caller enforcing its `allowed_context_kinds`,
+`max_retrieved_items` or `retain_task_summaries`; the legacy
+`require_user_confirmation_for_memory` flag is validated as true and is not the
+`CoworkerLearningPolicy`. **Current ContextDocument implementation is narrower:** the `domain-workspace` metadata
+validator accepts only `PERSONAL_PROFILE` owned by the authenticated USER and
+`WORKSPACE_NOTES` owned by the current WORKSPACE. Although `COWORKER_NOTES` and
+`GOAL_NOTES` exist in enums and event schemas, their authoritative Coworker/Goal
+aggregate services are not present and the validator rejects those kinds. Coworker
+Settings currently offers both options; they are not usable ContextDocument owner scopes.
+The generic create metadata schema still advertises all four enum values, but
+`valid_context_document_metadata` in `domain-workspace` fails closed for Coworker/Goal
+ownership. The currently served create path therefore supports only Personal Profile and
+Workspace Notes. Do not present Coworker/Goal note creation as a served feature until owner
+aggregates, resource authorization, revocation and retrieval are implemented together.
+
+For the currently supported user/workspace-owned documents, Resource identity, access,
+freshness, retention and deletion semantics apply. Edits use Resource revision
+concurrency; conflicting offline edits require rebase/merge and never use last-writer-wins.
 
 Context precedence is current user instruction and accepted TaskSpec, explicit current
 attachments, Workspace instructions, linked Goal context, Coworker instructions,
 user-confirmed ContextDocuments, then retrieved historical context. A lower-priority
 source cannot override a higher one. Material conflicts become a clarification or blocker.
-Current implemented storage has no provider-generated memory proposal path. The
-accepted target adds automatic, quiet, scoped memory proposals from authorized
-conversation checkpoints and verified completed work. Proposed records, gating,
-and the future implementation contract are in [Coworker target](COWORKERS-TARGET.md).
-This is NOT permission to mine every connected account or a claim the learning
-pipeline is currently operational. Until the corresponding verified implementation
-exists, owner-authored ContextDocuments may be revised, revoked, or deleted through
-ResourceService. Revocation removes a document from future context retrieval while
+Current implementation has no provider-generated memory proposal or Coworker-scoped
+memory persistence path. `storage-core/src/coworker_learning.rs` contains deterministic
+eligibility, sensitivity/redaction, conflict and auto-commit gates and event-payload
+construction only; its module documentation explicitly says it does not classify free
+text, call a model or persist candidates. The production SkillProposal extraction path
+reuses only `redact_sensitive_content` from this module (`crates/storage-core/src/skill.rs`);
+that shared redactor is not a production caller of the LearningCandidate evaluation or
+policy pipeline. No production caller of `evaluate_learning_candidate`,
+`classify_learning_conflict` or the Coworker learning policy, SQLite learning store/
+migration, LearningService, learning Operator routes/event producers or Learning Inbox UI
+was found in the active source tree. The full learning pipeline in [LEARNING.md](LEARNING.md)
+and Coworker memory browser in [COWORKERS-TARGET.md](COWORKERS-TARGET.md) remain target
+architecture, not an active capability. This is NOT permission to mine every connected
+account or a claim that quiet learning is operational. Until corresponding owner-scoped creation and retrieval implementations exist,
+currently supported user-authored Personal Profile and Workspace Notes ContextDocuments
+may be revised, revoked or deleted through ResourceService. Coworker/Goal-owned
+ContextDocuments cannot currently be created through this metadata path. Revocation removes a document from future context retrieval while
 retaining its bytes. The current local deletion command accepts only Resources with local
 managed content and fails closed before writing a tombstone if any exact revision has an
 external/provider-backed location. For accepted local content, deletion blocks reads at

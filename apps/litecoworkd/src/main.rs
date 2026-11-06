@@ -37,7 +37,7 @@ mod trust;
 
 use std::{path::PathBuf, process::ExitCode};
 
-const HELP: &str = "litecoworkd — LiteCowork local Runtime\n\nUSAGE:\n    litecoworkd [--help | --version]\n    litecoworkd run --data-dir <private-directory>\n    litecoworkd status --data-dir <private-directory>\n    litecoworkd backup <create|verify|restore|upgrade-check> [options]\n\n`run` starts the local daemon, acquires the single-instance lock, opens durable storage,\nand serves the local Operator API over OS-authenticated local IPC on supported platforms.\nWorkspace creation is idempotent per local Principal and request key. This build does not accept work: the Runtime remains DEGRADED until Task recovery and execution services are available, and it does not launch agents. SIGINT/SIGTERM are process-supervisor shutdown signals; there is no authenticated Operator stop command yet.\n\n`backup` is the local recovery surface. Run `litecoworkd backup --help` for its options. A backup\ncontainer is encrypted with an operator supplied passphrase; the passphrase is never written to the\narchive, to the archive name, or to a log line.\n";
+const HELP: &str = "litecoworkd — LiteCowork local Runtime\n\nUSAGE:\n    litecoworkd [--help | --version]\n    litecoworkd run --data-dir <private-directory>\n    litecoworkd status --data-dir <private-directory>\n    litecoworkd backup <create|verify|restore|upgrade-check> [options]\n\n`run` starts the local daemon, acquires the single-instance lock, opens durable storage,\nand serves the local Operator API over OS-authenticated local IPC on supported platforms.\nWorkspace creation is idempotent per local Principal and request key. A configured native Conversation adapter may dispatch a normal Conversation turn; this is separate from managed Task execution. Runtime READY reports startup and recovery health only. Task planning, Attempt admission, mediated Effect execution and completion verification are not available in this build, so a READY Runtime does not imply that Tasks can execute. The Runtime is DEGRADED only when a startup or recovery blocker is present. SIGINT/SIGTERM are process-supervisor shutdown signals; there is no authenticated Operator stop command yet.\n\n`backup` is the local recovery surface. Run `litecoworkd backup --help` for its options. A backup\ncontainer is encrypted with an operator supplied passphrase; the passphrase is never written to the\narchive, to the archive name, or to a log line.\n";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -75,5 +75,19 @@ fn main() -> ExitCode {
             eprintln!("Run 'litecoworkd --help' for usage.");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod help_contract_tests {
+    use super::HELP;
+
+    #[test]
+    fn help_separates_runtime_health_from_task_execution_readiness() {
+        assert!(HELP.contains("Runtime READY reports startup and recovery health only"));
+        assert!(HELP.contains("Task planning, Attempt admission"));
+        assert!(HELP.contains("A configured native Conversation adapter may dispatch"));
+        assert!(!HELP.contains("does not launch agents"));
+        assert!(!HELP.contains("Runtime remains DEGRADED until Task recovery"));
     }
 }

@@ -63,3 +63,7 @@ recovery:
   owner: domain owner
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
+
+# Implementation evidence boundary (2026-11-06)
+
+This YAML is the DRAFT target dependency graph, not a description of currently working provider wiring. In the active daemon, the `harness_a`/OpenCode dispatch edge is the only Conversation execution path. `harness_b` is target-only: Codex App Server profile-probe code is not connected to `AgentSessionSupervisor`. Do not mark the `harness_b` edge served or integrated until the second adapter is wired, qualified and covered by the A→B→A USER path.

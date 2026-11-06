@@ -1,12 +1,12 @@
 # Implementation Plan - Conversation Session Supervisor and Native Turn Execution
 
-**Feature:** 001 | **Status:** ACCEPTED/LOCKED | **Spec:** SPEC.md revision 1.0  
+**Feature:** 001 | **Status:** IN_REVIEW | **Spec:** SPEC.md revision 1.0
 **Updated:** 2026-11-01  
-**Rule:** Implementation proceeds in accordance with the accepted SPEC contracts and dependency DAG.
+**Rule:** This plan is under owner review. Implementation evidence is recorded separately from qualification; no feature-level acceptance is implied.
 
 ## 1. Delivery strategy
 
-Deliver one qualified native chat vertical slice for one pinned OS/build, one selected harness/version, one adapter version and one auth route. Do not enable general multi-agent support or all platforms by inference. Keep the existing docs-first main branch and the dirty feature worktree untouched while this plan is reviewed. Implementation must occur later in an explicitly selected clean worktree from the accepted revision.
+Deliver one qualified native chat vertical slice for one pinned OS/build, one selected harness/version, one adapter version and one auth route. Do not enable general multi-agent support or all platforms by inference. The active main branch contains source. Before implementation, inspect the current working tree and ignored worktrees, preserve user changes, and select the intended clean task worktree. Do not reset or mutate unrelated branches.
 
 The durable transaction path is built before UI enablement. Adapter launch is outside SQLite. Readiness activation and final response settlement are separate atomic storage operations. Native events are normalized and never become canonical Conversation state directly.
 

@@ -1,8 +1,8 @@
 # 001 - Conversation Session Supervisor and Native Turn Execution
 
-**Status:** ACCEPTED/LOCKED — normative specification locked and ready for execution.  
-**Revision:** 1.0 | **Updated:** 2026-11-01  
-**Owners:** Conversation, Agent Runtime, Storage, Operator/API, Desktop UI, Security/Trust and Product.
+- **Status:** IN_REVIEW — core decisions B-01 through B-10 are locked; dependent UI and error/recovery contracts still require owner acceptance.
+- **Revision:** 1.0 | **Updated:** 2026-11-06
+- **Owners:** Conversation, Agent Runtime, Storage, Operator/API, Desktop UI, Security/Trust and Product.
 
 ## User outcome
 
@@ -10,14 +10,14 @@ A user can send an ordinary LiteCowork Conversation message through the exact se
 
 ## Current truth
 
-The preserved source contains USER+OPEN turn commit, immutable host resolution, context-package read, STARTING reservation/LOST recovery and a storage-only atomic readiness activation foundation. No qualified supervisor invokes activation, dispatches the context, persists a final AGENT response with terminal turn settlement, or enables end-to-end Send. The route remains fail-closed and reports admission unavailable.
+The active source contains an OpenCode-only supervisor path that reserves and activates a Conversation AgentSession, loads/sends bounded context, consumes the OpenCode response stream and commits the final AGENT message with terminal turn/session settlement. This is CODE-level integration evidence, not a qualified Windows desktop Send journey. The mounted UI nevertheless exposes Send despite the target disabled-until-qualified gate; Stop is ineffective for the OpenCode path, Retry has no UI call site, composer attachments/voice/more-options are inert, and the empty state contains Antigravity placeholder copy. The commit-to-spawn crash window has no durable dispatch outbox/recovery sweep; some supervisor errors are only logged; retry transitions to RUNNING before a reservation path that requires OPEN; and the storage submit path does not enforce the accepted single-flight policy. Keep Send/release claims gated until those issues and exact provider/OS/UI qualification are resolved.
 
 ## Package
 
 - [SPEC.md](SPEC.md) - target HLD/LLD, decisions, security and EARS acceptance.
 - [PLAN.md](PLAN.md) - phases, dependency DAG, risks and gates.
 - [TASKS.md](TASKS.md) - reviewable implementation tasks and blockers.
-- [DATA-MODEL.md](DATA-MODEL.md) - reused records and proposed result-write boundary.
+- [DATA-MODEL.md](DATA-MODEL.md) - reused records, implemented result-write boundary and remaining durability gaps.
 - [RESEARCH.md](RESEARCH.md) - sources, verified evidence, alternatives and open questions.
 - [WIRING.yaml](WIRING.yaml) - component/owner/transaction graph.
 - [contracts/](contracts/README.md) - API/event and failure/recovery contract use.

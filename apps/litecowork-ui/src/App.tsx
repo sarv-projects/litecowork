@@ -733,6 +733,18 @@ function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
+  const [conversationPaginationByWorkspace, setConversationPaginationByWorkspace] = useState<Record<string, { hasMore: boolean; loading: boolean }>>({});
+  const loadMoreConversationChatsRef = useRef<(() => void) | null>(null);
+  const registerLoadMoreConversationChats = useCallback((handler: (() => void) | null) => {
+    loadMoreConversationChatsRef.current = handler;
+  }, []);
+  const updateConversationListPagination = useCallback((workspaceId: string, hasMore: boolean, loading: boolean) => {
+    setConversationPaginationByWorkspace(current => {
+      const previous = current[workspaceId];
+      if (previous?.hasMore === hasMore && previous.loading === loading) return current;
+      return { ...current, [workspaceId]: { hasMore, loading } };
+    });
+  }, []);
   const workspacesRef = useRef<WorkspaceView[]>([]);
   const updateWorkspaceProjection = (update: WorkspaceView[] | ((current: WorkspaceView[]) => WorkspaceView[])) => {
     const next = typeof update === "function" ? update(workspacesRef.current) : update;
@@ -2240,9 +2252,9 @@ function App() {
           </div>
           <div className="sidebar-top-nav-group">
             <button
-              className="sidebar-icon-btn"
+              className="sidebar-icon-btn sidebar-close"
               type="button"
-              aria-label="Collapse sidebar"
+              aria-label="Close navigation"
               title="Collapse sidebar"
               onClick={() => closeNavigation()}
             >
@@ -2330,7 +2342,7 @@ function App() {
             {(conversationsByWorkspace[selectedWorkspaceId] ?? []).length === 0 ? (
               <div className="sidebar-chat-item-empty">No saved chats yet</div>
             ) : (
-              (conversationsByWorkspace[selectedWorkspaceId] ?? []).slice(0, 10).map((conv, idx) => {
+              (conversationsByWorkspace[selectedWorkspaceId] ?? []).map((conv, idx) => {
                 const isSelected = selectedConversationId === conv.conversation_id && page === "Conversations";
                 return (
                   <button
@@ -2356,6 +2368,16 @@ function App() {
               })
             )}
           </div>
+          {page === "Conversations" && conversationPaginationByWorkspace[selectedWorkspaceId]?.hasMore && (
+            <button
+              className="sidebar-chat-load-more"
+              type="button"
+              disabled={conversationPaginationByWorkspace[selectedWorkspaceId]?.loading}
+              onClick={() => loadMoreConversationChatsRef.current?.()}
+            >
+              {conversationPaginationByWorkspace[selectedWorkspaceId]?.loading ? "Loading chats…" : "Load more chats"}
+            </button>
+          )}
         </div>
 
         {/* 4. Core Objects Nav (Clean & Uncluttered) */}
@@ -2529,6 +2551,8 @@ function App() {
             onConversationsLoaded={(loaded) => {
               setConversationsByWorkspace(current => ({ ...current, [selectedWorkspaceId]: loaded }));
             }}
+            onRegisterLoadMoreConversations={registerLoadMoreConversationChats}
+            onConversationListPaginationChange={updateConversationListPagination}
             workbenchOpen={workbenchShown}
             onToggleWorkbench={() => {
               if (workbenchNarrow) {

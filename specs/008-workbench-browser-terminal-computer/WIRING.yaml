@@ -63,3 +63,32 @@ recovery:
   owner: domain owner
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
+
+# Current implementation boundary checked 2026-11-06
+# The target graph above is not connected in the active checkout.
+# WorkbenchPanel is mounted as a right-pane React component and calls App resource
+# preview callbacks only. Browser uses an iframe URL held in local React state.
+# browser_consent.rs and browser_control_service.rs are #[allow(dead_code)] policy
+# modules; main.rs says no Operator route, provider or Chrome process is connected.
+# environment_computer_use.rs is #[allow(dead_code)] and its probe returns unsupported/
+# unavailable; no capture or input-injection backend exists.
+# Terminal commands are handled in WorkbenchPanel React state; no PTY/ConPTY process,
+# daemon TerminalSessionService, Tauri terminal bridge or session route exists.
+# Diffs are illustrative, not computed from VCS or exact Resource revisions. Activity
+# has no rendered Workbench branch. Environment take/return control operations are
+# target-only. Keep browser/pty/computer edges TARGET; do not mark INTEGRATED.
+# Current implementation evidence checked 2026-11-06
+# The graph above describes intended owner wiring, not currently integrated execution.
+# Actual UI: App.tsx -> WorkbenchPanel (ephemeral React state). Files -> Resource
+# catalog/exact ResourceRevision preview callbacks. Browser -> HTML iframe only;
+# no Chrome process, BrowserSession store, Operator route or CDP/Playwright dispatch.
+# Terminal -> local React scrollback; no Tauri PTY command, daemon PTY service,
+# shell process, ConPTY/OpenPTY bridge or Environment admission. Generic commands
+# fabricate exit code 0. Diffs -> fixed modulo line decoration or static example,
+# not VCS/immutable revision comparison. Activity enum exists but no view/navigation.
+# Browser consent/epoch modules are allow(dead_code) and only called from tests;
+# computer-use policy is allow(dead_code), provider probe returns unsupported/unavailable.
+# take/return Environment control and Environment lifecycle are target-only OpenAPI routes.
+# No browser/terminal/computer owner records, process/provider or user journey are served.
+# Keep every browser/PTY/computer/diff/activity execution edge TARGET until the exact
+# provider, owner API/store, Tauri transport, OS process and recovery evidence are qualified.

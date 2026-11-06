@@ -18,7 +18,7 @@
 ## Owners and file scope
 
 Owners: Conversation, Agent Runtime, Product.
-Allowed implementation paths are listed per task. This docs-first checkout has no `apps/` or `crates/` tree; those paths are the future scope, not files to create here.
+Allowed implementation paths are listed per task. The active source tree is in apps/ and crates/. Changes remain limited to the task-owned paths and require package acceptance, a clean selected worktree, and source/contract/UI/test reconciliation.
 
 ## Migration, rollout, rollback
 

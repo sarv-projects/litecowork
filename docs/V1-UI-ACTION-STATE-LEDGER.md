@@ -2,6 +2,8 @@
 
 Status: normative target companion to EXPERIENCE, DESIGN-SYSTEM, MOTION, DESKTOP-SHELL-LLD, NATIVE-COMPOSER-LLD and RENDERING-CONFORMANCE-LLD. UI events are local reducer semantics, not new durable domain event names. A documented action is not served until its authentic Operator/native handler exists.
 
+This ledger defines intended UI behavior and test IDs; it does not certify current source coverage. For each listed action, use [SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md) to find the current component, Tauri command and owner route, and [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) for current implementation/qualification evidence. Target actions without an integrated owner remain disabled or unavailable in the current build.
+
 ## Universal UI state contract
 
 Each control must supply pointer/keyboard/screenreader interactions, focus-visible, accessible name, disabled-with-reason/repair, loading/empty/error/permission/offline/stale states, actual backend owner, optimistic conflict and accessible annunciation. User-entered drafts, selection and scroll anchors are preserved against async races. On Workspace switch, invalidate stale fetches and option descriptors. All actual mutations carry canonical owner version/idempotency and actor from authenticated transport.

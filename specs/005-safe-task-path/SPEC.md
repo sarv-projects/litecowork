@@ -3,8 +3,8 @@
 **ID:** 005
 **Status:** DRAFT
 **Owners:** Task Runtime, Environments, Trust, Storage, Desktop UI
-**Updated:** 2026-11-01
-**Revision:** 0.1
+**Updated:** 2026-11-06
+**Revision:** 0.2
 **Target release:** V1 local desktop
 **Dependencies:** root ARCHITECTURE.md, docs/V1-PRODUCT-RELEASE-CONTRACT.md, docs/IMPLEMENTATION-MASTER-PLAN.md, and the owner documents named in RESEARCH.md. Feature 001 remains the Conversation send authority.
 
@@ -30,7 +30,23 @@ Observable outcome: The owner promotes one Conversation outcome into a Task, acc
 
 ## 4. Current evidence
 
-This checkout is documentation-first. The behavior below is **TARGET**. Archived source and historical CODE notes are evidence of past work, not SERVED or QUALIFIED status on this tree. No owner has locked this package.
+The active checkout contains a partial Task record/specification/read model, a read-only planning preflight, and compiled domain/storage execution primitives. It does not contain an integrated Task planning → accepted PlanRevision → Attempt → isolated Environment → mediated Effect → independent verification path. The following matrix records the current source/route/UI boundary; it is not owner acceptance or release qualification.
+
+| Capability | Current source/route evidence | Limitation / release meaning |
+|---|---|---|
+| Explicit Task creation | CODE/SERVED: `POST /v1/tasks` persists a durable Task and initial TaskSpecRevision with idempotency receipt. The Home “New task” composer submits a standalone objective, optional Coworker/default lead, and pinned Resource revision refs. Suggestion acceptance and Routine Manual Run also materialize Task records. | Task creation deliberately does not start planning, an AgentSession, an Attempt or an Environment. No explicit “promote this Conversation outcome” action was found in `ConversationsPage`; current Home creation is a separate Task objective flow. |
+| Task/specification read and edit | CODE/SERVED: Task list/get, `POST /v1/tasks/{task_id}/spec-revisions`, plan-revision list, Step list, Conversation Task list, Task artifacts, presentation/progress, capability-invocation and verification-run read views | These are durable records and read projections. Reading existing Steps/Attempt/Evidence is not an Attempt admission path. |
+| Task lead selection | CODE/SERVED: Task create resolves explicit preferred binding, then selected Coworker default, then Workspace default; missing lead fails `AGENT_UNAVAILABLE`. Owner Task lead handoff is served via `POST /v1/tasks/{task_id}/lead-agent` and commits a Task lead change. | Changing the lead does not start planning or create an Attempt. There is no substitute-agent execution fallback. |
+| Planning readiness | CODE/SERVED: `GET /v1/tasks/{task_id}/planning-readiness` validates Workspace ownership and `If-Match`, prepares a bounded internal planning packet, and returns a read-only projection | Response hardcodes `dispatch_available=false`, `planning_started=false`, `agent_session_started=false`, `plan_created=false`. Current blockers include isolation, unmediated native capabilities, protocol/process qualification, planning context materialization and session settlement. No provider is invoked. |
+| Plan acceptance | Only `GET /v1/tasks/{task_id}/plan-revisions` is served; `POST /v1/tasks/{task_id}/plan-revisions` (`submitTaskPlan`) is target-only | No authenticated Operator plan-acceptance handler or user acceptance flow. `PlanRevision` and `Step` types/storage exist but are not produced by the current Task UI flow. |
+| Attempt admission and recovery | Attempt/lease admission state types and SQLite storage methods exist in domain/storage crates with unit tests | No Task daemon route or production caller of `admit_step_attempt` was found. Attempt list, Effect list, recovery, pause/resume/cancel/steer and environment control routes are target-only. `attempt_process_scope.rs` explicitly says its containment/journal remains staged and is `allow(dead_code)`. |
+| Environment provider | CODE: `probe_environment_provider` reports platform/provider observations. Windows reports a local workspace class and Job Object process-tree lifetime capability; Linux only reports a local workspace class if bubblewrap exists and explicitly notes isolation is not qualified. | Provider probe is not provisioning or Task invocation. Budget enforcement is `Unavailable`; checkpoint/restore and persistent Workspace lifetime are false. No Task API provisions or attaches an Environment. |
+| Isolation/quiescence evidence | CODE: `IsolationAttestation`, enforcement dimensions and fail-closed admission checks exist in `environment_isolation.rs`; process-scope journal/proof types exist | Search found no production caller wiring those attestations into Task Attempt admission or recovery. A Windows Job Object is process-tree containment evidence; by itself it does not prove filesystem-root confinement, network denial or resource-budget enforcement. |
+| Trust and grants | CODE/SERVED: `POST /v1/capability-grants` and revoke route accept bounded, expiring Task-planning `workspace.resource.read` grants scoped to exact Resource refs | These are read grants for planning context, not an execution grant for the proposed file write. The Trust evaluator is not connected to a live Attempt/tool invocation path. |
+| Effects and verification | CODE/SERVED read views for Task verification runs, Artifacts, capability invocations and presentation/progress | No production Task Effect dispatcher/reconciler/verification pipeline is connected to the Attempt path. No file write is issued through an Environment by this feature. |
+| Desktop Work UI | `App.tsx` Home composer explicitly saves a Task; Work lists Tasks, opens detail, edits objective revisions, checks planning readiness, displays pinned inputs, read-only Steps, presentation/progress snapshots and committed outputs | No plan acceptance, Attempt start, cancellation, retry/recover, approval, Environment detail or real execution controls. Task presentation reads saved records and does not prove an execution worker is live. |
+
+Feature 005 remains DRAFT. The code has useful domain/storage primitives and a truthful read-only readiness screen, but the V1 outcome of one independently verified isolated file edit is not implemented.
 
 ## 5. LOCKED and FLEXIBLE decisions
 
@@ -49,12 +65,13 @@ This checkout is documentation-first. The behavior below is **TARGET**. Archived
 
 ### Open decisions
 
-- Which Environment provider is first (container, OS sandbox, or other) on the GA OS.
+- B-17: the first V1 Environment provider must be selected for the declared GA OS and exact Windows build/provider version (or another explicitly selected OS). Decide whether the first target is the Windows Job Object-backed local provider or a separately qualified container/OS sandbox provider. The current `probe_environment_provider()` output is discovery evidence only: Windows reports process-tree lifetime capability; it does not prove filesystem confinement, network enforcement or budget enforcement. On Linux, bubblewrap presence is not a qualification result.
+- B-18: choose the one write primitive for the first vertical slice: atomic replacement of one exact approved file, or a bounded patch against a pinned base revision. The choice must define the input/base digest, maximum bytes, allowed path/root, temporary-file semantics, atomic commit, rollback/reconciliation behavior, and independent post-write verifier. Do not accept arbitrary shell commands or general workspace writes as an equivalent first slice.
 
 ### Blockers
 
-- B-17: first Environment provider and attestation evidence.
-- B-18: the single allowed edit class (one file replace versus patch).
+- B-17: Product, Environments and Trust must name the first GA OS/build, exact Environment provider/version, and evidence for all enforced isolation dimensions: filesystem roots, process-tree lifetime/quiescence, network policy and resource limits. Provider capability probes and Job Object presence alone do not close this blocker.
+- B-18: Product, Environments and Trust must accept one exact file-write class and its digest/path/size/atomicity/recovery/verifier contract. No implementation should infer the allowed write class from an available OS API.
 
 ## 6. High-level design
 
@@ -131,7 +148,7 @@ Further gates after ACCEPTED/LOCKED are the cargo filters named in TASKS.md. The
 
 Each blocker has the owners named above. Resolution gate: owner decision recorded in this SPEC before status leaves DRAFT. Implementation tasks: 005-T01, 005-T02, 005-T03, 005-T04.
 
-## 7a. Owner facts incorporated 2026-11-01
+## 7a. Owner facts incorporated and implementation crosswalk checked 2026-11-06
 
 Read from TASK-RUNTIME, ENVIRONMENTS, DELEGATION, and STATE-MACHINES.
 
@@ -148,6 +165,16 @@ Read from TASK-RUNTIME, ENVIRONMENTS, DELEGATION, and STATE-MACHINES.
 
 
 
+## 7b. Current source and UI boundary checked 2026-11-06
+
+- Task create/spec edit and planning-readiness read are served; plan submission, Attempt admission/listing, Effect list/dispatch, recovery, Task pause/resume/cancel/steer and Environment provision/control remain target-only.
+- The current Task composer is a standalone Home “New task” form. It creates a Task envelope and pins selected Coworker/default lead plus Resource revision refs. It is not an in-Conversation promotion control; ordinary Conversation messages do not create Tasks.
+- Task planning readiness only builds an internal bounded preflight packet. It hardcodes dispatch/planning/session/plan booleans false. `LocalPlanningPreflight::require_dispatch()` remains unused and always refuses dispatch. No production `admit_step_attempt` call site exists in the daemon.
+- `probe_environment_provider()` reports provider capabilities, not an attached Environment. On Windows it reports a LocalWorkspace class and Job Object process-tree capability; on Linux it reports a local class only when bubblewrap exists and explicitly says isolation is not qualified. It reports no budget enforcement, checkpoint/restore, or workspace-persistent lifetime.
+- IsolationAttestation and quiescence proof types exist with strict comparisons, but they are not connected to production Task admission/recovery. The attempt process-scope journal is compiled as staged/dead code until exact Runtime scope evidence is wired.
+- The only currently served capability grant is the bounded Task-planning Resource-read grant. It does not authorize a file write. Trust evaluation and Effect reconciliation are not connected to a live Attempt execution path.
+- The desktop Work surface renders persisted Task envelope/spec/plan/Step/Artifact/presentation records and read-only planning readiness. It does not provide plan acceptance, Attempt start, Effect approval, cancel/recover, or Environment control. Task presentation is not a live execution proof.
+- The current Windows Job Object process-tree observation is not an attestation of filesystem root enforcement, network deny or every resource limit. Do not show it as a full Environment isolation badge.
 ## 19. Requirement traceability
 
 | Requirement | Spec | Canonical contract | Task | Acceptance |

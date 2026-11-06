@@ -18,7 +18,7 @@
 ## Owners and file scope
 
 Owners: Automation, Task Runtime, Runtime lifecycle, Desktop UI.
-Allowed implementation paths are listed per task. This docs-first checkout has no `apps/` or `crates/` tree; those paths are the future scope, not files to create here.
+Allowed implementation paths are listed per task. The active source tree is in apps/ and crates/. Changes remain limited to the task-owned paths and require package acceptance, a clean selected worktree, and source/contract/UI/test reconciliation.
 
 ## Migration, rollout, rollback
 
@@ -35,3 +35,9 @@ No migration ships in DRAFT. A later schema change uses the next immutable SQLit
 - `python3 .specify/scripts/validate_feature_package.py`
 - Owner review
 - After lock: TASKS.md commands and denial, replay, restart and cancel cases
+
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]
+
+## External workflow scope
+
+This package does not implement a graph schema, graph canvas or workflow execution engine. Its only V1-target integration task is the invocation of an existing qualified provider workflow as one CapabilityInvocation within an admitted Task; no production adapter is currently present. The provider owns graph authoring, graph revisions and internal execution states. Users may already use provider-native AI builders/MCP (for example n8n Assistant or Activepieces Build by Asking) inside the provider product, subject to that provider's feature/version/permission gates. What is deferred is direct LiteCowork-Coworker graph mutation through a provider API/MCP capability; that requires a separate owner ADR, exact permissions and a qualified provider-authoring adapter.

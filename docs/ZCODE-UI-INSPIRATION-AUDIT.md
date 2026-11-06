@@ -246,11 +246,11 @@ Direct examination of the local `repo_take/zcode` checkout confirms key architec
 1. **Settings Organization & Category Triad (`packages/ui/src/settings/settingsPageConfig.ts`):**
    - ZCode classifies settings into three strict groups: `basics` (General, Appearance, Model Provider, Browser, Computer Use, Shortcuts, File Search), `agentCapabilities` (Personalization/AGENTS.md, Memory, Subagents, Plugins, MCP, Skills, Commands, Automations, Hooks), and `dataAndStats` (Data Sync, Usage, Archive).
    - Each setting section has a distinct identity, breadcrumb header, card container, and explicit state disclosure. Destructive actions (like clearing all cookies vs. cache) are separated visually and logically.
-   - **LiteCowork Application:** Implemented in `apps/litecowork-ui/src/settings/SettingsView.tsx`, providing a full-featured, two-column settings workspace that maps cleanly to LiteCowork's 187 ledger controls.
+   - **LiteCowork source check (2026-11-06):** The active Settings route mounts `SettingsView.tsx`, which currently exposes only four categories (General, Workspaces, Agents and Runtime). The 187-control ledger is a target inventory, not a shipped screen. The exported `SettingsPage` in `App.tsx` is unmounted. See `SETTINGS-AND-SHELL-SURFACE-AUDIT.md`; do not treat this inspiration comparison as implementation evidence.
 
 2. **Terminal Session Resident Keep-Alive (`sidePaneTerminalSessionRegistry.js`):**
    - In ZCode's `WorkspaceShellLayout.tsx`, closing or switching side pane tabs does not terminate the underlying terminal session. Resident PTY/xterm handles are preserved by `workspaceKey` in a session registry until the workspace itself closes.
-   - **LiteCowork Application:** The Workbench terminal pane preserves its session state across panel collapse/tab switches so that long-running builds or commands are not killed by UI navigation.
+   - **LiteCowork source check (2026-11-06):** WorkbenchPanel holds simulated terminal transcript/input state in React while the component remains mounted. This is not a resident PTY/ConPTY process or a real terminal session; closing/unmounting the panel loses that component state. See Feature 008 and IMPLEMENTATION-STATUS.md.
 
 3. **Authoritative Project Tree vs. Ephemeral UI State (`project-sidebar/CONTRACT.md`):**
    - In ZCode, the Host daemon's `projectService.readTree` is the single source of truth for projects, folders, and CLI status. The UI only stores view preferences (folded/unfolded, order) and uncommitted composer drafts.

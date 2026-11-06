@@ -148,6 +148,10 @@ provider requirement, create a Grant, or authorize an Effect. Recommended defaul
 ordinary Trust checks for read-only work and drafts, explicit Approval for external
 mutation, and handoff for destructive/financial actions.
 
+### Current implementation boundary — 2026-11-06
+
+CoworkerRevision currently persists interaction defaults, but no production Trust evaluator consumes them; the current UI's “preference, not authority” copy is correct, and the setting does not yet force approval or handoff. The default lead binding is consumed by Task creation. Lead-failover policy is copied into TaskSpec but no production fallback dispatcher is wired. The current Coworker pause path is not a complete proactive fence: a Coworker can be paused while an Automation remains enabled, and the TriggerHost does not re-check Coworker status at occurrence settlement. The origin-status helper has no production caller. Task storage rejects ARCHIVED Coworkers but not PAUSED; the Task composer separately blocks PAUSED Coworkers even for owner-submitted Tasks. See [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) and Feature 009 for the complete source crosswalk. These are implementation gaps; they do not change the target semantics in this document.
+
 ## Goals
 
 A Goal is a user-authored, passive statement of desired outcome. It has an immutable

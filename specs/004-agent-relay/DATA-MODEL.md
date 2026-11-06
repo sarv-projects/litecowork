@@ -29,3 +29,11 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 ## Migration
 
 None in this revision. Blockers in SPEC section 5 must be closed before a migration is designed.
+
+## Current source boundary (2026-11-06)
+
+- `ConversationContextPackage` is an internal derived value, not an independently persisted aggregate or new table. The storage reader constructs it from the committed Conversation message prefix through the USER turn's exact event revision.
+- It carries the target AgentBinding and message-level `source_agent_binding_id` for AGENT messages. SYSTEM_NOTICE is excluded. Native session IDs, handles, private harness transcripts and credentials are not part of the portable prompt package.
+- The current implementation enforces 1,024 source messages / 4 MiB for the package and 256 KiB for encoded native text. These are code constants, not accepted portable-context schema/retention policy; B-15 remains blocked.
+- The context record can represent `resource_refs`, but prompt encoding refuses nonempty references/RESOURCE content until an explicit resource materializer exists. There is no persisted ContextAttachment or durable Context Used receipt in this relay slice.
+- Per-turn `agent_binding_id` and `agent_session_id` are existing Conversation message projection fields; the current UI does not render the producing binding.

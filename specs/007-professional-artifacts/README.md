@@ -1,7 +1,7 @@
 # 007 - Professional Artifacts One Format
 
 **Status:** DRAFT - review required; does not authorize implementation.
-**Revision:** 0.1 | **Updated:** 2026-11-01
+**Revision:** 0.3 | **Updated:** 2026-11-06
 **Owners to approve:** Artifacts, Presentation, Storage, Desktop UI.
 
 ## User outcome
@@ -10,7 +10,7 @@ The owner creates, revises, exports and reopens one professional deliverable and
 
 ## Current truth
 
-Global owner documents are the interim design authority. This package binds a V1 slice to those documents. The active checkout has no implementation to mark SERVED. Archived source is historical.
+The active checkout has an Artifact read/Library/version model and a narrow managed `text/plain` append editor. It has no production Artifact create command or durable export-receipt flow, and no qualified professional document/Office editor. Previewing Markdown/CSV/JSON is not editing those formats; uploading DOCX/XLSX/PPTX/PDF creates a Resource, not an Artifact. Native Save As is an exact-version local file save, not the target format-export receipt. This package remains DRAFT; its source/route/UI boundary is mapped in SPEC.md, RESEARCH.md and docs/IMPLEMENTATION-STATUS.md.
 
 ## Package
 

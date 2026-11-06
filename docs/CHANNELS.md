@@ -272,3 +272,9 @@ unless the authenticated owner/source policy explicitly qualifies them. Third-pa
 content cannot automatically become Coworker memory, instructions or a standing
 responsibility. See [Learning](LEARNING.md) and
 [Connectors & Workflows](CONNECTORS-WORKFLOWS.md).
+
+## Current source boundary — 2026-11-06
+
+The ChannelAdapter, ChannelHostAssignment, RuntimeMesh host lease, inbound receipt, outbound send and reply-target flows above are target contracts. A source scan of the active `apps/` tree found no ChannelAdapter implementation, ChannelHostAssignment runtime, outbound channel-send command or channel receipt consumer. The current Notification path is narrower: Automation/Task outcome settlement may insert a `PENDING` `notification_deliveries` row; the Notifications Operator reads delivery history and writes Workspace event-class preferences only. No sender advances a row to SENDING/SENT/FAILED/AMBIGUOUS/SUPPRESSED, so PENDING is not transport delivery.
+
+The Workspace preference `preferred_channels` list is stored but not consumed by the outcome producer. It reads the policy and quiet-hours only, then selects the first active ChannelBinding or treats any active Runtime Workspace binding as a local channel. The current UI's free-text channel values therefore do not route delivery. `ON_CONDITION` is implemented as the fixed `DEPENDENCY_BLOCKED` outcome, not a user-authored condition. Quiet hours can be evaluated when present, but the current Notifications UI cannot create or edit them. These gaps keep B-27 (local channel and delivery guarantee) open; do not claim a working Telegram/Slack/email/desktop outbound transport from the Notification records.

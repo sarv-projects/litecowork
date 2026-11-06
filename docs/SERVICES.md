@@ -1004,23 +1004,35 @@ and a STARTING-to-LOST settlement operation. After observed adapter readiness, t
 also exposes an atomic activation transaction: it rechecks host/Runtime/binding/endpoint
 readiness, inserts the Runtime-local host binding, and commits AgentSession ACTIVE plus
 first Task RUNNING and their events/snapshots. Adapter startup remains outside storage.
-PlanningCoordinator and AgentSessionSupervisor orchestration are not yet wired.
+TASK_PLANNING PlanningCoordinator/AgentSessionSupervisor orchestration is not yet wired. This does not describe the separate partial OpenCode-only CONVERSATION dispatch path documented below.
 
 ### AgentSessionSupervisor
 
-Owns AgentSession lifecycle for CONVERSATION, TASK_PLANNING, and ATTEMPT_EXECUTION
-sessions. It invokes the negotiated AgentAdapter, validates the discriminated scope before
-dispatch, asks AgentHostSupervisor to ensure/retain the selected endpoint, and emits
-normalized lifecycle outcomes; it cannot mutate Conversation or Task state directly.
-Durable session identity, scope, selected endpoint, Runtime, and RuntimeIncarnation are
-committed separately from the local `AgentSessionHostBinding`. A binding must match that
-exact Runtime/incarnation and is removed only after the session reaches CLOSED or LOST. A
-new Runtime creates a new session rather than attaching a source Runtime's opaque handle.
-The supervisor closes sessions when their owning turn/assignment settles or durably yields;
-it releases the local binding only after adapter quiescence is observed. A pending
-CapabilityInvocation does not hold an AgentSession open: its Invocation runner owns the
-provider lifecycle, and the Attempt can receive its result through a replacement session
-only after authority and checkpoint state are revalidated.
+**Target owner contract:** owns AgentSession lifecycle for CONVERSATION, TASK_PLANNING,
+and ATTEMPT_EXECUTION sessions. It invokes the negotiated AgentAdapter, validates the
+discriminated scope before dispatch, asks AgentHostSupervisor to ensure/retain the selected
+endpoint, and emits normalized lifecycle outcomes; it cannot mutate Conversation or Task
+state directly. Durable session identity, scope, selected endpoint, Runtime, and
+RuntimeIncarnation are committed separately from the local `AgentSessionHostBinding`. A
+binding must match that exact Runtime/incarnation and is removed only after the session
+reaches CLOSED or LOST. A new Runtime creates a new session rather than attaching a source
+Runtime's opaque handle. The supervisor closes sessions when their owning turn/assignment
+settles or durably yields; it releases the local binding only after adapter quiescence is
+observed.
+
+**Active source status (audit 2026-11-06):** `apps/litecoworkd/src/agents/supervisor.rs`
+contains a per-turn implementation with a single `opencode` provider branch (OpenCode
+Server protocol v2.0.32). It reserves/activates the Conversation session, loads/sends the
+bounded context and invokes the SQLite final-response writer. However, the active Operator
+calls this supervisor directly from a detached Tokio task; no separately wired
+AgentTurnCoordinator or AgentHostSupervisor was found. Retry reservation is inconsistent
+with the current turn state, RUNNING cancel does not observe provider quiescence, early
+supervisor errors can leave OPEN turns unsettled, and startup recovery is absent. Do not
+claim the target lifecycle or qualification is complete from this partial path.
+
+A pending CapabilityInvocation does not hold an AgentSession open: its Invocation runner
+owns the provider lifecycle, and the Attempt can receive its result through a replacement
+session only after authority and checkpoint state are revalidated.
 
 ### AttemptRunner
 
@@ -1515,7 +1527,9 @@ unsubscribe(SubscriptionRef) -> ProviderOutcome
 poll(TriggerRequest, opaque_cursor?) -> TriggerPollBatch
 ~~~
 
-### WorkflowBackendAdapter
+### WorkflowBackendAdapter (target contract; not implemented in active source)
+
+The following service shape defines the intended provider boundary only. A 2026-11-06 recursive scan found no production WorkflowBackendAdapter implementation in apps/ or crates/, and no served external-workflow integration is currently available. This section is not evidence of a registered service.
 
 ~~~text
 health(ConnectionId) -> HealthObservation

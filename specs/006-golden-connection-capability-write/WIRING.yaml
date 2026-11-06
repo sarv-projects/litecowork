@@ -63,3 +63,13 @@ recovery:
   owner: domain owner
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
+
+# Current source boundary checked 2026-11-06
+# The graph above describes the target Connection/CapabilityBroker flow, not current wiring.
+# Discover search/detail is served. connect-or-install returns 503 because LiteSPM is
+# not qualified; test returns UNKNOWN without contacting a provider. Connection list/get/
+# disconnect are target-only. The current SecretStore is not used by a ConnectionService.
+# Approval resolve is served, but the Trust evaluator is dead-code/unwired and Approval
+# resolution does not dispatch an action. CapabilityInvocation APIs are GET-only; SQLite
+# refuses DISPATCHED admission. The provider/secret/invocation/effect edges must remain
+# TARGET until the golden OAuth/read/write flow and reconciliation are qualified.

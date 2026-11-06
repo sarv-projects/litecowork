@@ -8,13 +8,9 @@ Automation activation/recurring trigger hosting is deliberately incomplete: the 
 path supports stored definitions and an explicit one-shot ManualTrigger Task admission,
 not a qualified recurring/provider TriggerCoordinator. Coworker presence has a route/UI
 shape but remains unavailable until its committed activity/runtime projections exist.
-Current integration status is tracked in `implementation/CURRENT-RUN.md`; source presence
-and passing unit tests do not satisfy system or owner acceptance gates.
+Current implementation and release evidence are tracked in [IMPLEMENTATION-STATUS](../../docs/IMPLEMENTATION-STATUS.md). Source presence and passing unit tests do not satisfy system or owner acceptance gates.
 
-Authority: [RESPONSIBILITIES](../../docs/RESPONSIBILITIES.md),
-[AUTOMATION](../../docs/AUTOMATION.md), [DATA-MODEL](../../docs/DATA-MODEL.md),
-[STATE-MACHINES](../../docs/STATE-MACHINES.md), [SCHEMAS](../../docs/SCHEMAS.md),
-[E08](../../implementation/epics/E08.md), [E09](../../implementation/epics/E09.md).
+Authority: [COWORKERS-TARGET](../../docs/COWORKERS-TARGET.md), [RESPONSIBILITIES](../../docs/RESPONSIBILITIES.md), [AUTOMATION](../../docs/AUTOMATION.md), [LEARNING](../../docs/LEARNING.md), [DATA-MODEL](../../docs/DATA-MODEL.md), [STATE-MACHINES](../../docs/STATE-MACHINES.md), [SCHEMAS](../../docs/SCHEMAS.md), [Feature 009](../../specs/009-coworkers-scoped-memory/README.md), [Feature 010](../../specs/010-automations-recurring-host/README.md).
 
 ## Implemented boundary
 

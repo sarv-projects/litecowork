@@ -60,3 +60,15 @@ recovery:
   owner: domain owner
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
+
+# Current implementation evidence checked 2026-11-06
+# Target graph above is not fully wired in the active checkout.
+# Present path: ArtifactLibrary/ArtifactWorkbench -> Tauri artifact_read/edit-head/
+# text-version/promote/archive/SaveAs bridge -> authenticated artifact_operator ->
+# ArtifactReadStore, ArtifactLibraryWriteStore and narrow ArtifactVersionWriteStore.
+# text-version appends only to an existing managed text/plain Artifact <=1 MiB.
+# SaveAs is a native local file write <=10 MiB and emits no durable ExportReceipt.
+# Missing target edges: initial Artifact create command/transaction; selected professional
+# format editor/parser/round-trip; durable export command/receipt; Task-produced artifact
+# integration (blocked by Feature005 Task dispatch). Do not label owner/editor/export
+# edges INTEGRATED or QUALIFIED based on the existing text editor or Office probe.

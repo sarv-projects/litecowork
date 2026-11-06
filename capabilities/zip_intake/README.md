@@ -1,10 +1,6 @@
 # Bounded ZIP intake capability slice
 
-This is the local Python archive implementation for the ZIP portion of
-[E06-S01](../../implementation/epics/E06.md). It uses only Python's standard
-library and follows the optional isolated-provider direction in
-[STACK](../../implementation/STACK.md). No dependency or lockfile changes are required.
-There is no generic provider registry, LiteSPM wire protocol, or Core parsing service.
+This is the local Python archive implementation for the ZIP portion of Workspace Resource ingestion. Its product boundary is owned by [WORLD-RESOURCES](../../docs/WORLD-RESOURCES.md), its isolation boundary by [ENVIRONMENTS](../../docs/ENVIRONMENTS.md), and its current integration state by [IMPLEMENTATION-STATUS](../../docs/IMPLEMENTATION-STATUS.md). It uses only Python's standard library. There is no generic provider registry, LiteSPM wire protocol, or Core parsing service.
 
 ## Port and ownership
 

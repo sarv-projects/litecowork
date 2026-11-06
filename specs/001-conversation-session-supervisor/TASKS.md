@@ -1,42 +1,43 @@
 # Tasks - Conversation Session Supervisor and Native Turn Execution
 
-**Feature:** 001 | **Status:** ACCEPTED/LOCKED - ready for execution.  
+**Feature:** 001 | **Status:** IN_REVIEW - implementation and qualification status reconciled to active source.
 **Spec revision:** 1.0 | **Owners:** domain owners named in SPEC.md.
 
 ## 001-T01 - Resolve first-provider and Conversation admission decisions
 
-- **Status:** COMPLETED.
+- **Status:** PARTIAL / OWNER REVIEW REQUIRED.
 - **Depends on:** NONE.
 - **Owners:** Product, Conversation, Agent Runtime, Security.
 - **Allowed paths:** this feature package; owner docs only after decision.
 - **Contract:** SPEC sections 5, 6, 7.2, 7.4, 7.6, 9, 10, 15.
 - **Change intent:** resolve B-01, B-02, B-03, B-05, B-07, B-08, B-09 and B-10; identify one exact OS/build/harness/adapter/auth route; freeze concurrency, readiness, input/attachment, event and process lifecycle contract. Apply the existing Conversation-scoped UserRequest continuation contract; do not create a competing flow.
 - **Acceptance:**
-  - [x] Every decision has an owner-authored resolution and source evidence (B-01 through B-10 resolved).
-  - [x] First target provider handshake and exact version are testable (Windows MSVC + Claude Code / Codex).
-  - [x] Context over-limit policy and process ownership are explicit (sliding window + Job Object).
+  - [ ] B-01 through B-10 have consistent owner acceptance and source-backed enforcement.
+  - [ ] The declared first OS/harness/adapter/auth tuple matches the active implementation (the source currently dispatches only OpenCode Server v2.0.32).
+  - [ ] Context bounds, process ownership and cancellation/quiescence behavior are proven on the declared target.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
 - **Stop:** any handshake/host identity ambiguity leaves feature blocked.
 
-## 001-T02 - Specify and approve atomic final Agent response commit
+## 001-T02 - Complete and qualify atomic final Agent response commit
 
-- **Status:** READY.
+- **Status:** PARTIAL — typed port, SQLite transaction and supervisor call exist; contract/negative/fault-injection coverage remains.
 - **Depends on:** T01.
 - **Owner:** Storage and Conversation.
 - **Allowed paths:** after approval, `crates/storage-core/src/conversation.rs`, `crates/storage-sqlite/src/conversations.rs`, related typed event/schema/docs/tests.
 - **Contract:** SPEC 7.3, DATA-MODEL, contracts/api-events.md.
 - **Change intent:** define one typed storage port and SQLite IMMEDIATE transaction for AGENT message + terminal turn + snapshots + events + receipt. Exact public payload/version must match canonical event and schema.
 - **Acceptance:**
-  - [x] Exact request/result types and idempotency identity are approved (commit_conversation_agent_response designed).
+  - [x] Typed request/result and SQLite operation exist and are invoked by the OpenCode supervisor.
+  - [ ] Storage/Conversation owners accept the exact field and event contract; retry ordinal and stable provider-response identity are explicitly protected.
   - [ ] Foreign owner, wrong Workspace, wrong active session, stale version and wrong retry ordinal fail with no partial writes.
   - [ ] Duplicate exact final result returns one stable receipt/message; conflicting replay fails.
   - [ ] Crash/rollback tests prove atomicity.
 - **Command:** `cargo test -p storage-sqlite --locked conversation_agent_response_commit` (test filter to be added).
 - **Stop:** never expose final answer as complete without commit receipt.
 
-## 001-T03 - Implement bounded AgentSessionSupervisor and AgentHostSupervisor lifecycle
+## 001-T03 - Complete bounded AgentSessionSupervisor and AgentHostSupervisor lifecycle
 
-- **Status:** NOT STARTED.
+- **Status:** PARTIAL — per-turn AgentSessionSupervisor code exists; separate host ownership and recovery lifecycle are not complete.
 - **Depends on:** T01.
 - **Scheduling:** Independent of T02; T02 and T03 may proceed in parallel after T01 locks shared interfaces. Both are prerequisites for T06.
 - **Owner:** Agent Runtime.
@@ -54,7 +55,7 @@
 
 ## 001-T04 - Qualify one native AgentAdapter
 
-- **Status:** BLOCKED - B-02/B-03/B-05.
+- **Status:** BLOCKED FOR QUALIFICATION — OpenCode Server v2.0.32 code path exists; the declared Adapter 1.0/first-route contract and exact OS/auth/USER evidence do not match or qualify it.
 - **Depends on:** T01, T03.
 - **Owner:** Agent Runtime.
 - **Allowed paths:** one selected adapter module, adapter contracts and fixtures.
@@ -69,9 +70,9 @@
 - **Command:** `cargo test -p litecoworkd --locked selected_adapter_conversation` (filter to be added).
 - **Stop:** if native API can't prove readiness or safe stop, do not qualify.
 
-## 001-T05 - Dispatch bounded context and supported resources
+## 001-T05 - Complete bounded context dispatch and supported resources
 
-- **Status:** NOT STARTED.
+- **Status:** PARTIAL — bounded context is loaded and sent on the OpenCode path; supported ResourceRef materialization and provider-bound qualification remain.
 - **Depends on:** T01, T03, T04.
 - **Owners:** Conversation, Resource, Agent Runtime.
 - **Allowed paths:** focused context materializer and adapter tests.
@@ -85,9 +86,9 @@
   - [ ] Never silently truncate or cross provider private context.
 - **Command:** `cargo test -p litecoworkd --locked conversation_context_dispatch` (filter to be added).
 
-## 001-T06 - Implement final response and terminal settlement
+## 001-T06 - Complete final response and terminal settlement
 
-- **Status:** BLOCKED - T02.
+- **Status:** PARTIAL — atomic SQLite operation and OpenCode supervisor call exist; strengthen provenance validation, retry identity and crash/rollback tests.
 - **Depends on:** T02, T03, T04, T05.
 - **Owners:** Conversation, Storage.
 - **Allowed paths:** Conversation result writer, storage ports/SQLite adapter and adjacent tests.
@@ -102,7 +103,7 @@
 
 ## 001-T07 - Complete stop, retry, provider input and stream integration
 
-- **Status:** NOT STARTED.
+- **Status:** PARTIAL / BLOCKED — routes and some storage transitions exist; retry currently changes the turn to RUNNING before STARTING reservation, and stop/quiescence plus provider-input/stream integration are not qualified.
 - **Depends on:** T01, T03, T04, T06.
 - **Owners:** Conversation, Agent Runtime, UI.
 - **Allowed paths:** Conversation Operator, supervisor, Tauri stream bridge, `apps/litecowork-ui/src/conversations/` and relevant tests.
@@ -120,7 +121,7 @@
 
 ## 001-T08 - Implement daemon restart and orphan recovery
 
-- **Status:** NOT STARTED.
+- **Status:** NOT STARTED — storage enumeration/LOST primitives exist, but no Conversation startup recovery sweep or durable dispatch-outbox replay is wired.
 - **Depends on:** T03, T04, T06, T07.
 - **Owners:** Agent Runtime, Storage, Conversation.
 - **Allowed paths:** bounded startup recovery scanner, supervisor and storage tests.
@@ -156,5 +157,5 @@ T01 -> T02 -> T03 -> T04 -> T05 -> T06 -> T07/T08 -> T09. T03 may be developed i
 
 ## Completion evidence
 
-Record per-task code revision, exact command, result, target OS/harness/auth, test report and reviewer in this file. No commit or push is implied by task completion.
+Record per-task code revision, exact command, result, target OS/harness/auth, test report and reviewer in this file. No commit or push is implied by task completion. Statuses above are source-audit classifications, not owner acceptance or release qualification.
 

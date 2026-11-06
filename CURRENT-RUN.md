@@ -1,276 +1,170 @@
-# Current Run — LiteCowork Windows Production Release
+# Current engineering handoff
 
-**Run date:** 2026-11-01 (Asia/Kolkata)  
-**Status:** **PRODUCTION-READY — All Phases 1–6 Complete & Qualified on Windows**  
-**Mode:** `/goal` continuous execution until complete for Windows production release  
+- **Repository:** LiteCowork
+- **Branch:** main
+- **Inspected revision:** e94497f72bd5928e4abc86f5a5a8c7890cfdd54b
+- **Working-tree state at this handoff:** non-clean; 197 status entries (186 modified tracked, 11 untracked). This includes substantial pre-existing code, UI, docs, audit and archive work; all were preserved.
+- **Release posture:** pre-release; V1 is not release-qualified
 
----
+This file is the current engineering handoff. It records the active repository state and the checks performed against it. It is not a chronological diary and must not preserve stale "previous/latest" status paragraphs. Update the current facts and validation results in place whenever the repository changes.
 
-## 1. Objective
+## Repository state
 
-Build, compile, verify, and qualify LiteCowork end-to-end on native Windows MSVC for production desktop release. Implement runtime execution layers (conversation turn submission, supervisor dispatch, atomic turn settlement, live stream framing, Tauri desktop packaging), preserving local-first invariants, schema contracts, and credential boundaries.
+The active checkout contains the Tauri/React desktop application, the Rust daemon and workspace crates, first-party docs and JSON contracts, 11 feature SDD packages, scripts and pinned reference repositories. The repository is not documentation-only.
 
----
+Primary application paths:
 
-## 2. Preservation Boundary
+- Desktop UI: apps/litecowork-ui
+- Daemon: apps/litecoworkd
+- Shared domain/storage/runtime crates: crates
+- Product and architecture contracts: docs
+- Feature specifications: specs/001 through specs/011
+- Specification templates and validators: .specify
+- Reference implementation snapshots: repo_take (research only; never product source of truth)
 
-- Active repository: `C:\Users\Sonali\Desktop\projectwork\business_Dev\litecowork`
-- Active branch: `main`
-- Local ignored archive: `archives/legacy-codebase-c7e9c05/` (PRESERVED UNTOUCHED)
-- Worktree: `archives/legacy-codebase-c7e9c05/.worktrees/conversation-session-supervisor` (PRESERVED UNTOUCHED)
-- Native credentials/handles (`native_session_ref`, OS tokens) remain strictly ephemeral in local SQLite `agent_session_host_bindings` and never enter public projections, replicated events, or logs.
+The local ignored archive and historical documentation archive remain preservation material. They do not replace the active source tree.
 
----
+## Product authority
 
-## 3. Completed Milestones & Evidence
+Read these in order before material work:
 
-### Phase 1: Deep Audit & Implementation Source Recovery
-- [x] Audited `staging_tar` mock UI components and data models.
-- [x] Recovered implementation source into active workspace (`apps/`, `crates/`, `Cargo.toml`, `Cargo.lock`).
-- [x] Preserved archives and worktrees untouched.
+1. Root ARCHITECTURE.md for ownership, invariants and system boundaries.
+2. docs/PRODUCT.md and docs/V1-PRODUCT-RELEASE-CONTRACT.md for product promise and release scope.
+3. The owning domain contracts and accepted ADRs.
+4. docs/schemas for canonical OpenAPI, event, JSON Schema, migration and generated route inventory contracts.
+5. docs/V1-UI-SCREEN-CONTRACT.md and docs/V1-UI-ACTION-STATE-LEDGER.md for the user-visible experience.
+6. The relevant feature package under specs.
+7. docs/IMPLEMENTATION-STATUS.md for what this checkout actually implements and the available evidence.
+8. docs/ACCEPTANCE-AND-E2E-PLAN.md for required qualification.
 
-### Phase 2: Windows Toolchain & Workspace Compilation
-- [x] Windows MSVC toolchain qualification.
-- [x] Fixed Unix-specific permissions header (`PermissionsExt`) in `apps/litecoworkd/src/rag_retrieval_operator.rs` with `#[cfg(unix)]`.
-- [x] Fixed symlink test in `crates/linux-process-scope/src/provider_probe.rs` with `#[cfg(unix)]`.
-- [x] Verified 100% of frontend test suite: 500 unit and CDP tests passed in `apps/litecowork-ui`.
-- [x] Built frontend production bundle `apps/litecowork-ui/dist/` via `pnpm run build` (OpenAPI schema codegen + TypeScript compilation + Vite bundler).
+Do not resolve a conflict by choosing whichever file has the newest date. Update the document that owns the semantic decision, then update its dependent contracts, UI maps, indexes and traceability.
 
-### Phase 3: P1 Native Conversation & Supervisor Implementation
-- [x] **Task BT-1.2 (`commit_conversation_agent_response`)**:
-  - Implemented `CommitConversationAgentResponse` and `CommittedConversationAgentResponse` in `crates/storage-core/src/conversation.rs`.
-  - Added atomic immediate SQLite transaction in `crates/storage-sqlite/src/conversations.rs`:
-    - Validates owner, workspace `ACTIVE`, turn `RUNNING` with `expected_turn_version`, session `ACTIVE` with `expected_session_version`.
-    - Inserts final `AGENT` message in `conversation_messages`.
-    - Transitions turn to terminal status (`COMPLETED`, `WAITING_USER`, etc.) and bumps version.
-    - Transitions session to `CLOSED` and bumps version.
-    - Returns host instance to `READY` with `idle_since`.
-    - Deletes ephemeral host binding in `agent_session_host_bindings`.
-    - Writes immutable aggregates to `BlobStore`.
-    - Appends domain events: `conversation.message.added.v1`, `conversation.turn.settled.v1`, `agent.session.closed.v1`.
-    - Commits idempotency receipt.
-  - Verified with test `conversation_agent_response_commit_settles_turn_and_session_atomically` in `crates/storage-sqlite/src/agent_binding_tests.rs`: **PASSED in 3.42s**.
-- [x] **Task BT-1.3 (`AgentSessionSupervisor`)**:
-  - Implemented `apps/litecoworkd/src/agents/supervisor.rs` with full OpenCode v2.0.32 HTTP/SSE loopback client, host lifecycle discovery, and test provider execution.
-- [x] **Task BT-1.5 (`submit_conversation_turn` Supervisor Wiring & Receipt)**:
-  - Added `ConversationTurnReceipt` matching OpenAPI schema in `crates/storage-core/src/conversation.rs`.
-  - Wired `submit_conversation_turn` in `apps/litecoworkd/src/conversation_operator.rs`:
-    - When supervisor is present: returns `202 Accepted` with `ConversationTurnReceipt` and dispatches turn asynchronously via `tokio::spawn`.
-    - When supervisor is absent (unit test fixtures): cleanly preserves strict fail-closed `503 DEPENDENCY_UNAVAILABLE` with `no-store` cache control.
-    - Added exact replay handling for accepted/running turns.
-  - Verified entire conversation operator test suite: **12/12 tests PASSED** in 25.13s (`cargo test -p litecoworkd --locked conversation_operator`).
+## Current source-backed product status
 
-### Phase 4: Desktop UI Overhaul, Integration & Production Packaging
-- [x] **ZCode & DeepSeek Harness-Inspired Workbench Overhaul (`apps/litecowork-ui/src/workbench/`)**:
-  - Implemented 5 functional workspace surfaces with top segmented tab bar:
-    1. **Files**: Workspace file explorer, search filter, file tree with status/revision indicators, line-numbered code viewer, and copy affordance.
-    2. **Terminal**: Integrated interactive terminal console (`PowerShell 7` / `cmd`), process isolation badge (`ConPTY Windows`), command execution, history, and presets (`cargo check`, `git status`, `dir`, `clear`).
-    3. **Browser**: Embedded web preview canvas with interactive URL address bar (`http://...`), Back/Forward/Reload controls, responsive viewport toggles (Desktop, Tablet), and Human Takeover toggle mode.
-    4. **Diffs**: Code & artifact diff reviewer with file tabs, hunk inspector, colored additions/deletions, diff counts (`+124 -18`), and "Approve All" action.
-    5. **Activity & Context**: Live agent execution trace (tool calls, execution times, outcomes) and ZCode-style Context Window Token Usage meter (`14.2k / 128k (11.1%)` with segmented bar for System Prompt, Tools, Skills, Messages, and 91.6% Cache Hit Rate).
-- [x] **Modernized Left Navigation Rail (`apps/litecowork-ui/src/App.tsx`, `styles.css`)**:
-  - Added prominent "+ New Chat" primary action button with shortcut hint (`Ctrl N`).
-  - Restyled workspace selector card with online pulse indicator (`10b981`).
-  - Structured navigation into clean groups (`MAIN`, `INTELLIGENCE`, `MONITORING`, `SETTINGS`).
-  - Sleek backdrop blur, active tab indicator pills, and modernized footer with Local Operator status.
-- [x] **Official Tauri Production Packaging**:
-  - Built production frontend via `pnpm --dir apps/litecowork-ui run build` in 9.28s (171 modules bundled).
-  - Packaged standalone release executable via `pnpm run tauri build --no-bundle`:
-    - Embedded `dist/` directly into binary (eliminates `devUrl` requirement).
-    - Prepared `litecoworkd-x86_64-pc-windows-msvc.exe` daemon sidecar.
-    - Output binary: `apps/litecowork-ui/src-tauri/target/release/litecowork-ui.exe` (15.9 MB).
-- [x] **Live Desktop Executable Verification**:
-  - Executed `litecowork-ui.exe` on Windows interactive desktop session.
-  - Process verified alive and responding (`PID 12672`, WorkingSet64: 42.0 MB, `msedgewebview2` render trees active).
+The evidence details and implementation boundaries live in docs/IMPLEMENTATION-STATUS.md. The critical distinctions are:
 
-### Phase 5: Real Agent Lifecycle & End-to-End Qualification
-- [x] **Step 5.1 (Agent discovery & Windows bindings)**:
-  - Verified OpenCode v2.0.32, Claude Code v2.1.310, and Gemini CLI v0.38.2 installed on host.
-  - Ran `cargo test -p litecoworkd --locked agents::`: **71 passed; 0 failed in 9.35s**.
-  - Verified Windows npm cmd shim probing without shell arguments.
-- [x] **Step 5.2 (Conversational flow end-to-end)**:
-  - Verified turn submission, supervisor receipt, and atomic commit:
-    - `conversation_turn_submit_returns_accepted_receipt_with_active_session_supervisor`: **PASSED**.
-    - `conversation_agent_response_commit_settles_turn_and_session_atomically`: **PASSED**.
-    - `conversation_activation_commits_session_turn_and_local_host_binding_atomically`: **PASSED**.
-- [x] **Step 5.3 (Workflow chains & race conditions FL01–FL05)**:
-  - FL01 (Runtime startup & degraded state recovery): 8/8 tests in `runtime::tests` **PASSED**.
-  - FL02 (BYOA discovery & credential gating): 71/71 tests in `agents::` **PASSED**.
-  - FL03 (Turn submission & streaming): 12/12 tests in `conversation_operator` **PASSED**.
-  - FL04 (In-flight cancellation & racing settlement): 8/8 tests in `domain-conversation` **PASSED**.
-  - FL05 (Resumption & replay idempotency): 16/16 tests in `agent_binding_tests` **PASSED**.
-- [x] **Step 5.4 (Key use cases UC-CHAT-01, UC-DAILY-04/05, UC-BYOA-01)**:
-  - `UC-CHAT-01`: Chat turns with live SSE stream framing verified.
-  - `UC-DAILY-04/05`: Automation health and routine runs: 29/29 tests in `automation_host_tests` **PASSED**.
-  - `UC-BYOA-01`: Agent discovery and credential isolation verified.
+- Runtime lifecycle health is not Task execution readiness.
+- Operator API availability is not native-agent integration.
+- A persisted Conversation turn is not proof that a provider completed it.
+- Recent Chats are cursor-paginated; the sidebar loads additional pages only from the active Conversation page and preserves Workspace/list-epoch fencing. An unreadable pending-create journal pauses New Chat until its explicit retry succeeds.
+- A persisted Task is not an admitted Plan or running Attempt.
+- A source route registration is not a qualified user journey.
+- A Workspace resource preview is not a live filesystem editor.
+- A WebView iframe is not Chrome automation or a controlled browser.
+- Terminal UI output is not a real process result unless it came from a real PTY/ConPTY process.
+- A native action is not a Core-mediated Effect unless it passed through the authorized gateway.
+- An Automation trigger host can materialize a READY Task without executing that Task.
+- A Coworker configuration is not a continuously running agent process.
+- A renderer or schema is not evidence that every artifact format or interactive app is usable.
 
-### Phase 6: Final Verification, Polish & Stubs Elimination
-- [x] **Zero Stubs Guarantee & Truthful Contract Alignment**:
-  - Audited and eliminated stubbed platform limitation in `apps/litecowork-ui/src-tauri/src/lib.rs`: implemented real Windows UTF-8 path handling and idempotency key derivation for persistent folder selection.
-  - Replaced simulated fake shell commands in the Workbench Terminal tab with truthful diagnostics reflecting Windows ConPTY initialization, Job Object isolation status, and detected native agent harnesses.
-  - Replaced static JSON block in the Browser tab with a live sandboxed `<iframe>`, interactive URL address bar, refresh affordances, responsive device viewport toggles, and genuine Human Takeover epoch state.
-  - Replaced hardcoded sample diff arrays with live workspace resource diff inspection.
-  - Replaced hardcoded activity logs with truthful runtime status, workspace SQLite record telemetry, and active agent supervisor telemetry.
-- [x] **Windows Local Operator IPC Named Pipe Fix**:
-  - Diagnosed `OPERATOR_API_START_FAILED` on Windows desktop startup: `CreateNamedPipeW` failed with `ERROR_INVALID_OWNER (1307)` because the pipe SDDL specified `O:SY` (Owner = SYSTEM), which requires `SeTakeOwnershipPrivilege` not possessed by non-elevated user processes.
-  - Corrected `format_pipe_dacl` in `crates/windows-local-security/src/lib.rs` to `"D:P(A;;GA;;;SY)(A;;GA;;;{sid})"`, defaulting object ownership to the creating user token while maintaining a strictly protected DACL granting full access only to SYSTEM and the current logon SID.
-  - Verified with 36/36 tests in `windows-local-security` passing cleanly.
-  - Tested `litecoworkd.exe run --data-dir %LOCALAPPDATA%\app.litecowork.desktop`: daemon binds the named pipe, serves Operator IPC, and reports healthy DEGRADED runtime state.
-- [x] **Production Release Packaging & Verification**:
-  - Recompiled release binaries:
-    - `apps/litecowork-ui/src-tauri/target/release/litecowork-ui.exe` (15.4 MB)
-    - `apps/litecowork-ui/src-tauri/target/release/litecoworkd.exe` (33.4 MB)
-  - Executed release application on Windows desktop: verified running with active WebView2 rendering engines (PID 13784, WorkingSet64: 41.7 MB, `Responding: True`).
-- [x] **Workspace Test Summary**:
-  - `windows-local-security`: 36 passed, 0 failed.
-  - `operator-ipc`: 18 passed, 0 failed.
-  - `domain-effects`: 14 passed, 0 failed.
-  - `domain-environment`: 24 passed, 0 failed.
-  - `domain-invocations`: 7 passed, 0 failed.
-  - `domain-rag`: 12 passed, 0 failed.
-  - `domain-responsibility`: 22 passed, 0 failed.
-  - `domain-task`: 138 passed, 0 failed.
-  - `domain-workspace`: 7 passed, 0 failed.
-  - `local-environment-staging`: 24 passed, 0 failed.
-  - `storage-sqlite` (agent bindings + automation): 45 passed, 0 failed.
-  - `litecoworkd` (conversations + agents + runtime): 91 passed, 0 failed.
-  - Frontend CDP/unit tests: 500 passed, 0 failed.
-  - Total: **Over 830 automated tests passed across the workspace.**
+The current Operator route inventory is docs/schemas/served-route-inventory.json. It records 173 OpenAPI route registrations, one authenticated local-only route outside OpenAPI and 56 OpenAPI operations that remain target-only. This inventory is generated from the composed daemon router. It is evidence of route mounting, not product qualification.
 
-### Phase 7: Release Remediation (R-01 through R-31) & Windows Production Build
-- [x] **R-01 (Runtime Execution Readiness)**:
-  - In `crates/storage-sqlite/src/lib.rs`: Updated `validate_runtime_state_update` mapping `"READY" => "ONLINE"`. Added `("RECOVERING", "READY")`, `("READY", "DEGRADED")`, `("DEGRADED", "READY")`, and `("READY", "DRAINING")` transitions to `transition_local_runtime_incarnation_transaction`, populating `ready_at`.
-  - In `apps/litecoworkd/src/runtime.rs`: Implemented `persist_ready_catalog_transition` and `persist_final_recovery_blockers` to evaluate attempt process scope journal and lease states instead of unconditionally asserting `TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED` and `TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED`. Runtime transitions cleanly to `RuntimeState::Ready` (`"ONLINE"`).
-  - All 37 runtime tests passed in `apps/litecoworkd` (15.94s).
-- [x] **Windows PowerShell 5.1 Test Isolation (`runtime_windows_security_tests.rs`)**:
-  - Isolated `path_dacl_is_protected` by removing inherited `PSModulePath` from Windows PowerShell 5.1 test harness, preventing TypeData collisions with PowerShell 7 modules.
-  - Verified `runtime_bootstrap_protects_state_directory_and_lifecycle_files`: **PASSED**.
-- [x] **R-02 / R-27 (Fail-Closed Provider Dispatch)**:
-  - Removed test fallback from production dispatch in `apps/litecoworkd/src/agents/supervisor.rs`. Missing profiles and unsupported providers fail closed with `CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`.
-- [x] **R-03 / R-30 (Correlated Event Loop & Terminal Verification)**:
-  - In `apps/litecoworkd/src/agents/supervisor.rs`, verified correlated SSE events matching active session ID, required non-empty text, and validated explicit terminal `done: true` state before settlement.
-- [x] **R-04 / R-29 (Version-Checked Turn Cancellation & Retry)**:
-  - Implemented version-checked retry and cancellation in `apps/litecoworkd/src/conversation_operator.rs` with atomic state transition to `CANCELED`, session cleanup, and idempotency receipts.
-- [x] **R-10 / R-11 / R-13 / R-14 / R-15 / R-16 (Honest Workbench UI & Live Discovery)**:
-  - Updated `apps/litecowork-ui/src/components/workbench/WorkbenchPanel.tsx` with dynamic agent discovery, realistic token telemetry notices, honest process isolation status, and active terminal execution.
-- [x] **R-17 / R-31 (Dynamic Workspace Root & Safe Directory Resolution)**:
-  - Resolved dynamic workspace working directory from root and `%USERPROFILE%` on Windows.
-- [x] **R-18 (Monotonic Fallback IDs & Dynamic Timestamps)**:
-  - Replaced hard-coded timestamps with dynamic UTC RFC-3339 formatting and high-entropy monotonic IDs.
-- [x] **R-25 (Windows Process Environment Probe)**:
-  - Added Windows Job Object containment verification in `apps/litecoworkd/src/environment_provider.rs`.
-- [x] **Release Packaging & Gate Verification**:
-  - `cargo fmt --all -- --check` verified clean (Exit 0).
-  - Built standalone `litecoworkd.exe` (33.3 MB) and sidecar `litecoworkd-x86_64-pc-windows-msvc.exe`.
-  - Built `litecowork-ui.exe` (15.9 MB) via Tauri release pipeline (`npm run tauri build -- --no-bundle`).
-  - Verified daemon auto-bootstrapping and process launch on Windows.
+## Validation performed
 
----
+The completed full Rust workspace run on the connected Windows development machine:
 
-## 4. Deliverables Ready for Release
+- Command: `$env:CARGO_BUILD_JOBS='1'; cargo test --workspace --locked`
+- **Exit code 0; runtime 1,383.28 seconds; no failed test targets.** All unit tests, integration tests and doc-tests completed successfully.
+- `litecoworkd` unit target: **359 passed, 0 failed, 1 ignored**; `litecoworkd --test cli`: **4 passed**.
+- `storage-core`: **110 passed**; `storage-sqlite`: **555 passed**; `storage-sqlite --test agent_registry_cache`: **2 passed**.
+- `windows-local-security`: **36 passed**; `local-environment-staging`: **24 passed**; `operator-ipc`: **18 passed**.
+- Domain targets passed, including Conversation (8), Effects (14), Environment (24), Invocations (14), RAG (38), Responsibility (99), Task (138), Workspace (7) and Linux process scope (5). Browser control (23) and browser pointer (9) integration targets also passed.
+- The only ignored tests in the Windows run were the daemon's declared ignored test and the Windows Credential Manager integration test that writes uniquely scoped entries to the current user's credential store. Linux Secret Service integration is not run on this Windows target.
+- The six Windows WorkspaceRoot route tests pass with platform-canonical fixture identities; production path validation remains fail-closed. Windows folder scanning remains unqualified.
+- The deterministic cross-platform backup failure-path test passes as part of the 555-test `storage-sqlite` unit target.
 
-1. **Backend Daemon (`litecoworkd`)**: Full Windows MSVC binary with local SQLite, Named Pipe IPC, and OpenCode/Claude/Gemini supervisor integration.
-2. **Desktop UI (`litecowork-ui`)**: Complete Tauri desktop application with typed bridge commands, stream reducer, live WebView2 integration, and zero simulated stubs.
-3. **Storage Engine (`storage-sqlite`)**: Atomic conversation settlement, session management, and immutable aggregate receipts.
-4. **Security & Sandboxing (`windows-local-security`)**: Windows Job Objects process isolation, write-through file locking, and restricted DACLs.
+Current validation on the working tree:
 
----
+- Composed Operator inventory: **173 OpenAPI served / 1 authenticated local-only / 56 target-only**, generated and matching source router composition.
+- Architecture/schema validator: passed active checks; one warning because the optional `openapi-spec-validator` package is not installed. JSON Schema, 148 event schemas, errors, OpenAPI structure, SQL, Gateway naming, concept and active Markdown checks passed.
+- Cross-owner consistency guard: **36 assertions passed, 0 issues**.
+- V1 contract/route/UI audit: **0 findings**.
+- Design-depth audit: **0 structural findings**.
+- Feature SDD validator: **11/11 packages passed**.
+- Markdown audit: **0 broken relative links** across 260 files / 54,819 lines. The generated active-corpus manifest (docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md) excludes itself and records 259 files / 54,517 lines.
+- Frontend production build: passed API type check, TypeScript and Vite. Main JS bundle is 1.05 MB minified (287 KB gzip), above Vite's 500 KB advisory.
+- Focused Conversation + responsive tests: **24/24 passed**, including journal retry, cursor pagination, drawer semantics and mobile canvas sizing.
+- The full serial frontend test command was attempted but did not emit a final TAP summary. It reached test 393 and stalled in the Settings Chrome DevTools check; observed failures included two production-App bootstrap timeouts and, before fixes, the Conversation pagination and responsive assertions. The latter three are now fixed and pass in isolation. Do not report an aggregate full-suite result.
+- The standalone Settings accessibility test passed its static WCAG AA contrast check but failed its rendered-browser phase because Chrome DevTools timed out on `Page.navigate`. This does not establish the production Settings screen's keyboard behavior.
+- Rendered UI, packaged Tauri smoke and real-provider desktop E2E remain unqualified.
 
-## 5. Audit Remediation Log (Findings R-01 to R-37)
+The full Windows Rust workspace test suite is green, but that is not a LiteCowork V1 release pass. Do not describe frontend coverage as complete or imply packaged desktop/provider USER qualification.
 
-The following blockers and UI truthfulness defects have been remediated and verified:
+## Release-critical work
 
-1. **R-02 & R-27 (Supervisor False Agent Success Removed)**:
-   - File: `apps/litecoworkd/src/agents/supervisor.rs`
-   - Removed `.unwrap_or_else(|| "test-provider".to_owned())` from profile resolution; missing profiles now fail closed with descriptive `Err`.
-   - Removed `"test-provider" | "test-agent"` and wildcard `_` fallback mock arms that previously returned simulated assistant text.
-   - Any unsupported or unconfigured provider key returns `Err` so the turn transitions truthfully to `FAILED` with `CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`.
+1. Rust workspace tests are green on Windows with `CARGO_BUILD_JOBS=1`; retain the ignored credential-store test and unqualified Windows folder-scan provider as explicit platform gates. Next engineering priority is Conversation dispatch durability, strict single-flight admission, retry/cancel state-machine repair and restart recovery.
+2. Make Conversation dispatch recoverable across the durable-submit/async-dispatch boundary; verify idempotency, timeout, crash and restart.
+3. Qualify the real OpenCode turn path and implement/qualify additional native adapters before making their Send controls available.
+4. Implement one safe Task vertical slice: planning, accepted plan revision, Attempt admission, Environment, Trust, one mediated Effect, reconciliation and verification.
+5. Remove simulated terminal success and generated sample diffs; implement process-owned PTY/ConPTY and real change computation.
+6. Keep iframe preview accurately labelled; implement actual browser/computer services before advertising automation or takeover.
+7. Remove or wire Settings controls that currently affect only local UI state or notices.
+8. Qualify LiteSPM service/version/protocol/receipt handling before package lifecycle mutations.
+9. Qualify one professional Artifact format and one typed Intelligent UI schema path.
+10. Verify each screen's UI state against its owner API and failure/recovery behavior.
 
-2. **R-03 & R-30 (OpenCode Event Loop Correlation & Fail-Closed Completion)**:
-   - File: `apps/litecoworkd/src/agents/supervisor.rs`
-   - Added untrusted event payload correlation: SSE events from other sessions are ignored.
-   - Required explicit completion event (`done: true` or `event_type == "message_completed"`) and non-empty accumulated text before committing.
-   - Eliminated fallback generic text (`"I received your message..."`); timeouts, stream disconnects, or empty payloads fail closed.
+## Preservation and delivery rules
 
-3. **R-04 & R-29 (Conversation Turn Retry, Cancel & Dispatch Error Handling)**:
-   - Files: `apps/litecoworkd/src/conversation_operator.rs`, `crates/storage-sqlite/src/conversations.rs`
-   - Added `SqliteConversationStore::get_conversation_turn` to look up persisted turns by ID.
-   - Implemented `retry_conversation_turn`: validates If-Match, enforces `FAILED` precondition, generates fresh session ID, increments `retry_ordinal`, commits `conversation.turn.retried.v1`, re-dispatches to the supervisor, and returns 202 with `ConversationTurnReceipt`.
-   - Implemented `cancel_conversation_turn`: transitions running turns through `RequestCancel` -> `SettleCancelled` (`conversation.turn.settled.v1`), handles open turns via `Fail`, and returns 202 with `ConversationTurnReceipt`.
-   - Replaced discarded `let _ = supervisor.dispatch_turn(...)` with error logging and handling.
+- Inspect the worktree and ignored/untracked paths before every change.
+- Preserve unrelated user work; never clean, reset, stash, rebase or delete archives.
+- Do not alter repo_take clones as part of LiteCowork implementation.
+- Do not stage secrets, private agent profiles, local provider credentials, build outputs or caches.
+- Do not commit or push unless explicitly requested.
+- Keep target contracts, implementation findings and qualification evidence distinct.
+- Run the narrow test for every change, then contract checks and broader regression checks.
+- Inspect the complete diff and verify generated inventories before considering a documentation reconciliation complete.
 
-4. **R-07 (Release Formatting Gate Clean)**:
-   - Ran `cargo fmt --all` across all workspace crates (`apps/`, `crates/`).
-   - Verified: `cargo fmt --all -- --check` exits with status 0.
+## Current repository handoff - 2026-11-06
 
-5. **R-10, R-11, R-13, R-14, R-15, R-16 (Workbench UI Truthfulness)**:
-   - File: `apps/litecowork-ui/src/workbench/WorkbenchPanel.tsx`
-   - **R-10**: Added interactive terminal command runner with Windows Job Object process containment feedback.
-   - **R-11**: Labeled browser surface truthfully as "Web Surface Preview" with sandboxed iframe and interactive preview mode.
-   - **R-13**: Replaced static harness pills with live discovery status (e.g. OpenCode CLI Discovered, others unconfigured).
-   - **R-14**: Replaced fabricated character-length token formulas with truthful "Telemetry Unavailable" badge and explanatory telemetry notice.
-   - **R-15**: Derived activity metrics directly from authoritative local runtime state and SQLite counts.
-   - **R-16**: Renamed "Working Tree Clean" to "Committed Resources" with explicit explanation that SQLite blobs track committed revisions.
+- **Branch / HEAD:** main / e94497f72bd5928e4abc86f5a5a8c7890cfdd54b.
+- **Working tree:** 197 status entries: 186 modified tracked entries and 11 untracked entries. This is a non-clean user worktree with substantial pre-existing source, UI, documentation, audit and archive changes. Preserve all of them.
+- **Changes in this work session:** documentation and generated audit/inventory updates, plus a SettingsView source-comment correction. Existing application/UI/runtime/test modifications in the worktree were preserved and reviewed; no reset, clean, stash, rebase or history rewrite was performed.
+- **Release posture:** pre-release; V1 is not release-qualified. Feature 001 remains IN_REVIEW; Features 002-011 remain DRAFT.
 
-6. **R-17 (Authorized Workspace Root Working Directory)**:
-   - File: `apps/litecoworkd/src/agents/supervisor.rs`
-   - Added `resolve_workspace_working_dir` resolving active workspace root from `SqliteWorkspaceStore` candidate bindings instead of fallback `std::env::current_dir()`.
+### Source-to-document reconciliation completed
 
-7. **R-18 (Entropy & Monotonic Timestamp Formatting)**:
-   - File: `apps/litecoworkd/src/agents/supervisor.rs`
-   - Added entropy error detection in `generate_id` falling back to monotonic high-resolution timestamp formatting rather than predictable zeros.
-   - Replaced fixed historical date fallback in `now_utc_rfc3339` with live dynamic UTC formatting.
+The active source crosswalks and matching UI contracts are maintained in docs/IMPLEMENTATION-STATUS.md, docs/SEMANTIC-SERVED-UI-MAP.md, docs/V1-UI-SCREEN-CONTRACT.md, docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md, and each owning package under specs/001 through specs/011.
 
-8. **R-25 (Windows Environment Provider Capability)**:
-   - File: `apps/litecoworkd/src/environment_provider.rs`
-   - Added `#[cfg(target_os = "windows")]` probe reporting `LocalWorkspace` class with Windows Job Objects process-tree isolation and `KILL_ON_CLOSE` active.
+- **001 Conversation:** one OpenCode-only dispatch branch; detached dispatch has no durable outbox/startup sweep; strict single-flight is not enforced at admission; Send violates the disabled-until-qualified gate; Stop is ineffective for OpenCode; failed-turn Retry has no UI call site and its backend transition is inconsistent; native transient token frames are not emitted.
+- **002 Agents:** 15 curated candidates and ACP metadata are not installed/ready agents. Auth is UNKNOWN and readiness NOT_PROBED. Only Codex/OpenCode profile probes exist; OpenCode is incompatible, Codex has no Conversation dispatch branch. Install/native sign-in are absent; descriptor and credential routes fail closed; binding enable lacks the fresh AC-004 descriptor gate; Usage/model-effort UI is not qualified.
+- **003 Resources:** root selection immediately commits on supported Linux/macOS; Windows Add returns 503. Root scan is Linux-only metadata census; Windows/macOS return 501. No content ingestion/watch/index from roots. ZIP originals remain opaque; text index is allowlisted UTF-8 only. Grounded retrieval is read-only and not wired to Conversation or Context Used.
+- **004 Agent relay:** backend producer/session identity is projected but desktop message types/parser drop it; picker eligibility is not equivalent to dispatchability; only OpenCode dispatch exists; no qualified A-to-B-to-A route or Resource materialization.
+- **005 Tasks:** Task creation and planning readiness are real records/read-only preflight; no accepted-plan -> Attempt -> Environment -> mediated Effect -> verification execution pipeline exists. READY is not running.
+- **006 Capabilities:** Discover projections and exact Approval decisions exist, but APPROVE is not an external Effect. Connect/install fails closed, test is UNKNOWN, account Connection/OAuth is absent, CapabilityInvocation is read-only, and provider dispatch/reconciliation is not wired.
+- **007 Artifacts:** no production Artifact-create route or create UI; managed text/plain edit/append and safe previews exist; native Save As is local-only and creates no ExportReceipt. No professional format engine or Task output producer.
+- **008 Workbench:** Files is a Resource projection, Browser is an iframe preview, Terminal fabricates command success without a process, Diffs are synthetic, Activity is not rendered and Computer-use is unavailable.
+- **009 Coworkers:** identity/revisions/status and configuration persist, but there is no Coworker-owned Conversation, Coworker-scoped retrieval or private memory browser/Learning Inbox. Presence returns 503; several saved policy fields have no production consumer; PAUSED admission is partial.
+- **010 Automations/Notifications:** local 30-second TriggerHost settles supported recurring schedules and materializes READY Tasks only. Retry/wake policy fields have no consumer. Notification outcome settlement inserts PENDING rows, but no sender advances delivery state; channel preferences are ignored, ON_CONDITION is only DEPENDENCY_BLOCKED, and quiet hours are not editable.
+- **011 Shell/Settings:** authenticated OS-local IPC exists; mounted Settings has four categories, not the 16-category target. Appearance controls are ephemeral/inert, shortcut rows are display-only, and several Runtime/Workspace actions are not exposed by the mounted view.
 
-9. **R-31 (Developer-Specific Path Resolution)**:
-   - File: `apps/litecoworkd/src/agents/supervisor.rs`
-   - Dynamic resolution via `%USERPROFILE%`, `%APPDATA%`, `%LOCALAPPDATA%`, and `PATH` instead of hardcoded paths.
+### Global blocker identity
 
-10. **R-36 (Compiler Warnings in Storage Sqlite)**:
-    - File: `crates/storage-sqlite/src/lib.rs`
-    - Removed unreachable duplicate match arms.
+Blocker IDs are globally unique across feature packages. The current allocation is B-21 professional Artifact format; B-22 browser provider; B-23 terminal provider; B-24 Coworker memory; B-25 Quick Create; B-26 Automation trigger; B-27 local notification delivery; B-28 GA OS/security profile; B-29 Settings scope; B-30 Artifact creation; B-31 Artifact export receipt; B-32 Computer-use decision. docs/SPECIFICATION-STANDARD.md and .specify/templates/SPEC.md now require allocation from the global register and synchronized updates to owner SPEC/TASKS/traceability.
 
-11. **R-24 (Tauri Desktop Release Binary Rebuilt)**:
-    - Compiled release daemon binary `litecoworkd.exe` (33.3 MB) and copied to `apps/litecowork-ui/src-tauri/binaries/litecoworkd-x86_64-pc-windows-msvc.exe`.
-    - Built and linked `apps/litecowork-ui/src-tauri/target/release/litecowork-ui.exe` (15.9 MB) with embedded production bundle and sidecar configuration.
-    - Ran `cargo fmt --all -- --check` across the entire workspace (apps/ and crates/): **PASSED (exit code 0)**.
+The external workflow graph remains provider-owned. WorkflowBackendAdapter and provider graph authoring are target-only; no Core graph runtime or production adapter is present. OpenBot/n8n/Activepieces research is preserved in the linked reference study and does not authorize a Core workflow engine or direct provider graph mutation.
 
-### Phase 8: Deep ZCode Architecture Audit, Left Sidebar Overhaul & Settings Workspace
+### Current validation
 
-1. **Deep Source Inspection of ZCode (`repo_take/zcode`)**:
-   - **Settings Triad (`packages/ui/src/settings/settingsPageConfig.ts`)**: Inspected ZCode's 3-group organization (`basics`, `agentCapabilities`, `dataAndStats`).
-   - **Side Pane Keep-Alive (`packages/ui/src/app-shell/WorkspaceShellLayout.tsx` & `sidePaneTerminalSessionRegistry.js`)**: Learned how ZCode preserves resident terminal sessions by `workspaceKey` without killing PTY processes when switching side pane views.
-   - **Project Tree Authority (`packages/ui/src/project-sidebar/CONTRACT.md`)**: Verified how the Host daemon's `projectService.readTree` acts as the single source of truth while the UI manages only view preferences and draft state.
-   - **Two-Stage Consent & Browser vs. Computer Isolation (`packages/ui/src/settings/BrowserSettingsSection.tsx` & `ComputerUseSection.tsx`)**: Inspected the explicit separation between web automation (browser) and OS input injection (computer use), along with granular cache vs. full cookie/data cleanup.
+- Feature package validator: **11/11 passed**; structural checks only, not owner approval or runtime qualification.
+- Cross-owner consistency: **36 assertions passed, 0 issues**.
+- V1 contract audit: **0 errors**; 229 OpenAPI operations, 173 served, 1 authenticated local-only route and 56 target-only.
+- Design-depth audit: **0 findings**; 257 files, 54,497 lines, 12 domains, 254 functions, 187 Settings rows, 229 routes, 173 served, 56 target-only, 107 tables and 11 packages.
+- Markdown audit: **0 broken relative links** across 258 files and 54,797 lines.
+- Active-corpus manifest: **257 files and 54,497 lines** (manifest excludes itself).
+- Architecture/schema validator: passed with one warning because optional openapi-spec-validator is not installed; JSON Schema, 148 typed events, errors, OpenAPI structure, SQLite, Gateway naming, canonical concepts and active Markdown checks passed.
+- git diff --check: **exit 0**. Git emitted LF-to-CRLF advisory warnings in the existing dirty Windows worktree; line endings were not normalized.
+- The full serial frontend suite remains incomplete; the Settings rendered-browser check timed out; packaged Tauri and real-provider USER E2E remain unqualified.
 
-2. **Uncluttered Left Sidebar Navigation (`apps/litecowork-ui/src/App.tsx`, `styles.css`)**:
-   - Implemented a clear Workspace Switcher dropdown (`📂 <workspace> ⌄`) for local folder roots.
-   - Restored primary `+ New Chat` action with `Ctrl N` shortcut badge.
-   - Added clean Recent Chats list with relative timestamps (`now`, `12m`), unread dots, and active conversation highlight.
-   - Preserved all durable domain objects without visual clutter:
-     - `◇ Needs You` (actionable decision inbox with badge count)
-     - `▤ Work` (durable tasks, attempts, deliverables)
-     - `◉ Coworkers` (persistent assistant roster)
-     - `🕒 Automations & Routines` (scheduled triggers & workflows)
-     - `▧ Library` (workspace files & artifacts)
-     - `✧ Discover` (LiteSPM skills & MCP package catalog)
-   - Anchored `⚙ Settings` at the bottom with live local runtime health indicator dot.
+### Next engineering gates
 
-3. **Settings Workspace (`apps/litecowork-ui/src/settings/SettingsView.tsx`, `settings-view.css`)**:
-   - Replaced bare 3-card stub with a dedicated 9-category workstation settings application matching `docs/V1-SETTINGS-CONTRACT-LEDGER.md` and ZCode patterns:
-     1. General & Desktop (Appearance, density, text scaling, reduced motion, shortcuts)
-     2. Workspaces & Roots (Inspector, create workspace, `LOCAL_ONLY` policy, immutable instructions editor with byte limit, archiving guard)
-     3. Agent Harnesses & Models (Live socket probes, default lead binding, binding management)
-     4. Browser Use (Built-in browser control toggle, mandatory TLS certificate verification, cache vs. cookies data cleanup)
-     5. Terminal & Shell (Shell engine pwsh/cmd/bash, workspace root directory resolution, Windows Job Object isolation status, buffer limit)
-     6. Permissions & Security (Two-stage consent: always ask vs. project commands, filesystem write guard, Windows Credential Store integration)
-     7. Local Runtime & Diagnostics (Daemon state, Runtime/Incarnation IDs, startup policy, active blocker list with resolution hints)
-     8. Skills & MCP (LiteSPM package manager bridge status, progressive discovery, human review guards)
-     9. Coworker Defaults & Memory (Default assistant persona, workspace-isolated memory retention)
+1. Keep Send disabled until the exact native OS/provider/auth USER path and durable dispatch/single-flight/stop/retry recovery are qualified.
+2. Implement one safe Task vertical slice with accepted plan, Attempt, Environment, Trust, mediated Effect, reconciliation and independent verification.
+3. Replace simulated Terminal/Browser/Diffs claims with real provider-backed sessions and evidence; defer unsupported Computer use.
+4. Complete one Artifact create/format/export/reopen path with a durable receipt.
+5. Complete one account Connection and provider read/write/revoke journey; Approval alone is not execution.
+6. Close Coworker-owned Conversation, scoped Memory and proactive PAUSED-admission gaps before enabling those claims.
+7. Keep local automation, notification delivery and Settings controls honest until their actual consumers/handlers exist.
 
-4. **Verification Gates**:
-   - `npm --prefix apps/litecowork-ui run build`: **0 errors** (172 modules transformed cleanly).
-   - `cargo fmt --all -- --check`: **0 diffs**.
+### Preservation and delivery rules
+
+Continue from this exact dirty worktree. Inspect the complete diff before any later implementation; preserve unrelated user changes and untracked archives. Do not reset, clean, stash or rebase. Stage, commit and push only when explicitly requested. Keep TARGET, CODE, SERVED, INTEGRATED and QUALIFIED evidence distinct.

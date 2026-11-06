@@ -1,15 +1,15 @@
 # Feature Specification - Conversation Session Supervisor and Native Turn Execution
 
-**Feature ID:** 001 | **Status:** ACCEPTED/LOCKED | **Revision:** 1.0  
-**Created/updated:** 2026-11-01 | **Target:** LiteCowork V1 native Conversation  
-**Owners:** Conversation, Agent Runtime, Storage, Operator/API, Desktop UI, Security/Trust, Product  
-**Dependencies:** Conversation/turn contract; AgentSession reservation and activation; AgentHostSupervisor; qualified native adapter; durable result settlement.
+- **Feature ID:** 001 | **Status:** IN_REVIEW | **Revision:** 1.0
+- **Target:** LiteCowork V1 native Conversation
+- **Owners:** Conversation, Agent Runtime, Storage, Operator/API, Desktop UI, Security/Trust, Product
+- **Dependencies:** Conversation/turn contract; AgentSession reservation and activation; AgentHostSupervisor; qualified native adapter; durable result settlement.
 
 ## 1. Problem and user outcome
 
 LiteCowork is local-first, chat-first and BYOA. A normal Conversation must invoke the user's chosen native harness without creating a Task, Attempt or Coworker. LiteCowork owns canonical message/turn state, admission, correlation, display, cancellation, final persistence and recovery; the harness continues to own its reasoning, authentication, private transcript and native tools.
 
-Today the daemon can commit a USER message and OPEN turn, but with no qualified session supervisor it settles the turn as FAILED using `CONVERSATION_SESSION_ADMISSION_UNAVAILABLE` and responds dependency-unavailable. The preserved dirty feature worktree adds a storage-only Conversation readiness activation operation. No supervisor invokes it; no native prompt is dispatched through it; no final AGENT response writer or end-to-end Send path is integrated. This spec defines the missing journey without claiming it exists.
+The active daemon now contains an OpenCode-only Conversation dispatch path. `submit_conversation_turn` atomically commits the USER message, OPEN turn, events and receipt, then starts `AgentSessionSupervisor::dispatch_turn` in a detached Tokio task and returns 202. The supervisor resolves the turn-pinned host, reserves STARTING, starts OpenCode Server v2.0.32, creates a native session, atomically activates the session and turn, loads the bounded Conversation context, sends it, consumes the response stream, and calls the SQLite final-response transaction. This is source-level integration evidence, not a qualified user journey. The implementation still has material recovery and concurrency defects: the commit-to-spawn interval is not durably represented; pre-dispatch supervisor errors can be logged while leaving OPEN turns stranded; retry changes the turn to RUNNING before calling a reservation path that requires OPEN; RUNNING cancellation is settled CANCELLED without observing native interrupt/quiescence; the accepted single-flight policy is not enforced in the submit transaction; and there is no startup sweep for orphaned Conversation turns/sessions. Keep Send and release claims gated on those fixes plus exact Windows/provider/UI qualification.
 
 **Outcome:** the user selects a supported native agent, sends a message, sees truthful progress, receives a durable answer, can stop/retry safely, and can reload/reconnect after daemon failure. A turn never silently changes its pinned agent.
 
@@ -31,19 +31,30 @@ No Task/Attempt/Plan/Coworker; no universal model router; no automatic provider 
 
 ## 4. Current implementation/evidence boundary
 
-| Capability | State and evidence | Limitation |
+| Capability | Current evidence | Limitation |
 |---|---|---|
-| USER message + OPEN turn | CODE/SERVED in preserved source snapshot | Not native admission |
-| Turn-pinned binding + host resolver | CODE in preserved source snapshot | Resolver is observational, not readiness |
-| STARTING reservation + LOST recovery | CODE in preserved source snapshot | No supervisor orchestration |
-| Bounded context package load | CODE in preserved source snapshot | Not dispatched by supervisor |
-| Atomic Conversation activation | CODE in dirty feature worktree at 3052341; focused storage test passed 2026-10-31 | No supervisor caller; broader package suite predates final handle-redaction changes |
-| OpenCode/Codex transport helpers | CODE as transport-only helpers | Not a supervisor, authorization layer or durable output path |
-| Supervisor, dispatch, final response writer | TARGET | Not integrated/served |
-| Durable Conversation projection | CODE/SERVED | Native transient deltas not produced by local Operator |
-| End-to-end native Send | NOT QUALIFIED | Remains fail-closed |
+| USER message, OPEN turn and idempotency receipt | CODE/SERVED in the active Operator | Durable admission does not prove provider dispatch |
+| Send qualification gate | TARGET says disabled until exact OS/provider/auth/USER qualification; current UI violates the gate | Send is enabled for a non-empty draft when local isTurnRunning is false; no qualified binding/provider or Operator readiness guard; backend error is relied on for unsupported/no binding |
+| Conversation snapshots, pagination and create | CODE/SERVED with desktop UI calls | Exact packaged desktop/restart qualification is still required |
+| Desktop stop/retry controls | PARTIAL / inconsistent | Stop is displayed for active RUNNING status but its handler searches only the presentation-stream transient-turn collection; the OpenCode Operator path does not emit those transient turns. If a transient turn exists, the call hardcodes If-Match version 1. The Operator cancellation route writes CANCEL_REQUESTED then CANCELLED without native interrupt/quiescence. Retry route exists but has no UI call site or failed-turn affordance; active-turn projection omits aggregate version. |
+| Composer affordances | PARTIAL / placeholder | The agent-binding selector, textarea, Enter-to-send and Send button are wired. Add context/file and Voice Input buttons have no handlers; More options has no handler; Turbo is a static non-control; “@ to mention, / for actions” is placeholder copy with no mention/action implementation. Every submit sends resource_refs: [], so no attachment can be selected from this composer. |
+| Active-turn composer gate | PARTIAL / inconsistent | isTurnRunning checks only RUNNING plus presentation-stream transient turns. OPEN (shown as “Preparing”), WAITING_DEPENDENCY and CANCEL_REQUESTED are not consistently fenced; after a 202 response the local sending flag clears before the OPEN turn necessarily becomes RUNNING. The backend submit transaction has no single-flight check, so duplicate active turns remain possible. WAITING_USER continuation semantics remain a separate owner decision. |
+| Empty Conversation state | PLACEHOLDER / misleading | The no-selection canvas contains hard-coded “I am Antigravity” copy and capability claims (including verifiable command execution and multi-step orchestration) that are not evidence of LiteCowork capabilities. Replace with truthful product-owned empty-state content when the UI is next changed. |
+| Operator source comment | STALE SOURCE COMMENT | conversation_operator.rs module header says turn dispatch is intentionally absent, but production ConversationApiState::from_ref constructs AgentSessionSupervisor and submit/retry handlers call dispatch_turn. The comment is stale; the actual source path is OpenCode-only and remains unqualified. |
+| Turn-pinned AgentBinding and host resolution | CODE in the active source | Discovery and host resolution are not session readiness |
+| STARTING reservation and atomic readiness activation | CODE; invoked by the OpenCode supervisor path | Storage primitives exist; no daemon-start recovery sweep settles/reconciles orphaned STARTING Conversation sessions |
+| Context package loading and OpenCode input | CODE in the active supervisor path | The OpenCode branch loads the bounded package and sends it; complete resource-format coverage and exact prompt-bound behavior remain unqualified |
+| OpenCode server/session/turn dispatch | CODE path in `AgentSessionSupervisor` | Only provider key `opencode` is dispatched, using OpenCode Server v2.0.32; no exact Windows/USER qualification is recorded |
+| Final AGENT response and terminal turn commit | CODE in the OpenCode supervisor path and SQLite store | Atomic transaction and exact idempotent replay exist; storage test coverage does not yet prove every rollback, ownership, retry-provenance and crash window |
+| Retry lifecycle | PARTIAL / inconsistent | Operator transitions FAILED to RUNNING before calling a dispatcher whose STARTING reservation requires OPEN; retry dispatch is not correctly integrated |
+| Single-flight admission | NOT ENFORCED in storage | Submit transaction inserts OPEN without checking another nonterminal turn in the Conversation; no matching active-turn uniqueness constraint was found |
+| Startup recovery of OPEN / STARTING / ACTIVE Conversation work | NOT WIRED | Storage can list STARTING sessions and mark them LOST, but no Runtime startup caller was found; committed OPEN turns have no durable dispatch outbox/claim |
+| Claude Code, Codex, Gemini CLI and Cline turn execution | TARGET/adapter work varies by provider | Profile probes or binding records do not make them Send-capable |
+| Conversation transient token stream | TARGET/partial presentation projection | POST /v1/stream is a rich-presentation stream, not proof of a complete native token-stream path; current Stop UI depends on transient turns that the OpenCode path does not emit |
+| Durable Conversation recovery across commit-before-dispatch crash | NOT IMPLEMENTED / NOT QUALIFIED | Submit commits OPEN before detached spawn; exact replay returns its 202 receipt without rechecking or re-admitting dispatch |
+| End-to-end native Send | CODE PATH ONLY for OpenCode; QUALIFIED is not established | Exact provider/version/auth/OS/UI and all negative/recovery cases remain release gates |
 
-The preserved storage-sqlite package suite previously passed 593 unit tests plus 2 AgentRegistryCache integration tests; it was not rerun after final handle-redaction assertions. The focused activation test was rerun and passed after those changes. Linux Secret Service integration was deliberately ignored due active-user side effects; Windows Credential Manager had no tests on Linux. These are not end-to-end evidence.
+Do not duplicate transient test totals in this feature package. The completed Windows serial full-workspace run and current frontend/structural validation evidence are recorded in [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md) and [CURRENT-RUN.md](../../CURRENT-RUN.md). The latest focused Conversation storage and domain-state-machine rerun also passed; it confirms the current stale-snapshot test still admits two OPEN turns and the current domain retry test encodes the pre-dispatch RUNNING transition that conflicts with STARTING reservation.
 
 ## 5. Decision register
 
@@ -64,7 +75,7 @@ The preserved storage-sqlite package suite previously passed 593 unit tests plus
 | L-11 | Cancellation settles only after stop/quiescence is observed; completion/failure that wins the race remains authoritative. | STATE-MACHINES |
 | L-12 | Retry is explicit, version/idempotency protected, increments retry_ordinal, uses a fresh session and retains prior provenance. | STATE-MACHINES |
 | L-13 | No automatic fallback. Unsupported or expired target fails visibly and preserves user content. | PRODUCT, AGENT-CONTROL |
-| L-14 | Final AGENT message and terminal turn state must commit atomically with events/snapshots/receipt. | STATE-MACHINES; write boundary still to be promoted |
+| L-14 | Final AGENT message and terminal turn state must commit atomically with events/snapshots/receipt. | STATE-MACHINES, STORAGE; SQLite implementation exists, qualification and contract completeness remain open |
 
 ### FLEXIBLE
 
@@ -76,14 +87,14 @@ The preserved storage-sqlite package suite previously passed 593 unit tests plus
 | F-04 | First UI progress | Durable projections only, then bounded transient frames | Saved transcript remains source of truth |
 | F-05 | Internal module names | Existing crate boundaries or focused module | No duplicated provider framework |
 
-### RESOLVED OWNER DECISIONS AND ARCHITECTURAL CONTRACTS
+### DECLARED DECISIONS AND ARCHITECTURAL CONTRACTS (OWNER ACCEPTANCE NOT YET EVIDENCED)
 
 | ID | Topic | Resolution & Architectural Contract | Canonical Authority & Consequence |
 |---|---|---|---|
 | B-01 | Concurrent send policy per Conversation | **Strict Serialized Turn Lane.** A Conversation enforces a single-flight active turn (`OPEN` -> `RUNNING` -> `SETTLED`). Concurrent submit requests are rejected with `CONVERSATION_TURN_IN_PROGRESS` (HTTP 409 Conflict). The client UI disables the composer Send button and shows an in-flight status indicator while a turn is active. Local typing buffer is preserved in desktop UI state. | [STATE-MACHINES.md](../../docs/STATE-MACHINES.md), [API.md](../../docs/API.md). Eliminates race conditions in HLC ordering, message correlation, and context packaging. |
 | B-02 | First GA OS/build, harness, adapter version and auth mode | **Windows 11 / Windows 10 (`x86_64-pc-windows-msvc`) + Claude Code CLI & OpenCode / Codex CLI.** Adapter Version: `1.0.0` subprocess framed transport. Auth Mode: **Harness-Managed Native Pass-Through**. The CLI harness authenticates directly with the model provider via its native credentials (e.g. `claude login` or provider API keys in user environment/keyring). LiteCowork passes no raw bearer keys and stores no user provider credentials, preserving BYOA zero-knowledge security. | [AGENT-CONTROL.md](../../docs/AGENT-CONTROL.md), [LOCAL-OPERATOR-IPC.md](../../docs/LOCAL-OPERATOR-IPC.md). Windows MSVC toolchain is fully native with VS 2022 Build Tools. |
 | B-03 | Exact readiness handshake that proves session identity | **Three-Phase Session Handshake Protocol**: 1. `AdapterVersionProbe`: Host probes adapter executable via `--version`/ping, receiving `AdapterVersionInfo { adapter_version: "1.0.0", harness_version, capabilities: [STREAMING, INTERRUPT] }`. 2. `CreateSessionRequest`: Supervisor sends `{ workspace_id, conversation_id, turn_id, options }` and adapter establishes native session, returning `SessionReadyResponse { native_session_id, protocol_version }`. 3. `Atomic Activation`: Supervisor executes SQLite CAS `activate_conversation_agent_session` binding the native handle to local SQLite only and advancing turn `OPEN` -> `RUNNING`. Prompt dispatch occurs only after activation commits. | [AGENT-CONTROL.md](../../docs/AGENT-CONTROL.md), [STORAGE.md](../../docs/STORAGE.md). Distinguishes host process presence from active turn readiness. |
-| B-04 | Exact atomic storage operation for final response commit | **`commit_conversation_agent_response`** SQLite Immediate Transaction. Atomically executes: 1. Verifies `expected_turn_version` and `expected_session_version`. 2. Inserts final `conversation_messages` row (`message_kind = 'AGENT'`, content, tokens, source refs). 3. Updates `conversation_turns` to `SETTLED` (`outcome = COMPLETED | FAILED | CANCELLED`, `settled_at = datetime('now')`). 4. Updates `agent_sessions` to `CLOSED`. 5. Appends `conversation.message.added.v1` and `conversation.turn.settled.v1` to `event_journal`. 6. Commits idempotency receipt to `request_dedup`. Failure leaves state unchanged with zero partial writes. | [STORAGE.md](../../docs/STORAGE.md), [EVENTS.md](../../docs/EVENTS.md), [STATE-MACHINES.md](../../docs/STATE-MACHINES.md). Eliminates orphaned turns and phantom messages. |
+| B-04 | Exact atomic storage operation for final response commit | **`commit_conversation_agent_response`** SQLite Immediate Transaction. Atomically executes: 1. Verifies `expected_turn_version` and `expected_session_version`. 2. Inserts final `conversation_messages` row (`message_kind = 'AGENT'`, content, tokens, source refs). 3. Updates `conversation_turns` to `SETTLED` (`outcome = COMPLETED | FAILED | CANCELLED`, `settled_at = datetime('now')`). 4. Updates `agent_sessions` to `CLOSED`. 5. Appends `conversation.message.added.v1` and `conversation.turn.settled.v1` to `event_journal`. 6. Commits idempotency receipt to `request_dedup`. Failure leaves state unchanged with zero partial writes. | [STORAGE.md](../../docs/STORAGE.md), [EVENTS.md](../../docs/EVENTS.md), [STATE-MACHINES.md](../../docs/STATE-MACHINES.md). Prevents partial final-response commits and phantom messages; it does not replace durable dispatch admission or daemon-restart recovery. |
 | B-05 | Resumable streaming sequence vs stream gaps | **Best-Effort Transient Streaming with Authoritative REST Resync.** `TURN_DELTA` frames are transient, sequence-tagged, and emitted over the Operator stream bridge. If a stream disconnection or sequence gap occurs, the UI discards transient token buffers and issues an authenticated REST query `GET /v1/conversations/{id}/messages` to restore the committed semantic transcript. Transient frames are never replayed from historical storage. | [PRESENTATION-RUNTIME.md](../../docs/PRESENTATION-RUNTIME.md), [API.md](../../docs/API.md), Architecture Invariant 17. |
 | B-06 | Conversation-scoped UserRequest continuation | **State-Machine Driven Continuation.** Commits immutable `UserRequestResponse` and transitions exact `WAITING_USER` turn to `WAITING_DEPENDENCY`. Reconciles provider input acceptance against the Runtime-local input key; only then allocates a fresh `AgentSession` reserved `STARTING` and returns to `RUNNING` on readiness. Rejection or ambiguous acceptance follows canonical state machines. Never creates Task or Attempt authority. | [STATE-MACHINES.md](../../docs/STATE-MACHINES.md), [API.md](../../docs/API.md), [STORAGE.md](../../docs/STORAGE.md), [TRUST.md](../../docs/TRUST.md). |
 | B-07 | Context package reduction for tight harness budgets | **Bounded Deterministic Sliding Window with Pinned Preamble**: 1. Pinned Workspace instructions / system prompt (always retained). 2. Selected `ResourceRefs` / `ContextAttachments` with cryptographic digests. 3. Most recent contiguous messages backwards from latest user turn until 80% of provider context budget is reached. 4. Explicit truncation receipt header appended to prompt: `[Notice: Messages 1..N omitted due to model context window budget]`. Never silently drops content without audit provenance. | [CONTEXT.md](../../docs/CONTEXT.md), [SCHEMAS.md](../../docs/SCHEMAS.md). Transparent and reviewable context limits. |
@@ -91,7 +102,7 @@ The preserved storage-sqlite package suite previously passed 593 unit tests plus
 | B-09 | Process ownership, lifecycle and idle shutdown | **Supervised Subprocess with Job Object / Cgroup and 10-Minute Idle TTL.** `AgentHostSupervisor` launches adapter under an OS Job Object (Windows) or cgroup (Linux). Sessions register live use references. When all active turns finish and reference count reaches 0, an idle timer starts. After 10 minutes of inactivity, supervisor sends graceful termination signal, waits 5 seconds for clean exit, and forcibly kills lingering processes. Shared external processes are never killed. | [RUNTIME-LIFECYCLE.md](../../docs/RUNTIME-LIFECYCLE.md), [LOCAL-OPERATOR-IPC.md](../../docs/LOCAL-OPERATOR-IPC.md). Clean process isolation and zero zombie processes. |
 | B-10 | Usage and cost attribution | **Tiered Telemetry Attribution**: 1. If provider/harness reports token counts in final response, record in `usage_records` with `attribution_source = PROVIDER_REPORTED`. 2. If provider omits token usage, calculate byte-based heuristic (`tokens = max(1, utf8_byte_count / 4)`) and record with `attribution_source = ESTIMATED_LOCAL`. Turn settlement and response display are never blocked on missing provider billing telemetry. | [OBSERVABILITY.md](../../docs/OBSERVABILITY.md), [SCHEMAS.md](../../docs/SCHEMAS.md). Truthful, non-fabricated usage accounting. |
 
-All blocking decisions B-01 through B-10 are fully resolved and locked.
+B-01 through B-10 are recorded as declared architectural decisions, but this feature package remains IN_REVIEW: source conformance, exact first-route alignment and owner acceptance are not complete. Do not infer owner sign-off or release qualification from the presence of a decision row.
 
 ## 6. High-level design
 
@@ -115,7 +126,7 @@ flowchart TD
   BR --> UI
 ```
 
-### Request sequence
+### Target request sequence (not the current source wiring)
 
 1. UI creates a stable send idempotency key and sends authenticated Workspace/Conversation request.
 2. Operator authenticates, applies expected version/idempotency and owner scope. ConversationService commits USER message + OPEN turn + receipt atomically.
@@ -126,8 +137,10 @@ flowchart TD
 7. Storage atomically activates AgentSession, changes turn OPEN->RUNNING, writes snapshots/events and stores opaque handle only in Runtime-local host binding.
 8. Only after activation does adapter receive the bounded context and current USER message. Every ResourceRef is reauthorized/materialized.
 9. Provider output is treated as untrusted; bounded normalized observations correlate to Workspace/Conversation/turn/retry/session and sequence.
-10. ConversationService commits final AGENT message and terminal turn outcome atomically through a storage operation that still needs design/promotion.
+10. The OpenCode supervisor calls the implemented SQLite final-response transaction to commit the AGENT message and terminal turn/session outcome atomically; its current contract and failure/replay coverage remain incomplete and unqualified.
 11. Supervisor waits for quiescence, closes session and releases host reference. Durable projection supports reload/reconnect.
+
+**Current source divergence:** the Operator currently commits USER+OPEN directly through SQLite and starts `AgentSessionSupervisor` with detached `tokio::spawn`; the `AgentTurnCoordinator` and `ConversationService` ownership boundaries in this target sequence are not wired. The OpenCode supervisor also starts/stops its server in the per-turn path rather than delegating to a separately wired `AgentHostSupervisor`. These are architectural integration gaps, not merely naming differences.
 
 ### Ownership
 
@@ -147,7 +160,7 @@ flowchart TD
 
 ### 7.1 Existing storage signatures
 
-Observed in the preserved feature worktree at `3052341473e964bececf7f34c9d45923848e5218`; existence does not prove invocation by a supervisor.
+Observed in the active main-worktree source; the OpenCode supervisor invokes the activation path. Existence and invocation are CODE evidence, not SYSTEM/USER qualification.
 
 ```rust
 pub trait AgentSessionStore: Send + Sync {
@@ -187,7 +200,7 @@ Generic OPEN->RUNNING through `transition_conversation_turn` remains forbidden; 
 - `submit_turn(principal, workspace, conversation, expected_version, idempotency_key, request) -> ConversationTurnReceipt`
 - `cancel_turn(turn_id, expected_version, request_id) -> CancelReceipt`
 - `retry_turn(turn_id, expected_version, request_id) -> ConversationTurnReceipt`
-- `append_agent_response_and_settle(request) -> CommittedConversationAgentResponse` - PROPOSED; backing storage port missing.
+- `commit_conversation_agent_response(commit) -> CommittedConversationAgentResponse` - implemented in `ConversationTurnStore` and called by the OpenCode supervisor; the Operator does not yet expose a separate ConversationService/AgentTurnCoordinator owner boundary.
 
 **AgentTurnCoordinator** consumes committed dispatch, resolves exact turn binding/context, requests supervisor startup/dispatch, consumes normalized results, asks ConversationService for durable settlement and continues a WAITING_DEPENDENCY turn only after provider acceptance. It never writes Conversation/Turn directly.
 
@@ -195,32 +208,27 @@ Generic OPEN->RUNNING through `transition_conversation_turn` remains forbidden; 
 
 **AgentHostSupervisor** ensures/attaches only the exact endpoint and Runtime incarnation, supervises process/health/concurrency and stops only LiteCowork-owned processes with no live references.
 
-### 7.3 Required proposed final-result transaction
+### 7.3 Implemented final-result transaction and remaining proof
 
-No final AGENT-message-plus-terminal-turn atomic write was found in the inspected ConversationTurnStore port. This is B-04 and blocks truthful durable completion.
+The active source defines `CommitConversationAgentResponse` and `CommittedConversationAgentResponse` in `crates/storage-core/src/conversation.rs`. `ConversationTurnStore::commit_conversation_agent_response` is implemented in `crates/storage-sqlite/src/conversations.rs` and is called by the OpenCode branch in `apps/litecoworkd/src/agents/supervisor.rs`.
 
-**PROPOSED signature, not a current API:**
+The SQLite IMMEDIATE transaction currently:
+- checks the owner/workspace boundary and active Workspace state;
+- verifies the Conversation exists and compares the current turn version/status/session ID;
+- verifies the AgentSession version, ACTIVE state and exact Conversation/turn scope;
+- inserts the AGENT message, settles the turn, closes the session, returns the host instance to READY and deletes the ephemeral host binding;
+- writes aggregate snapshots, domain events and an idempotency receipt before commit; and
+- resolves an exact request replay through the stored receipt/digest.
 
-```rust
-fn commit_conversation_agent_response(
-    &self,
-    commit: CommitConversationAgentResponse,
-) -> Result<CommittedConversationAgentResponse, StoreError>;
-```
+The current storage contract is narrower than the target contract described in B-04: `CommitConversationAgentResponse` has no explicit retry ordinal or stable provider-response identity field. The transaction overwrites the message role and binding/session/turn pointers, but the message author is passed through from the caller; inspect/strengthen author/provenance validation before treating this as a complete trust boundary. The existing adjacent test covers stale turn version, stale session version, foreign principal, successful settlement and exact replay; it does not by itself prove every wrong-Workspace/session, retry ordinal, crash/rollback and concurrent final-response case.
 
-Request binds principal, Workspace, Conversation, turn, AgentSession, retry ordinal, expected turn/session versions, stable response identity, immutable AGENT message/provenance and event drafts. Result returns only committed message, turn and events (never handle).
-
-One SQLite immediate transaction must recheck owner/scope, turn RUNNING, exact ACTIVE session, versions, retry ordinal and pinned binding; validate message author and provenance; dedupe response identity; commit AGENT message + message event + message snapshot; commit terminal turn + settled event + turn snapshot + receipt. Stale/foreign/malformed/duplicate IDs abort without partial writes.
-
-Reuse the event names/versions already owned by EVENTS.md (including `conversation.message.added.v1` and `conversation.turn.settled.v1` where applicable). Do not invent a new global event/schema without changing owner docs, JSON schemas, migration and tests together. Exact event draft and storage request is open for B-04.
-
-If DB commit is uncertain after provider final output, query stable response identity and authoritative state before retrying the local commit. Never resend the provider prompt to repair a DB write.
+Keep this as CODE, not QUALIFIED. Retain the owner requirement: one atomic transaction must protect message + terminal turn + session close + events + snapshots + receipt. If commit outcome is uncertain, query the stable storage receipt/authoritative state before retrying the local commit. Never resend the provider prompt to repair a DB write.
 
 ### 7.4 Native adapter boundary
 
 A qualified adapter needs a negotiated/versioned contract for process/session start, exact readiness handshake, prompt/context input, bounded event observation, interrupt and shutdown/quiescence. No first harness contract is locked until B-02/B-03.
 
-OpenCode Server and Codex App Server helpers exist in the preserved source. OpenCode includes bounded SSE and context-aware sends; Codex includes thread/turn start, interrupt and events/poll. They are transport-only: events are untrusted observations, not authorization/effect proof, and no supervisor currently calls Conversation activation.
+The active supervisor calls the OpenCode Server helper: it creates a session, activates the durable AgentSession/ConversationTurn, loads the bounded Conversation context, sends that context, consumes SSE observations and commits a final response. Only the `opencode` provider key has a dispatch branch, pinned to OpenCode Server protocol v2.0.32. Codex transport helpers exist but are not called by this supervisor; Claude Code, Codex, Gemini CLI and Cline are not Send-capable through this path. The current implementation directly starts/stops an OpenCode server inside the per-turn blocking dispatch flow; it does not yet demonstrate the separately owned AgentHostSupervisor/AgentTurnCoordinator topology in the target diagram. Provider events remain untrusted observations, not authorization or Effect proof. Exact Windows packaging, credentials, stop/quiescence and end-to-end USER behavior are unqualified.
 
 ### 7.5 Context projection
 
@@ -301,13 +309,13 @@ Record safe correlation IDs for request, Workspace, Conversation, turn, retry, s
 cargo test -p litecoworkd --test conversation_session_supervisor --locked -- --nocapture
 ```
 
-**Narrow foundation evidence only:** the focused storage activation test passed in the preserved feature worktree on 2026-10-31: `cargo test -p storage-sqlite --locked conversation_activation_commits_session_turn_and_local_host_binding_atomically -- --nocapture`. It does not exercise the supervisor, prompt dispatch, final response writer, Send route or end-to-end UI journey.
+**Narrow foundation evidence only:** the focused storage activation test passed in an earlier run; the current Windows full-workspace serial run is separately recorded in `CURRENT-RUN.md` and `docs/IMPLEMENTATION-STATUS.md`. Storage activation/result tests do not by themselves prove packaged desktop, provider auth, cancellation/quiescence, crash recovery or the end-to-end USER journey.
 
 Do not mark the feature VERIFIED until the canonical target exists, covers AC-001 through AC-019 and passes on the pinned OS/provider.
 
 ## 14. Out-of-bounds paths and side effects
 
-No implementation changes are authorized while this package is DRAFT. After lock, candidate paths (subject to fresh worktree review) are focused daemon Conversation/agent supervisor modules, AgentSession/Conversation storage ports and SQLite transaction code, Conversation UI/Tauri bridge, tests and canonical owner docs/schemas.
+This package is IN_REVIEW and is an audit/specification record, not authorization to change runtime implementation. Any future source change requires an explicit scoped engineering task, fresh worktree review and owner approval. Candidate paths are focused daemon Conversation/agent supervisor modules, AgentSession/Conversation storage ports and SQLite transaction code, Conversation UI/Tauri bridge, tests and canonical owner docs/schemas.
 
 Out of scope: Task planning/Attempt execution; Coworker/delegation; generic routing; LiteSPM; connectors/OAuth/SecretStore redesign; Environment/sandbox; browser/computer/terminal; arbitrary native module system; automated memory; interactive artifact runtime; rich media; cloud Runtime; mobile; replication; unrelated schema migrations.
 
@@ -317,10 +325,10 @@ Do not execute native prompts, install/update/remove software, access/change use
 
 | ID | Question | Evidence/limitation | Owner | Gate |
 |---|---|---|---|---|
-| O-01 | First harness is Codex App Server or OpenCode Server. | Both transports exist; neither supervisor-qualified. | Product/Agent Runtime | B-02 |
-| O-02 | Handshake can correlate stable session ID, host and incarnation. | Not specified in current adapter API. | Agent Runtime | B-03 |
-| O-03 | A single-flight policy exists per Conversation. | Confirm reject versus bounded queue. | Conversation/Product | B-01 |
-| O-04 | Final message and terminal turn can share one transaction. | Current write port missing. | Storage | B-04 |
+| O-01 | First harness and exact route match. | Active Conversation dispatch contains only the OpenCode Server v2.0.32 branch; Codex transport helper is not called by this supervisor. Declared B-02 includes other harnesses and a generic framed Adapter 1.0 contract, so the source and declared route do not align. | Product/Agent Runtime | B-02 / T04 |
+| O-02 | Handshake conformance and host/session identity. | OpenCode path performs session creation and readiness activation, but conformance to the declared generic Adapter 1.0 handshake and independently owned host lifecycle is not proven. | Agent Runtime | B-03 / T03-T04 |
+| O-03 | Enforce the declared strict single-flight policy. | Storage admission currently inserts OPEN without checking for another nonterminal turn; no active-turn uniqueness constraint was found. | Conversation/Storage | B-01 / T01 |
+| O-04 | Complete and qualify final-result transaction contract. | SQLite operation exists and is invoked by OpenCode supervisor; retry ordinal/provider-response identity and full provenance/rollback/concurrency tests remain gaps. | Storage/Conversation | B-04 / T02 / T06 |
 | O-05 | A pinned harness may accept less than the 4 MiB / 1,024-message package. | 256 KiB in API.md is the UserRequest detail prompt cap, not the adapter budget. | Product/Agent Runtime | B-07 |
 | O-06 | First adapter can report ordered bounded output/final/stop events. | Need pinned provider fixture. | Agent Runtime | B-05 |
 | O-07 | Attachment/resource transfer is provider-specific. | Package exposes ResourceRefs only. | Resource/Agent Runtime | B-08 |

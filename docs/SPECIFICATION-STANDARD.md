@@ -80,6 +80,8 @@ The package does not duplicate global definitions. A feature links to canonical 
 
 A choice is not flexible when it changes a public interface, schema, security authority, data lifetime, state transition or observable failure behavior.
 
+Blocking decision IDs (`B-01`, `B-02`, …) are globally unique across the repository, not local to a feature package. Before assigning one, consult `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md` and allocate the next unused ID there. The owning SPEC, README/current-truth summary, TASKS, `docs/SPEC-TASK-TRACEABILITY.md`, coverage/index ledgers and global register must use the same ID and decision. Never reuse a blocker number for a different question in another feature. When correcting a collision, update every reference in the owning packages and global ledgers in one change; do not renumber unrelated feature-local Task IDs.
+
 ## 6. EARS syntax
 
 - Ubiquitous: THE SYSTEM SHALL ...

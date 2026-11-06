@@ -1,7 +1,7 @@
 feature_id: "001"
 name: "Conversation Session Supervisor and Native Turn Execution"
 status: "DRAFT"
-spec_revision: "0.1"
+spec_revision: "1.0"
 nodes:
   - id: "desktop-ui"
     owner: "Conversation UI"
@@ -20,7 +20,7 @@ nodes:
     kind: "domain service"
     responsibility: "Conversation/message/turn durable mutation and receipt ownership"
     inputs: ["validated command", "normalized turn outcome"]
-    outputs: ["committed turn dispatch", "PROPOSED committed final message/turn receipt"]
+    outputs: ["committed USER+OPEN turn receipt", "detached supervisor dispatch request"]
   - id: "sqlite-store"
     owner: "Storage"
     kind: "transaction boundary"
@@ -30,13 +30,15 @@ nodes:
   - id: "turn-coordinator"
     owner: "AgentTurnCoordinator"
     kind: "orchestrator"
-    responsibility: "Turn sequencing, context acquisition, supervisor handoff, ordered outcomes, retry and continuation"
+    responsibility: "TARGET boundary for turn sequencing, context acquisition, supervisor handoff, ordered outcomes, retry and continuation"
+    implementation_status: "TARGET_ONLY: active Operator currently calls AgentSessionSupervisor directly; no AgentTurnCoordinator implementation/wiring was found"
     inputs: ["committed turn", "pinned binding", "context package", "normalized outcome"]
     outputs: ["supervisor lifecycle request", "ConversationService settle request"]
   - id: "session-supervisor"
     owner: "AgentSessionSupervisor"
     kind: "runtime supervisor"
-    responsibility: "AgentSession reservation, native adapter lifecycle, readiness, normalization, quiescence and close"
+    responsibility: "Partially implemented per-turn AgentSession reservation, OpenCode Server startup, readiness activation, bounded event reading and result commit"
+    implementation_status: "PARTIAL: only opencode v2.0.32 branch; error handling, cancellation/quiescence, retry and restart recovery are incomplete"
     inputs: ["exact turn scope", "pinned host", "context package", "adapter observations"]
     outputs: ["storage lifecycle commands", "normalized outcome stream"]
   - id: "invocation-runner"
@@ -48,7 +50,8 @@ nodes:
   - id: "host-supervisor"
     owner: "AgentHostSupervisor"
     kind: "process supervisor"
-    responsibility: "Ensure/attach host process, health, concurrency, references and owned-process stop"
+    responsibility: "TARGET boundary for host process, health, concurrency, references and owned-process stop"
+    implementation_status: "TARGET_ONLY: the active dispatch creates/updates a SQLite host record but directly starts/stops OpenCode per turn; no separately wired AgentHostSupervisor was found"
     inputs: ["endpoint and Runtime incarnation"]
     outputs: ["host instance identity", "bounded readiness/health observation"]
   - id: "agent-adapter"
@@ -94,7 +97,8 @@ edges:
   - id: "e04"
     from: "conversation-service"
     to: "turn-coordinator"
-    kind: "durable-dispatch"
+    kind: "target durable-dispatch boundary"
+    implementation_status: "TARGET_ONLY: current Operator spawns the per-turn supervisor directly after the admission commit"
     contract: "committed turn ID or committed WAITING_DEPENDENCY UserRequest continuation; never uncommitted draft"
   - id: "e05"
     from: "turn-coordinator"
@@ -147,10 +151,11 @@ edges:
     kind: "settlement-command"
     contract: "final response candidate; no direct aggregate mutation"
   - id: "e15"
-    from: "conversation-service"
+    from: "session-supervisor"
     to: "sqlite-store"
     kind: "transaction"
-    contract: "PROPOSED atomic AGENT message + terminal turn + events + snapshots + receipt"
+    implementation_status: "CODE: current OpenCode supervisor invokes SQLite directly; target ConversationService/AgentTurnCoordinator owner path is not wired"
+    contract: "Implemented SQLite atomic AGENT message + terminal turn + session close + events + snapshots + request receipt; qualification/negative cases remain"
   - id: "e16"
     from: "sqlite-store"
     to: "presentation-operator"
@@ -181,6 +186,7 @@ transactions:
     owner: "ConversationService via Storage"
     atomic_records: ["USER ConversationMessage", "OPEN ConversationTurn", "conversation.message.added.v1", "conversation.turn.created.v2", "request receipt", "snapshot/projection"]
     external_calls_inside: false
+    known_gap: "No same-Conversation nonterminal-turn guard or durable dispatch outbox/claim was found; accepted B-01 single-flight policy is not enforced by this transaction"
   - id: "tx-session-reservation"
     owner: "AgentSessionStore"
     atomic_records: ["STARTING AgentSession", "agent.session.starting.v1", "idempotency receipt"]
@@ -195,8 +201,8 @@ transactions:
     atomic_records: ["immutable UserRequestResponse", "UserRequest ANSWERED with matching response digest/responder/timestamp", "ConversationTurn WAITING_USER -> WAITING_DEPENDENCY", "conversation.turn.status.changed.v1"]
     external_calls_inside: false
   - id: "tx-final-response"
-    owner: "ConversationService via proposed storage port"
-    status: "PROPOSED - B-04 blocking"
+    owner: "Storage implementation called by AgentSessionSupervisor"
+    status: "CODE - OpenCode path uses the SQLite transaction; ConversationService ownership and qualification remain open"
     atomic_records: ["AGENT ConversationMessage", "conversation.message.added.v1", "COMPLETED ConversationTurn", "conversation.turn.settled.v1", "snapshots", "response receipt"]
     external_calls_inside: false
 external_boundaries:
@@ -223,6 +229,8 @@ external_boundaries:
 recovery:
   owner: "AgentSessionSupervisor with ConversationService"
   source_of_truth: ["AgentSession", "ConversationTurn", "DomainEvent", "AgentSessionHostBinding"]
-  restart_action: "reconcile exact Runtime incarnation; settle stranded STARTING as LOST; query active adapter state only for same live incarnation; never replay uncertain prompt across incarnation"
+  implementation_status: "NOT WIRED in active daemon startup"
+  known_gap: "No durable Conversation dispatch outbox/claim or OPEN-turn recovery sweep; current detached dispatch errors can be logged without terminal settlement"
+  restart_action: "TARGET ONLY: reconcile exact Runtime incarnation; settle stranded STARTING as LOST; query active adapter state only for same live incarnation; never replay uncertain prompt across incarnation"
   ui_action: "resume durable projection cursor and authorized snapshot; discard non-replayable transient frames"
 

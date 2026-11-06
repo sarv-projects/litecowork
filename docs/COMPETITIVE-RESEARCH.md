@@ -1,4 +1,4 @@
-# Competitive Product Research (latest snapshot: 2026-10-25; earlier checks retained)
+# Competitive product research
 
 This is dated product research, not a normative competitor dependency. Product behavior
 changes quickly; cited vendor pages are the evidence, while LiteCowork contracts are owned
@@ -606,3 +606,70 @@ This recheck adds product changes published after the 2026-10-24 comparison. It 
 - Anthropic, [Claude app release notes](https://support.claude.com/en/articles/12138966-release-notes) and [Claude Cowork](https://claude.com/product/cowork).
 - Microsoft, [Copilot Cowork changes](https://learn.microsoft.com/en-us/microsoft-365/copilot/cowork/whats-new), [local browser use](https://learn.microsoft.com/en-us/microsoft-365/copilot/cowork/cowork-local-browser), and [Cowork overview](https://learn.microsoft.com/en-us/microsoft-365/copilot/cowork/).
 - xAI, [Grok Bot overview](https://docs.x.ai/grok-bot/overview), [computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), and [security FAQ](https://docs.x.ai/grok-bot/security-faq).
+
+## Workflow authoring and code-node research — 2026-11-06
+
+This update checks the external workflow-builder category specifically. It does not make a competitor's workflow engine an implementation dependency for LiteCowork.
+
+### n8n
+
+Official n8n Assistant announcement (2026-09-09): https://blog.n8n.io/introducing-n8n-assistant/
+- Plain-language outcome is translated into a graph on the existing n8n canvas; the result is a standard n8n workflow that the owner can inspect/edit manually.
+- Assistant can request credentials, run/debug and iterate. Credential access and activation require explicit confirmation.
+- Availability caveats: preview-flagged; Cloud on by default for new instances except Enterprise Cloud; self-hosted Docker requires 2.36+ and user-supplied keys/environment setup; npm self-hosted unsupported; initial launch is single-instance and does not control the user's computer/browser.
+- This provider-native Assistant is distinct from the external MCP server below.
+
+Official n8n MCP and setup permissions: https://n8n.io/mcp/ and https://docs.n8n.io/connect/connect-to-n8n-mcp-server/
+- External AI apps/IDEs can build/edit workflows and data tables, validate, test, generate test data, inspect execution logs and iterate (build/edit documented from 2.13.0).
+- Instance owner/admin enables MCP; each workflow is explicitly exposed; each connected client gets a permission scope such as read-only versus create/run. Clients share the set of workflows exposed to MCP rather than each receiving a separate workflow subset.
+- search_workflows returns previews for workflows the user can view; full read/edit/run needs explicit exposure. execute_workflow uses the published version by default, with manual mode for the current unpublished version.
+- These operations happen in the user's n8n instance and remain within its own API/MCP permission system. The newer per-client connection-details UI starts at 2.33.0; exact setup depends on instance version.
+
+Code nodes and security:
+- n8n Code node runs JavaScript or Python: https://docs.n8n.io/code/code-node/
+- Security Audit checks risky nodes, including those that can fetch or run code on the host: https://docs.n8n.io/hosting/securing/security-audit/
+- GHSA-9pq8-m8gp-4p53 (2026-05-27) covers a Python Task Runner sandbox escape when Python Task Runner is enabled and workflow includes a Python Code Node. Published patched versions are 1.123.48 and 2.21.8 / 2.22.4: https://github.com/n8n-io/n8n/security/advisories/GHSA-9pq8-m8gp-4p53. Treat as condition-specific; inspect exact provider version/configuration and current advisories.
+
+### Activepieces
+
+Official product page: https://www.activepieces.com/product/workflow-builder
+- Visual flow builder with “Build by Asking”, TypeScript Code steps, step-level tests, routers/loops and run history.
+- It presents chat-built flows as normal visual flows the owner can inspect/refine, rather than code that exists only in an assistant transcript.
+
+Agents documentation: https://www.activepieces.com/docs/agents
+- Flow is deterministic (steps written once), while an Agent chooses tools/steps at each run.
+- Agents can use flows as steps and can be created from plain-language task descriptions. Do not conflate a deterministic Flow with an Agent's per-run choices.
+
+MCP server overview and permission model: https://www.activepieces.com/docs/mcp/overview
+- The provider's built-in MCP server is enabled in Settings and uses OAuth.
+- Discovery tools are always available and read-only. Other tool categories are enabled/disabled per project: Flow Management, Flow Building, Router & Branching, Annotations, Tables, and Testing & Runs.
+- Operations are scoped to the authenticated project. Provider documentation says connection credentials/secrets are never returned by MCP tools; setup-guide actions direct the user to configure credentials in the provider UI.
+- MCP tool calls are not all equivalent: flow publish/enable/disable/delete and code mutation are different authorities. The provider documents ap_delete_flow as permanent deletion of a flow and all versions; ap_run_action is a separate one-shot action with a per-call credit charge, while flow runs are billed as normal runs.
+
+MCP tools reference: https://www.activepieces.com/docs/mcp/tools
+- ap_build_flow creates a trigger plus sequential steps and validates each added step.
+- ap_add_step / ap_update_step add/configure PIECE, CODE, LOOP_ON_ITEMS and ROUTER steps.
+- ap_validate_step_config / ap_validate_flow validate configuration/structure before publish.
+- ap_read_step_code retrieves CODE step source, dependencies and mappings.
+- ap_test_flow / ap_test_step provide test execution; ap_lock_and_publish publishes the configured draft; ap_change_flow_status enables/disables; ap_delete_flow is irreversible.
+- CODE steps accept JavaScript/TypeScript source and package dependency declarations.
+
+Architecture and workers: https://www.activepieces.com/docs/install/architecture/overview and https://www.activepieces.com/docs/install/architecture/workers
+- App, queue, Worker, Engine and Sandbox components manage process lifecycle, execution and resource limits. Execution isolation and network policy are separately configurable concerns. That is the provider's own boundary, not a LiteCowork Environment or automatic Trust attestation.
+
+### Node-RED
+
+Official Function node docs: https://nodered.org/docs/user-guide/writing-functions
+- Function node runs JavaScript against flow messages; users can also build flows using declarative Change/Switch/Template and other nodes.
+
+### Product interpretation for LiteCowork
+
+The important competitor pattern is **hybrid authoring over one provider-owned graph**:
+- the human can create/refine nodes visually;
+- the provider's AI assistant/MCP can generate or edit a graph from a brief;
+- the AI-created result remains inspectable and manually editable;
+- code steps are first-class in some providers, but execute under the provider's own host/credential/network/sandbox rules.
+
+LiteCowork should expose that pattern through provider-owned workflow integration, not by implementing a native workflow graph engine in Core. The user may use the connected provider's own builder/assistant directly. LiteCowork Coworkers can help create a LiteCowork Routine and map inputs. Direct LiteCowork-agent graph mutation requires a future provider-specific authoring capability and explicit owner/security approval. The current source tree has no production WorkflowBackendAdapter or WorkflowAuthoringAdapter implementation, so external workflow selection/invocation and AI graph authoring are not yet available LiteCowork features.
+
+Source study and pinned OpenBot comparison: [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).

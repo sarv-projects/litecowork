@@ -1,64 +1,108 @@
-# Contradiction and Alignment Register
 
-**Updated:** 2026-11-01  
-**Status:** living register. This is the contradiction matrix requested in [CURRENT-RUN.md](../CURRENT-RUN.md) §5. It records conflicts that were checked against owner authority. It is not a claim that every paragraph of the archive was reread in this pass.
+# Contradiction and alignment register
 
-Authority order: [docs/README.md](README.md) and root [ARCHITECTURE.md](../ARCHITECTURE.md).
+This register records current semantic decisions, implementation divergences and owner decisions that must remain open. It is not a chronological change log. Each conflict is resolved at the document that owns the underlying behavior; this register links to that authority.
 
-## Resolved in prior reconciliation (do not reopen without new evidence)
+## Authority
 
-| Topic | Conflict | Authority | Resolution |
+Root ARCHITECTURE.md owns system invariants and authority boundaries. PRODUCT.md and V1-PRODUCT-RELEASE-CONTRACT.md own product behavior and release scope. Domain owner contracts own their entities, state machines, authorization and recovery. docs/schemas owns machine-readable contracts. The UI screen/action contracts own visible behavior. IMPLEMENTATION-STATUS.md records source evidence without redefining the target.
+
+## Adjudicated system facts
+
+| ID | Area | Current authoritative statement | Consequence |
 |---|---|---|---|
-| 001 B-01–B-10 | Feature 001 blocking decisions: concurrency, first harness, handshake, atomic result write, stream gaps, context reduction, process lifecycle, usage attribution | ARCHITECTURE, STATE-MACHINES, STORAGE, AGENT-CONTROL | **RESOLVED & LOCKED in Feature 001 (Rev 1.0)**: B-01 serialized turn lane (409 Conflict); B-02 Windows MSVC + Claude Code / Codex CLI with native auth pass-through; B-03 3-phase session handshake; B-04 `commit_conversation_agent_response` atomic SQLite transaction; B-05 best-effort transient streaming with REST resync; B-06 UserRequest continuation; B-07 sliding-window context reduction with audit header; B-08 dual-mode resource materialization; B-09 Job Object/cgroup with 10-min idle TTL; B-10 tiered usage attribution. Feature 001 is now ACCEPTED/LOCKED. |
-| Conversation activation vs Send | Storage activation existed; Send looked available | NATIVE-COMPOSER-LLD, feature 001 | Activation is not Send. Send stays fail-closed until 001 is locked and served. |
-| Native handles | Risk of putting handles in events | AGENT-CONTROL, STORAGE, EVENTS | Runtime-local binding only. Excluded from events, snapshots and public API. |
-| Workspace root routes | OpenAPI describes POST/PATCH workspace-roots; handlers were not mounted | API.md comments plus OpenAPI | Target-only until feature 003 is locked and a handler is served. Feature 003 states this explicitly. |
-| ZCode / DeepSeek as architecture | Desktop shells are Electron | ARCHITECTURE, DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT | Inspiration only. LiteCowork keeps Tauri plus `litecoworkd`. |
-| Evidence words | Release contract uses TARGET_ONLY / CODE_IMPLEMENTED / INTEGRATION_PROVEN; AGENTS.md uses TARGET / CODE / INTEGRATED | Both are intentional vocabularies | Map them: TARGET_ONLY→TARGET, CODE_IMPLEMENTED→CODE, INTEGRATION_PROVEN→INTEGRATED, QUALIFIED→QUALIFIED. Do not invent a third scale. |
+| A-01 | Active source tree | The active checkout contains apps/, crates/, docs/, specs/, .specify/ and scripts/. | Do not refer to this checkout as documentation-only or say the source tree is absent. |
+| A-02 | Runtime readiness | Runtime READY means startup/recovery health. Operator readiness means authenticated local API availability. Neither means Task execution readiness. | Use separate runtime, operator and capability-readiness projections. |
+| A-03 | Operator routes | The composed router registers 173 OpenAPI operations, one authenticated local-only route outside OpenAPI; 56 OpenAPI operations remain target-only. | Read docs/schemas/served-route-inventory.json. A registration is not proof of handler integration or end-to-end qualification. |
+| A-04 | Conversation execution | Conversation create/list/history and an OpenCode-only submit path exist. Send is exposed despite the target disabled-until-qualified gate; the visible Stop control is not effective for OpenCode, and failed-turn Retry has no UI call site. The pending-create journal has a separate visible retry action. Other advertised native agents are not turn-capable solely because discovery/probing/binding exists. | Native composer eligibility must match exact adapter/version/OS/auth qualification; do not describe the current Send/Stop/Retry surface as qualified. |
+| A-05 | Turn durability | USER message + OPEN turn + idempotency receipt precede asynchronous dispatch. A crash after commit and before dispatch can strand an OPEN turn unless recovery owns dispatch intent. | Add durable dispatch admission/outbox or equivalent recoverable state and prove no duplicate provider prompt. |
+| A-06 | Task | Create/get/list/spec revision and planning-readiness exist. Planning readiness returns dispatch_available=false, planning_started=false, agent_session_started=false and plan_created=false. | A READY Task is a persisted record, not a running worker. Plan/Attempt dispatch and execution remain unavailable. |
+| A-07 | Trust and Environment | Evaluator, Environment and isolation code exists, but is not wired into a qualified Task admission/execution path. | Do not advertise safe Task execution or claim mediated authorization for direct native actions. |
+| A-08 | Workbench Terminal | Current terminal handler is simulated; arbitrary commands receive fabricated success and labels imply ConPTY/Job Object that are not invoked. | Remove/disable simulation before release; implement daemon-owned PTY/ConPTY and evidence-backed command receipts. |
+| A-09 | Workbench Browser | Current Browser is an iframe/WebView preview. It is not Chrome/CDP automation or a controlled browser profile. | Label as preview; no claims of agent navigation, cookies, screenshots, DOM control or secure browser sandbox. |
+| A-10 | Workbench Diffs | Current Diffs can synthesize additions/deletions and display hard-coded sample content. | Remove false diffs; compute from actual revision/VCS content and pin exact source revision. |
+| A-11 | Coworkers | Coworker definition/revisions/status and Workspace-primary selection persist. Task creation can pin origin Coworker ID/revision, but Conversation create/ConversationRecord has no Coworker origin. Presence route returns 503 pending Task/UserRequest/Attempt/Runtime projections. | Do not describe Quick Create as opening a Coworker chat or Coworker configuration as a running agent. Task provenance is not Conversation ownership; scoped context, learning, presence and responsibility execution remain separately unqualified. |
+| A-12 | Automations | Local TriggerHost starts with Operator, polls supported trigger cursors and settles occurrences. A due/manual/test occurrence can materialize an ordinary READY Task. | It is a scheduler/materializer, not a Task executor. Local execution requires an awake host. |
+| A-13 | LiteSPM | Discover reads Workspace-local skill information and observed capability hosts. The LiteSPM lifecycle bridge is not qualified/connected. | No install/adopt/update/repair/unmanage/remove success may be presented. LiteSPM remains the package lifecycle authority. |
+| A-14 | Active Settings UI | The mounted App.tsx route renders SettingsView with four visible categories: General, Workspaces, Agents and Runtime. The 16-category IA and 187-control ledger are target-only. General appearance values are component-local state, not applied or persisted; shortcut labels have no matching key handlers. Workspace controls cover select/refresh/create, instruction revisions and archive; roots, rename, policy mutation and Runtime enrollment are not rendered. Agents exposes bounded catalogue/probe/binding operations. Runtime exposes start/refresh and lifecycle observation. The exported SettingsPage in App.tsx is unmounted. | Use SETTINGS-AND-SHELL-SURFACE-AUDIT.md as the current source crosswalk. Do not count unmounted components, props, routes or target ledger rows as visible controls. Keep Workbench Browser/Terminal in Feature 008. Correct the "Connected (Localhost)" label and preserve Operator readiness vs Task execution readiness. |
+| A-15 | Artifacts/Intelligent UI | Renderer, Artifact and presentation routes exist. Format editing/export and the full declarative/isolated artifact stack are not all qualified. | Advertise only handler-specific abilities; preserve semantic message fallback. |
+| A-16 | Cloud/mobile | Local V1 is the target. Portable Task rehydration, cloud Runtime, remote/mobile control and multi-device replication are later scope. | Do not make cloud hosting a V1 dependency or imply laptop-off continuation. |
+| A-17 | External workflow graphs | LiteCowork Core V1 does not own a generic WorkflowGraph schema, canvas, graph persistence or graph execution engine. The target design is to invoke a provider-owned workflow through a future WorkflowBackendAdapter as one CapabilityInvocation inside a Task. No production WorkflowBackendAdapter or WorkflowAuthoringAdapter implementation was found in apps/ or crates/ in the 2026-11-06 source scan. Provider node/run state is observation, not LiteCowork Step state. | Manual and provider-native AI graph authoring stay in the connected provider's product (n8n Assistant/MCP, Activepieces Build by Asking/MCP where enabled). LiteCowork Coworkers may draft LiteCowork Routines and map inputs; direct LiteCowork-agent graph mutation is future and provider-specific. n8n/Activepieces/Node-RED code steps remain external-provider execution, not LiteCowork Environment processes. See CONNECTORS-WORKFLOWS.md §10.2 and OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md. |
+| A-18 | ContextDocument owner kinds | The current domain-workspace metadata validator accepts PERSONAL_PROFILE owned by the authenticated USER and WORKSPACE_NOTES owned by the current WORKSPACE only. COWORKER_NOTES and GOAL_NOTES exist in enums/schema/UI but are rejected until their authoritative aggregate services exist. | Do not present Coworker/Goal notes as usable Resource ContextDocument types. Coworker Settings should hide/disable those options or show the exact owner prerequisite until aggregate create/read/revoke/retrieval is implemented. |
+| A-19 | Coworker context-policy enforcement | CoworkerContextPolicy is persisted in CoworkerRevision JSON, but no production retrieval caller consumes allowed_context_kinds, max_retrieved_items or retain_task_summaries. The active retrieval route is Workspace/Resource-scoped and has no Coworker identity/revision. | Stored policy is not enforced retrieval authorization. Do not claim Coworker-scoped retrieval, Task-summary retention or Coworker-specific memory isolation based on these stored fields. |
+| A-20 | Coworker learning implementation | storage-core/src/coworker_learning.rs contains typed candidate/policy records and deterministic eligibility/redaction/conflict/auto-commit gates only. Its module docs say it does not classify free text, call a model or persist anything. The redaction helper is reused by SkillProposal intake, but no production caller of evaluate_learning_candidate, classify_learning_conflict or the Coworker learning policy exists. There is no SQLite learning store/schema/migration, LearningService, Operator learning routes/event producer or Learning Inbox UI. | docs/LEARNING.md is accepted target architecture, not current capability. Do not claim a LearningCandidate or MemoryRecord is persisted, classified or reviewed by this product. |
+| A-21 | Coworker-owned Conversation | Conversation create accepts Workspace and title only; ConversationRecord has no Coworker origin ID/revision. Task creation separately pins origin Coworker ID/revision. | Task origin provenance is not Coworker chat ownership. Do not describe Home Quick Create or primary Coworker selection as opening a Coworker-owned chat. |
+| A-22 | Coworker PAUSED admission fence | Coworker status can transition to PAUSED while enabled Automations remain. Automation enable checks Coworker active only at enable time; TriggerHost/occurrence settlement does not re-check Coworker status and the origin-status helper has no production caller. Task storage rejects ARCHIVED, not PAUSED; Task composer rejects PAUSED Coworkers even for owner Tasks. | Current pause is partial: already-enabled Automations may still materialize READY Tasks, while the UI blocks owner Tasks that the target RESPONSIBILITIES contract allows. Do not claim pause fully stops proactive/scheduled admission. Reconcile the UI copy and exact occurrence/Task fences against the target contract. |
+| A-23 | Coworker policy-field enforcement | CoworkerRevision persists interaction, notification, delegation strategy, failover and context policy. Default lead is consumed by Task creation; lead-failover is copied into TaskSpec but no production fallback dispatcher is wired. Interaction has no Trust consumer, notification has no Coworker delivery consumer, delegation strategy has no worker selector, and context policy has no retrieval consumer. Enabled profile IDs/budget are checked by a SQLite child-Attempt admission primitive but no production daemon/Operator caller invokes it. | Treat these values as persisted configuration, not active enforcement. Keep target policy semantics in RESPONSIBILITIES/DELEGATION/CONTEXT and track the missing consumers; do not describe profile assignment or safety-default copy as a running delegated worker. |
+| A-24 | Conversation Send qualification gate | NATIVE-COMPOSER-LLD and Feature 001 G-09 require Send to remain unavailable until an exact OS/build/provider/version/auth/USER route qualifies. ConversationsPage currently enables Send for a non-empty draft when its local running predicate is false; it does not require qualified binding/provider or Operator readiness and can submit without a Workspace default binding. | The mounted Send control violates the target release gate. Do not treat the code-level OpenCode path as a qualified user-facing Send journey. |
+| A-25 | Conversation stop/retry lifecycle | Stop searches presentation-stream transient turns not emitted by the OpenCode path and hardcodes If-Match version 1. The cancel Operator route commits CANCEL_REQUESTED then CANCELLED without native interrupt/quiescence. Failed-turn Retry route exists but has no UI call site; its FAILED→RUNNING transition conflicts with the STARTING reservation's OPEN/no-session precondition. | The visible Stop control is ineffective for OpenCode and failed-turn Retry is unavailable. Keep terminal state, native process state and UI controls distinct; do not claim safe cancellation/retry. |
+| A-26 | Conversation composer and empty-state affordances | Add context/file, Voice Input and More options have no handlers; Turbo is static; @/slash copy is placeholder; every submit sends resource_refs=[]. The empty Conversation canvas contains Antigravity branding and unsupported capability claims. | These are placeholders, not capabilities. Composer attachments/Context Used, voice, native command/reference palettes and truthful empty-state copy remain UI contract gaps. |
+| A-27 | Notification delivery lifecycle | Outcome settlement inserts notification_deliveries rows with status PENDING. Source search found no production sender/consumer or status-transition writer; notification_operator only reads history and writes preferences. | PENDING is an undelivered queue record, not proof of a desktop/email notification. Do not show Sent or delivery success without a real transport receipt. |
+| A-28 | Notification routing and preference controls | preferred_channels is persisted and editable as free text but the producer never reads it; the producer picks the first active ChannelBinding or treats any active Runtime binding as a local channel. Quiet hours are shown but not editable. ON_CONDITION maps only to DEPENDENCY_BLOCKED and has no named-condition editor. | Channel names do not route delivery; ON_CONDITION is a fixed blocked outcome; quiet-hours UI is read/preserve-only. B-27 remains open for the local channel and delivery guarantee. |
+| A-29 | Automation policy execution | retry_policy and wake_policy are editable/persisted but no daemon consumer exists. Definition list paginates; occurrence history UI drops next_cursor. Pause success copy says trigger execution is unavailable although TriggerHost runs; automation_operator.rs module header incorrectly says recurring host and /resume are unavailable. | Treat retry/wake as inert configuration, not runtime behavior; history is first-page-only; correct stale source/UI claims when implementation is next changed. |
+| A-30 | Workbench Terminal execution claims | The mounted Terminal pane is React-local sample output; it launches no process and performs no Tauri IPC. Built-in commands print fixed samples, dir/ls lists Resource records, arbitrary commands fabricate exit code 0, and pwsh/ConPTY/KILL_ON_CLOSE/Job Object labels have no process or containment receipt. | This is a visible truthfulness defect. Remove fabricated success and unsupported process/containment claims; show unavailable until a real Environment-bound PTY/ConPTY service is wired. |
+| A-31 | Native agent readiness and Conversation dispatch | Catalogue/ACP metadata and bounded version probes are not installation/auth/readiness. Auth remains UNKNOWN and readiness NOT_PROBED. Codex profile observations do not imply Conversation dispatch; OpenCode's current offer is incompatible; binding enable omits the fresh AC-004 AgentControlDescriptor gate. | Do not present Installed, Authenticated, Enabled or model metadata as Send-ready. The first exact OS/harness/auth/dispatch journey remains unqualified. |
+| A-32 | Artifact create, authoring and export | Artifact list/version reads, bounded managed text/plain append, promote/archive, safe previews and exact-version local Save As exist. No production createArtifact route or create UI exists; preview formats are not editable round-trip; no professional format engine or durable ExportReceipt exists. | Resource upload is not Artifact creation. Native Save As is a local file save, not provider/server export or a durable receipt. Keep B-21/B-30/B-31 separate. |
+| A-33 | Capability Approval versus external Effect | Approval list/get/resolve is durable; APPROVE validates the exact action digest, but the operation only records the owner's decision. CapabilityInvocation is read-only; no account Connection/OAuth, provider dispatch, CapabilityBroker admission, Effect reconciliation or provider verification is connected. | An APPROVED record is not a completed write, reusable grant or external Effect. Keep Discover actions unavailable until the exact provider read/write/revoke journey is served and qualified. |
 
-## Still open (owner must decide; SDDs name them)
+## Feature package status
 
-| ID | Topic | Why it is not silently closed |
+The package lifecycle and its supporting contracts must agree. Feature 001 contains accepted/locked core design decisions B-01 through B-10, but its dependent UI behavior and error/recovery contracts are still marked DRAFT. Until those artifacts receive owner review, the complete package is IN_REVIEW. Packages 002–011 remain DRAFT and do not authorize implementation.
+
+| Feature | Current package status | Source-backed implementation note |
 |---|---|---|
-| 002 B-11–B-12 | Agent matrix beyond the first route; descriptor TTL | AGENT-CONTROL allows per-module policy |
-| 003 B-13–B-14 | First ingestion formats; watcher vs rescan | WORLD-RESOURCES watcher is target-only |
-| 004 B-15–B-16 | Portable context bound; second module | Depends on 002 |
-| 005 B-17–B-18 | Environment provider; one edit class | Worktree is not a sandbox |
-| 006 B-19–B-20 | Golden provider; one write operation | CONNECTORS-WORKFLOWS leaves the first account open |
-| 007 B-21 | One professional format | Preview is not editing |
-| 008 B-22–B-23 | Browser mode; computer-use in the same milestone | WebView is not Chrome |
-| 009 B-24–B-25 | Minimal memory record; Quick Create binding | COWORKERS-TARGET schema additions are proposed |
-| 010 B-26–B-27 | First trigger; local notification | Public webhooks are out of the slice |
-| 011 B-28–B-29 | GA OS; which settings groups may be enabled | 187 controls are not served |
+| 001 Conversation supervisor | IN_REVIEW; core decisions locked, supporting contracts pending | Persisted Conversation flows and OpenCode dispatch branch; crash-recovery gap and exact-provider qualification remain |
+| 002 Agent install/auth/binding | DRAFT | Profile discovery/probe and binding operations exist; install/auth/adapter matrix not generally qualified; model/effort picker remains descriptor-bound target because descriptor reads and exact dispatch path are unqualified |
+| 003 Roots and context ingestion | DRAFT | Workspace/resource upload, search, index and root scan operations exist; OS/path/format qualification remains |
+| 004 Agent relay | DRAFT | Binding selection exists; private-session continuity and complete A→B→A semantics need owner tests |
+| 005 Safe Task path | DRAFT | Task records/spec revision/readiness exist; plan/Attempt admission and mediated execution unavailable |
+| 006 Connection/capability write | DRAFT | Skill/host discovery exists; LiteSPM lifecycle and Connection operation qualification unavailable |
+| 007 Professional Artifacts | DRAFT | Artifact/resource views exist; one complete professional format workflow needs qualification |
+| 008 Workbench browser/terminal/computer | DRAFT | Files/resource preview exists; terminal is simulated, browser is iframe preview, computer use unavailable |
+| 009 Coworkers/memory | DRAFT | Coworker records/revisions exist; memory learning and full Coworker chat/responsibility path remain incomplete |
+| 010 Automations/recurring host | DRAFT | Local TriggerHost and occurrence settlement/materialization exist; Tasks do not execute. External workflow invocation is provider-owned through WorkflowBackendAdapter; no Core graph runtime is V1 scope |
+| 011 Shell/IPC/settings/runtime | DRAFT | Daemon and OS-authenticated local IPC source are present; T02 is source-implemented but platform/packaged-peer qualification remains open. Mounted SettingsView exposes four categories only; target 16-category IA/187 controls are not shipped. Appearance controls are inert component state; B-28/B-29 remain open |
 
-## Semantic alignment
+## Reference decisions
 
-[SEMANTIC-SERVED-UI-MAP.md](SEMANTIC-SERVED-UI-MAP.md) now has one row per settings control (187) and one row per shell control in the action ledger (36). Status is LOCAL_ONLY, NATIVE, or TARGET. **No operationId is marked SERVED**, because this checkout has no active daemon to inventory. That is the remaining BT-0.4 work, not a missing row.
+OpenBot is pinned in [REFERENCE-IMPLEMENTATIONS.md](REFERENCE-IMPLEMENTATIONS.md) and analyzed in [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md). It informs compact Tasks UX, agent-profile model/effort selection and Usage presentation/accounting. Its in-Core graph runtime is **not adopted** because it conflicts with existing PRODUCT-STRATEGY, AUTOMATION and CONNECTORS-WORKFLOWS owners. External graph authoring stays provider-owned; any provider-specific AI authoring requires an explicit future owner decision. The OpenBot development-preview security mode and PolyForm Noncommercial license are not adopted.
 
-## Corrected in the feature specs on 2026-11-01
+## Owner decisions still open
 
-These were false in the DRAFT specs and are now edited to match STATE-MACHINES, API, FLOWS, and the owner docs read in full that day.
+These choices remain in the respective feature SPEC blockers. They must be decided by the named owners rather than filled in by implementation guesswork. Blocker IDs are globally unique across feature packages: Feature 007's initial Artifact creation/export decisions use B-30/B-31 so they do not collide with Feature 008's browser/terminal decisions B-22/B-23; Computer-use is B-32. Feature 009 retains B-24/B-25 for Coworker memory and Quick Create.
 
-| Spec | What was wrong | Correction now in the spec |
+| ID | Topic | Why it remains open |
 |---|---|---|
-| 001 AC-018 | Readiness was required before creating the AgentSession | Acceptance allows a STARTING reservation. RUNNING is committed only with readiness |
-| 001 §7.5 | 256 KiB treated as the adapter budget | 256 KiB is the UserRequest detail prompt cap. The package cap is 1,024 messages / 4 MiB. `CONVERSATION_CONTEXT_LIMIT_EXCEEDED` is not in the 131-code registry |
-| 003 AC-003 | Every identity failure marks the root UNAVAILABLE | ACTIVE becomes UNAVAILABLE. PAUSED stays PAUSED with location UNAVAILABLE. REVOKED is not reopened |
-| 004 §7 | Return to agent A could reuse a qualified session | Every admitted turn gets a fresh Conversation-scoped AgentSession |
-| 005 | Omitted failover meant DISABLED | Omission copies the Coworker revision when one exists. DISABLED is only the fallback when that default is absent |
-| 008 §7 | Takeover kept the same epoch | Lease stays ACTIVE. Control moves to HUMAN epoch n+1. The old epoch is rejected |
-| 009 | Archive only blocked proactive work | PAUSED blocks proactive work and still allows an explicit owner Task. ARCHIVED cannot be a new Task origin |
-| 011 AC-005 | Not-ready blocked every domain mutation | DEGRADED plus Operator SERVING still allows ordinary commands. Execution readiness stays closed |
+| B-11 | Additional V1 AgentModules after the first qualified native route | Each harness has separate installation, auth, command, model, session and OS semantics. |
+| B-12 | Descriptor freshness TTL and probe budget by AgentModule | A generic TTL may misstate auth or capability freshness. |
+| B-13 | First supported Workspace ingestion formats | Upload/parser/index behavior must be bounded and qualified by format. |
+| B-14 | Watcher versus explicit rescan behavior | Resource invalidation and OS notification behavior need a single owner contract. |
+| B-15 | Portable context size and reduction rules for relay | Private transcripts cannot be migrated or inferred. |
+| B-16 | Second qualified native route and exact relay semantics | Switching a LiteCowork binding is not transfer of provider-private state. |
+| B-17 | First Environment provider for safe Task execution | Worktree, Job Object or container is not automatically a full sandbox. |
+| B-18 | First mediated file-operation class | Scope, staging, diff, rollback and Effect reconciliation must be proven together. |
+| B-19 | First Connection/provider | API/schema/auth/scope must be pinned as one golden vertical slice. |
+| B-20 | First capability write operation | Requires plan digest, approval, idempotency, receipt and UNKNOWN recovery. |
+| B-21 | First professional Artifact format | Preview, edit, save, export and validation must be qualified for one format. |
+| B-22 | First real browser mode | Separate isolated profile, existing profile attach, policy, consent and takeover. |
+| B-23 | First real terminal provider | Pin the PTY/ConPTY implementation, shell profile, Environment binding, process-tree containment, streaming and stop/recovery contract. |
+| B-24 | Minimal Coworker memory record | Scope, provenance, retention, revocation and learning eligibility. |
+| B-25 | Quick Create Coworker binding | Identity, first Conversation and initial agent assignment are separate commits. |
+| B-26 | First Automation trigger type | Trigger identity, deduplication, host requirements and occurrence settlement. |
+| B-27 | Local notification channel and delivery guarantees | A scheduled Task record does not imply notification delivery. |
+| B-28 | First GA operating system and exact security profile | Windows, macOS and Linux qualification cannot be inferred from shared Rust code. |
+| B-29 | Which Settings groups are enabled in V1 | Every enabled control requires a durable owner operation and recovery behavior. |
+| B-30 | Initial Artifact creation authority | Define the authenticated create command and atomic Artifact/ARTIFACT Resource/ResourceRevision/version-1/provenance/event/receipt transaction. |
+| B-31 | Durable Artifact export receipt | Distinguish local Save As from provider/server export and define exact-version digest, destination class, idempotency and recovery. |
+| B-32 | Computer-use milestone and takeover boundary | OS capture/input provider, explicit permission, sensitive-region exclusions, revocation and per-action authority; or explicitly defer the surface. |
 
-OpenAPI `Connection.status` omits `REVOKED`, which CONNECTORS-WORKFLOWS includes. `runtime.availability.changed.v1` allows only PAIRING, ONLINE, DEGRADED, DRAINING, OFFLINE, and REVOKED, while the lifecycle view availability enum also includes STARTING and RECOVERING. Those promotions stay with the schema owner. Spec 001 has no "Owner facts incorporated" heading; that heading is on 002–011 only. Spec 001 §10 now uses 256 KiB only as the UserRequest detail prompt cap.
+## Contract alignment rules
 
-## Machine contracts previously checked (2026-10-31)
+- OpenAPI operations are not considered served unless present in the composed router and source inventory.
+- The served-route inventory is generated from the active daemon route composition. It must be regenerated and reviewed when router source or OpenAPI changes.
+- UI action ledgers point to the owning route/service. A control with no service is disabled or removed, not shown as a working control.
+- Any new state, event or error is added once in its canonical owner and machine schema; downstream ledgers link to it.
+- Native direct operations remain outside Core Trust unless a qualified mediation boundary exists.
+- No feature package is marked VERIFIED on the basis of structural validation alone.
 
-Recorded in CURRENT-RUN §13 and not re-executed as a schema mutation in this pass:
-
-- OpenAPI 229 operationIds aligned with API.md including two explicit target-only workspace-root operations.
-- 148 event types aligned between EVENTS.md and domain-event.schema.json.
-- 131 error codes aligned between SCHEMAS.md and error-codes.schema.json.
-- 28 SQLite migrations replayed in order on that date.
-
-A future edit that adds an event, error or route must update the owner prose and the machine schema together, then rerun those checks.
+[executed on device: DESKTOP-SARV (a709d51c-bcd7-4e97-a12f-b3b065c93231)]
