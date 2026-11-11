@@ -3,7 +3,7 @@
 **Feature:** 003 | **Status:** ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
 **Spec revision:** 1.0 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 
-## Current baseline
+## Historical baseline (2026-11-09; superseded)
 
 Verified in source on 2026-11-09 (branch `docs/audit-competitor-superset`):
 
@@ -16,6 +16,8 @@ Verified in source on 2026-11-09 (branch `docs/audit-competitor-superset`):
 - UI: Persistent folders section in `apps/litecowork-ui/src/App.tsx` (Add always enabled when the Operator is ready); `workspaces/workspace-root-scan.ts` disables Scan only after a 501. `ConversationsPage.tsx` submits `resourceRefs: []`, shows "@ to mention" placeholder copy and an "Add context or file" button with no handler. `resources/retrieval-grounding.ts` decoder has no production call site.
 
 Gaps: Windows add/scan (GA row), Windows path-identity tests, root content ingestion, persisted ContextAttachment, retrieval receipt from Send, @-reference picker, Context Used, qualification on both rows.
+
+The preceding audit is preserved for provenance only. At the 2026-11-12 checkout (`6adadab`), the Conversation composer has an implemented Resource picker and sends selected, revision-pinned `resourceRefs`; Feature 001 performs bounded text materialization at dispatch. This does not implement WorkspaceRoot content ingestion, does not wire grounded retrieval into Send, and does not create durable ContextAttachment/retrieval receipts or a Context Used projection. Root content indexing and native Windows root qualification remain open; use the individual task statuses and `docs/IMPLEMENTATION-STATUS.md` as current evidence.
 
 ## 003-T01 - Promote accepted 003 contracts into owner docs and machine schemas
 
@@ -207,7 +209,7 @@ Gaps: Windows add/scan (GA row), Windows path-identity tests, root content inges
 
 ## 003-T11 - @-reference ResourceRef picker in the Feature 001 composer
 
-- **Status:** NOT STARTED (placeholder "@ to mention" and an "Add context or file" button with no handler in `apps/litecowork-ui/src/conversations/ConversationsPage.tsx`; submit sends `resourceRefs: []`)
+- **Status:** PARTIAL - the Conversation composer has a Resource picker and submits selected revision-pinned `resourceRefs` (Feature 001 text materialization); this task's WorkspaceRoot ingestion-backed selection behavior remains incomplete.
 - **Depends on:** T09
 - **Cross-package prerequisites:** Feature 001 composer attachments handler (owns submit and `resourceRefs` wiring).
 - **Owner:** Desktop UI, Resource
@@ -221,7 +223,7 @@ Gaps: Windows add/scan (GA row), Windows path-identity tests, root content inges
   - [ ] Revision changes after selection keep the pinned revision and show it.
 - **Command:** `pnpm --dir apps/litecowork-ui test` and `pnpm --dir apps/litecowork-ui run build`
 - **Evidence:** test names; NATIVE-COMPOSER-LLD and UI ledgers updated in T16
-- **Stop:** do not enable the picker until 001 can materialize refs; until then keep the button visibly unavailable.
+- **Stop:** never imply that an ordinary uploaded Resource was ingested from a WorkspaceRoot; keep root-backed selection unavailable until the root content/revision path is implemented and can be reauthorized at dispatch.
 
 ## 003-T12 - Context Used surface for grounded answers
 

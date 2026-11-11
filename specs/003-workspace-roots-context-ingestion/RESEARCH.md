@@ -22,7 +22,7 @@ Authorities: docs/WORLD-RESOURCES.md, docs/CONTEXT.md, docs/STORAGE.md, docs/API
 
 No ZCode or DeepSeek Harness code is imported; both are prototype/reference inputs that reinforce the shell/Host trust boundary this slice already requires.
 
-## Source and UI audit (2026-11-06)
+## Historical source and UI audit (2026-11-06; superseded)
 
 Inspected `apps/litecoworkd/src/operator.rs`, `workspace_root_scan_operator.rs`, `resource_archive_operator.rs`, `rag_retrieval_operator.rs`, `apps/litecowork-ui/src-tauri/src/lib.rs`, `apps/litecowork-ui/src/App.tsx`, `workspaces/WorkspaceRootObservations.tsx`, `workspaces/workspace-root-mutations.ts`, `workspace-root-scan.ts`, `resources/retrieval-grounding.ts`, `presentation/rich-presentation.ts`, and `crates/storage-sqlite/src/{resource_index.rs,rag_retrieval.rs}`. Cross-checked the composed route inventory and the Feature 003 API/UI contracts.
 

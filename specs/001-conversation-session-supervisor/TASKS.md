@@ -4,7 +4,7 @@
 **Spec revision:** 1.1 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 **Owners:** domain owners named in SPEC.md. Owner acceptance: 2026-11-09 via docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md.
 
-## Current baseline
+## Historical baseline (2026-11-09; superseded)
 
 Verified against the checkout on branch `docs/audit-competitor-superset` (after commit 8129420).
 
@@ -17,6 +17,8 @@ Verified against the checkout on branch `docs/audit-competitor-superset` (after 
 - **Tests today:** `apps/litecoworkd/src/conversation_operator_tests.rs` (for example `conversation_turn_submit_returns_accepted_receipt_with_active_session_supervisor`), `crates/storage-sqlite/src/agent_binding_tests.rs` (`conversation_activation_commits_session_turn_and_local_host_binding_atomically`, `conversation_agent_response_commit_settles_turn_and_session_atomically`), `crates/storage-sqlite/src/conversation_turn_tests.rs`, UI `tests/conversation-stream.test.ts`, `tests/conversation-view.test.ts`. `apps/litecoworkd/tests/` contains only `cli.rs`; the canonical target `--test conversation_session_supervisor` does not exist.
 
 Gaps to V1: Stop without quiescence, broken Retry, no outbox or startup sweep, no storage single-flight, B-04 identity fields, attachments, usage records, composer fencing and inert controls, and no CODE/SYSTEM/USER qualification on either release row. Cross-package: the Feature 002 OpenCode probe records `compatible=false`, so the desktop cannot create the OpenCode binding this package needs.
+
+The preceding audit is preserved for provenance only. It must not be used as current source status: several listed absences were implemented after this snapshot. At the 2026-11-12 checkout (`6adadab`), inspect each task's status below and `docs/IMPLEMENTATION-STATUS.md`. Current examples: the dispatch outbox, usage records, single-flight admission, Stop/Retry UI paths, and text ResourceRef picker/materialization have CODE-level coverage; pinned OpenCode Form and permission APIs exist, but live event evidence and end-to-end answer/deny handling remain incomplete. T12 remains BLOCKED; T09 and T28 remain NOT STARTED; T27 remains PARTIAL. The packaged desktop journey and release qualification remain outstanding.
 
 ## 001-T01 - Record owner acceptance and promote accepted contracts into owner docs and schemas
 

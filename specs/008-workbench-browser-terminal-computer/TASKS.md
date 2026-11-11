@@ -3,9 +3,9 @@
 **Feature:** 008 | **Status:** ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
 **Spec revision:** 1.0 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 
-## Current baseline
+## Historical baseline (2026-11-11; superseded)
 
-Verified in source on 2026-11-11 (current uncommitted worktree):
+Verified in source on 2026-11-11:
 
 - `apps/litecowork-ui/src/workbench/WorkbenchPanel.tsx` (608 lines) is mounted by `App.tsx` as the right pane. After register A-51, `TerminalPane` renders an "unavailable" notice with no input or output, `ReviewPane` renders "Nothing to review yet", and the Browser iframe starts with an empty `browserUrl` labelled "Embedded page preview". `apps/litecowork-ui/tests/workbench-truthfulness.test.mjs` guards against the strings `exit code`, `ConPTY`, `Job Object`, `KILL_ON_CLOSE`, `pwsh` and `DACL`.
 - Activity now has a launcher/tab and its own status-only empty state; Computer use is shown as status-only UNAVAILABLE with no action control.
@@ -16,6 +16,8 @@ Verified in source on 2026-11-11 (current uncommitted worktree):
 - `docs/schemas/served-route-inventory.json` has no BrowserSession, TerminalSession, Activity, Diff or Computer route; `takeEnvironmentControl`/`returnEnvironmentControl` are target-only.
 
 Gaps: every provider, store, route, bridge and real view listed in SPEC §7.2; the Activity view; real Diffs; per-row terminal availability; Computer UNAVAILABLE surface.
+
+The preceding baseline predates the 2026-11-11 handoff changes and is retained for provenance. At the 2026-11-12 checkout, Workbench Activity and Computer remain truthful status-only surfaces, Terminal reports platform blockers, Browser is still an empty embedded-page preview, and Review has no real VCS diff. The managed-browser observation viewport and takeover described in the UI contract are TARGET only. No browser, terminal or computer provider journey is implemented or qualified; use the package task statuses and `docs/IMPLEMENTATION-STATUS.md` for current evidence.
 
 ## 008-T01 - Promote accepted Workbench contracts into owner docs and schemas
 
