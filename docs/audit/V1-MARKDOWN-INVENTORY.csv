@@ -9,7 +9,7 @@ file,lines,bytes,sha256,categories,has_heading
 AGENTS.md,133,11515,e534272a21474a59850069a4de4e6da27fe0203ce287733a1a64985fa741d0a6,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 ARCHITECTURE.md,803,56649,370f19d571ec7deb5495f3bd765ad48839b22d0196bf9ec4602c95e45d1b5161,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 CONTRIBUTING.md,81,6032,2fc07511243a861e2b0bd7e5de07e4f66b09aebe7ddbbb5b563774ba4d8814c5,agent/composer;browser/computer;rendering;workflow/recovery;trust/security,True
-CURRENT-RUN.md,472,87850,f1764d59dbf757f5d885020ffdda3de09ceb828ead15ae964900636f9a03a8a9,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+CURRENT-RUN.md,472,88136,3688835841995e2cf535081270385ae722fbc2369b10dbc9dcd1c35aa2f28dad,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 GLOSSARY.md,292,12637,bd9ffa34cb5ee0a0877784f2e047fe8380fd29cfc37961c83d0a57e81a106713,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 README.md,93,8289,3727827fd285fbe4a46c47c59e9f562b6d21a6617a070e43b75b83b5f28b3296,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 apps/litecowork-ui/README.md,77,4351,c47d822925a4b15bcd033695b22b3a59ce293efacbf211418a9b7b5a0b2c5b57,browser/computer;shell/settings/motion;workflow/recovery,True
@@ -60,7 +60,7 @@ docs/FLOWS.md,4513,319382,47817b00c268f83b37ee43e9e0ce4d775f6f2daf225761e28356b1
 docs/HANDOFF-NEXT-AGENT-2026-11.md,841,191950,4d18924863b3c0b5c29c2e9a52e43ac229c048a4af078ddc89ff5d07a4481cbb,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/HOST-GUIDANCE.md,138,5902,c2a6b681466516353350603ae0ecb739c5bb9dc28738b29ee16af27a7729be8d,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/IMPLEMENTATION-MASTER-PLAN.md,168,12860,e901a943fa3b9ad6fc82400af683969be2d9523dbd97e3424d5342172cd5a692,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
-docs/IMPLEMENTATION-STATUS.md,335,71298,c4bff89d8abef69f146b684971b3390ac1e3d0f57ebf6c1e46308281eb76ef8e,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+docs/IMPLEMENTATION-STATUS.md,335,71327,ad061afa69add914a77f8d191cf22aae24aad6506f49687cf67b54ed4c9cd7b6,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/IMPLEMENTATION.md,232,9336,c9dbf532b8948bbcb49db799497251f119631185b8bd499c74dce4b417b1cd60,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md,334,14062,7c876ce6b07697cacb95a418ef878f83fd7b2910022e292c107a8851ee136ba6,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery,True
 docs/INTERACTIVE-ARTIFACT-RUNTIME.md,135,20237,6d5d6bd44fb9dd820d26aa67813d877feae2c370c5ec2214aefb461d4e4bac96,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
