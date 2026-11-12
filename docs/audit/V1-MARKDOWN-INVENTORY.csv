@@ -9,7 +9,7 @@ file,lines,bytes,sha256,categories,has_heading
 AGENTS.md,133,11515,e534272a21474a59850069a4de4e6da27fe0203ce287733a1a64985fa741d0a6,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 ARCHITECTURE.md,824,58190,45248d5f5a1a6ca74014ddfc370548a1d1ab067b0c9013169f1d004b5f225026,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 CONTRIBUTING.md,81,6032,2fc07511243a861e2b0bd7e5de07e4f66b09aebe7ddbbb5b563774ba4d8814c5,agent/composer;browser/computer;rendering;workflow/recovery;trust/security,True
-CURRENT-RUN.md,487,95359,80e2a97957e4047ec1150e55e265c904548b1ba6c1d793b404bd33e47819065c,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+CURRENT-RUN.md,487,95500,182c2da37a0c7a5bb6241a3392bd4ab88b2a25b7f55b9e9f83657db6f9876f39,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 GLOSSARY.md,292,12637,bd9ffa34cb5ee0a0877784f2e047fe8380fd29cfc37961c83d0a57e81a106713,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 README.md,93,8289,3727827fd285fbe4a46c47c59e9f562b6d21a6617a070e43b75b83b5f28b3296,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 apps/litecowork-ui/README.md,77,4351,c47d822925a4b15bcd033695b22b3a59ce293efacbf211418a9b7b5a0b2c5b57,browser/computer;shell/settings/motion;workflow/recovery,True

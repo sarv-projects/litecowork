@@ -4,9 +4,9 @@ This is the current source and design handoff. It distinguishes the shipped chec
 
 ## Current repository state
 
-- Repository: LiteCowork; branch `main`; latest active source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; the Feature 005 documentation commit is `cd5b21f` (`docs: reconcile safe Task path contracts`); the pre-continuation documentation HEAD was `5097cc4975c5f259582cdd4ff250e913401c55ad`. `origin/main` remains at the source checkpoint; the branch had nine local commits before this handoff-status update, which will be the tenth.
+- Repository: LiteCowork; branch `main`; latest active source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; the Feature 005 documentation commit is `cd5b21f` (`docs: reconcile safe Task path contracts`), followed by handoff commit `0c556fc` (`docs: record handoff push status`); the pre-continuation documentation HEAD was `5097cc4975c5f259582cdd4ff250e913401c55ad`. `origin/main` remains at the source checkpoint; `main` had ten local commits ahead before this final push-status update, which will be the eleventh.
 - One worktree. This continuation changes documentation and generated audit inventories only; no Rust, TypeScript, Tauri, database schema or runtime source was changed. The global semantic audit remains open; exact Feature 005 coverage and current validation evidence are recorded below.
-- The normal push of `cd5b21f` was attempted and failed: Git Credential Manager cancelled its credential dialog, then Git could not read the GitHub username because `/dev/tty` is unavailable in this non-interactive shell. `gh` is not installed, and no remote update was observed. The remote has not received the eight earlier local commits or `cd5b21f`; this handoff-status commit is also local. Retry `git push origin main` from an authenticated session; do not force-push or rewrite history.
+- Normal pushes after `cd5b21f` and `0c556fc` both failed: Git Credential Manager cancelled its credential dialog, then Git could not read the GitHub username because `/dev/tty` is unavailable in this non-interactive shell. `gh` is not installed, and no remote update was observed. `origin/main` remains at the source checkpoint; none of the ten local commits has been pushed, and this final push-status update is local as well. Retry `git push origin main` from an authenticated session; do not force-push or rewrite history.
 - The root `AGENTS.md` is already tracked and contains the current operating rules plus next-agent reading order. On this Windows filesystem `agents.md` resolves to the same case-insensitive path; do not add a second case-colliding file.
 - Preserve `audit-output/`, `archives/`, `.agents/`, `repo_take/`, ignored build/dependency data, stashes and other user work. Stage only the reviewed intended paths. No reset, clean, force-push or history rewrite.
 - Active implementation is in `apps/` and `crates/`: Rust daemon/domain/storage, Tauri v2 desktop and React UI. This is not a documentation-only checkout.
@@ -57,7 +57,7 @@ Latest documentation-only checks (rerun after the handoff edits):
 
 No packaged desktop journey, native-provider qualification, product test suite or platform qualification was run in this documentation-only tranche.
 
-Feature 005 delivery: `cd5b21f` (`docs: reconcile safe Task path contracts`) commits 19 reviewed documentation/audit files. A separate handoff-status commit records the push outcome. The push was attempted and failed because this shell could not complete GitHub authentication (see repository state above); `origin/main` was not updated.
+Feature 005 delivery: `cd5b21f` (`docs: reconcile safe Task path contracts`) commits 19 reviewed documentation/audit files. Handoff commit `0c556fc` records the first push failure. A final normal push including both commits was retried and failed for the same authentication reason; this last handoff update records that result, and `origin/main` was not updated.
 
 ## Intelligent answers and ACP
 
