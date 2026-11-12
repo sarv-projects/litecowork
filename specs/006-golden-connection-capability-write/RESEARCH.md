@@ -1,6 +1,6 @@
 # Research - Golden Connection and One Capability Write
 
-**Feature:** 006 | **Checked:** 2026-11-06 (source, composed routes and desktop UI); provider docs re-checked 2026-11-09
+**Feature:** 006 | **Checked:** 2026-11-06 (source, composed routes and desktop UI); provider docs re-checked 2026-11-12
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -60,7 +60,7 @@ These are source/route/UI findings. No LiteCowork account Connection was created
 
 ## Limitations
 
-- Rival web pages were not re-fetched on 2026-11-06 for this package; the LiteSPM bridge pin was resolved 2026-11-09 to HEAD `84d5fab` (v0.6.0, [LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md)), superseding the earlier `111fd9b8e84573f8fce76b6374b4ff9639502539` as checked on 2026-11-05, not as proof of LiteCowork integration.
+- Rival web pages were not re-fetched on 2026-11-06 for this package; the LiteSPM bridge pin was resolved 2026-11-09 to HEAD `84d5fab` (v0.6.0, [LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md)), superseding the earlier `111fd9b8e84573f8fce76b6374b4ff9639502539` as checked on 2026-11-05, not as proof of LiteCowork integration. GitHub provider documentation was rechecked on 2026-11-12; see the current supplemental check below.
 - No LiteCowork runtime or end-to-end bridge integration was executed. The upstream source review is static and commit-pinned; it does not qualify a local LiteCowork process launch, IPC identity, host mutation, or receipt/recovery path.
 
 ## Provider documentation check (2026-11-09)
@@ -69,6 +69,14 @@ These are source/route/UI findings. No LiteCowork account Connection was created
 |---|---|---|
 | [GitHub: Authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) | PKCE supported with `S256` only; loopback `redirect_uri` on any port at `127.0.0.1` is accepted; `client_secret` is listed as required for the web-flow code exchange and for refresh unless the token came from the device flow; the device flow needs no client secret; token exchange is at `github.com/login/oauth/access_token`. | B-19's loopback-PKCE recipe still needs a client secret, so B-19's stop clause applies until the owner decides (TASKS T02). The OAuth token endpoint must be a separate allowlisted auth host. |
 | [GitHub REST: OAuth authorizations](https://docs.github.com/en/rest/apps/oauth-applications) | `DELETE /applications/{client_id}/token` requires Basic auth with the client secret. | Remote revocation is not possible without a client secret; revoke is local first and remote revoke may be an owner action (AC-015). |
+
+## Current provider documentation check (2026-11-12)
+
+The official GitHub OAuth pages were re-read after the 2026-11-09 check. The authentication finding is unchanged: the web-application code exchange requires `client_secret` even when PKCE is used, while the device-flow token request does not; refreshing device-flow tokens also omits the secret. Token revocation by `DELETE /applications/{client_id}/token` requires Basic authentication with the client id and secret. This still blocks the accepted loopback web-flow recipe under B-19's stop clause; it does not select the device flow or authorize an embedded secret.
+
+The provider's permission model also invalidates the operation-specific scope wording currently implied by B-19. GitHub documents `repo:status` as commit-status access, `read:user` as profile read access, and `repo` as the OAuth scope required for issue access in private repositories; public-repository access is through the broader `public_repo` scope. OAuth Apps cannot request fine-grained Issues permissions. GitHub Apps can request targeted repository permissions, including separate Issues permissions, but their authorization/credential lifecycle must be evaluated before choosing them for a local desktop client. Consequently, the accepted `list issue comments` read and `create issue comment` write cannot be described as separate least-privilege OAuth scopes. The exact permission shown to the user and the provider model are an open owner decision in register A-82 and TASKS T02; do not implement or qualify against the current wording.
+
+Primary sources checked 2026-11-12: [GitHub OAuth authorization](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps), [OAuth scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps), [OAuth App vs GitHub App permissions](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/differences-between-github-apps-and-oauth-apps), [issue-comment REST operations](https://docs.github.com/en/rest/issues/comments), and [OAuth token revocation](https://docs.github.com/en/rest/apps/oauth-applications).
 
 Content was rephrased for compliance with licensing restrictions.
 
@@ -81,7 +89,7 @@ Content was rephrased for compliance with licensing restrictions.
 
 ## Unresolved questions
 
-- OAuth recipe after the client-secret finding (TASKS T02, owner).
+- Authentication model and effective GitHub permissions after the client-secret and scope findings (TASKS T02, owner; A-82). Do not proceed with contract promotion until renewed acceptance.
 - Whether the Task-scoped golden write needs an admitted Environment (SPEC §18; affects the Windows row through 005 B-35).
 - Confirmation of the golden read operation (proposed: list issue comments), recorded in T01.
 

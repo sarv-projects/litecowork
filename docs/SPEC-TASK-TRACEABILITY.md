@@ -48,8 +48,8 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | 003 | ACCEPTED/LOCKED 2026-11-09 (B-13, B-14 with Windows scanner rider; folded Context Debugger P-15) | T01..T18 | 003-T15, 003-T18 | E2E-03 | UC files and citations | W1 |
 | 004 | ACCEPTED/LOCKED 2026-11-09 (B-15, B-16) | T01..T12 | 004-T10, 004-T12 | E2E-02 | UC relay A to B to A | W4 |
 | 005 | ACCEPTED/LOCKED 2026-11-09 (B-17 Linux-first rider, B-18); B-35 Windows provider PROPOSED | T01..T20 | 005-T15, 005-T18, 005-T20 | E2E-04 | UC one safe task edit | W2 |
-| 006 | ACCEPTED/LOCKED 2026-11-09 (B-19, B-20); 006-T02 BLOCKED on the client_secret finding | T01..T17 | 006-T15, 006-T17 | E2E-05 | UC one connection write | W3 |
-| 007 | ACCEPTED/LOCKED 2026-11-09 (B-21, B-30, B-31); 007-T06 BLOCKED on the export receipt class | T01..T17 | 007-T15, 007-T17 | E2E-07 | UC one professional format | W2 |
+| 006 | ACCEPTED/LOCKED 2026-11-09 (B-19, B-20); T01/T02 BLOCKED on authentication/effective permissions (A-82); Task-write row order OPEN (A-80) | T01..T17 | 006-T15, 006-T17 | E2E-05 | UC one connection write | W3 |
+| 007 | ACCEPTED/LOCKED 2026-11-09 (B-21, B-30, B-31); T01/T06 BLOCKED on export receipt ordering/local recovery (A-81); destination-class decision closed | T01..T17 | 007-T15, 007-T17 | E2E-07 | UC one professional format | W2 |
 | 008 | Revision 1.0 ACCEPTED/LOCKED 2026-11-09 (B-22, B-23, B-32 deferred; P-06/P-13); revision 1.1 IN_REVIEW (selected laptop Computer, compact Workbench, takeover) | T01..T27 | 008-T17, 008-T21 (rev 1.0); 008-T22..T27 (rev 1.1 review/promotion/qualification gates) | E2E-08; revision 1.1 E2E mapping pending owner/schema promotion | UC browser/terminal; selected-screen Computer proposal | W3 |
 | 009 | ACCEPTED/LOCKED 2026-11-09 (B-24, B-25) | T01..T18 | 009-T16, 009-T18 | E2E-09 | UC optional Coworker chat and memory | W2 |
 | 010 | ACCEPTED/LOCKED 2026-11-09 (B-26, B-27); CONNECTOR_EVENT over LOCAL_POLL confirmed 2026-11-10 (010-T09 still needs a qualified 006 Connection; 010-T19 deferred, out of V1) | T01..T19 (T18/T19 outside the V1 gate) | 010-T15, 010-T17 | E2E-10 | UC schedule exactly once | W5 |
@@ -58,7 +58,7 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | 013 | IN_REVIEW (new 2026-11-09); B-36, B-37 DEFERRED by the owner 2026-11-10 (LiteSPM parts deferred); folded LiteSPM pin P-17 | T01..T21 | 013-T18, 013-T21 | E2E-06 | UC discover and install a package | W2 observe, W3 plan/apply |
 | 014 | IN_REVIEW (new); B-38 ACCEPTED as proposed 2026-11-10 | T01..T19 | 014-T17, 014-T19 | E2E-14 (adopted) | UC find, rename, archive, delete chats | W1 |
 | 015 | IN_REVIEW (new); B-39 ACCEPTED as proposed 2026-11-10; folded Mission Control/Compare P-14 | T01..T21 | 015-T17, 015-T18, 015-T21 | E2E-15 (adopted) | UC steer, pause and delegate a Task | W4 |
-| 016 | IN_REVIEW (new); B-40 ACCEPTED as proposed 2026-11-10; folded per-block Markdown P-03 | T01..T19 | 016-T16, 016-T19 | E2E-11 | UC rich answer with fallback | W2 |
+| 016 | IN_REVIEW; baseline AC-001..AC-019 acceptance pending T01; extension AC-020..AC-027 separately gated at T25 (A-84); A-85 blocks MCP proposal exposure | T01..T25 | 016-T16, 016-T19, 016-T24 | E2E-11 | UC rich answer with fallback | W2 |
 | 017 | IN_REVIEW (new); B-41 ACCEPTED as proposed 2026-11-10 | T01..T18 | 017-T16, 017-T18 | E2E-12 | UC back up and restore | W6 |
 | 018 | IN_REVIEW (new); B-42 PROPOSED (open, BLOCKED); folded operator-api.ts codegen + drift gate P-18 | T01..T19 | 018-T16, 018-T19 | E2E-16 (adopted) | UC usage and support bundle | W6 |
 | 019 | IN_REVIEW (new); B-43, B-44 DEFERRED 2026-11-10 (release dependent) | T01..T23 | 019-T22, 019-T23 (V1 go/no-go) | all rows | UC install, update, sign-off | W0 skeleton, W6 qualification |

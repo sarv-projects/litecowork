@@ -453,6 +453,8 @@ For each task record in CURRENT-RUN.md and the matching docs/IMPLEMENTATION-STAT
 
 These stable IDs extend T01..T21; no historical task is renumbered. Current request authorizes design revision only. T22 review must complete before T23 promotion; T24..T27 are not implementation authorization and do not clear existing BLOCKED tasks. T21 cannot mark revision 1.1 VERIFIED without T27 and recorded owner sign-off.
 
+Cross-cutting owner issue A-83: the accepted revision 1.0 AC-009/CommandReceipt promises exact per-command exit outcomes, while the terminal LLD correctly treats PTY bytes and shell markers as insufficient proof. T22 must settle the receipt boundary and Task/Effect evidence source before T23 promotes terminal receipts. Until then, raw PTY input/output is not Task verification evidence.
+
 ## 008-T22 - Review revision 1.1 scope, attachment and authority decisions
 
 - **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
@@ -461,9 +463,10 @@ These stable IDs extend T01..T21; no historical task is renumbered. Current requ
 - **Owner:** Desktop shell, Environments, Trust, Product
 - **Allowed paths:** this package; docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md; docs/V1-INTEGRATED-TERMINAL-LLD.md; owning global contracts
 - **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
-- **Change intent:** Record the explicit user scope correction; reconcile B-32/AC-016, observation-only Desktop attachment, physical input-domain arbitration, Conversation vision grant scope, out-of-app emergency takeover reachability while the target app is foreground, and manual-host terminal decision. Pin exact OS/provider candidates only after review.
+- **Change intent:** Record the explicit user scope correction; reconcile B-32/AC-016, observation-only Desktop attachment, physical input-domain arbitration, Conversation vision grant scope, out-of-app emergency takeover reachability while the target app is foreground, manual-host terminal decision, and A-83's per-command receipt versus PTY input evidence conflict. The active Computer session shows a persistent, non-modal in-app Take over/Stop run strip; a native/global trigger covers the background case. Ordinary text-only runs use their own Stop control and never show Computer Take over without an active Computer input lease. Pin exact OS/provider candidates only after review.
 - **Acceptance:**
   - [ ] Recorded owner decisions distinguish local preview, model disclosure and input; no unsupported Task or isolation bypass; no fabricated acceptance.
+  - [ ] A-83 defines whether terminal receipts describe process termination, a separately admitted ProcessRunner command, or a qualified shell-integration signal; untrusted PTY output is never treated as verified Task/Effect evidence.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py specs/008-workbench-browser-terminal-computer` (implementation filters are targets to add, not tests run in this documentation pass).
 - **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
 - **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
@@ -476,7 +479,7 @@ These stable IDs extend T01..T21; no historical task is renumbered. Current requ
 - **Owner:** Environments, Trust, Storage, Operator
 - **Allowed paths:** docs/API.md; docs/EVENTS.md; docs/SCHEMAS.md; docs/schemas/; apps/litecowork-ui/src/generated/; owning LLDs; this package
 - **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
-- **Change intent:** Promote exact routes/operationIds, ACLs, permit/receipt/events/errors, input sequencing, revisions and immutable migration after next-free allocation. Reuse existing EnvironmentControlLease, authenticated headers and idempotency. Keep new routes target-only until mounted.
+- **Change intent:** Promote exact routes/operationIds, ACLs, permit/receipt/events/errors, input sequencing, revisions and immutable migration after next-free allocation. Reuse existing EnvironmentControlLease, authenticated headers and idempotency. Promote `CommandReceipt` only after A-83 resolves its exact scope and assurance. Keep new routes target-only until mounted.
 - **Acceptance:**
   - [ ] Schema/prose match; no frames/raw key text/native handles in durable projections; denial and migration/recovery contract fixtures; generated types match.
 - **Command:** `python3 scripts/audit_v1_contracts.py --strict` (implementation filters are targets to add, not tests run in this documentation pass).

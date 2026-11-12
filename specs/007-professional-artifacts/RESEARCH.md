@@ -86,4 +86,4 @@ Pinned source evidence: [Comrak v0.59.0 release](https://github.com/kivikakk/com
 
 ## Unresolved questions
 
-B-21, B-30 and B-31 are accepted. Remaining implementation questions: Product confirmation of the local-export receipt destination class under the B-31 caveat (recorded in T01), and whether a sandboxed read-only PDF view qualifies for V1 (T10). The Markdown engine version/license pin is recorded above; implementation conformance remains open in T03.
+B-21, B-30 and B-31 are accepted, and Product confirmed `LOCAL_OWNER_SELECTED_FILE` on 2026-11-10. A-81 records an internal order conflict: SPEC §7 says receipt before external work, while HLD/API/T06 say verified local write before receipt; the latter leaves a crash window requiring owner-approved UNKNOWN recovery. Other implementation questions are whether a sandboxed read-only PDF view qualifies for V1 (T10) and Markdown adapter conformance under T03. The Comrak version/license pin selects an engine candidate, not a completed adapter.

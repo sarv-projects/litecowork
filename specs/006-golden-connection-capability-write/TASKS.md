@@ -15,43 +15,45 @@ Historical source crosswalk checked 2026-11-09 on branch `docs/audit-competitor-
 - **Dispatch:** `SqliteCapabilityDispatchStore::admit_capability_dispatch` (`crates/storage-sqlite/src/capability_dispatch.rs`) implements the combined Trust + ApprovalUse + Invocation + Effect transaction but fails closed because `docs/schemas/sqlite-v15.sql` triggers `capability_invocation_creation_admission_closed` and `capability_invocation_status_transition_guard` reject Invocation INSERT and any `DISPATCHED` transition. No daemon caller. `apps/litecoworkd/src/capability_invocations_operator.rs` is read-only (`get_invocation`, `list_task_invocations`). `crates/domain-invocations` has `InvocationStatus`, `CapabilityInvocationRecord::transition` and `reconcile_ambiguous_terminal`; `capability_bridge.rs` has `classify_agent_capability_route`.
 - **Trust and approval:** `apps/litecoworkd/src/trust.rs` is compiled `#[allow(dead_code)]` in `main.rs`. Approval list/get/resolve with exact `confirmation_digest` is served (`approval_operator.rs`) and used by `apps/litecowork-ui/src/needs-you/ApprovalDetail.tsx`. `trust_operator.rs` `create_read_grant` issues only `workspace.resource.read` grants.
 - **HTTP:** `apps/litecoworkd/Cargo.toml` already has `reqwest` 0.12 (`rustls-tls`, no default features); no brokered egress policy exists.
-- **Provider finding:** GitHub documentation (checked 2026-11-09) requires `client_secret` on the web-flow code exchange and on token revocation; see SPEC §5 source check. This blocks the accepted loopback-PKCE recipe under B-19's own stop clause until the owner picks an option (T02).
+- **Provider finding:** GitHub documentation rechecked 2026-11-12 confirms a `client_secret` is required for web-flow code exchange and token revocation, and separately confirms that GitHub OAuth Apps cannot express the fine-grained issue permissions implied by B-19. `repo:status` is for commit statuses and `read:user` is for profile data; private-repository issue access needs `repo`, while public-repository access uses the broad `public_repo` scope. These block final recipe/scope promotion under B-19 and A-82 until the owner reviews the provider model (T02). See the dated source table in RESEARCH.md.
 
 Gaps to V1: recipe decision, Connection aggregate and service, keystore custody with a broker-only resolver, egress policy, refresh, Invocation dispatch schema, golden read and write, reconciliation, revoke, routes and bridge, UI, recovery, qualification on both rows.
 
-## 006-T01 - Promote accepted 006 contracts into owner docs and machine schemas
+## 006-T01 - Promote owner-approved 006 contracts into owner docs and machine schemas
 
-- **Status:** NOT STARTED
-- **Depends on:** NONE
+- **Status:** BLOCKED pending T02 (B-19 authentication recipe and A-82 effective-permission decision).
+- **Depends on:** T02
 - **Cross-package prerequisites:** 005 contract promotion (shared Trust/Effect wording); orchestrator assigns the migration number because several packages promote migrations in parallel
 - **Owner:** Connectors, Capability Fabric, schema owner
 - **Allowed paths:** `docs/CONNECTORS-WORKFLOWS.md`, `docs/CAPABILITY-INVOCATIONS.md`, `docs/CAPABILITY-FABRIC.md`, `docs/NETWORK-SECURITY.md`, `docs/TRUST.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, `docs/schemas/sqlite-v40.sql` (new, allocated in docs/LITECOWORK-BUILD-TASKS.md; v29 is already taken by Feature 001), `specs/006-golden-connection-capability-write/`
-- **Contract:** SPEC §5 B-19/B-20, §7.2, §7a, §13; AC-006, AC-013, AC-014, AC-015
-- **Change intent:** Add `REVOKED` to the OpenAPI Connection status enum and the `connections` table CHECK (SQLite needs a table rebuild migration that preserves rows). Add Connection begin, callback-complete (internal), cancel and list/get/disconnect bodies; the golden read operation (proposed: list issue comments, `GET /repos/{owner}/{repo}/issues/{number}/comments`, recorded for owner confirmation) and the golden write operationId for "create issue comment"; an `auth_attempts` table (state, expiry, PKCE/state digests only, never the verifier in clear after use); `remote_revocation` status on Connection (`CONFIRMED | OWNER_ACTION_REQUIRED | NOT_ATTEMPTED`). Reuse `connection.state.changed.v1`; add events only if missing. The recipe-specific fields wait for T02.
+- **Contract:** SPEC §5 B-19/B-20, §7.2, §7a, §13; AC-006, AC-013, AC-014, AC-015; A-82
+- **Change intent:** After T02 resolves the exact provider authentication model and effective scopes, add `REVOKED` to the OpenAPI Connection status enum and the `connections` table CHECK (SQLite needs a table rebuild migration that preserves rows). Add Connection begin, callback-complete (internal), cancel and list/get/disconnect bodies; the golden read operation (proposed: list issue comments, `GET /repos/{owner}/{repo}/issues/{number}/comments`, recorded for owner confirmation) and the golden write operationId for "create issue comment"; an `auth_attempts` table (state, expiry, PKCE/state digests only, never the verifier in clear after use); `remote_revocation` status on Connection (`CONFIRMED | OWNER_ACTION_REQUIRED | NOT_ATTEMPTED`). Reuse `connection.state.changed.v1`; add events only if missing. Keep authorization scopes truthful and tied to the selected provider model; do not encode the current unsupported implication of an operation-specific GitHub OAuth scope.
 - **Acceptance:**
   - [ ] Owner prose and OpenAPI/JSON Schema/migration change in the same commit.
   - [ ] Migration rebuild keeps existing `connections` rows and foreign keys from `channel_bindings` and later tables; a test opens a v28-era database and upgrades.
   - [ ] No secret material column is added; only SecretRef ids.
+  - [ ] T02 records an owner-approved exact auth model, the precise provider permissions displayed to the user, and their relationship to the LiteCowork operation grant (A-82).
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`; `cargo test -p storage-sqlite --locked migration`
 - **Evidence:** commit SHA in the completion table.
 - **Stop:** stop if `REVOKED` conflicts with another owner's Connection state machine; resolve at CONNECTORS-WORKFLOWS first.
 
-## 006-T02 - Owner decision on the GitHub OAuth recipe (client-secret finding)
+## 006-T02 - Owner decision on GitHub authentication and effective permissions
 
-- **Status:** BLOCKED (GitHub docs require `client_secret` for web-flow exchange and revocation; B-19 stop clause applies; owner: repository owner with Connectors and Security)
-- **DEFERRED/BLOCKED note:** Why: GitHub web-flow exchange and revocation require a client_secret, which a desktop app cannot hold; the B-19 stop clause applies and the B-19 follow-up is open. Unblocks when: owner decision on the OAuth recipe (device flow, PKCE-only app, or other). Test later at: decision only; then a real GitHub account on any native machine.
+- **Status:** BLOCKED (web-flow client-secret requirement and OAuth scope mismatch; B-19/A-82 require owner review; owner: repository owner with Connectors and Security)
+- **DEFERRED/BLOCKED note:** Why: GitHub web-flow exchange and remote revocation require a client secret, and OAuth App scopes do not match the narrow operation-level permissions implied by B-19. Unblocks when: owner approves a revised authentication and provider-permission model under a new SPEC revision. Test later at: decision only; then a real GitHub account on a native machine.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE
 - **Owner:** Repository owner; Connectors; Security
 - **Allowed paths:** `specs/006-golden-connection-capability-write/` (SPEC §5 and revision bump), `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md` (orchestrator)
-- **Contract:** SPEC §5 B-19 and the 2026-11-09 source check; SPECIFICATION-STANDARD §7
-- **Change intent:** Present options (a) device flow with public client id, (b) embedded non-confidential client secret with the risk recorded, (c) another provider. Re-verify the GitHub pages at decision time and pin the retrieval date. Record the decision as SPEC revision 1.1 with renewed approval.
+- **Contract:** SPEC §5 B-19, A-82, the provider checks in RESEARCH.md and SPECIFICATION-STANDARD §7
+- **Change intent:** Review both the client-secret/authentication mismatch and the scope mismatch before selecting an integration. Compare at least: (a) GitHub OAuth device flow with a public client id and its actual refresh/revoke limitations; (b) the loopback web flow and its actual client-secret requirements; (c) a GitHub App using fine-grained Issues permissions, including whether a desktop-safe user/installation authorization and credential model is feasible; and (d) another provider or operation. For each option, record the exact provider permissions shown to the user, public/private repository support, effective privilege, refresh/revocation behavior, and how the narrow LiteCowork grant still gates mediated actions. Re-verify and pin the official documentation at decision time. Record the choice and contract changes as a new SPEC revision with renewed approval.
 - **Acceptance:**
   - [ ] Decision recorded with date, option, and the exact GitHub documentation revision checked.
+  - [ ] Decision explicitly resolves A-82; no operation-specific least-privilege claim is made for an OAuth App.
   - [ ] AC-002, AC-012 wording adjusted in the new revision if the device flow removes the loopback listener.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
 - **Evidence:** SPEC revision 1.1 and register row.
-- **Stop:** no ConnectionService OAuth code (T05) before this decision.
+- **Stop:** no contract promotion (T01), ConnectionService code (T05), or provider qualification before this decision.
 
 ## 006-T03 - OS-keystore secret custody with a broker-only resolver and delete (Rust)
 
@@ -92,7 +94,7 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 ## 006-T05 - ConnectionService: AuthAttempt, OAuth flow per T02, Connection commit after keystore write
 
 - **Status:** BLOCKED (needs T02 recipe decision; no ConnectionService exists)
-- **DEFERRED/BLOCKED note:** Why: depends on the T02 recipe decision; no ConnectionService exists. Unblocks when: T02 decided. Test later at: a real GitHub account on native Linux then the owner's native Windows x64 laptop (release matrix row 1); WSL2 and containers never count.
+- **DEFERRED/BLOCKED note:** Why: depends on the T02 recipe decision; no ConnectionService exists. Unblocks when: T02 decided. Qualify the standalone Connection path on the native Windows x64 row first, then native Linux x64, as required by SPEC §13 and B-28; WSL2 and containers never count. E2E-05's later Task-scoped write ordering remains separately open under A-80.
 - **Depends on:** T01, T02, T03, T04
 - **Cross-package prerequisites:** 011 system-browser open via Tauri and Runtime readiness
 - **Owner:** Connectors
@@ -268,15 +270,15 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Evidence:** crash-injection test names.
 - **Stop:** stop if recovery would need to read token bytes.
 
-## 006-T15 - Qualification: E2E-05 on the Windows row, then the Linux row, with cross-layer traces
+## 006-T15 - Qualification: E2E-05 after A-80 resolves Task-write row ordering
 
-- **Status:** NOT STARTED
+- **Status:** NOT STARTED; Task-write platform order is OPEN under register A-80.
 - **Depends on:** T13, T14
 - **Cross-package prerequisites:** 005 Attempt admission on the same row (and B-35 on Windows if the SPEC §18 question resolves that the write needs an Environment); 019 evidence bundle process and release rows; 011 packaged desktop
 - **Owner:** Connectors, QA, repository owner (USER evidence)
 - **Allowed paths:** `apps/litecoworkd/tests/` (new E2E harness files), `apps/litecowork-ui/tests/`, `scripts/v1_platform_matrix.py` (row entries only), `specs/006-golden-connection-capability-write/`
 - **Contract:** docs/ACCEPTANCE-AND-E2E-PLAN.md E2E-05; AGENTS.md §4; AC-001 to AC-016
-- **Change intent:** Record the AGENTS.md §4 trace for each user operation: (1) connect (Connect GitHub -> `begin_connection` -> begin route -> owner check -> ConnectionService -> browser -> callback or device poll -> keystore write -> Connection txn -> `connection.state.changed.v1` -> Connections list -> restart reload); (2) read (Read action -> `request_golden_read` -> grant check -> broker -> Invocation -> detail view); (3) write (Write preview -> `request_golden_write` -> Approval -> Needs You approve -> admission txn -> POST -> reconcile -> Evidence -> detail view); (4) revoke. Run packaged E2E on Windows x64 first and Linux x64 second against a dedicated test repository, including denial (no grant, stale approval, self-approval, non-allowlisted host), duplicate replay, timeout-after-dispatch, revoke race, crash and restart.
+- **Change intent:** Record the AGENTS.md §4 trace for each user operation: (1) connect (Connect GitHub -> `begin_connection` -> begin route -> owner check -> ConnectionService -> browser -> callback or device poll -> keystore write -> Connection txn -> `connection.state.changed.v1` -> Connections list -> restart reload); (2) read (Read action -> `request_golden_read` -> grant check -> broker -> Invocation -> detail view); (3) write (Write preview -> `request_golden_write` -> Approval -> Needs You approve -> admission txn -> POST -> reconcile -> Evidence -> detail view); (4) revoke. Against a dedicated test repository, qualify Connection/read operations per available OS row and qualify the Task-scoped write in the row order established by A-80. Do not mark E2E-05 fully qualified while its write row is unavailable or unresolved. Include denial (no grant, stale approval, self-approval, non-allowlisted host), duplicate replay, timeout-after-dispatch, revoke race, crash and restart in every row that qualifies the corresponding operation.
 - **Acceptance:**
   - [ ] CODE, SYSTEM and owner USER evidence per row with exact OS build, keystore backend and GitHub API version header.
   - [ ] Token redaction verified across daemon logs, events and UI state dumps on both rows.
@@ -319,7 +321,7 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 
 ## Dependency order
 
-T01 -> T03, T04, T07. T02 (owner) -> T05.
+T02 (owner; auth model and exact provider scopes) -> T01 -> T03, T04, T07. T02 -> T05.
 T01 + T02 + T03 + T04 -> T05 -> T06.
 T04 + T05 + T07 -> T08 -> T09 -> T10.
 T03 + T05 -> T11.

@@ -2,7 +2,7 @@
 
 This is the working delivery checklist for the active source tree. It is not a Git commit plan. Feature-specific work items belong in specs/NNN-*/TASKS.md. Product semantics remain in owner contracts; current evidence is in IMPLEMENTATION-STATUS.md.
 
-## Status snapshot (2026-11-10, tip e9abe46)
+## Status snapshot (refreshed 2026-11-12, review tip 8432397)
 
 The tables below are the plan and carry no per-row status. Per-task status lives in specs/NNN-*/TASKS.md; this snapshot only indexes it. Nothing is INTEGRATED with a live agent or QUALIFIED.
 
@@ -13,8 +13,8 @@ The tables below are the plan and carry no per-row status. Per-task status lives
 | BT-02 | Linux storage tests only; Windows tasks DEFERRED to the owner's Windows laptop | 003-T02 PARTIAL |
 | BT-03 | Registry, descriptors, auth observation, Matchmaker CODE/SERVED; Claude Code module BLOCKED; relay (004) not started | 002 statuses |
 | BT-04 | Not started | 005; Windows Environment provider B-35 still PROPOSED |
-| BT-05 | 013 part: whole package DEFERRED by the owner (A-62). 006 part: BLOCKED on the B-19 follow-up | See the DEFERRED note in specs/013-litespm-package-lifecycle-bridge/TASKS.md |
-| BT-06 to BT-09 | Not started (pre-existing foundations only); 010-T19 deferred out of V1 | 007, 016, 008, 009, 010 |
+| BT-05 | 013 part: whole package DEFERRED by the owner (A-62). 006 part: BLOCKED on B-19/A-82 owner decisions; E2E-05 Task-write row order remains OPEN under A-80 | See the DEFERRED note in specs/013-litespm-package-lifecycle-bridge/TASKS.md and A-80/A-82 in the contradiction register |
+| BT-06 to BT-09 | Existing foundations only; 010-T19 deferred out of V1. Feature 016 baseline acceptance is pending; A-84 separates its revision 0.2 extension decision and A-85 blocks MCP proposal exposure pending a canonical tool-input/sequence contract. | 007, 016, 008, 009, 010 |
 | BT-10 | Partly done for Linux; Windows and packaged rows DEFERRED | 011 DONE T01, T04, T05, T07, T08, T09, T10, T21 |
 | BT-11 | Storage layer only (014-T03 partial, migration v31) | Routes, search, purge, UI NOT STARTED |
 | BT-12 to BT-14 | Not started; B-39, B-40, B-41, D-01, B-45 accepted as proposed; B-42 open | 015 to 018, 020 |
@@ -95,7 +95,7 @@ BT-06.1 and BT-06.2 are owned by Feature 007; BT-06.3..BT-06.5 are owned by Feat
 | BT-06.1 | Qualify one professional Artifact format | Create/edit/save/export/reopen/compare round trip |
 | BT-06.2 | Verify exact source/version and Artifact provenance | Hash and revision consistency |
 | BT-06.3 | Validate typed RichPresentation document | Size/depth/node/schema/digest bounds and semantic fallback |
-| BT-06.4 | Add one accessible Intelligent UI component | Restricted state reducer, table fallback, malicious input tests |
+| BT-06.4 | Add the accepted first accessible Intelligent UI component, SAFE_CALCULATOR | Restricted state reducer, table fallback, malicious-input tests; exact feature acceptance still pending at 016-T01 |
 | BT-06.5 | Keep Interactive Artifact in isolated runtime | Separate process, authority and OS qualification |
 
 ## BT-07 — Workbench providers (Feature 008)
@@ -103,7 +103,7 @@ BT-06.1 and BT-06.2 are owned by Feature 007; BT-06.3..BT-06.5 are owned by Feat
 | ID | Task | Exit evidence |
 |---|---|---|
 | BT-07.1 | Remove simulated terminal success and sample output | No false success label or exit code |
-| BT-07.2 | Implement daemon-owned PTY/ConPTY session | Stream/resize/detach/reattach/stop/backpressure/restart |
+| BT-07.2 | Implement daemon-owned PTY/ConPTY session | Stream/resize/detach/reattach/stop/backpressure/restart; resolve A-83 before claiming per-command exit receipts or using PTY output as Task/Effect evidence |
 | BT-07.3 | Replace sample diffs with exact VCS/revision diff | Source identity and actual hunk tests |
 | BT-07.4 | Keep Browser iframe labeled preview until real provider | No Chrome/automation/sandbox claims |
 | BT-07.5 | Implement isolated browser provider and takeover only after security design | Profile, site grants, lease epoch, stale handle, egress tests |
@@ -202,6 +202,8 @@ The owner accepted packages 001-012 on 2026-11-09. Packages 013-020 are IN_REVIE
 | W6 | 017, 018, 019 qualification (019-T06..019-T23) | All earlier waves VERIFIED or explicitly descoped by the owner | E2E-12, proposed E2E-16, signed packages, V1 go/no-go |
 
 Windows Task execution, the daemon terminal and Windows delegation stay UNAVAILABLE until B-35 is accepted and 005-T17/005-T18 qualify. That path runs in parallel with W3 to W5 and does not block the Linux row.
+
+Feature 006's Connection/read qualification is distinct from its Task-scoped golden write. A-80 leaves open whether the write requires an admitted Environment; if it does, E2E-05's write row follows Feature 005's Linux-first qualification and Windows stays unavailable until B-35. A-82 also blocks provider contract promotion until the OAuth/App permission model and actual user-visible scopes are owner-approved. Do not describe Windows Connection/read evidence alone as a fully qualified E2E-05 journey.
 
 Folded tasks (owner-accepted 2026-11-09, register A-55) land in the wave of their owning package. The ACP native-agent client (002-T17, consumed by Feature 001) is the W1 adapter spine and carries the OpenCode fixture and normalizer (001-T23, 001-T24) plus the activity/plan cards, autoscroll and native permission prompts (001-T25, 001-T26, 001-T27); the Agent Matchmaker (002-T18) is W1. Per-block Markdown (016-T18) and the Context Debugger (003-T17) are W2. The LiteSPM pin (013-T20) is W3; the iframe sandbox guard and Git worktree/diff/PR (008-T19, 008-T20) are W3. Mission Control and read-only Compare (015-T20) is W4. The shell reachability, decomposition, SettingsPage merge and Workspace Dashboard tasks (011-T19..011-T22) ride the W0 shell package, with the Dashboard deliverable landing once its inputs exist. The operator-api.ts codegen and drift gate (018-T18) is W6. The V1 go/no-go (019-T23) re-synced its VERIFIED-id list to the new final task ids.
 

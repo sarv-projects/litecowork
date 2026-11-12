@@ -4,16 +4,16 @@
 
 ## Phases
 
-1. Contract promotion (T01) and the owner decision on the OAuth recipe after the client-secret finding (T02).
+1. Owner decision on the authentication model and effective provider permissions (T02), followed by contract promotion (T01); both are blocked until B-19/A-82 receive renewed owner approval.
 2. Foundations (T03, T04, T07): keystore custody with a broker-only resolver, brokered HTTP egress policy, Invocation dispatch schema opened only through the combined admission transaction.
 3. Connection (T05, T06): ConnectionService and refresh, after T02.
 4. Operations (T08-T11): golden read, golden write with exact approval, UNKNOWN reconciliation, revoke.
 5. Surfaces (T12, T13): Operator routes, Tauri bridge, Discover Connections UI.
-6. Recovery (T14), qualification E2E-05 on the Windows row then the Linux row (T15) with the desktop USER path in [ACCEPTANCE-AND-E2E-PLAN.md](../../docs/ACCEPTANCE-AND-E2E-PLAN.md), documentation sync (T16) and VERIFIED (T17).
+6. Recovery (T14), then E2E-05 qualification (T15) with the desktop USER path in [ACCEPTANCE-AND-E2E-PLAN.md](../../docs/ACCEPTANCE-AND-E2E-PLAN.md). **The Task-write row order is OPEN under A-80:** Connection/read evidence may be collected per available OS row, but the write journey follows Feature 005's Environment qualification order if the write requires an admitted Environment. Do not mark the combined journey VERIFIED until the owner decision is reflected in the platform rows. Then documentation sync (T16) and VERIFIED (T17).
 
 ## Dependency DAG
 
-- T01 blocks every implementation task; T02 (owner) blocks only ConnectionService and its dependents. The full DAG is in [TASKS.md](TASKS.md#dependency-order).
+- T02 (owner) blocks T01 and ConnectionService; T01 then blocks contract-dependent implementation tasks. The full DAG is in [TASKS.md](TASKS.md#dependency-order).
 - 005 Trust wiring and Attempt admission precede dispatch (Wave 3 after 005).
 - External side effects never run inside the transactions declared in WIRING.yaml.
 - Feature 001 remains a prerequisite wherever this slice needs a committed Conversation turn.
@@ -37,5 +37,5 @@ No migration has shipped for this package yet. T01 promotes one forward-only imm
 ## Verification gates
 
 - `python3 .specify/scripts/validate_feature_package.py`
-- Owner review recorded 2026-11-09 for B-19/B-20; T02 recipe decision pending
+- Owner review recorded 2026-11-09 for B-19/B-20; renewed T02 review for authentication and effective provider permissions pending
 - TASKS.md commands and denial, replay, restart and cancel cases

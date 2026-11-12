@@ -2,7 +2,7 @@
 
 > **Revision 1.1: IN_REVIEW / TARGET (2026-11-12).** Actual laptop Computer view and independent local/agent observation/input replace the requested browser-only scope. Historical revision 1.0 acceptance remains below; implementation remains UNAVAILABLE. See [Computer LLD](../../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md), SPEC section 20 and tasks T22..T27.
 
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Historical baseline status:** Revision 1.0 was ACCEPTED/LOCKED on 2026-11-09; that decision authorizes only its browser/terminal scope and keeps Computer deferred. Revision 1.1 remains IN_REVIEW/TARGET and authorizes no implementation or qualification.
 
 Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs/V1-UI-SCREEN-CONTRACT.md), [DESKTOP-SHELL-LLD.md](../../../docs/DESKTOP-SHELL-LLD.md), [CHROME-BROWSER-LLD.md](../../../docs/CHROME-BROWSER-LLD.md), and [V1-INTEGRATED-TERMINAL-LLD.md](../../../docs/V1-INTEGRATED-TERMINAL-LLD.md).
 
@@ -17,7 +17,7 @@ Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs
 - Diffs show actual content/revision or VCS comparison, exact source IDs/digests and true added/removed counts. Activity shows committed event/Attempt/Effect/process observations only, or is deferred to Work/Task detail by the screen contract.
 - Computer use is only shown when a real provider and OS permission exists. Otherwise the UI states unavailable/unsupported with a reason; it never animates a phantom cursor or claims screen capture/input injection.
 
-## Current implementation crosswalk (re-checked 2026-11-11)
+## Current implementation crosswalk (re-checked 2026-11-12)
 
 - `WorkbenchPanel` is a React right pane with launcher, Files, Terminal, Browser, Review (`diffs`) and Activity paths. Activity has its own launcher/tab and status-only empty state; it does not fall through to Review.
 - Files is a list/filter of the Workspace Resource catalog; preview is fetched for an exact ResourceRevision. It is not a native filesystem tree or Environment browser.
@@ -78,6 +78,8 @@ Every command below crosses typed UI -> authenticated Tauri bridge -> Operator u
 | Workbench object tabs, **+ > Canvas**, tab close/maximize -> OpenWorkbenchObject / SelectWorkbenchTab / CloseWorkbenchView | Shell layout only; exact Workspace+ArtifactVersion authorized through existing Artifact owner; dirty draft guard; Run uses existing separate runtime contract | Compact on launch, bounded tab strip/overflow, no competing inspector; preserve object/draft/provider on tab switch, lost process never revived by layout restore; AC-026, T26 |
 
 Take over and Stop run remain reachable while Computer is hidden or another tab is selected. Keep the persistent, non-modal app-chrome strip outside captured pixels, generated artifacts and agent-controlled pages. Because the target app normally covers LiteCowork, Computer input also requires at least one qualified out-of-app emergency trigger (global shortcut or native tray item); without one, the provider is observation-only. The trigger closes the broker fence first and may show the app/result afterward. Stop run closes Computer input, then requests the actual Conversation/Task stop through their owners; each domain reconciles separately. Computer tab includes source, frame age, local/agent sharing state, input owner and Stop sharing. No capture begins on launch, Quick Entry, + menu opening or automatic context switch. Saved layout restores view references only after authorization.
+
+Use a persistent, non-modal takeover banner instead of a transient modal popup: it stays visible across Workbench tabs, does not time out, and does not block the target view. Show **Take over** only while a live LiteCowork-mediated Computer input lease is AGENT-owned. A normal text-only Conversation/Task run uses its own run status and owner-routed Stop when that path is qualified; it does not show Computer Take over. **Take over** fences further mediated Computer input while reasoning and unrelated authorized work may continue; **Stop run** also requests cancellation through the applicable Conversation/Task owner. Neither button sends a message. A native notification may announce that control began, but cannot replace the persistent banner and qualified out-of-app trigger. Direct native-agent tools outside LiteCowork's broker are not intercepted by this control.
 
 While a Conversation turn is RUNNING, sending a normal message does not transfer computer control or stop the run. An in-turn continuation/answer is available only for an exact provider-correlated request whose typed reply path has been qualified under Feature 001; otherwise the user stops the run, waits for settlement, and sends a new turn. Do not add a prompt queue or generic steering action by implication.
 

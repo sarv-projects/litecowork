@@ -13,7 +13,7 @@ Canonical definitions: [docs/RICH-RESPONSE.md](../../docs/RICH-RESPONSE.md), [do
 | Artifact, ArtifactVersion | `crates/storage-core/src/artifact.rs` (`ArtifactVersionRecord { artifact_id, version, resource_revision_id, input_refs, content, provenance, created_by_attempt, verification_refs, created_at }`) | Generated media is a new Artifact version; create path from Feature 007 |
 | `conversation_messages` | Feature 001 | Authoritative semantic text; never modified here |
 
-## 2. Document shape (proposed V1 profile; requires T02 promotion and whole-SPEC acceptance)
+## 2. Document shape (proposed V1 profile; requires baseline owner acceptance at T01 and T02 promotion)
 
 | Field | Bound |
 |---|---|

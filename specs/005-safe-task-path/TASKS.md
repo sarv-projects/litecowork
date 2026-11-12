@@ -1,7 +1,7 @@
 # Tasks - Safe Task Path
 
 **Feature:** 005 | **Status:** ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
-**Spec revision:** 1.0 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+**Spec revision:** 1.0 | **Release target:** V1 (Task execution qualifies first on Linux x64; Windows x64 Task execution stays visibly UNAVAILABLE until B-35 is accepted and qualified; Task create/read remain available)
 
 Task execution follows the B-17 rider: it qualifies first on the Linux x64 row. On the Windows x64 row, Task create and read views stay available while execution stays visibly UNAVAILABLE until B-35 (PROPOSED, pending owner) is accepted and its provider qualifies.
 
@@ -252,7 +252,7 @@ Gaps to V1: Conversation promotion, planning dispatch, plan acceptance route, a 
 - **Owner:** Desktop UI
 - **Allowed paths:** `apps/litecowork-ui/src/App.tsx` (`TaskDetailPanel` only), `apps/litecowork-ui/src/tasks/` (new modules `task-execution-state.ts`, `TaskExecutionPanel.tsx`), `apps/litecowork-ui/src/presentation/TaskPresentationPanel.tsx`, `apps/litecowork-ui/tests/task-execution-state.test.ts` (new), `docs/V1-UI-ACTION-STATE-LEDGER.md`, `docs/SEMANTIC-SERVED-UI-MAP.md`
 - **Contract:** contracts/ui-behavior.md; SPEC §6; AC-011, AC-014
-- **Change intent:** Move execution UI out of the 4,523-line `App.tsx` into `TaskExecutionPanel.tsx` with a pure reducer in `task-execution-state.ts` (no UI-owned Task state machine; it maps owner records to view states). Render separately: proposed plan with Accept (If-Match), Attempt state, Environment class and the four enforcement statuses, grant and Approval (deep link to Needs You `ApprovalDetail`), Effect PROPOSED/STARTED/AMBIGUOUS/COMMITTED/NOT_APPLIED, Evidence and verification PASSED/FAILED, Cancel and Recover. States: loading, empty (no plan yet), error, denied, offline (Runtime unreachable), stale (409 refetch), UNAVAILABLE (no provider), recovery (AMBIGUOUS awaiting reconcile).
+- **Change intent:** Move execution UI out of the monolithic `App.tsx` into `TaskExecutionPanel.tsx` with a pure reducer in `task-execution-state.ts` (no UI-owned Task state machine; it maps owner records to view states). Render separately: proposed plan with Accept (If-Match), Attempt state, Environment class and the four enforcement statuses, grant and Approval (deep link to Needs You `ApprovalDetail`), Effect PROPOSED/STARTED/AMBIGUOUS/COMMITTED/NOT_APPLIED, Evidence and verification PASSED/FAILED, Cancel and Recover. States: loading, empty (no plan yet), error, denied, offline (Runtime unreachable), stale (409 refetch), UNAVAILABLE (no provider), recovery (AMBIGUOUS awaiting reconcile).
 - **Acceptance:**
   - [ ] A saved READY Task or progress snapshot never renders as a running worker (AC-011).
   - [ ] AMBIGUOUS never renders as success or offers Retry; Recover appears only after reconciliation.

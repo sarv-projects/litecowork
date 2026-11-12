@@ -1,8 +1,8 @@
 # 006 - Golden Connection and One Capability Write
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Revision:** 1.0 | **Updated:** 2026-11-09
-**Implementation state (2026-11-10):** Not implemented. T02 BLOCKED on the B-19 follow-up (GitHub OAuth client-secret finding, open decision), T05 BLOCKED behind it; migration v40 allocated.
+**Revision:** 1.0 | **Updated:** 2026-11-12
+**Implementation state (2026-11-12):** Not implemented. T01/T02 are BLOCKED pending renewed owner decisions for B-19 authentication and A-82 effective provider permissions; T05 is blocked behind them; migration v40 is allocated. E2E-05 Task-write platform order is OPEN under register A-80 because its Environment requirement is unresolved.
 **Owners:** Connectors, Capability Fabric, Security, LiteSPM boundary, Desktop UI. Accepted by the repository owner via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md).
 
 ## User outcome
@@ -11,7 +11,9 @@ The owner completes one real account Connection, performs one authorized read, t
 
 ## Current truth
 
-The active checkout serves Discover projections, fail-closed connect-or-install/test routes, exact Approval list/get/resolve and a narrow Task-planning Resource-read grant. Connect-or-install returns 503 without a receipt or grant; test returns UNKNOWN without contacting a provider. Account Connection/OAuth routes are not mounted; CapabilityInvocation is read-only; Trust/Effect provider dispatch and reconciliation are not wired. The Approval UI records an exact action decision but does not execute it. This package is ACCEPTED/LOCKED (B-19 and B-20 accepted 2026-11-09); no golden provider read/write journey is implemented or qualified. A 2026-11-09 provider check found that GitHub requires a client secret for the web-flow exchange and token revocation, which triggers B-19's own stop clause; task T02 in [TASKS.md](TASKS.md) holds the owner decision.
+The active checkout serves Discover projections, fail-closed connect-or-install/test routes, exact Approval list/get/resolve and a narrow Task-planning Resource-read grant. Connect-or-install returns 503 without a receipt or grant; test returns UNKNOWN without contacting a provider. Account Connection/OAuth routes are not mounted; CapabilityInvocation is read-only; Trust/Effect provider dispatch and reconciliation are not wired. The Approval UI records an exact action decision but does not execute it. This package is ACCEPTED/LOCKED (B-19 and B-20 accepted 2026-11-09); no golden provider read/write journey is implemented or qualified. The 2026-11-12 provider check confirms the web-flow client-secret blocker and finds that GitHub OAuth App scopes do not match the operation-specific permissions implied by B-19; A-82 and task T02 in [TASKS.md](TASKS.md) hold the owner decision.
+
+Cross-feature review found that T15's former Windows-first wording could conflict with Feature 005's Linux-first Task execution rider if the Task-scoped `STRUCTURED_API` write needs an admitted Environment. Feature 006 SPEC §18 leaves that requirement open; the dependency is now tracked as A-80. T15 must separate Connection/read evidence from Task-write qualification until Trust and Environments owners resolve it.
 
 ## Boundary
 

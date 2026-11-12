@@ -202,4 +202,4 @@ extension_review:
     - "Forget/delete/revocation fences late saves and acknowledgements; backup cannot resurrect content"
     - "Changed document namespace starts fresh; migration needs explicit preview and consent"
     - "Late agent modification creates no overwrite; compare base revision and require review"
-  gates: ["T01 whole-SPEC acceptance", "T20 native ingress and canonical intent/pins", "T21 Canvas controller", "T22 persistence/privacy/migration review", "T23 modification context/lineage review", "T24 exact packaged SYSTEM and USER evidence"]
+  gates: ["T01 baseline AC-001..AC-019 acceptance only", "T25 separate extension owner decision under A-84", "T20 native ingress and canonical intent/pins; resolve A-85 sequence and MCP input contract", "T21 Canvas controller", "T22 persistence/privacy/migration review", "T23 explicit new-turn modification, independent of T22 persistence", "T24 exact packaged SYSTEM and USER evidence"]

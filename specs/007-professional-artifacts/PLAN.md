@@ -6,7 +6,7 @@
 ## Phases
 
 1. Contract promotion (TASKS T01): promote B-21 engine pin, B-30 create, B-31 export receipt, the capability matrix and Conversation origin into ARTIFACTS-EVIDENCE, API, EVENTS, SCHEMAS with `docs/schemas/operator-api.openapi.yaml`, `domain-event.schema.json` (`artifact.exported.v1`), `error-codes.schema.json` and the next immutable `docs/schemas/sqlite-vNN.sql`.
-2. Storage and format (T02-T06): atomic create, Markdown adapter, Markdown version publish, capability matrix producer, export receipt.
+2. Storage and format (T02-T06): atomic create, Markdown adapter, Markdown version publish, capability matrix producer, export receipt. T06 remains blocked on A-81 until owner review resolves the SPEC §7 versus HLD/API/T06 ordering conflict and local write-before-receipt recovery; do not promote its command/schema ahead of that review.
 3. Operator routes and Tauri bridge (T07); Conversation association (T08); imported source class (T12).
 4. UI (T09-T11): Library and Workbench create/edit/export, read-only/unsupported rendering for DOCX/XLSX/PPTX/PDF, stored-version compare.
 5. Failure/recovery (T13), cross-layer trace (T14), qualification of E2E-07 on both rows (T15), documentation sync (T16), package VERIFIED (T17).
@@ -32,7 +32,7 @@ Rollout: the capability matrix ships first so the UI can hide unsupported contro
 
 - Two Markdown dialects (daemon validator versus the hand-written UI preview) drifting apart; T03 and T09 test both against one fixture set.
 - Presenting a PDF or Office preview as editing.
-- Local-export receipt destination class not confirmed by Product (B-31 caveat) delaying T06.
+- SPEC §7 says receipt before “any external call,” while HLD/API/T06 say format/write/verify before receipt. The local file can exist without a receipt, so A-81 requires one owner-approved order and explicit UNKNOWN/restart recovery without exposing the selected path.
 - Collapsing distinct states into one UI boolean.
 
 ## Verification gates
