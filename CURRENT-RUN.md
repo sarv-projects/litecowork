@@ -4,9 +4,9 @@ This is the current source and design handoff. It distinguishes the shipped chec
 
 ## Current repository state
 
-- Repository: LiteCowork; branch `main`; source checkpoint `8432397befc69bafd3335a0c30b2f1e9e82bef5e`; `origin/main` is `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`. Main was six commits ahead before this documentation continuation.
+- Repository: LiteCowork; branch `main`; source checkpoint `8432397befc69bafd3335a0c30b2f1e9e82bef5e`; `origin/main` is `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`. Main was six commits ahead before this continuation; `cdc4310` made it seven ahead, and this status update makes it eight ahead.
 - One worktree. This continuation changes documentation only; no Rust, TypeScript, Tauri, database schema or runtime source was changed. The current source checkpoint and audit scope are recorded here; commit and normal-push results are reported in the delivery summary.
-- A previous normal push attempt failed because Git Credential Manager authentication was canceled/unavailable in the non-TTY session; `origin/main` did not move. A new normal push is authorized and will be attempted after the reviewed docs are committed. No force-push or history rewrite.
+- The normal push of `cdc4310` failed: Git Credential Manager reported “User cancelled dialog,” then Git could not read the GitHub username because `/dev/tty` is unavailable in this non-interactive shell. `origin/main` did not move; the remote still lacks all eight local commits. Retry `git push origin main` from an authenticated session after this status update is committed. No force-push or history rewrite.
 - The root `AGENTS.md` is already tracked and contains the current operating rules plus next-agent reading order. On this Windows filesystem `agents.md` resolves to the same case-insensitive path; do not add a second case-colliding file.
 - Preserve `audit-output/`, `archives/`, `.agents/`, `repo_take/`, ignored build/dependency data, stashes and other user work. Stage only the reviewed intended paths. No reset, clean, force-push or history rewrite.
 - Active implementation is in `apps/` and `crates/`: Rust daemon/domain/storage, Tauri v2 desktop and React UI. This is not a documentation-only checkout.
@@ -33,9 +33,9 @@ The Computer interaction decision is a persistent, non-modal takeover banner whi
 
 Feature 016 now distinguishes pending baseline acceptance (T01, AC-001..AC-019) from the separate revision 0.2 extension decision (T25, AC-020..AC-027). Its proposed ACP/MCP presentation tool remains unavailable until A-85's model-visible input, host sequence, replay identity and acknowledgement mapping are canonical. Feature 006's auth and permission mismatch (A-82), Feature 007's local file/export receipt crash gap (A-81), Feature 008's PTY per-command evidence gap (A-83), and Feature 006's Environment/qualification ordering (A-80) remain owner gates, not resolved implementation work.
 
-Documentation-only validation at this checkpoint: 20 feature packages structurally valid; V1 contract audit reports 0 errors across 231 OpenAPI operations (178 served, 4 outside OpenAPI, 53 target-only); architecture validator passed with one optional `openapi-spec-validator`-missing warning; owner consistency reports 373 documents / 77,252 lines, 36 assertions and 0 issues; design-depth scan reports 372 files / 76,841 lines and 0 findings; Markdown audit reports 369 files / 76,862 lines / 7,485,471 bytes and 0 broken links; CRLF-aware diff check passes. These checks do not qualify runtime or packaged journeys.
+Documentation-only validation at this checkpoint: 20 feature packages structurally valid; V1 contract audit reports 0 errors across 231 OpenAPI operations (178 served, 4 outside OpenAPI, 53 target-only); architecture validator passed with one optional `openapi-spec-validator`-missing warning; owner consistency reports 373 documents / 77,252 lines, 36 assertions and 0 issues; design-depth scan reports 372 files / 76,841 lines and 0 findings; Markdown audit reports 369 files / 76,862 lines / 7,485,972 bytes and 0 broken links; CRLF-aware diff check passes. These checks do not qualify runtime or packaged journeys.
 
-Commit and normal-push outcome: reported in the delivery summary after the reviewed documentation paths are committed and the authorized push is attempted.
+Documentation commit: `cdc4310` (`docs: reconcile design status and handoff`), 39 reviewed files, documentation/audit only. The authorized normal push failed for the authentication reason above. This status update is also being committed locally; after GitHub authentication is available, `git push origin main` will push both this update and the prior local commits. Do not force-push.
 
 ## Intelligent answers and ACP
 
@@ -93,7 +93,7 @@ No product-code tests or packaged journeys were run during this documentation-on
 | `python .specify/scripts/validate_feature_package.py` | PASS; 20 packages, required files/sections/links/task fields/traceability/wiring validated | Structural SDD validation only; not owner approval |
 | `python scripts/audit_v1_contracts.py --strict` | PASS; 0 errors, 231 OpenAPI, 178 served, 4 outside OpenAPI, 53 target-only | Route/contract consistency only; not handler or journey qualification |
 | `python scripts/validate_architecture.py` | PASS with 1 warning: optional `openapi-spec-validator` package is not installed; internal YAML/schema/event/route checks passed | Validator warning retained; no runtime evidence |
-| `python scripts/audit_v1_markdown.py` | Final PASS; 369 files, 76,862 lines, 7,485,471 bytes, 0 broken links. Initial run found one wrong A-83 relative link; fixed and rerun. `docs/audit/V1-MARKDOWN-AUDIT.md` and inventory refreshed. | Counts and hashes are corpus inventory, not semantic review |
+| `python scripts/audit_v1_markdown.py` | Final PASS; 369 files, 76,862 lines, 7,485,972 bytes, 0 broken links. Initial run found one wrong A-83 relative link; fixed and rerun. `docs/audit/V1-MARKDOWN-AUDIT.md` and inventory refreshed. | Counts and hashes are corpus inventory, not semantic review |
 | `python scripts/validate_design_owner_consistency.py` | PASS; 373 documents, 77,252 lines, 36 assertions, 0 issues | Structural assertions only |
 | `python scripts/audit_v1_design_depth.py` | PASS; 372 files, 76,841 lines, 12 domains, 254 functions, 201 settings rows, 231 routes (178 served / 53 target), 107 tables, 20 packages, 0 findings | Design-depth inventory only; not semantic completeness |
 | `git -c core.whitespace=cr-at-eol diff --check` | PASS; no whitespace errors | Git reports existing LF-to-CRLF normalization notices for generated audit documents |
@@ -110,7 +110,7 @@ No product tests, native provider sign-in, packaged desktop route, Computer capt
 6. Promote and implement real Workbench providers, including the out-of-app Computer takeover gate; complete professional Markdown Artifact authoring/export; then implement accepted declarative presentation/Canvas capabilities with fallback.
 7. Finish platform-denial/recovery, backup/restore and release-row evidence; obtain owner USER qualification before marking V1 ready.
 
-The existing local commits and all reviewed work must be preserved. This document's final section records the documentation commit and the exact outcome of the authorized normal push; no history rewrite or force-push is allowed.
+The existing local commits and all reviewed work must be preserved. The latest section records documentation commit `cdc4310` and the exact outcome of the authorized normal push; the additional current-run status update remains local until authentication succeeds. No history rewrite or force-push is allowed.
 
 ## Historical V1 implementation progress snapshot (2026-11-09; superseded)
 
