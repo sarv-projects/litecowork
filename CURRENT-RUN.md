@@ -4,9 +4,9 @@ This is the current source and design handoff. It distinguishes the shipped chec
 
 ## Current repository state
 
-- Repository: LiteCowork; branch `main`; latest active source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; current documentation HEAD before this continuation is `5097cc4975c5f259582cdd4ff250e913401c55ad`; `origin/main` remains at the source checkpoint. The branch is eight commits ahead before the current documentation edits.
+- Repository: LiteCowork; branch `main`; latest active source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; the Feature 005 documentation commit is `cd5b21f` (`docs: reconcile safe Task path contracts`); the pre-continuation documentation HEAD was `5097cc4975c5f259582cdd4ff250e913401c55ad`. `origin/main` remains at the source checkpoint; the branch had nine local commits before this handoff-status update, which will be the tenth.
 - One worktree. This continuation changes documentation and generated audit inventories only; no Rust, TypeScript, Tauri, database schema or runtime source was changed. The global semantic audit remains open; exact Feature 005 coverage and current validation evidence are recorded below.
-- The previous normal push attempt was cancelled at the Git Credential Manager prompt, after which Git could not read the GitHub username because `/dev/tty` is unavailable in the non-interactive shell. No remote update was observed. After the current documentation change is committed, retry the authorized normal `git push origin main`; do not force-push or rewrite history.
+- The normal push of `cd5b21f` was attempted and failed: Git Credential Manager cancelled its credential dialog, then Git could not read the GitHub username because `/dev/tty` is unavailable in this non-interactive shell. `gh` is not installed, and no remote update was observed. The remote has not received the eight earlier local commits or `cd5b21f`; this handoff-status commit is also local. Retry `git push origin main` from an authenticated session; do not force-push or rewrite history.
 - The root `AGENTS.md` is already tracked and contains the current operating rules plus next-agent reading order. On this Windows filesystem `agents.md` resolves to the same case-insensitive path; do not add a second case-colliding file.
 - Preserve `audit-output/`, `archives/`, `.agents/`, `repo_take/`, ignored build/dependency data, stashes and other user work. Stage only the reviewed intended paths. No reset, clean, force-push or history rewrite.
 - Active implementation is in `apps/` and `crates/`: Rust daemon/domain/storage, Tauri v2 desktop and React UI. This is not a documentation-only checkout.
@@ -35,7 +35,7 @@ Feature 016 now distinguishes pending baseline acceptance (T01, AC-001..AC-019) 
 
 At that earlier checkpoint, documentation-only validation reported: 20 feature packages structurally valid; V1 contract audit 0 errors across 231 OpenAPI operations (178 served, 4 outside OpenAPI, 53 target-only); architecture validator passed with one optional `openapi-spec-validator`-missing warning; owner consistency 373 documents / 77,252 lines, 36 assertions and 0 issues; design-depth scan 372 files / 76,841 lines and 0 findings; Markdown audit 369 files / 76,862 lines / 7,485,972 bytes and 0 broken links; CRLF-aware diff check passed. These are historical results for that checkpoint and do not qualify runtime or packaged journeys.
 
-Documentation commit: `cdc4310` (`docs: reconcile design status and handoff`), 39 reviewed files, documentation/audit only. The authorized normal push failed for the authentication reason above. That prior status update was committed locally; push status for the current continuation is pending. Do not force-push.
+Documentation commit: `cdc4310` (`docs: reconcile design status and handoff`), 39 reviewed files, documentation/audit only. Its push failed for the same missing interactive GitHub authentication; the commit remains in the local branch history.
 
 ## Latest documentation continuation — Feature 005 cross-check — 2026-11-12
 
@@ -56,6 +56,8 @@ Latest documentation-only checks (rerun after the handoff edits):
 - `git -c core.whitespace=cr-at-eol diff --check` — PASS; no whitespace errors. Git reports only expected LF-to-CRLF normalization notices for generated audit files.
 
 No packaged desktop journey, native-provider qualification, product test suite or platform qualification was run in this documentation-only tranche.
+
+Feature 005 delivery: `cd5b21f` (`docs: reconcile safe Task path contracts`) commits 19 reviewed documentation/audit files. A separate handoff-status commit records the push outcome. The push was attempted and failed because this shell could not complete GitHub authentication (see repository state above); `origin/main` was not updated.
 
 ## Intelligent answers and ACP
 
