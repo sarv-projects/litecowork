@@ -6,7 +6,7 @@ crates already exist. The target must land in the actual `domain-responsibility`
 `domain-rag`, `storage-core`/`storage-sqlite`, `apps/litecoworkd` and UI owners,
 with separately reviewed boundaries for any new crates.
 
-**Current implementation checkpoint (2026-11-06):** `storage-core/src/coworker_learning.rs`
+**Current implementation checkpoint (2026-11-12; source checkpoint 6adadab):** `storage-core/src/coworker_learning.rs`
 exports candidate/policy types and deterministic eligibility, redaction, conflict and
 auto-commit gates. The deterministic learning evaluation/policy path has no production
 caller, candidate persistence or LearningService. Its `redact_sensitive_content` helper
@@ -36,7 +36,7 @@ in [STATE-MACHINES.md](STATE-MACHINES.md), and the committed-record lifecycle
   competing candidate vocabulary. It is the distinct lifecycle of a *committed* memory
   record after a candidate reaches `COMMITTED`, and it stays as written.
 - The `MemoryCandidate` (QUEUED/EVALUATING/ACCEPTED/REJECTED/CONFLICTED) set is
-  **superseded by this proposal**. `MemoryCandidatePayload` (§5) keeps its name because it
+  **superseded by this owner-accepted resolution**. `MemoryCandidatePayload` (§5) keeps its name because it
   is a candidate *payload shape*, not a second state machine; the superseded *state* set is
   retired, not the payload type.
 
@@ -98,7 +98,7 @@ Conversation / Task / Feedback / Demonstration
       +-------------+-------------+----------------+
       |                           |                |
       v                           v                v
- MemoryCandidate          InstructionPatch   SkillProposal
+ MemoryCandidatePayload   InstructionPatch   SkillProposal
       |                           |                |
  policy-safe?                    review           test/review
       |                           |                |
@@ -273,7 +273,7 @@ MemoryRecordMetadata {
 }
 ```
 
-The actual text/value is stored as a bounded ContextDocument/Resource revision with exact provenance. Search/retrieval never treats metadata alone as the content. This MemoryRecordMetadata is for **automatically learned Coworker-private entries** with a real LearningCandidate and policy snapshot. An owner choosing Add Memory manually creates a **user-authored ContextDocument/Resource revision** with owner/scope/source metadata through ResourceService, not a fabricated LearningCandidate/source_candidate_id. Explicitly shared Workspace/personal knowledge uses separate reviewed Resource sharing/permissions, never a new automatic-memory scope. The unified Memory page may project both source classes but must label provenance and deletion owner accurately.
+The actual text/value is stored as a bounded ContextDocument/Resource revision with exact provenance. Search/retrieval never treats metadata alone as the content. This MemoryRecordMetadata is for **automatically learned Coworker-private entries** with a real LearningCandidate and policy snapshot. An owner choosing Add Memory manually creates a **user-authored ContextDocument/Resource revision** with owner/scope/source metadata through ResourceService, not a fabricated LearningCandidate/source_candidate_id. Explicitly shared Workspace/personal knowledge uses separate reviewed Resource sharing/permissions, never a new automatic-memory scope. The unified Memory page may project both source classes but must label provenance and deletion owner accurately. Feature 009 decision B-24 requires the first manual Coworker-memory slice to use the committed-record status vocabulary, while this section defines MemoryRecordMetadata as automatic-only and requires a real LearningCandidate source id. Their exact persisted manual-memory relationship remains unresolved under [A-91](CONTRADICTION-AND-ALIGNMENT-REGISTER.md); do not weaken the automatic record contract or create a second lifecycle by inference.
 
 ## 8. InstructionPatch
 

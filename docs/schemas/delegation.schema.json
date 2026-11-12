@@ -136,7 +136,7 @@
       "properties": {
         "max_worker_attempts": {"type": "integer", "minimum": 1, "maximum": 8},
         "fallback_profile_ids": {"type": "array", "uniqueItems": true, "maxItems": 7, "items": {"$ref": "#/$defs/id"}, "description": "Ordered profile IDs tried after the initial child Attempt."},
-        "on_exhaustion": {"type": "string", "enum": ["RETURN_TO_LEAD", "NEEDS_YOU"], "description": "TARGET, not yet wired (register A-37): selects whether an exhausted escalation returns a typed blocker to the lead Attempt or surfaces Needs You. The Rust EscalationPolicy struct does not yet carry this field and no production producer emits it; see DELEGATION.md 'Verification and escalation'. A PROPOSED owner resolution pending acceptance; packets omitting it must not be treated as malformed until the delegation dispatcher is implemented."}
+        "on_exhaustion": {"type": "string", "enum": ["RETURN_TO_LEAD", "NEEDS_YOU"], "description": "OWNER-ACCEPTED 2026-11-09, A-37; TARGET, not yet wired. Selects whether an exhausted escalation returns a typed blocker to the lead Attempt or surfaces Needs You. The Rust EscalationPolicy struct does not yet carry this field and no production producer emits it; see DELEGATION.md 'Verification and escalation'. Packets omitting it remain valid until the delegation dispatcher is implemented."}
       },
       "additionalProperties": false
     },

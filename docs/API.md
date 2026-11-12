@@ -1795,10 +1795,12 @@ retains `resource.created.v1`.
 First-party user-authored context documents may additionally supply typed
 `context_document` metadata; the upload session pins this metadata and applies it to the
 Resource created at commit. The target owner model names USER, Workspace, Coworker and Goal
-scopes, but the current `domain-workspace` create validator accepts only USER-owned
-PERSONAL_PROFILE and Workspace-owned WORKSPACE_NOTES. COWORKER_NOTES and GOAL_NOTES are
-currently rejected even though the generic OpenAPI enum lists them; do not treat those
-schema values as accepted current create operations.
+scopes, but the current `domain-workspace` create validator and canonical
+`ContextDocumentCreateMetadata` create enum accept only USER-owned PERSONAL_PROFILE and
+Workspace-owned WORKSPACE_NOTES. COWORKER_NOTES and GOAL_NOTES remain in the broader
+`ContextDocumentKind` used by record/read metadata and policy allowlists; they are not
+accepted by this create operation. Coworker memory remains a Feature 009 target pending
+the authenticated Coworker/Workspace owner check and A-91's manual-memory metadata decision.
 The upload-session response echoes `ContextDocumentCreateMetadata` (owner and kind only);
 the committed Resource response exposes full `ContextDocumentMetadata`, initially
 `ACTIVE` without purge fields.

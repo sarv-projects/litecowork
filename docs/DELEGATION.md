@@ -683,8 +683,9 @@ Until a delegation dispatcher is implemented, the exhaustion destination follows
 above (lead or Needs You) and no `DelegateRequest` may be rejected as malformed solely for
 omitting `on_exhaustion`. The schema is kept as the authoritative target shape because it
 matches this accepted design; wiring the field is a Feature 004/005 implementation step,
-not a schema correction. This is a PROPOSED owner resolution pending acceptance
-([SPECIFICATION-STANDARD.md](SPECIFICATION-STANDARD.md) §7).
+not a schema correction. The owner accepted A-37 on 2026-11-09: retain the schema, label
+the field TARGET-not-yet-wired, and continue accepting packets that omit it until the
+delegation dispatcher is implemented.
 
 Only the lead or TaskService may accept the worker output into Task completion. A passing
 child verifier is evidence for its criteria; it does not itself complete the Task.

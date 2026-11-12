@@ -115,14 +115,16 @@ retrieval has no production caller enforcing its `allowed_context_kinds`,
 `CoworkerLearningPolicy`. **Current ContextDocument implementation is narrower:** the `domain-workspace` metadata
 validator accepts only `PERSONAL_PROFILE` owned by the authenticated USER and
 `WORKSPACE_NOTES` owned by the current WORKSPACE. Although `COWORKER_NOTES` and
-`GOAL_NOTES` exist in enums and event schemas, their authoritative Coworker/Goal
-aggregate services are not present and the validator rejects those kinds. Coworker
-Settings currently offers both options; they are not usable ContextDocument owner scopes.
-The generic create metadata schema still advertises all four enum values, but
-`valid_context_document_metadata` in `domain-workspace` fails closed for Coworker/Goal
-ownership. The currently served create path therefore supports only Personal Profile and
-Workspace Notes. Do not present Coworker/Goal note creation as a served feature until owner
-aggregates, resource authorization, revocation and retrieval are implemented together.
+`GOAL_NOTES` remain in record/read and policy types, the validator rejects those kinds
+for creation. Coworker Settings currently offers both options; they are not usable
+ContextDocument owner scopes. The canonical `ContextDocumentCreateMetadata` OpenAPI enum
+was owner-accepted under A-18 on 2026-11-09 and now lists only the two currently
+supported kinds, matching `valid_context_document_metadata` in `domain-workspace`.
+The currently served create path therefore supports only Personal Profile and Workspace
+Notes. Feature 009 targets COWORKER_NOTES after the authenticated Resource path validates
+the same-Workspace Coworker owner; GOAL_NOTES remains unavailable until its owner-scoped
+path exists. Do not present either note kind as served until owner-specific creation,
+authorization, revocation and retrieval are implemented together.
 
 For the currently supported user/workspace-owned documents, Resource identity, access,
 freshness, retention and deletion semantics apply. Edits use Resource revision

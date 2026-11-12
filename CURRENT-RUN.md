@@ -1,15 +1,46 @@
-# Current engineering handoff — 2026-11-12
+# Current engineering handoff — 2026-11-13
 
 This is the current source and design handoff. It distinguishes the shipped checkout from the proposed V1 experience and preserves older dated notes below for provenance. A structural check, UI fixture, route, or unit test does not qualify a packaged provider journey.
 
 ## Current repository state
 
-- Repository: LiteCowork; branch `main`; latest active source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; the Feature 005 documentation commit is `cd5b21f` (`docs: reconcile safe Task path contracts`), followed by handoff commit `0c556fc` (`docs: record handoff push status`); the pre-continuation documentation HEAD was `5097cc4975c5f259582cdd4ff250e913401c55ad`. `origin/main` remains at the source checkpoint; `main` had ten local commits ahead before this final push-status update, which will be the eleventh.
-- One worktree. This continuation changes documentation and generated audit inventories only; no Rust, TypeScript, Tauri, database schema or runtime source was changed. The global semantic audit remains open; exact Feature 005 coverage and current validation evidence are recorded below.
-- Normal pushes after `cd5b21f` and `0c556fc` both failed: Git Credential Manager cancelled its credential dialog, then Git could not read the GitHub username because `/dev/tty` is unavailable in this non-interactive shell. `gh` is not installed, and no remote update was observed. `origin/main` remains at the source checkpoint; none of the ten local commits has been pushed, and this final push-status update is local as well. Retry `git push origin main` from an authenticated session; do not force-push or rewrite history.
+- Repository: LiteCowork; branch `main`; source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; documentation HEAD at continuation start `815ec0ffeb2e9b1f7fe55e602e049224f75826a7`. `origin/main` remains at the source checkpoint; `main` was 11 local commits ahead before this documentation tranche.
+- One worktree. This tranche changes design/status documentation, generated audit inventories and one generated TypeScript API description only; it changes no Rust/Tauri behavior, database migration or runtime route. The global semantic audit remains open; exact Feature 005/009 coverage and current validation evidence are recorded below.
+- Prior normal pushes after `cd5b21f` and `0c556fc` failed: Git Credential Manager cancelled its credential dialog, then Git could not read the GitHub username because `/dev/tty` is unavailable in this non-interactive shell. `gh` is not installed. No authentication change has been observed since those attempts; current edits are not pushed. Do not force-push or rewrite history.
 - The root `AGENTS.md` is already tracked and contains the current operating rules plus next-agent reading order. On this Windows filesystem `agents.md` resolves to the same case-insensitive path; do not add a second case-colliding file.
 - Preserve `audit-output/`, `archives/`, `.agents/`, `repo_take/`, ignored build/dependency data, stashes and other user work. Stage only the reviewed intended paths. No reset, clean, force-push or history rewrite.
 - Active implementation is in `apps/` and `crates/`: Rust daemon/domain/storage, Tauri v2 desktop and React UI. This is not a documentation-only checkout.
+
+## Latest continuation — design and source reconciliation — 2026-11-13
+
+This documentation-only tranche resumes from HEAD `815ec0ffeb2e9b1f7fe55e602e049224f75826a7` and source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`. It cross-checked the dirty design changes against the root authority documents, the owning Feature 008/009/016 contracts, current OpenAPI and route inventory, source call sites, and the accepted owner-decision packet. It adds no product behavior. The generated TypeScript edit changes only an OpenAPI description string to match A-18.
+
+The design records now make the product decisions explicit:
+
+- **Workbench and Computer:** keep one compact left navigation and use the right Workbench for open objects. Show the selected laptop/window only after a local-view permit is already active and a Computer session is LIVE; that view selection starts no capture, grants no agent disclosure/input, steals no focus, changes no chat scroll and loses no composer draft. Respect a deliberate close for the session while leaving the control strip and **Show computer** entry available. This is TARGET/IN_REVIEW; Computer remains unavailable in the current UI.
+- **Manual control:** use a persistent, non-modal **Take over / Stop run** strip while LiteCowork-mediated Computer input is agent-owned. Take over fences only Computer input and may leave agent reasoning active. Stop run additionally asks the owning Conversation or Task to cancel and reconcile. Neither action sends a chat message. A separate qualified shortcut/tray fence is required while the target app covers LiteCowork; without it, Computer input remains unavailable. Ordinary agent runs use their normal owner-routed Stop control.
+- **Terminal:** create no process on app launch or when opening **+**. Start a terminal only through explicit **New terminal** in a qualified admitted Environment; keep user and Task sessions separate. The current terminal provider is unavailable, so default-profile behavior remains design, not a host-shell fallback.
+- **Agent-generated UI:** keep one canonical validated PresentationIntent/RichPresentation path and host-owned registered components. An ACP agent may use a narrowly scoped proposal tool only after exact provider/version evidence; Rust binds and validates the result, and unsupported providers fall back to semantic text. Do not add arbitrary model HTML/JavaScript or a duplicate schema. Current A2UI research confirms protocol v1.0 is called stable, but official pages disagree about the exact React renderer release/support matrix; no package is pinned or adopted.
+- **Feature 009:** revision 1.0 remains owner-accepted; revision 1.1 is IN_REVIEW. The manual-memory status/provenance conflict A-91 remains OPEN. The Coworker UI/API/wiring trace and transaction owners were reconciled, and all 11 package files are recorded at 1,401 lines with current hashes. Do not finalize v38 memory fields or Add Memory persistence before the owner decision.
+- **Contract inventory:** current machine inventory is 231 OpenAPI operations: 178 mounted from OpenAPI, 4 served outside OpenAPI, 0 local-only, and 53 target-only. The three Feature 014 Conversation routes and the stream route need contract promotion; route registration is not qualification. Current Feature 001/002 task rows now use these counts; dated 2026-11-10 snapshots retain the values that were true at that time. The generated design-depth audit was refreshed to the current inventory.
+
+The supplied competitor examples contributed interaction patterns, not an architectural replacement. OpenAI's current Data Analysis guidance shows interactive data tables with row/column/cell selection and CSV download, with only some chart types interactive; Claude's current Artifact guidance describes an editable surface beside conversation, templates and revisiting saved work. LiteCowork's accepted presentation slice remains narrower and has no general dataframe/query engine. Any broader file-analysis flow needs a Resource/dataset identity, exact selected-source receipts and an explicit user-approved context/send path.
+
+The all-document/all-source semantic audit is still **OPEN**. Current full-package reads recorded in `docs/audit/MODULE-DESIGN-REVIEW-2026-11-12.md` cover Features 005 and 009 plus the earlier 006/007/008/016 supplement; those counts overlap the baseline and must not be summed as a unique repository-line total. Other feature packages, global owner documents and most active Rust/Tauri/React source remain partial or inventory-only. Structural validators below do not close that audit.
+
+### Current documentation validation
+
+The following checks were run against this documentation tranche. They validate structure and cross-contract consistency, not runtime, user approval, real providers or packaged journeys.
+
+- `python .specify/scripts/validate_feature_package.py` — PASS, 20 packages.
+- `python scripts/audit_v1_contracts.py --strict` — PASS, 0 errors; 231 OpenAPI operations (178 mounted, 4 served outside OpenAPI, 53 target-only).
+- `python scripts/validate_architecture.py` — PASS with one warning: optional `openapi-spec-validator` is not installed; 149 typed events and repository checks passed.
+- `python scripts/validate_design_owner_consistency.py` — PASS; 373 documents, 77,474 lines, 36 assertions and 0 issues.
+- `python scripts/audit_v1_design_depth.py --write` — PASS; 372 files, 77,063 lines, 12 domains, 254 function signatures, 201 settings rows, 231 routes (178 served, 4 outside OpenAPI, 53 target-only), 107 tables, 20 packages and 0 findings.
+- `python scripts/audit_v1_markdown.py` — PASS; 369 files, 77,084 lines, 7,555,775 bytes and 0 broken links.
+- `git -c core.whitespace=cr-at-eol diff --check` — PASS, no whitespace errors.
+
+No product test suite, native-provider session, packaged desktop journey or platform qualification was run for this documentation tranche.
 
 ## What LiteCowork is building
 
@@ -37,7 +68,7 @@ At that earlier checkpoint, documentation-only validation reported: 20 feature p
 
 Documentation commit: `cdc4310` (`docs: reconcile design status and handoff`), 39 reviewed files, documentation/audit only. Its push failed for the same missing interactive GitHub authentication; the commit remains in the local branch history.
 
-## Latest documentation continuation — Feature 005 cross-check — 2026-11-12
+## Previous documentation continuation — Feature 005 cross-check — 2026-11-12
 
 The current source baseline is `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; the checked-in handoff before this continuation was `5097cc4975c5f259582cdd4ff250e913401c55ad`. This tranche is documentation-only. All 11 normative files in `specs/005-safe-task-path/` were read line by line at the 1,427-line starting revision; after edits, the current package is 1,430 lines, and the changed passages plus full intended-path diff were reread. The audit records current per-file line counts and SHA-256 digests. Its package digest is computed from raw per-file SHA-256 values and UTF-8/LF manifest records sorted by repository path. The complete all-document/all-source audit remains OPEN.
 
@@ -61,9 +92,9 @@ Feature 005 delivery: `cd5b21f` (`docs: reconcile safe Task path contracts`) com
 
 ## Intelligent answers and ACP
 
-The useful part of the supplied concept is one validated, declarative presentation path: semantic response first; optional registered components for charts, tables, metrics, forms and bounded calculators; deterministic local calculations; accessible text fallback; and Canvas expansion over the same document identity. No arbitrary model HTML/JavaScript runs in the chat WebView, and no hidden second LLM is inserted into BYOA. Remembered view data is an optional persistence proposal. Conversational modification can use an explicitly reviewed in-memory snapshot and a normal new Conversation send; it must not secretly send values. Both are separate revision 0.2 proposals awaiting the Feature 016 gates.
+The useful part of the supplied concept is one validated, declarative presentation path: semantic response first; optional registered components for charts, tables, metrics, forms and bounded calculators; deterministic local calculations; accessible text fallback; and Canvas expansion over the same document identity. No arbitrary model HTML/JavaScript runs in the chat WebView, and no hidden second LLM is inserted into BYOA. Remembered view data is an optional persistence proposal. Conversational modification can use an explicitly reviewed in-memory snapshot and a normal new Conversation send; it must not secretly send values. Both are separate revision 0.2 proposals awaiting the Feature 016 gates. The competitor cross-check supports a contextual editable surface and interactive tables, but LiteCowork does not yet have a general dataframe/query engine: the current proposal only charts committed semantic TABLE data and offers the bounded SAFE_CALCULATOR.
 
-ACP supplies native-agent lifecycle and event transport, not a UI schema. Current ACP launches do not provide a qualified presentation ingress; the configured MCP server list is empty. To let an ACP agent propose a rich answer, the exact provider/version must either emit a documented structured payload or accept a qualified, narrowly scoped `litecowork.presentation.propose` tool; Rust validates the intent against canonical contracts, binds it to the current host-owned turn and resources, then React renders only registered components. A `tool_call` event is observation, not permission to execute it. A2UI is a candidate adapter into the existing canonical presentation model, not a second renderer/state authority. The official A2UI announcement/public index and repository README/roadmap disagree about 1.0 maturity; exact React renderer package/version and conformance remain unpinned. See `docs/ACP-PRESENTATION-PIPELINE-LLD.md` and Feature 016 RESEARCH.
+ACP supplies native-agent lifecycle and event transport, not a UI schema. ACP v1 supports permission requests and structured form/URL elicitation, but those do not define rich components or replace LiteCowork authorization; ACP v2 remains draft. Current LiteCowork ACP launches do not provide a qualified presentation ingress; the configured MCP server list is empty. To let an ACP agent propose a rich answer, the exact provider/version must either emit a documented structured payload or accept a qualified, narrowly scoped `litecowork.presentation.propose` tool; Rust validates the intent against canonical contracts, binds it to the current host-owned turn and resources, then React renders only registered components. A `tool_call` event is observation, not permission to execute it. On 2026-11-13, the A2UI index and SDK/client-setup table say v1.0 is current/stable and list React v1.0 support, but the official renderer status matrix and older README/roadmap still show v0.9.1 as current and v1.0 as planned/candidate; the npm package could not be re-fetched today, so its last retrieved v0.9-era description is historical. Keep the exact renderer package/conformance unresolved; A2UI remains optional because ACP does not transport it by itself and LiteCowork already owns the canonical validated presentation path. See `docs/ACP-PRESENTATION-PIPELINE-LLD.md` and Feature 016 RESEARCH.
 
 ## Current progress and remaining work
 
@@ -76,11 +107,40 @@ ACP supplies native-agent lifecycle and event transport, not a UI schema. Curren
 - **Artifacts and presentation:** bounded text/plain editing and native Save As exist, but there is no complete professional Markdown create/edit/publish/export-receipt journey. Feature 016 B-40 is accepted as proposed; baseline acceptance at T01 and revision 0.2 extension decision at T25 are still pending. The five-block validation/read foundation is CODE/SERVED; no production publisher, rich calculator/chart, proposal tool, media provenance or Canvas controller is integrated. Arbitrary custom app execution stays outside V1 until its separate containment contract qualifies.
 - **Other owners:** LiteSPM remains owner-deferred; Automations/notifications, backup/restore and release qualification retain the task-level gaps in `docs/IMPLEMENTATION-STATUS.md` and feature TASKS.
 
+## Latest documentation continuation — Feature 009 Coworker and memory cross-check — 2026-11-12
+
+The active source checkpoint is `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; the documentation HEAD before this continuation was `815ec0ffeb2e9b1f7fe55e602e049224f75826a7`. This tranche changes documentation and the generated TypeScript API description only; it does not change Rust, Tauri behavior, database migrations or product routes. All 11 current Feature 009 package files were read line by line and cross-checked against the owner decision packet, canonical memory/context/API contracts, current route/type generation and Rust validation/storage code. The package contains 1,401 physical lines at the reviewed revision; exact final per-file counts and SHA-256 digests are in `docs/audit/MODULE-DESIGN-REVIEW-2026-11-12.md`. Feature 009 revision 1.0 remains accepted; the A-91 reconciliation is tracked as revision 1.1 IN_REVIEW because the locked SPEC requires renewed owner review for amendments. Edited passages and the complete intended-path diff were reread.
+
+**Accepted versus unresolved:** B-24 and B-25, A-18, and A-20/A-34 are owner-accepted (2026-11-09); acceptance records target behavior, not implementation. A-91 is a separate OPEN owner decision, not accepted: B-24 names the `MemoryRecordMetadata.status` lifecycle for manual Coworker memory and forbids fabricating a learning candidate, while `LEARNING.md` §7 defines `MemoryRecordMetadata` as automatic-only with a required real `source_candidate_id`. Do not make that field optional, invent a local lifecycle, or map Resource status values without the owner decision. Until then the manual-memory schema/persistence representation is not final.
+
+The source check confirms `valid_context_document_metadata` accepts authenticated USER `PERSONAL_PROFILE` and selected-WORKSPACE `WORKSPACE_NOTES`; the canonical OpenAPI create enum and generated TypeScript client now match those two kinds. The four-kind `ContextDocumentKind` read/policy vocabulary remains distinct. No Coworker-owned ContextDocument create path, Coworker-filtered retrieval, LearningService/store/routes, or Memory & Knowledge UI exists. Existing Resource status/revoke/purge routes apply only to the two served kinds. Feature 009 T01 is PARTIAL; T04/T05/T07 and most user journeys are NOT STARTED; T06/T08/T10 are PARTIAL; T16 is BLOCKED on Feature 001 Send and a qualified Feature 002 binding; T17/T18 are NOT STARTED. See the owning task file for the exact item states and dependencies.
+
+Structural validation passed after removing a repeated `009-T16` reference that the validator interpreted as a duplicate task ID. The global semantic audit remains OPEN; no product tests, packaged desktop journey, provider qualification or owner decision was performed in this tranche.
+
+Current documentation-only checks for this tranche:
+
+| Check | Result | Limit |
+|---|---|---|
+| `python .specify/scripts/validate_feature_package.py` | PASS; 20 packages structurally valid | Not owner approval or runtime qualification |
+| `python scripts/audit_v1_contracts.py --strict` | PASS; 0 errors, 231 OpenAPI operations, 178 served, 4 outside OpenAPI, 53 target-only | Not handler or user-journey qualification |
+| `python scripts/validate_architecture.py` | PASS; one warning because optional `openapi-spec-validator` is not installed | Structural schema/architecture validation only |
+| `python scripts/validate_design_owner_consistency.py` | PASS; 373 documents, 77,434 lines, 36 assertions, 0 issues | Structural consistency only |
+| `python scripts/audit_v1_design_depth.py` | PASS; 372 files, 77,023 lines, 12 domains, 254 functions, 201 settings rows, 231 routes (178 served / 53 target), 107 tables, 20 packages, 0 findings | Inventory/shape check only |
+| `python scripts/audit_v1_markdown.py` | PASS; 369 files, 77,044 lines, 7,539,263 bytes, 0 broken links | Link and inventory check only |
+| Feature 009 `WIRING.yaml` parse | PASS | YAML syntax only |
+| `git -c core.whitespace=cr-at-eol diff --check` | PASS; no whitespace errors | Line-ending normalization notices remain for generated files |
+
+No product tests, native-provider tests or packaged desktop journey were run in this documentation-only tranche.
+
+The cross-contract search also found stale A-37 wording in the delegation guide/schema and stale automatic-learning names in the service map, ADR, memory fast-path and Coworker index. The owner packet confirms A-37 was accepted on 2026-11-09 as a target field that is not yet wired; packets may omit it until the dispatcher exists. Those descriptions now distinguish accepted target from implementation. Automatic candidate records are called `LearningCandidate`; `MemoryCandidatePayload` remains the content payload name defined by `LEARNING.md`, not a second lifecycle or coordinator.
+
 ## Documentation audit status
 
-The requested complete semantic, line-by-line reread of all documentation and source is **still open**. The original module audit semantically read 10,356 of 22,910 lines across 18 feature packages, with other sections inventory-only or partial. The previous continuation completed a full current-tree read of all 11 normative files in Features 006, 007, 008 and 016: 5,384 physical lines total. This continuation has now read all 11 normative Feature 005 files line by line (1,427 current lines) and cross-checked its Task, Environment, Storage, Trust, Event and UI claims against the active source and owner contracts. The exact file ranges, hashes, issues and limits are in `docs/audit/MODULE-DESIGN-REVIEW-2026-11-12.md`; prior and current coverage overlap, so no cumulative unique-line total is asserted. Relevant source paths were read or searched in bounded scope, not every active source line. Other feature packages, global docs and most active source still have not been semantically read line by line. Validators are not a substitute; do not claim the global audit is finished.
+The requested complete semantic, line-by-line reread of all documentation and source is **still open**. The original module audit semantically read 10,356 of 22,910 lines across 18 feature packages, with other sections inventory-only or partial. Earlier supplemental full reads covered Features 006, 007, 008 and 016 (5,384 physical lines total). Subsequent full-package reads covered Feature 005 (1,430 lines after edits) and Feature 009 (1,401 lines after the wiring reconciliation). The exact file ranges, hashes, issues and limits are in `docs/audit/MODULE-DESIGN-REVIEW-2026-11-12.md`; prior and current coverage overlaps, so no cumulative unique-line total is asserted. Source checks for these packages were bounded to relevant paths and call sites, not every active source line. Other feature packages, global docs and most active source still have not been semantically read line by line. Validators are not a substitute; do not claim the global audit is finished.
 
 The design review added or clarified A-78 (background Computer takeover reachability), A-79 (waiting-state Conversation Stop contract gap), A-80 (Connection/read vs Task-write qualification order), A-81 (Artifact export file/receipt crash window), A-82 (GitHub OAuth permission mismatch), A-83 (interactive PTY receipt boundary), A-84 (Feature 016 baseline vs extension acceptance), A-85 (MCP proposal input/sequence/replay contract), A-86 (caller-supplied isolation attestation; resolved against owner contracts), A-87 (missing durable approved file payload), A-88 (Attempt/Effect transaction mapping, target boundaries now aligned but direct-writer mapping open), A-89 (planning with unmediated native tools; resolved against TASK-RUNTIME) and A-90 (FileWriteGrant request-versus-authority semantics); M17 records secondary-navigation focus loss on route remount. Register A-65, A-66, A-67, A-69, A-70, A-73, A-77, A-87, A-88 and A-90 are OPEN/BLOCKED; A-68, A-72, A-74, A-75, A-78 and A-83 are IN_REVIEW/OPEN as specified by their rows; A-71 is partly aligned with owner review open; A-76 resolves transport authority while implementation remains deferred. Feature 008 revision 1.1 and Feature 016 revision 0.2 remain TARGET/IN_REVIEW, not implementation authority. Check exact task lifecycle and owner decisions before implementing blocked/deferred work.
+
+This Feature 009 cross-check adds A-91: the conflict between B-24's accepted manual-memory status requirement and LEARNING.md §7's automatic-only metadata record with a required real candidate ID remains an OPEN owner decision. It is separate from A-20/A-34, which are accepted vocabulary decisions.
 
 ## Historical validation record — not current at source checkpoint 8432397
 
@@ -106,7 +166,7 @@ The following engineering/test results were recorded at HEAD `64c4351` before th
 
 No packaged desktop, real native-agent sign-in/permission, Computer capture/input, Browser, PTY, Task write/verification, Artifact export, backup/restore or release-matrix qualification was run in this pass. Earlier Windows workspace/UI results remain dated evidence at their own source revisions and must not be combined with this focused run as a full qualification claim.
 
-## Current documentation checks — continuation at source checkpoint 8432397
+## Historical documentation checks — continuation at source checkpoint 8432397
 
 No product-code tests or packaged journeys were run during this documentation-only continuation. These checks establish document shape and consistency only; they do not owner-accept IN_REVIEW designs or qualify product journeys.
 
@@ -124,16 +184,17 @@ No product tests, native provider sign-in, packaged desktop route, Computer capt
 
 ## Next handoff sequence
 
-1. Resolve Feature 005 A-87/A-88/A-90 at 005-T01 with Task Runtime, Trust and Storage owners before write-path implementation; preserve the no-caller-attestation rule from A-86 and the native-tool dispatch gate from A-89. Recheck the exact owner-approved schema and transaction/replay trace before T08/T15.
-2. Continue the all-doc/all-source semantic audit using explicit coverage accounting. Reconcile A-65..A-90 and M17 only at their owning contracts; accepted owner decisions are not inferred from documentation edits.
-3. Complete one exact native Conversation path (descriptor/readiness → send → real events → stop/retry → restart/recovery), including provider event evidence and denial. Resolve A-79. Then run the packaged desktop journey.
-4. Complete agent authentication/credential durability and qualify sign-in/bind/send. Add a second genuinely dispatchable provider before A→B→A relay qualification.
-5. Complete Workspace-root ingestion and atomic context admission/receipt/Context Used with the Feature 001 transaction boundary reconciled under A-65.
-6. Build the first safe Task/Attempt/Environment/Trust/write/receipt/independent-verification slice on Linux. Keep Windows execution unavailable until B-35 qualifies.
-7. Promote and implement real Workbench providers, including the out-of-app Computer takeover gate; complete professional Markdown Artifact authoring/export; then implement accepted declarative presentation/Canvas capabilities with fallback.
-8. Finish platform-denial/recovery, backup/restore and release-row evidence; obtain owner USER qualification before marking V1 ready.
+1. Obtain the owner decision for A-91 before Feature 009 finalizes manual-memory provenance/status persistence; preserve B-24's accepted status vocabulary and never fabricate a LearningCandidate ID or parallel lifecycle.
+2. Resolve Feature 005 A-87/A-88/A-90 at 005-T01 with Task Runtime, Trust and Storage owners before write-path implementation; preserve the no-caller-attestation rule from A-86 and the native-tool dispatch gate from A-89. Recheck the exact owner-approved schema and transaction/replay trace before T08/T15.
+3. Continue the all-doc/all-source semantic audit using explicit path/range/hash accounting. Reconcile open A-65..A-91 and M17 only at their owning contracts; accepted owner decisions are not inferred from documentation edits. Features 005 and 009 now have supplemental full-package coverage; retain the exact per-file ledger.
+4. Complete one exact native Conversation path (descriptor/readiness → send → real events → stop/retry → restart/recovery), including provider event evidence and denial. Resolve A-79. Then run the packaged desktop journey.
+5. Complete agent authentication/credential durability and qualify sign-in/bind/send. Add a second genuinely dispatchable provider before A→B→A relay qualification.
+6. Complete Workspace-root ingestion and atomic context admission/receipt/Context Used with the Feature 001 transaction boundary reconciled under A-65.
+7. Build the first safe Task/Attempt/Environment/Trust/write/receipt/independent-verification slice on Linux. Keep Windows execution unavailable until B-35 qualifies.
+8. Promote and implement real Workbench providers, including the out-of-app Computer takeover gate; complete professional Markdown Artifact authoring/export; then implement accepted declarative presentation/Canvas capabilities with fallback.
+9. Finish platform-denial/recovery, backup/restore and release-row evidence; obtain owner USER qualification before marking V1 ready.
 
-The existing local commits and all reviewed work must be preserved. The latest section records documentation commit `cdc4310` and the exact outcome of the authorized normal push; the additional current-run status update remains local until authentication succeeds. No history rewrite or force-push is allowed.
+The existing local commits and all reviewed work must be preserved. This continuation has not yet committed or pushed its reviewed documentation changes. After the intended paths are committed, make one normal push attempt under the user's existing authorization; if interactive authentication remains unavailable, record the exact commit and leave it local. No history rewrite or force-push is allowed.
 
 ## Historical V1 implementation progress snapshot (2026-11-09; superseded)
 

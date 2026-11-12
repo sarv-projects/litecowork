@@ -72,7 +72,7 @@ Authenticated principal is derived from transport, never accepted from request p
 | getScopedMemoryCache(key, grantEpoch) | scope/revision TTL and capacity | HIT/MISS with revocation recheck |
 | invalidateMemoryCache(scope, changedRevision) | Resource/grant/source change | cache epoch bumped; stale inflight answers discarded |
 | prepareMemoryAttachment(taskOrTurn, hits, nativeDescriptor) | eligible low-trust context | bounded context receipt or incompatibility |
-| proposeLearningFromCheckpoint(verifiedSource, policy) | committed Turn / verified Task | MemoryCandidate only; no unchecked auto-commit |
+| proposeLearningFromCheckpoint(verifiedSource, policy) | committed Turn / verified Task | LearningCandidate with a MemoryCandidatePayload; no unchecked auto-commit |
 | observeMemoryLatency(operation, stages) | monotonic, redacted timing | safe histogram+trace without memory contents |
 | revokeMemorySource(owner, exactVersion) | authenticated owner, approved purge plan | tombstone/revocation and receipt saga |
 
@@ -93,7 +93,7 @@ Memory page has search, Add Memory, clear empty state, but must show My Context 
 - Cross-Workspace hot cache hit is denied even when query text is identical.
 - Revocation while provider search is in flight causes final gate rejection and stale hit invalidation.
 - Provider down != no memory: show UNAVAILABLE versus EMPTY.
-- A MemoryCandidate from a third-party email/web page cannot directly commit as user preference.
+- A LearningCandidate sourced from a third-party email/web page cannot directly commit as a user preference.
 - Two confirmed conflicting memories require review; no last-writer-wins.
 - Deleted ContextDocument cannot be fetched from old result refs; external purge completion remains receipt-backed.
 - Native harness memory file updates do not produce silent LiteCowork edits.

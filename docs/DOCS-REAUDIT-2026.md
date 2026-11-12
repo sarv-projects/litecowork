@@ -34,7 +34,7 @@ Evidence vocabulary (TARGET / CODE / SERVED / INTEGRATED / QUALIFIED) is defined
 | [ARCHITECTURE.md](../ARCHITECTURE.md) execution model | Exactly one real native agent execution path exists and other harnesses are not turn-capable merely because discovery/probe/binding exist. | One `provider_key=opencode` branch in `apps/litecoworkd/src/agents/opencode_server.rs` (enum `V2_0_32`) and `opencode_profile_probe.rs` (pins `"2.0.32"`); other providers fail closed. | true | A-04 |
 | [PRODUCT.md](PRODUCT.md) / [V1-PRODUCT-RELEASE-CONTRACT.md](V1-PRODUCT-RELEASE-CONTRACT.md) release posture | V1 is pre-release and not release-qualified; a route/mock/tile is not a shipped journey. | Matches IMPLEMENTATION-STATUS.md "Release posture" and the 12 release blockers. | true | A-02, A-03 |
 | [adr/](adr/) decisions vs current authority | ADRs explain rationale and never override current authority. | COVERAGE-MATRIX.md authority order §7 states the same; no ADR redefines an owner. | true | — |
-| [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) "Active documentation corpus" | 258 files / 54,473 lines; Markdown audit 255 / 54,385. | Branch-tip generators (2026-11-10, after the handoff sync) report 367 files / 75,138 lines (design-depth, manifest) and 364 / 75,159 (markdown); the corpus grew as Phase 2/3 added docs and the spec-upgrade pass deepened packages 002-011, added package 012, the v1-review cleanup added the missing EARS categories to 007/009/011, and the 2026-11-09 V1 task planning added TASKS plans to every package and new packages 013-020. | stale | n/a (corrected in place) |
+| [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) "Active documentation corpus" | 258 files / 54,473 lines; Markdown audit 255 / 54,385. | The old counts were superseded on 2026-11-10, and the current 2026-11-13 generators report 372 design-depth files / 77,063 lines and 369 Markdown files / 77,084 lines. The corpus grew as Phase 2/3 added docs, the spec-upgrade pass deepened packages 002-011, package 012 was added, the v1-review cleanup added EARS categories to 007/009/011, V1 planning added TASKS and packages 013-020, and later review updates expanded Feature 005/009 contracts and audit evidence. | stale | corrected in current status; see CURRENT-RUN.md |
 
 ## Cluster B — Domain contracts (DATA-MODEL, STATE-MACHINES, SCHEMAS, TASK-RUNTIME, TRUST, ENVIRONMENTS, DELEGATION, LEARNING)
 
@@ -43,10 +43,10 @@ Evidence vocabulary (TARGET / CODE / SERVED / INTEGRATED / QUALIFIED) is defined
 | [TASK-RUNTIME.md](TASK-RUNTIME.md) execution pipeline | Safe Task path: planning, Attempt admission, Environment, Trust, Effects, verification. | `apps/litecoworkd/src/agents/planning.rs` `require_dispatch()` is dead code and always errors; no production `admit_step_attempt` caller. Planning readiness returns `dispatch_available=false`. | aspirational-unlabeled (owner is TARGET; status-side already labels it) | A-06, A-07 |
 | [STORAGE.md](STORAGE.md) migrations §"current schema version is 28" | The current schema version is 28; migration 28 is applied. | `crates/storage-sqlite/src/lib.rs:218` `SCHEMA_VERSION = 27`; last `include_str!` is `sqlite-v27.sql`; `sqlite-v28.sql` is not referenced. | contradicted | A-40 |
 | [EVENTS.md](EVENTS.md) / [DELEGATION.md](DELEGATION.md) v28 references | "migration v28 seeds…" / "A pre-v28 TaskSpecRevision…" read as applied. | v28 unwired (above). | stale | A-40 |
-| [DATA-MODEL.md](DATA-MODEL.md) / [STATE-MACHINES.md](STATE-MACHINES.md) learning vocabulary | `MemoryCandidate`, `LearningCandidate` and `MemoryRecordMetadata.status` coexist for one capability. | `storage-core/src/coworker_learning.rs` has typed records only; no store/service/route/producer. | contradicted (un-owned decision) | A-34, A-20 |
-| [schemas/delegation.schema.json](schemas/delegation.schema.json) escalation_policy | Requires `escalation_policy.on_exhaustion` (RETURN_TO_LEAD\|NEEDS_YOU). | Rust `EscalationPolicy` carries only `max_worker_attempts`/`fallback_profile_ids`; no non-test producer. | contradicted (schema ahead of code) | A-37 |
+| [DATA-MODEL.md](DATA-MODEL.md) / [STATE-MACHINES.md](STATE-MACHINES.md) learning vocabulary | **At the original audit baseline:** `MemoryCandidate`, `LearningCandidate` and `MemoryRecordMetadata.status` coexisted without an owner decision. | The source still has typed gates only and no store/service/route/producer. **Rechecked 2026-11-12:** A-20/A-34 owner-accepted `LearningCandidate` as the sole candidate lifecycle; implementation is absent and A-91 separately gates manual Coworker-memory metadata. | baseline finding corrected by owner decision; implementation gap remains | A-34, A-20, A-91 |
+| [schemas/delegation.schema.json](schemas/delegation.schema.json) escalation_policy | Requires `escalation_policy.on_exhaustion` (RETURN_TO_LEAD\|NEEDS_YOU). | Rust `EscalationPolicy` carries only `max_worker_attempts`/`fallback_profile_ids`; no non-test producer. A-37 was owner-accepted 2026-11-09: this is an intentional TARGET-ahead-of-code field and packets may omit it until the dispatcher exists. | baseline finding resolved by owner decision; implementation gap remains | A-37 |
 | [ENVIRONMENTS.md](ENVIRONMENTS.md) / [TRUST.md](TRUST.md) isolation | Trust/Environment/isolation modules mediate Task execution. | Modules compile as dead code; not wired into a qualified admission path (`attempt_process_scope.rs` staged). | aspirational-unlabeled (TARGET owner) | A-07 |
-| [DATA-MODEL.md](DATA-MODEL.md) ContextDocument kinds | Four ContextDocument kinds usable. | Validator accepts only PERSONAL_PROFILE / WORKSPACE_NOTES; COWORKER_NOTES / GOAL_NOTES rejected; OpenAPI enum still lists all four. | contradicted | A-18 |
+| [DATA-MODEL.md](DATA-MODEL.md) ContextDocument kinds | **At the original audit baseline:** four ContextDocument kinds were described as usable. | At that baseline the validator accepted only PERSONAL_PROFILE / WORKSPACE_NOTES and the OpenAPI create enum listed all four. **Rechecked 2026-11-12:** A-18 is owner-accepted; the create enum is now correctly narrowed to two while record/read and policy types retain all four. Coworker/Goal owner operations remain unserved. | baseline finding corrected at contract | A-18 |
 
 ## Cluster C — UI, Flows, Ledgers
 
@@ -103,13 +103,14 @@ audit.
   active acceptance authority (A-39), that instruction points at an archived catalog. The
   owning packages' UI contracts (e.g. `specs/001-.../contracts/ui-behavior.md`) should cite
   live flow IDs and feature AC IDs; the UIV1 citation is provenance only.
-- **Cross-package owner collisions remain open (A-35).** 002 and 011 both publish a
-  normative control table for Settings → Agents, and 010 and 011 both specify the
-  notification quiet-hours surface. One owning package per screen must be named before
-  either leaves DRAFT.
-- **Un-owned learning vocabulary (A-34).** 009's memory records depend on one of three
-  competing learning vocabularies being chosen in its owner (LEARNING.md) before 009 can
-  define a persistable record; this is an owner decision, not a spec edit.
+- **A-35 owner decision accepted (2026-11-09).** Feature 011 owns the Settings → Agents
+  screen; Feature 002 owns only the agent operations it invokes. Feature 010 owns the
+  notification quiet-hours control; Feature 011 links to it. The duplicate-control
+  conflict is resolved at the owner level; implementation status stays separate.
+- **A-20/A-34 vocabulary accepted (2026-11-09); implementation absent.** LearningCandidate
+  is the one candidate lifecycle. No learning store/service/route/UI exists. A-91 is a
+  separate open owner decision for manual Coworker-memory metadata; see the current
+  contradiction register and Feature 009 package.
 
 ## What this re-audit changed
 

@@ -90,7 +90,7 @@ Rechecked against source and contracts on 2026-11-12. Served: ACP Registry and l
 
 ## 002-T05 - AgentControlDescriptor producer and served descriptor routes
 
-- **Status:** PARTIAL (descriptor routes `getAgentControlDescriptor` and `refreshAgentProfileControl` now served for a profile whose provider selects the OpenCode module: bounded probe outside any transaction, budget `429 RATE_LIMITED`, `Cache-Control: no-store`, Codex/unknown profiles still `503`; route tests added. Not done: `getAgentSessionOptions` and `getAgentHarnessCapabilities` projections (still target-only; serving them changed the 176/1/55 route counts; current is 178/1/53), `StoredAgentDescriptorSource` for the credential route, panel stale/refresh test, and a live-OpenCode refresh).
+- **Status:** PARTIAL (descriptor routes `getAgentControlDescriptor` and `refreshAgentProfileControl` now served for a profile whose provider selects the OpenCode module: bounded probe outside any transaction, budget `429 RATE_LIMITED`, `Cache-Control: no-store`, Codex/unknown profiles still `503`; route tests added. Not done: `getAgentSessionOptions` and `getAgentHarnessCapabilities` projections (still target-only; serving them changed the 176/1/55 route counts; current inventory is 178 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 53 target-only), `StoredAgentDescriptorSource` for the credential route, panel stale/refresh test, and a live-OpenCode refresh).
 - **Depends on:** T01, T04
 - **Cross-package prerequisites:** NONE
 - **Owner:** Agent Runtime, Desktop UI.
@@ -296,7 +296,7 @@ Rechecked against source and contracts on 2026-11-12. Served: ACP Registry and l
 
 ## 002-T16 - Documentation and ledger sync
 
-- **Status:** PARTIAL 2026-11-10 (DOCS). `served-route-inventory.json` regenerated (178 served / 1 local-only / 53 target-only; three audit scripts, `tests/test_architecture_validator.py`, IMPLEMENTATION-STATUS, the register, coverage and semantic maps updated), `docs/API.md` and `contracts/api-events.md` state the two newly served fail-closed routes. SPEC section 4 and the function ledger F13 rows were not rewritten because T15 produced no evidence; no claim is above CODE/SERVED. Closing register rows B-11/B-12 is left to the orchestrator.
+- **Status:** PARTIAL 2026-11-10 (DOCS). At that dated update, `served-route-inventory.json` reported 178 served / 1 local-only / 53 target-only; three audit scripts, `tests/test_architecture_validator.py`, IMPLEMENTATION-STATUS, the register, coverage and semantic maps were updated, and `docs/API.md` plus `contracts/api-events.md` stated the two newly served fail-closed routes. Current inventory is 178 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 53 target-only; see CURRENT-RUN.md. SPEC section 4 and function ledger F13 were not rewritten because T15 produced no evidence; no claim is above CODE/SERVED. Closing register rows B-11/B-12 is left to the orchestrator.
 - **Depends on:** T15
 - **Cross-package prerequisites:** orchestrator-owned register and traceability updates.
 - **Owner:** Agent Runtime, documentation owner.

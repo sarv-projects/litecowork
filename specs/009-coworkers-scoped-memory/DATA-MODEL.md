@@ -1,6 +1,6 @@
 # Data model - Coworkers and Scoped Memory
 
-**Feature:** 009 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Feature:** 009 | **Status:** Revision 1.0 ACCEPTED/LOCKED; revision 1.1 amendment IN_REVIEW. A-91 gates manual-memory schema/persistence; not a claim of implementation or qualification.
 
 Identities and lifecycles stay in the canonical owner documents. This file lists the records this slice reads or commits. It does not authorize new tables by itself.
 
@@ -41,4 +41,4 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 
 ## Migration
 
-No migration has shipped for this package yet, and no LearningCandidate/MemoryRecord migration or Coworker-owned ContextDocument create path exists. B-24 and B-25 are accepted (2026-11-09); the accepted records (Conversation `owner_coworker_id`/`owner_coworker_revision`, COWORKER_NOTES create ownership, CoworkerCapabilityAssignment, responsibility proposals) land as the next immutable `docs/schemas/sqlite-vNN.sql` in TASKS.md T02, T04, T11 and T12. The automatic LearningCandidate store belongs to Feature 020; any accepted owner-scoped records must be added through the canonical Resource/Coworker/Conversation owners rather than a second memory database.
+No migration has shipped for this package yet; the source chain ends at v32. The build allocation reserves v38 for Feature 009 Conversation Coworker origin and memory fields, but no v38 file or source schema exists. A-91 blocks finalizing the manual-memory metadata fields until the Memory/Coworker owners resolve B-24 against LEARNING.md §7; no candidate id may be fabricated and no second lifecycle may be added. B-24/B-25 and the A-18 create boundary are accepted (2026-11-09). Conversation origin, COWORKER_NOTES creation, CoworkerCapabilityAssignment and responsibility proposals must be promoted through their canonical owners and T02/T04/T11/T12. The automatic LearningCandidate store belongs to Feature 020; owner-scoped Resource records remain Resource/Coworker/Conversation-owned, not a second memory database.

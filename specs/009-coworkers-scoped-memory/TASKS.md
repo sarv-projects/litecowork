@@ -1,18 +1,18 @@
 # Tasks - Coworkers and Scoped Memory
 
-**Feature:** 009 | **Status:** ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
-**Spec revision:** 1.0 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+**Feature:** 009 | **Status:** Revision 1.0 ACCEPTED/LOCKED; revision 1.1 amendment IN_REVIEW. Existing tasks remain authorized only within revision 1.0 scope; A-91 blocks manual-memory schema/persistence. Tasks not started unless marked.
+**Spec revision:** 1.1 (amendment IN_REVIEW; baseline 1.0 accepted) | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 **Owners:** Coworkers, Conversation, Memory, Trust, Desktop UI. Owner acceptance: 2026-11-09 via docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md (B-24, B-25, A-18 rider, A-20/A-34 vocabulary).
 
 ## Current baseline
 
-Verified against the checkout on branch `docs/audit-competitor-superset` on 2026-11-09.
+Source cross-check refreshed 2026-11-12 against active source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2` on branch `main`; docs-only handoff commits do not change this source baseline.
 
 - **Operator:** `apps/litecoworkd/src/coworker_operator.rs` mounts `GET/POST /v1/coworkers`, `GET /v1/coworkers/{coworker_id}`, `POST .../revisions`, `GET .../revisions/{revision}`, `POST .../status` (`change_status`, `ResponsibilityCommand::SetCoworkerStatus` with `If-Match` and `Idempotency-Key`), `GET .../presence` (`presence_unavailable`, 503 `DEPENDENCY_UNAVAILABLE`) and `POST /v1/workspaces/{workspace_id}/primary-coworker`. `DomainError::CoworkerInactive` maps to `COWORKER_PAUSED`. There is no Coworker Conversation, memory, assignment or responsibility route.
 - **Storage:** `crates/storage-sqlite/src/coworkers.rs` `SqliteCoworkerStore` persists Coworker heads, immutable revisions and events (tests in `crates/storage-sqlite/src/coworker_tests.rs`, for example `coworker_sqlite_revisions_events_replay_and_restart`). `lifecycle_facts` computes `has_active_automation` (any ENABLED Automation or non-terminal occurrence pinned to the Coworker) and sets `resume_reconciled: !has_active_automation`. Because `check_coworker_transition` in `crates/domain-responsibility/src/service.rs` allows ACTIVE to PAUSED unconditionally but rejects PAUSED to ACTIVE with `ReconciliationRequired` when `resume_reconciled` is false, a Coworker paused while it has an enabled Automation cannot be resumed until that Automation is disabled or paused. `check_origin_status(Paused, Proactive)` exists in the same file with no production caller.
 - **Pause at occurrence time:** `validate_coworker_provenance` in `crates/storage-sqlite/src/automation_admission.rs` rejects Task materialization when the pinned Coworker is not ACTIVE (`"Automation Coworker is not active"`). The TriggerHost (`settle_one_trigger` in `apps/litecoworkd/src/automation_operator.rs`) records that as a deferral blocker and the cursor keeps naming the slot, so a paused Coworker produces a failing retry every 30 s pass, not a recorded skip. Enable time checks Coworker ACTIVE in `validate_automation_references` (`crates/storage-sqlite/src/coworkers.rs`).
 - **Conversation:** `ConversationRecord` in `crates/storage-core/src/conversation.rs` has `conversation_id`, `workspace_id`, `title`, `active_agent_binding_id`, `version`, `created_at` and no Coworker origin; the `conversations` table (`docs/schemas/sqlite-v1.sql`) matches. The migration chain now ends at `docs/schemas/sqlite-v32.sql`; the 009 migration is allocated v38 (docs/LITECOWORK-BUILD-TASKS.md).
-- **ContextDocument create:** `valid_context_document_metadata` in `crates/domain-workspace/src/lib.rs` accepts only `PERSONAL_PROFILE` (USER owner = principal) and `WORKSPACE_NOTES` (WORKSPACE owner = selected Workspace). `ContextDocumentCreateMetadata.kind` in `docs/schemas/operator-api.openapi.yaml` is narrowed to the same two values (register A-18); `ContextOwnerRef` already has a COWORKER variant (`workspace_id`, `coworker_id`). The generated `apps/litecowork-ui/src/api/operator-api.ts` still lists four kinds in places. Status and deletion routes are `/v1/resources/{resource_id}/context-document/status` and `/deletion` in `apps/litecoworkd/src/operator.rs`, with purge in `crates/storage-sqlite/src/context_document_purge.rs`.
+- **ContextDocument create:** `valid_context_document_metadata` in `crates/domain-workspace/src/lib.rs` accepts only `PERSONAL_PROFILE` (USER owner = principal) and `WORKSPACE_NOTES` (WORKSPACE owner = selected Workspace). `ContextDocumentCreateMetadata.kind` in the canonical OpenAPI schema is narrowed to those two values by accepted A-18; record/read metadata and the Settings editor still expose all four kinds, so distinguish those types. The generated `apps/litecowork-ui/src/api/operator-api.ts` has been regenerated from the corrected A-18 description. `ContextOwnerRef` already has a COWORKER variant (`workspace_id`, `coworker_id`). Status and deletion routes are `/v1/resources/{resource_id}/context-document/status` and `/deletion` in `apps/litecoworkd/src/operator.rs`, with purge in `crates/storage-sqlite/src/context_document_purge.rs`.
 - **Retrieval:** `POST /v1/resources/retrieval` in `apps/litecoworkd/src/rag_retrieval_operator.rs` over `crates/storage-sqlite/src/rag_retrieval.rs` is Workspace or explicit-Resource scoped lexical search with no Coworker filter and no `CoworkerContextPolicy` consumer.
 - **Learning:** `crates/storage-core/src/coworker_learning.rs` defines `LearningCandidate`, `CoworkerLearningPolicy`, `MemoryRecordMetadata` (required `source_candidate_id`, free-text `status`) and pure gates. No store, route or caller exists. The automatic pipeline belongs to Feature 020.
 - **Tauri:** `apps/litecowork-ui/src-tauri/src/coworker_bridge.rs` `coworker_request` forwards a fixed operation set (list, get, presence, revision, create, revise, status, primary); `context_document_deletion_bridge.rs` handles ContextDocument deletion.
@@ -22,21 +22,22 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 
 ## 009-T01 - Promote accepted Coworker contracts into owner docs and schemas
 
-- **Status:** PARTIAL - owner acceptance of B-24 and B-25 recorded 2026-11-09 (SPEC revision 1.0). No accepted interface is promoted: no Coworker Conversation route, assignment, responsibility proposal or Coworker origin column exists in `docs/schemas/`.
+- **Status:** PARTIAL - owner acceptance of B-24/B-25, A-18 and A-20/A-34 is recorded. No accepted interface is promoted: no Coworker Conversation route, assignment, responsibility proposal or Coworker origin column exists in `docs/schemas/`. Register A-91 leaves the manual-memory metadata/status representation unresolved; do not finalize the Feature 009 memory schema until its owner decision is recorded.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE. Feature 020 reviews the `MemoryRecordMetadata` decision because it owns the candidate path; Feature 006 reviews the assignment shape because it owns grants.
 - **Owner:** Coworkers, Conversation, Memory, API, Events and Storage owners.
-- **Allowed paths:** `docs/COWORKERS-TARGET.md`, `docs/RESPONSIBILITIES.md`, `docs/LEARNING.md`, `docs/CONTEXT.md`, `docs/DATA-MODEL.md`, `docs/API.md`, `docs/EVENTS.md`, `docs/STORAGE.md`, `docs/STATE-MACHINES.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/domain-event.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/sqlite-v29.sql` (new; use the next free number at implementation time), this package.
+- **Allowed paths:** `docs/COWORKERS-TARGET.md`, `docs/RESPONSIBILITIES.md`, `docs/LEARNING.md`, `docs/CONTEXT.md`, `docs/DATA-MODEL.md`, `docs/API.md`, `docs/EVENTS.md`, `docs/STORAGE.md`, `docs/STATE-MACHINES.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/domain-event.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/sqlite-v38.sql` (reserved by the current build allocation; not written), this package.
 - **Contract:** SPEC sections 5, 7.2, 15; AC-009, AC-017, AC-019, AC-021; SPECIFICATION-STANDARD section 7.
-- **Change intent:** in one reviewed change promote, each labelled "accepted target interface (not yet in source)" until its implementing task lands: `owner_coworker_id` / `owner_coworker_revision` on the Conversation record and `conversation.coworker.assigned.v1`; `GET/POST /v1/coworkers/{coworker_id}/conversations`; `GET /v1/coworkers/{coworker_id}/memory` (filtered ContextDocument read); `CoworkerCapabilityAssignment` with `GET/POST/PATCH/DELETE /v1/coworkers/{coworker_id}/capability-assignments` and the three `coworker.capability_assignment.*.v1` events; the responsibility proposal (`StandingResponsibility` DRAFT/commit) with `GET/POST /v1/coworkers/{coworker_id}/responsibilities` and `coworker.responsibility.*.v1`; error codes `COWORKER_ORIGIN_IMMUTABLE`, `COWORKER_SCOPE_DENIED`, `CONTEXT_OWNER_KIND_REJECTED`, `MEMORY_TOO_LARGE`, `MEMORY_QUOTA_EXCEEDED`. Pin the AC-013 per-document and per-Coworker memory bounds and the AC-016 retrieval budget. Resolve the SPEC section 18 open question: either make `MemoryRecordMetadata.source_candidate_id` optional with owner-authored provenance, or document the mapping from ContextDocument status (ACTIVE, REVOKED, DELETION_PENDING, DELETED) to `MemoryRecordMetadata.status` (ACTIVE, SUPERSEDED, REVOKED, PURGE_PENDING) at the LEARNING.md owner. The COWORKER_NOTES create-enum change is excluded here; it is T04 so the schema and validator change together.
+- **Change intent:** promote accepted Conversation origin, assignment, responsibility and API/event/error contracts in their canonical owners and schemas. Keep `COWORKER_NOTES` creation unavailable until the Coworker-scoped Resource path verifies Coworker and Workspace ownership. Resolve register A-91 at the Memory/Coworker owners before defining manual-memory metadata or finalizing the memory portion of `sqlite-v38.sql`: do not create a second lifecycle, treat the automatic-only `source_candidate_id` as optional without owner approval, or forge a LearningCandidate. Pin the AC-013 per-document and per-Coworker memory bounds and the AC-016 retrieval budget in the owner contract. T04 owns the paired create-schema/validator change after the same-Workspace owner check is included.
 - **Acceptance:**
   - [x] B-24 and B-25 owner acceptance recorded with the A-18 rider (SPEC section 5).
+  - [ ] A-91 owner decision recorded before manual-memory metadata or status fields are finalized.
   - [ ] Every promoted name exists exactly once in its owner doc and machine schema; no parallel definition remains in this package.
   - [ ] The migration is the next immutable `sqlite-vNN.sql`; older migrations are byte-identical and the schema fingerprint test passes.
   - [ ] Negative: the OpenAPI validator rejects an assignment or responsibility payload that carries a grant, approval or `enabled` trigger field.
   - [ ] One documented status vocabulary for owner-authored memory; no second state machine.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py` and `python3 scripts/validate_architecture.py` and `cargo test -p storage-sqlite --locked schema` (fingerprint filter to be added by this task if absent)
-- **Evidence:** PR link and command output in Completion evidence; register rows for B-24/B-25 closed by the orchestrator.
+- **Evidence:** owner decision links, contract/schema diff and command output in Completion evidence. B-24/B-25/A-18 remain accepted decisions; T17 updates implementation evidence and does not close or reopen those decision rows.
 - **Stop:** a promoted name conflicts with an existing owner definition; resolve it at the owner, not in this package.
 
 ## 009-T02 - Store an immutable Coworker origin on Conversations
@@ -45,7 +46,7 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 - **Depends on:** T01
 - **Cross-package prerequisites:** Feature 001 Conversation aggregate and versioning (the record is shared; coordinate the migration with the 001 storage tasks).
 - **Owner:** Conversation, Storage.
-- **Allowed paths:** `crates/storage-core/src/conversation.rs`, `crates/storage-sqlite/src/conversations.rs`, `crates/storage-sqlite/src/conversation_turn_tests.rs`, `crates/storage-sqlite/src/lib.rs`, `docs/schemas/sqlite-v29.sql` (the T01 migration).
+- **Allowed paths:** `crates/storage-core/src/conversation.rs`, `crates/storage-sqlite/src/conversations.rs`, `crates/storage-sqlite/src/conversation_turn_tests.rs`, `crates/storage-sqlite/src/lib.rs`, `docs/schemas/sqlite-v38.sql` (the Feature 009 migration reserved in the build allocation; not yet written).
 - **Contract:** SPEC sections 6, 7.2; COWORKERS-TARGET "Coworker-owned Conversations must belong to the same Workspace"; AC-001, AC-017.
 - **Change intent:** add `owner_coworker_id: Option<String>` and `owner_coworker_revision: Option<u64>` to `ConversationRecord` (both null or both set) and the columns plus a `(workspace_id, owner_coworker_id, created_at)` index. `create_conversation` in `SqliteConversationStore` validates in the same transaction that the Coworker exists in the same Workspace, is not ARCHIVED, and that the revision exists; PAUSED is allowed because an owner chat is owner-origin work. No update path writes these columns. Add `list_conversations_for_coworker` with a cursor. Write `conversation.coworker.assigned.v1` in the create transaction.
 - **Acceptance:**
@@ -62,7 +63,7 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 
 - **Status:** NOT STARTED.
 - **Depends on:** T02
-- **Cross-package prerequisites:** Feature 011 authenticated IPC on both release rows; Feature 001 Send route for a usable reply.
+- **Cross-package prerequisites:** Feature 011 authenticated IPC on both release rows. Feature 001 Send and Feature 002 qualified binding are required before the opened Conversation can send a reply and before E2E qualification; neither blocks creating or reopening an UNBOUND Conversation.
 - **Owner:** Operator/API, Conversation, Desktop bridge.
 - **Allowed paths:** `apps/litecoworkd/src/coworker_operator.rs`, `apps/litecoworkd/src/conversation_operator.rs`, `apps/litecoworkd/src/conversation_operator_tests.rs`, `apps/litecowork-ui/src-tauri/src/coworker_bridge.rs`, `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs`, `apps/litecowork-ui/src/coworkers/coworker-api.ts`, `apps/litecowork-ui/src/coworkers/desktop-coworker-api.ts`, `apps/litecowork-ui/src/api/operator-api.ts` (regenerated).
 - **Contract:** SPEC sections 6, 9, 10; AC-017; docs/LOCAL-OPERATOR-IPC.md.
@@ -82,13 +83,14 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 - **Depends on:** T01
 - **Cross-package prerequisites:** Feature 003 owns the Resource upload/create path; review the change with its owner.
 - **Owner:** Memory, Workspace domain, API schema owner.
-- **Allowed paths:** `docs/schemas/operator-api.openapi.yaml` (`ContextDocumentCreateMetadata` only), `docs/DATA-MODEL.md` ("ContextDocument create ownership"), `docs/CONTEXT.md`, `crates/domain-workspace/src/lib.rs` (`valid_context_document_metadata` and its tests), `apps/litecowork-ui/src/api/operator-api.ts` (regenerated), `apps/litecowork-ui/src/coworkers/CoworkerSettings.tsx`, `apps/litecowork-ui/tests/context-document-deletion.test.ts`.
+- **Allowed paths:** `docs/schemas/operator-api.openapi.yaml` (`ContextDocumentCreateMetadata` only), `docs/DATA-MODEL.md` ("ContextDocument create ownership"), `docs/CONTEXT.md`, `crates/domain-workspace/src/lib.rs` (`valid_context_document_metadata` and its tests), `apps/litecoworkd/src/operator.rs` (Resource upload begin/commit owner checks), `apps/litecoworkd/src/resource_upload_archive_operator_tests.rs` (owner-scope and replay regression coverage), `apps/litecowork-ui/src/api/operator-api.ts` (regenerated), `apps/litecowork-ui/src/coworkers/CoworkerSettings.tsx`.
 - **Contract:** SPEC section 5 (B-24 rider), section 7; register A-18; AC-010, AC-018.
-- **Change intent:** in one reviewed change: add `COWORKER_NOTES` to `ContextDocumentCreateMetadata.kind` and rewrite its A-18 description; extend `valid_context_document_metadata` with a `COWORKER_NOTES` arm that requires a COWORKER `owner_ref` with exactly `kind`, `workspace_id` equal to the selected Workspace, and `coworker_id`; the caller checks in the same transaction that the Coworker exists, is not ARCHIVED and belongs to that Workspace. `GOAL_NOTES` stays rejected. Update the DATA-MODEL.md paragraph from "TARGET-pending" to served for COWORKER_NOTES only. Keep the Coworker Settings option disabled until T05 serves Add Memory.
+- **Change intent:** in one reviewed change, add `COWORKER_NOTES` to `ContextDocumentCreateMetadata.kind` and extend `valid_context_document_metadata` with an exact COWORKER owner_ref shape (`kind`, selected `workspace_id`, `coworker_id`). The authenticated Resource upload caller must verify in the owner transaction, both when admitting the upload and when committing it, that the Coworker exists, belongs to that Workspace and is not ARCHIVED; reject stale or mismatched owners before Resource/ContextDocument commit. `GOAL_NOTES` stays rejected. Update the accepted A-18 owner prose and generated client type. The Coworker Settings Add Memory control remains unavailable until T05 serves the complete scoped read/write path.
 - **Acceptance:**
   - [ ] AC-018: COWORKER_NOTES with a same-Workspace Coworker is accepted.
   - [ ] AC-010 and AC-018 negatives: GOAL_NOTES, a COWORKER owner from another Workspace, an unknown or ARCHIVED Coworker, extra owner fields and a USER owner on COWORKER_NOTES are rejected with `CONTEXT_OWNER_KIND_REJECTED`.
   - [ ] Schema, validator and DATA-MODEL.md change in the same commit; the contract test fails if one changes without the others.
+  - [ ] A generic Resource upload cannot create a Coworker note without the same-Workspace, non-ARCHIVED owner check; archiving between upload admission and commit leaves no committed Resource.
 - **Command:** `cargo test -p domain-workspace --locked context_document` and `python3 scripts/validate_architecture.py` and `pnpm --dir apps/litecowork-ui run build`
 - **Evidence:** test names and the commit SHA covering all three files.
 - **Stop:** the schema and validator cannot land in one change; do not widen either alone.
@@ -99,9 +101,9 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 - **Depends on:** T01, T04
 - **Cross-package prerequisites:** Feature 003 ResourceService upload/commit; Feature 020 owns the automatic LearningCandidate pipeline (link only, no shared code path).
 - **Owner:** Memory, ResourceService, Trust.
-- **Allowed paths:** `apps/litecoworkd/src/operator.rs` (Resource upload commit for COWORKER_NOTES), `apps/litecoworkd/src/coworker_operator.rs` (`GET .../memory`), `crates/storage-sqlite/src/resource_index.rs`, `crates/storage-sqlite/src/coworkers.rs`, `crates/storage-core/src/coworker_learning.rs` (only the T01 metadata decision), `apps/litecowork-ui/src-tauri/src/coworker_bridge.rs`.
+- **Allowed paths:** `apps/litecoworkd/src/operator.rs` (Resource upload commit for COWORKER_NOTES), `apps/litecoworkd/src/coworker_operator.rs` (`GET .../memory`), `crates/storage-sqlite/src/resource_index.rs`, `crates/storage-sqlite/src/coworkers.rs`, `apps/litecowork-ui/src-tauri/src/coworker_bridge.rs`. Do not alter the automatic-only `crates/storage-core/src/coworker_learning.rs` metadata shape unless the A-91 owner decision explicitly assigns that change to its owner.
 - **Contract:** SPEC sections 5 (B-24), 7.2, 10; LEARNING.md section 7; AC-008, AC-009, AC-013, AC-014.
-- **Change intent:** Add Memory commits a user-authored ContextDocument revision with COWORKER owner, source `USER_AUTHORED`, and memory status ACTIVE per the T01 vocabulary, through the existing upload/commit path. It never creates a `LearningCandidate` and never fills `source_candidate_id`. Enforce the T01 per-document and per-Coworker bounds before commit. Serve `GET /v1/coworkers/{coworker_id}/memory` as a filtered ContextDocument list. Memory text is stored as inert data; events carry ids and digests only.
+- **Change intent:** After T01 records the A-91 owner decision, Add Memory commits a user-authored ContextDocument revision with COWORKER owner, source `USER_AUTHORED`, and B-24 status ACTIVE in the approved manual-memory representation through the existing upload/commit path. It never creates a `LearningCandidate` and never fills `source_candidate_id`. Enforce the T01 per-document and per-Coworker bounds before commit. Serve `GET /v1/coworkers/{coworker_id}/memory` as a filtered ContextDocument list. Memory text is stored as inert data; events carry ids and digests only.
 - **Acceptance:**
   - [ ] AC-008: the committed record has owner-authored provenance and no candidate id.
   - [ ] AC-013: an over-bound document or Coworker total returns `MEMORY_TOO_LARGE` / `MEMORY_QUOTA_EXCEEDED` and nothing partial is committed.
@@ -119,7 +121,7 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 - **Owner:** Memory, Storage.
 - **Allowed paths:** `crates/storage-sqlite/src/context_document_purge.rs`, `crates/storage-sqlite/src/context_document_purge_tests.rs`, `apps/litecoworkd/src/operator.rs` (status/deletion handlers), `apps/litecowork-ui/src-tauri/src/context_document_deletion_bridge.rs`.
 - **Contract:** SPEC sections 5, 11; AC-004, AC-011, AC-015.
-- **Change intent:** apply the existing status and deletion transactions to COWORKER_NOTES; revoke moves the record to REVOKED and purge to the T01 PURGE_PENDING mapping; both bump the scope version that retrieval and context assembly read, so a fenced record cannot be returned. The deletion receipt keeps ids, digests and timestamps without bytes. Serialize Add Memory and revoke/purge on the same Coworker scope with the existing CAS version.
+  - **Change intent:** apply the existing Resource status and deletion transactions to COWORKER_NOTES using the A-91-approved mapping from B-24's REVOKED/PURGE_PENDING outcomes; both bump the scope version that retrieval and context assembly read, so a fenced record cannot be returned. The deletion receipt keeps ids, digests and timestamps without bytes. Serialize Add Memory and revoke/purge on the same Coworker scope with the existing CAS version.
 - **Acceptance:**
   - [ ] AC-004: after revoke or purge the record is absent from retrieval and context assembly; no capability is granted.
   - [ ] AC-011: purge leaves a receipt without the deleted bytes; the blob is unreachable.
@@ -151,7 +153,7 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 
 - **Status:** PARTIAL - `HomeCoworkerOnboarding.tsx` creates the Coworker (and can set primary) with `tests/home-onboarding.test.ts`; it opens no chat and does not show the unbound state.
 - **Depends on:** T03
-- **Cross-package prerequisites:** Feature 002 qualified OpenCode binding (until then the chat shows Send unavailable); Feature 001 Send gate.
+- **Cross-package prerequisites:** None to implement the unbound chat shell. A qualified Feature 002 binding plus the Feature 001 Send gate is required before the chat can send; the package's T16 task owns the packaged journey after those prerequisites qualify.
 - **Owner:** Desktop UI, Coworkers.
 - **Allowed paths:** `apps/litecowork-ui/src/coworkers/HomeCoworkerOnboarding.tsx`, `apps/litecowork-ui/src/coworkers/coworker-api.ts`, `apps/litecowork-ui/src/coworkers/desktop-coworker-api.ts`, `apps/litecowork-ui/src/App.tsx` (navigation only), `apps/litecowork-ui/tests/home-onboarding.test.ts`.
 - **Contract:** SPEC section 5 (B-25), 7.2 `QuickCreateCoworker`; AC-002, AC-012, AC-023.
@@ -309,7 +311,7 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 - **Owner:** Documentation owner, orchestrator.
 - **Allowed paths:** `docs/IMPLEMENTATION-STATUS.md`, `docs/V1-UI-ACTION-STATE-LEDGER.md`, `docs/V1-UI-SCREEN-CONTRACT.md`, `docs/SEMANTIC-SERVED-UI-MAP.md`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`, generated served-route inventory, this package.
 - **Contract:** AGENTS.md section 4 steps 5-6.
-- **Change intent:** update Coworker rows in IMPLEMENTATION-STATUS.md to the evidence reached, regenerate the served-route inventory with `scripts/audit_served_routes.py`, update UI ledgers for the new controls, and close register rows for B-24, B-25 and A-18.
+- **Change intent:** update Coworker rows in IMPLEMENTATION-STATUS.md to the evidence reached, regenerate the served-route inventory with `scripts/audit_served_routes.py`, and update UI ledgers for controls that actually exist. Keep B-24, B-25 and A-18 recorded as accepted owner decisions; record implementation and qualification evidence separately, including any remaining owner decisions such as A-91.
 - **Acceptance:**
   - [ ] Route inventory lists the new Coworker routes as served; nothing else changes class without evidence.
 - **Command:** `python3 scripts/audit_served_routes.py` and `python3 .specify/scripts/validate_feature_package.py`
@@ -324,7 +326,7 @@ Gaps to V1: no Coworker-owned Conversation, no COWORKER_NOTES create path, no Co
 - **Owner:** Product (sign-off), Coworkers, Memory, Security.
 - **Allowed paths:** this package; `docs/IMPLEMENTATION-STATUS.md`.
 - **Contract:** SPEC sections 15-16; AC-001 to AC-023; SPECIFICATION-STANDARD lifecycle.
-- **Change intent:** assemble the evidence bundle (per-task revision, command, result, OS, harness, reviewer); move the package ACCEPTED/LOCKED to IMPLEMENTING at the first implementation merge and to VERIFIED after owner sign-off on both release rows.
+- **Change intent:** assemble the evidence bundle (per-task revision, command, result, OS, harness, reviewer); move the accepted implementation baseline to IMPLEMENTING at the first implementation merge only after confirming the applicable SPEC revision is owner-accepted, and to VERIFIED after owner sign-off on both release rows.
 - **Acceptance:**
   - [ ] Canonical command and T16 pass on Windows x64 + OpenCode v2.0.32 and on Linux x64.
   - [ ] SPEC and WIRING status equal VERIFIED and the validator passes.

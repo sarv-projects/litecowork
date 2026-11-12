@@ -2176,7 +2176,7 @@ the `DELETING` fence for retry. Empty plans are valid only after the local inven
 verified empty. This Resource deletion state does not assert that an already-fed native
 AgentSession is invalidated or that its history can be recalled.
 
-**ContextDocument create ownership (PROPOSED, owner acceptance required, register A-18).**
+**ContextDocument create ownership (OWNER-ACCEPTED 2026-11-09, register A-18).**
 `ContextDocumentKind` has four values (`PERSONAL_PROFILE | COWORKER_NOTES | WORKSPACE_NOTES
 | GOAL_NOTES`, owned by [SCHEMAS.md](SCHEMAS.md)) and the record/read `ContextDocumentMetadata`
 and `CoworkerContextPolicy.allowed_context_kinds` retain all four as target values. The
@@ -2188,10 +2188,15 @@ matching the authenticated principal, and `WORKSPACE_NOTES` with a WORKSPACE own
 matching the selected Workspace. `COWORKER_NOTES` and `GOAL_NOTES` are TARGET-pending their
 authoritative Coworker/Goal aggregate create/read/revoke/retrieval services and resource
 authorization; until those exist they cannot be created, so Coworker Settings must hide or
-disable those create options rather than offer an Add that cannot persist that scope. This
-is a PROPOSED resolution pending the named owner
-([SPECIFICATION-STANDARD.md](SPECIFICATION-STANDARD.md) §7); it narrows only the create
-contract and does not remove the two kinds from the type, events or policy allowlists.
+disable those create options rather than offer an Add that cannot persist that scope.
+This is the owner-accepted create boundary
+([OWNER-ACCEPTANCE-REVIEW-PACKET.md](OWNER-ACCEPTANCE-REVIEW-PACKET.md)); it narrows only
+the create contract and does not remove the two kinds from the type, events or policy
+allowlists. COWORKER_NOTES remains an accepted Feature 009 target for manual Coworker
+memory, but the create schema and validator stay restricted until the Coworker-scoped
+Resource owner path checks the Coworker and Workspace together. Its manual-memory
+metadata/status mapping against the automatic-only MemoryRecordMetadata contract remains
+open under register A-91.
 
 ProviderIdentity {
   provider_instance_id: string
@@ -2577,9 +2582,25 @@ and case-folded by the owning service using `NFC(NFC(trim(name)).casefold())`; t
   visibility. A kind mute and resolution of current proposals commit atomically; only an
   owner dismissal of the identical dedupe key creates the 30-day cooldown.
 
-## Accepted Coworker target additions (draft, not current SQLite)
+## Accepted Coworker target additions (not yet in current SQLite)
 
-See [Coworker target](COWORKERS-TARGET.md), sections 8-9. An ordinary Conversation has NULL owner_coworker_id; a Coworker-owned Conversation pins one same-Workspace Coworker and cannot silently change owner. Last activity is an authoritative server-derived cursor/order projection. StandingResponsibility / Revision link existing Goal, Routine and Automation revisions to a Coworker, with immutable title/purpose/stop criteria, budgets, notification and approval policy. CoworkerCapabilityAssignment references a shared installed/connected capability with an independently revocable access ceiling. CoworkerMemoryPolicy defines eligible sources and quiet automatic-learning mode, while the `LearningCandidate` record (the single candidate-lifecycle vocabulary selected by the PROPOSED owner resolution in [LEARNING.md](LEARNING.md), register A-34/A-20, superseding the earlier `MemoryCandidate` state set) records source digest/receipt/reconciliation state and MemoryRecordMetadata extends Resource-backed ContextDocuments with its own committed-record lifecycle. Handoff between Coworkers creates a separate recipient Task/association, never inherited private context. These models are NOT yet in the canonical SQLite schema, and no live API or status claims may assume they exist until migrated and verified.
+See [Coworker target](COWORKERS-TARGET.md), sections 8-9. These are accepted target
+requirements, not active SQLite/API capability. An ordinary Conversation has NULL
+owner_coworker_id; a Coworker-owned Conversation pins one same-Workspace Coworker and
+cannot silently change owner. Last activity is an authoritative server-derived
+cursor/order projection. StandingResponsibility / Revision link existing Goal, Routine
+and Automation revisions to a Coworker, with immutable title/purpose/stop criteria,
+budgets, notification and approval policy. CoworkerCapabilityAssignment references a
+shared installed/connected capability with an independently revocable access ceiling.
+CoworkerMemoryPolicy defines automatic-learning eligibility. The accepted
+LearningCandidate vocabulary and lifecycle are owned by [LEARNING.md](LEARNING.md)
+(register A-20/A-34); it is not a proposal. B-24 separately requires manual
+Coworker-authored ContextDocument memory. Whether that manual record uses
+MemoryRecordMetadata or only the canonical Resource/ContextDocument status is unresolved
+under register A-91; no LearningCandidate or source_candidate_id may be fabricated.
+Handoff between Coworkers creates a separate recipient Task/association, never inherited
+private context. These models are not yet in the canonical SQLite schema, and no live API
+or status claims may assume they exist until migrated and verified.
 
 
 ## Accepted connector, workflow, learning, and follow-up target records

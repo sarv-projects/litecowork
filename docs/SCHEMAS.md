@@ -1300,9 +1300,13 @@ ContextDocumentMetadata {
 }
 
 ContextDocumentCreateMetadata {
-  kind: ContextDocumentKind
+  kind: PERSONAL_PROFILE | WORKSPACE_NOTES
   owner_ref: ContextOwnerRef
-} # upload-session pin only; status/purge fields belong to committed Resource metadata
+} # A-18: create-only subset. Cross-field validation pairs PERSONAL_PROFILE with the
+  # authenticated USER, and WORKSPACE_NOTES with the selected Workspace. COWORKER_NOTES
+  # and GOAL_NOTES remain read/policy targets; Coworker creation needs Feature 009's scoped
+  # owner check. Manual-memory status/provenance is gated by A-91. Upload-session pin only;
+  # status/purge fields belong to committed Resource metadata.
 
 ContextDocumentPurgeTarget {
   replica_ref: Sha256Digest # local content-addressed identity; never a path or locator

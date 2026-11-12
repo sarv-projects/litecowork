@@ -1,6 +1,6 @@
 # 009 contracts
 
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Status:** Revision 1.0 ACCEPTED/LOCKED; revision 1.1 amendment IN_REVIEW. Existing accepted contracts remain distinct from the pending A-91 manual-memory representation.
 
 - [API and events](api-events.md)
 - [Errors and recovery](errors-recovery.md)

@@ -38,6 +38,12 @@ Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs
 
 Every unavailable state is a focusable status region with an accessible name and the concrete prerequisite; keyboard users reach each view through the launcher and tool pills.
 
+## Revision 1.1 live-preview selection behavior (TARGET / IN_REVIEW)
+
+After the owner has explicitly selected a source and granted local observation, when its existing Computer session reaches LIVE, the visible Workbench selects the Computer tab and shows the newest eligible frame. Selecting a tab never starts capture or changes agent-disclosure/input permits. The selection must not move keyboard focus, alter the Conversation scroll position, or discard the composer draft. If the owner deliberately closes/collapses the Computer view during that session, do not reopen it repeatedly; keep the persistent control strip and a **Show computer** entry available. With local preview disabled or revoked, show permission/source status and no frame. This is a view projection, not a new domain state or authorization command.
+
+Acceptance is proposed as AC-027 in SPEC: verify automatic tab selection only for an already-authorized LIVE local view, no capture or focus side effect, suppression after deliberate dismissal, stale-frame labeling, and status-only rendering after local-preview denial/revocation.
+
 ## Required rendered regression cases after implementation
 
 - Browser provider unavailable/needs setup/offline/ready; no iframe fallback masquerades as a qualified browser session.

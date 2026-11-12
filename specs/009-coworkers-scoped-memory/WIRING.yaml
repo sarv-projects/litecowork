@@ -1,74 +1,320 @@
 feature_id: "009"
-status: "ACCEPTED/LOCKED"
-# Owner-accepted 2026-11-09. Edges below are accepted target wiring unless a comment says
-# the path is served today; acceptance is not evidence that an edge is served.
-nodes:
-  - id: "ui"
-    owner: Desktop UI
-    kind: component
-  - id: "operator"
-    owner: authenticated Operator
-    kind: service
-  - id: "owner"
-    owner: domain owner service
-    kind: service
-  - id: "storage"
-    owner: Storage
-    kind: store
-edges:
-  - id: "e-ui-op"
-    from: "ui"
-    to: "operator"
-    kind: command
-  - id: "e-op-owner"
-    from: "operator"
-    to: "owner"
-    kind: request
-  - id: "e-owner-storage"
-    from: "owner"
-    to: "storage"
-    kind: transaction
-  - id: "e-storage-ui"
-    from: "storage"
-    to: "ui"
-    kind: projection
-transactions:
-  - id: "tx-coworker"
-    owner: Coworker owner
-    atomic_records: ["coworker_revision"]
-    external_calls_inside: false
-  - id: "tx-memory"
-    owner: Memory owner
-    atomic_records: ["context_document_status"]
-    external_calls_inside: false
-external_boundaries:
-  - id: "outside-sqlite"
-    owner: domain owner
-    input_trust: untrusted
-    timeout: bounded
-    retry: reconcile-before-retry
-recovery:
-  owner: domain owner
-  source_of_truth: durable-owner-records
-  restart_action: reload-last-commit-and-reconcile
+status: "IN_REVIEW"
+accepted_baseline_revision: "1.0"
+revision: "1.1"
+reviewed_source_checkpoint: "6adadab539a62ca1c8b70621c7f88e1785cfe8c2"
+reviewed_on: "2026-11-12"
+authority:
+  global: "ARCHITECTURE.md"
+  product: ["docs/PRODUCT.md", "docs/V1-PRODUCT-RELEASE-CONTRACT.md"]
+  owner_contracts:
+    - "docs/RESPONSIBILITIES.md"
+    - "docs/CONTEXT.md"
+    - "docs/LEARNING.md"
+    - "specs/001-conversation-session-supervisor/SPEC.md"
+  feature: "specs/009-coworkers-scoped-memory/SPEC.md"
+  implementation_status: "docs/IMPLEMENTATION-STATUS.md"
+  evidence_rule: "TARGET, CODE, SERVED, INTEGRATED and QUALIFIED remain distinct"
 
-# CURRENT SOURCE BOUNDARY (2026-11-06):
-# Coworker CRUD/revision/status/primary selection is served through the authenticated
-# Operator and Responsibility/Coworker SQLite owner. This graph describes the target
-# feature wiring, not a claim that all edges are currently connected.
-#
-# Conversation has no Coworker origin/revision fields; Task alone pins
-# origin_coworker_id/origin_coworker_revision. No Coworker-owned chat path is served.
-#
-# Resource ContextDocument creation currently accepts only USER/PERSONAL_PROFILE and
-# WORKSPACE/WORKSPACE_NOTES. COWORKER_NOTES and GOAL_NOTES are rejected by the
-# domain-workspace owner validator even though the API enum and Settings UI list them.
-#
-# CoworkerContextPolicy is persisted configuration; current retrieval does not enforce
-# its allowed_context_kinds, max_retrieved_items or retain_task_summaries.
-# Workspace/Resource lexical retrieval is not Coworker-scoped.
-#
-# storage-core/coworker_learning.rs provides deterministic candidate/policy gates.
-# Its redaction helper is reused by SkillProposal intake, but LearningCandidate
-# evaluation/classification has no production caller and no LearningService,
-# SQLite learning storage, learning routes/events or Learning Inbox exists.
+product_boundary:
+  purpose: "Optional Workspace-scoped Coworker identity and authorized context over existing Conversation, Resource, Task, Capability, Trust and Automation owners."
+  non_goals:
+    - "A Coworker is not a continuously running native agent process."
+    - "A Coworker does not own a second Conversation, Resource, Task, CapabilityGrant or scheduler."
+    - "Memory text cannot create permissions, connections, packages, automations, tasks or schedules."
+    - "Native private transcripts and unmediated native tool effects are not imported into Core truth."
+  decision_gates:
+    - "A-22: pause does not yet fence already-enabled Automation occurrence settlement."
+    - "A-91: manual-memory provenance/status representation is unresolved."
+
+runtime_topology:
+  desktop: "Tauri v2 / React; screens are projections and typed command clients, never state or authority owners."
+  local_transport: "Tauri allowlisted bridge to authenticated local Operator; no generic path passthrough."
+  daemon: "Authenticated Operator resolves the active principal and Workspace before invoking domain owners."
+  persistence: "SQLite owns durable aggregate records, events and replay receipts; Resource BlobStore work follows Resource owner recovery."
+  provider: "Feature 001 Conversation coordinator sends only selected, authorized context to the selected native AgentModule. Native reasoning, credentials, private transcript and harness-specific tools remain native."
+  host_state: "Runtime and AgentSession identities stay distinct; Coworker identity/revision does not imply a live session."
+
+nodes:
+  - id: "desktop"
+    owner: "Desktop UI"
+    kind: "component"
+    evidence: "PARTIAL; current roster/settings exists, chat and Memory & Knowledge journeys are absent"
+  - id: "tauri_bridge"
+    owner: "Desktop bridge"
+    kind: "component"
+    evidence: "SERVED for current Coworker operations only; fixed operation allowlist"
+  - id: "operator"
+    owner: "Authenticated Operator"
+    kind: "service"
+    evidence: "SERVED for Coworker configuration; new Conversation/memory/assignment/responsibility routes are TARGET"
+  - id: "coworker_owner"
+    owner: "Coworker / Responsibility domain"
+    kind: "service"
+    evidence: "SERVED for identity, revisions, status and Workspace primary; target Coworker-specific policy consumers are incomplete"
+  - id: "conversation_owner"
+    owner: "Conversation domain, Feature 001"
+    kind: "service"
+    evidence: "SERVED for ordinary Conversations; Coworker origin and routes are TARGET"
+  - id: "resource_owner"
+    owner: "Resource / Workspace domain"
+    kind: "service"
+    evidence: "SERVED for supported Resource and ContextDocument owner kinds; Coworker-owned creation is TARGET"
+  - id: "retrieval_owner"
+    owner: "Context / Retrieval domain, Feature 003"
+    kind: "service"
+    evidence: "SERVED for Workspace and explicit Resource lexical retrieval; Coworker filtering and send receipt are TARGET"
+  - id: "responsibility_owner"
+    owner: "Responsibility, Automation and Task domains"
+    kind: "service"
+    evidence: "Existing owners remain authoritative; Coworker responsibility composition is TARGET"
+  - id: "capability_trust"
+    owner: "Capability Fabric and Trust"
+    kind: "service"
+    evidence: "Own installation, Connection, Grant, Approval, Invocation and Effect; Coworker assignment is only a ceiling"
+  - id: "storage"
+    owner: "SQLite owner stores"
+    kind: "store"
+    evidence: "Current Coworker/Resource/Conversation schemas do not contain the Feature 009 target records"
+  - id: "blob_store"
+    owner: "Resource BlobStore"
+    kind: "store"
+    evidence: "Local managed content; deletion is a receipt-backed recoverable saga"
+  - id: "native_agent"
+    owner: "Selected native AgentModule"
+    kind: "external"
+    evidence: "Provider-specific session and reply behavior; not qualified for Coworker-owned Conversation in this feature"
+
+edges:
+  - id: "e-ui-bridge"
+    from: "desktop"
+    to: "tauri_bridge"
+    kind: "typed command"
+    contract: "Only declared Coworker/Conversation/Resource commands; preserve request identity and visible pending state."
+  - id: "e-bridge-operator"
+    from: "tauri_bridge"
+    to: "operator"
+    kind: "authenticated IPC"
+    contract: "The bridge carries opaque IDs and typed payloads, never credentials, native handles or arbitrary paths."
+  - id: "e-operator-coworker"
+    from: "operator"
+    to: "coworker_owner"
+    kind: "authorized request"
+    contract: "Bind principal and Workspace from authenticated local request; use If-Match and Idempotency-Key for mutations."
+  - id: "e-operator-conversation"
+    from: "operator"
+    to: "conversation_owner"
+    kind: "authorized request"
+    contract: "Target create/list path stores immutable Coworker origin on the Conversation aggregate."
+  - id: "e-conversation-coworker-check"
+    from: "conversation_owner"
+    to: "coworker_owner"
+    kind: "same-transaction owner validation"
+    contract: "The Conversation store uses the Coworker owner predicate inside its creation transaction; this is not a service-to-service call. Require same Workspace, existing Coworker, pinned revision and non-ARCHIVED status; PAUSED remains valid for owner-origin chat."
+  - id: "e-operator-resource"
+    from: "operator"
+    to: "resource_owner"
+    kind: "authorized upload/status/deletion request"
+    contract: "ResourceService owns ContextDocument metadata and revision; Coworker scope is revalidated before commit."
+  - id: "e-resource-storage"
+    from: "resource_owner"
+    to: "storage"
+    kind: "durable transaction"
+    contract: "Resource owner commits metadata, revision, event and replay receipt; no file/process/network calls inside SQLite."
+  - id: "e-resource-blob"
+    from: "resource_owner"
+    to: "blob_store"
+    kind: "reconciled local I/O"
+    contract: "Content is staged and digest checked; purge acknowledgement follows exact physical removal."
+  - id: "e-operator-retrieval"
+    from: "operator"
+    to: "retrieval_owner"
+    kind: "authorized bounded read"
+    contract: "Target query filters Coworker and Workspace scope before returning exact pinned Resource revisions."
+  - id: "e-retrieval-resource"
+    from: "retrieval_owner"
+    to: "resource_owner"
+    kind: "final status and authorization check"
+    contract: "Recheck active status and revocation fence before final attachment."
+  - id: "e-retrieval-conversation"
+    from: "retrieval_owner"
+    to: "conversation_owner"
+    kind: "context receipt"
+    contract: "Feature 001 turn admission binds exact selected attachment refs/receipts to the dispatched turn."
+  - id: "e-conversation-agent"
+    from: "conversation_owner"
+    to: "native_agent"
+    kind: "provider-owned dispatch"
+    contract: "Send only the selected bounded context; no private transcript migration or fictitious Core Effect receipt."
+  - id: "e-coworker-assignment"
+    from: "coworker_owner"
+    to: "capability_trust"
+    kind: "assignment ceiling"
+    contract: "Assignment never installs, authenticates, grants, approves, activates or invokes."
+  - id: "e-coworker-responsibility"
+    from: "coworker_owner"
+    to: "responsibility_owner"
+    kind: "versioned references"
+    contract: "Responsibility links existing owner records; Automation/Task/Trust continue to own admission and execution."
+  - id: "e-coworker-storage"
+    from: "coworker_owner"
+    to: "storage"
+    kind: "durable transaction"
+    contract: "Coworker head, immutable revision, event and replay receipt are committed by the Coworker owner."
+  - id: "e-conversation-storage"
+    from: "conversation_owner"
+    to: "storage"
+    kind: "durable transaction"
+    contract: "Conversation origin, record, event and replay receipt commit together; Coworker scope is checked in that same transaction."
+  - id: "e-retrieval-storage"
+    from: "retrieval_owner"
+    to: "storage"
+    kind: "bounded indexed read"
+    contract: "The retrieval owner queries only authorized Workspace/Coworker-scoped Resource revisions; storage returns data to the owner service, never directly to the desktop."
+  - id: "e-coworker-projection"
+    from: "coworker_owner"
+    to: "operator"
+    kind: "authorized projection"
+    contract: "Return Coworker-owned projections to the authenticated Operator; do not expose raw rows or storage handles."
+  - id: "e-conversation-projection"
+    from: "conversation_owner"
+    to: "operator"
+    kind: "authorized projection"
+    contract: "Return only the authorized Conversation projection and committed origin through the Operator."
+  - id: "e-resource-projection"
+    from: "resource_owner"
+    to: "operator"
+    kind: "authorized projection"
+    contract: "Return Resource metadata and exact-revision receipts through the authenticated Operator."
+  - id: "e-retrieval-projection"
+    from: "retrieval_owner"
+    to: "operator"
+    kind: "authorized projection"
+    contract: "Return bounded exact-source retrieval results to the Operator; raw indexed rows are not exposed to Tauri or React."
+  - id: "e-operator-response"
+    from: "operator"
+    to: "tauri_bridge"
+    kind: "authorized typed response"
+    contract: "Return only Workspace-scoped projections, committed status and exact receipts; unknown stays unknown."
+  - id: "e-bridge-projection"
+    from: "tauri_bridge"
+    to: "desktop"
+    kind: "typed UI projection"
+    contract: "Render owner-returned data and explicit pending/failure state; UI state does not become durable truth."
+
+transactions:
+  - id: "tx-coworker-revision"
+    owner: "Coworker / Responsibility owner"
+    status: "SERVED"
+    atomic_records: ["coworker head", "immutable revision", "domain event", "idempotency receipt"]
+    external_calls_inside: false
+    fence: "Workspace owner, expected version, Coworker lifecycle and replay digest."
+  - id: "tx-conversation-origin"
+    owner: "Conversation owner"
+    status: "TARGET"
+    atomic_records: ["Conversation", "Coworker origin id/revision", "conversation.coworker.assigned.v1", "idempotency receipt"]
+    external_calls_inside: false
+    fence: "Same-Workspace Coworker lookup and immutable origin; no provider start in this transaction."
+  - id: "tx-manual-memory"
+    owner: "Resource / Coworker owners"
+    status: "BLOCKED_BY_A-91"
+    atomic_records: ["Resource", "ResourceRevision", "ContextDocument owner metadata", "resource event", "upload commit receipt", "manual-memory metadata only after owner resolution"]
+    external_calls_inside: false
+    fence: "Same-Workspace non-ARCHIVED Coworker is rechecked before commit; size/quota and status representation must be canonical."
+  - id: "tx-context-status"
+    owner: "Resource / Workspace owner"
+    status: "SERVED_FOR_PERSONAL_AND_WORKSPACE_KINDS"
+    atomic_records: ["ContextDocument status", "domain event", "idempotency receipt"]
+    external_calls_inside: false
+    fence: "Current Resource version and owner authorization; Coworker kind is not currently creatable."
+  - id: "tx-purge-plan"
+    owner: "Resource / Workspace owner"
+    status: "SERVED_FOR_SUPPORTED_LOCAL_RESOURCES"
+    atomic_records: ["DELETION_PENDING status", "sealed purge manifest", "pending target receipts", "domain event", "replay response"]
+    external_calls_inside: false
+    fence: "Physical deletion occurs after commit; exact target acknowledgements determine terminal purge status."
+  - id: "tx-capability-assignment"
+    owner: "Coworker assignment owner"
+    status: "TARGET"
+    atomic_records: ["versioned assignment", "assignment event", "idempotency receipt"]
+    external_calls_inside: false
+    fence: "Same Workspace and assignment revision; no grant/approval/invocation fields accepted."
+  - id: "tx-responsibility"
+    owner: "Responsibility owner"
+    status: "TARGET"
+    atomic_records: ["responsibility draft or revision", "linked owner revision refs", "domain event", "idempotency receipt"]
+    external_calls_inside: false
+    fence: "Draft admits no Task; trigger and Task admission remain with Automation/Task owners."
+
+external_boundaries:
+  - id: "operator-peer"
+    owner: "Authenticated local Operator"
+    input_trust: "desktop payload is untrusted until principal and Workspace authorization"
+    timeout: "bounded local IPC"
+    retry: "reuse RequestId and reconcile owner receipt"
+  - id: "blobstore-io"
+    owner: "Resource BlobStore"
+    input_trust: "staged bytes are untrusted; verify size and digest"
+    timeout: "bounded; deletion may remain pending"
+    retry: "resume exact durable purge targets"
+  - id: "native-agent-session"
+    owner: "AgentModule"
+    input_trust: "provider output and events are untrusted until normalized/correlated"
+    timeout: "provider-specific Feature 001 policy"
+    retry: "reconcile exact turn/session; do not infer private transcript continuity"
+
+events:
+  rule: "Promote new names once in docs/EVENTS.md and docs/schemas/domain-event.schema.json with the owner implementation."
+  target:
+    - "conversation.coworker.assigned.v1"
+    - "coworker.capability_assignment.created.v1"
+    - "coworker.capability_assignment.revised.v1"
+    - "coworker.capability_assignment.revoked.v1"
+    - "coworker.responsibility.created.v1"
+    - "coworker.responsibility.revised.v1"
+    - "coworker.responsibility.status_changed.v1"
+  current: "No Coworker-specific Conversation, assignment, responsibility or learning event producer is served."
+  redaction: "No credentials, provider handles, raw memory bodies, native transcript, or raw local paths."
+
+api_contracts:
+  current:
+    - "GET/POST /v1/coworkers"
+    - "GET /v1/coworkers/{coworker_id}"
+    - "POST /v1/coworkers/{coworker_id}/revisions"
+    - "POST /v1/coworkers/{coworker_id}/status"
+    - "POST /v1/workspaces/{workspace_id}/primary-coworker"
+    - "GET /v1/coworkers/{coworker_id}/presence returns 503 DEPENDENCY_UNAVAILABLE"
+    - "POST /v1/resources/retrieval is Workspace/explicit-Resource lexical retrieval, without Coworker scope"
+  target:
+    - "GET/POST /v1/coworkers/{coworker_id}/conversations (T03; target, not yet machine-promoted)"
+    - "GET /v1/coworkers/{coworker_id}/memory; Add Memory uses Resource upload/commit (T04/T05; target only)"
+    - "Capability-assignment route family is in COWORKERS-TARGET; T12 must promote exact methods and schemas in canonical OpenAPI"
+    - "GET/POST /v1/coworkers/{coworker_id}/responsibilities; remaining detail/commit methods must be promoted from the owner target by T11"
+    - "Feature 003 Coworker-scoped retrieval/ContextAttachment extension; no feature-local parallel schema"
+
+recovery:
+  source_of_truth: "Durable records, owner events, idempotency receipts and exact Resource purge receipts."
+  quick_create: "Two commits; a Conversation failure leaves the Coworker and retries only the original Conversation request."
+  memory_write: "Recover through the original upload/commit idempotency identity; a duplicate cannot create another Resource or revision."
+  memory_read: "Reauthorize Workspace, Coworker, Resource revision and current status before every attachment; stale or revoked sources do not attach."
+  purge: "Restart reconciles the sealed manifest and each exact BlobStore target; do not mark DELETED on timeout."
+  native_provider: "Conversation restart does not claim the previous provider's private transcript; Feature 001 owns turn recovery."
+
+trust_boundaries:
+  - "Workspace is the security/resource boundary; Coworker ID and client-provided metadata never replace authenticated owner checks."
+  - "Memory and retrieved content are inert untrusted data, not policy, authority, code or a tool command."
+  - "Coworker assignment is a ceiling; Trust and Capability owners issue and consume actual authority."
+  - "Core receipts cover only operations mediated by LiteCowork; direct native actions remain provider-reported."
+  - "A revocation fences future reads but cannot recall content already delivered to a native AgentSession."
+
+cross_layer_trace:
+  authority: "contracts/ui-behavior.md Cross-layer operation trace"
+  required_chain: "screen/control -> typed command -> authenticated IPC/Operator -> authorization -> owner service -> transaction/version/fence -> event/receipt -> projection -> restart/recovery -> acceptance evidence"
+  current_gap: "The operation trace is TARGET except for current Coworker configuration, supported Resource operations and Workspace retrieval; no end-to-end Coworker chat or memory path is qualified."
+
+current_source_boundary:
+  coworker: "Identity/revisions/status/primary selection are SERVED; several persisted policies have no production consumer."
+  conversation: "Ordinary Conversation is SERVED; Coworker origin/list/create is absent."
+  memory: "Personal Profile and Workspace Notes create/status/purge paths exist. Coworker Notes create, Coworker retrieval, manual memory metadata, Memory UI and LearningService are absent."
+  pause: "A-22 remains partial: TriggerHost does not recheck Coworker pause for enabled schedules; Home blocks an owner Task that the target allows."
+  qualification: "No Feature 009 Coworker-owned chat/memory/provider journey is INTEGRATED or QUALIFIED."

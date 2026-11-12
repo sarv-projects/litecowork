@@ -1,7 +1,7 @@
 # Research - Coworkers and Scoped Memory
 
-**Feature:** 009 | **Checked:** 2026-11-06
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification. This file is a source-backed implementation crosswalk (current-state evidence only).
+**Feature:** 009 | **Checked:** 2026-11-12 against active source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`
+**Status:** Revision 1.0 ACCEPTED/LOCKED; revision 1.1 amendment IN_REVIEW. This file is a source-backed implementation crosswalk (current-state evidence only); A-91 remains open and gates manual-memory schema/persistence.
 
 ## Canonical authorities
 
@@ -29,7 +29,7 @@
 |---|---|---|---|---|
 | Rowboat living knowledge-graph-as-context (`rowboatlabs/rowboat`) | https://github.com/rowboatlabs/rowboat/tree/9052e28b9ede46478e04f9cf600c7ebaf5895dc7 | Apache-2.0 at checked root LICENSE | A local desktop coworker that indexes work into a living knowledge graph used as retrieval context (`apps/x` desktop + `apps/harbor` agent runtime). It is a reference for how Coworker-scoped Memory & Knowledge can be surfaced as retrieval context, and for keeping provenance/deletion owner explicit on each entry. | REJECT the auto-indexing crawler model for V1. MAP the pattern to quiet, owner-authored, scoped Memory + Knowledge only: Add Memory writes an owner-authored Coworker-scoped ContextDocument (`MemoryRecordMetadata.status`), never an automatic `LearningCandidate`; the automatic-learning pipeline stays deferred (B-24). Do not adopt harbor as LiteCowork Task authority and import no Rowboat code. |
 
-No Rowboat code is imported; it is read at the pinned SHA as a design reference. LiteCowork's V1 memory is owner-authored and quiet, not an ambient indexer; the single learning vocabulary (`LearningCandidate` for candidate lifecycle, `MemoryRecordMetadata.status` for committed records) is owned by [LEARNING.md](../../docs/LEARNING.md) per register A-34/A-20.
+No Rowboat code is imported; it is read at the pinned SHA as a design reference. LiteCowork's V1 memory is owner-authored and quiet, not an ambient indexer; the single automatic-learning candidate vocabulary (`LearningCandidate`) is owned by [LEARNING.md](../../docs/LEARNING.md) per register A-34/A-20. `MemoryRecordMetadata.status` applies to its defined automatic-record contract; the matching manual-memory representation required by B-24 remains open under A-91.
 
 ## Findings from the active source tree
 
@@ -58,14 +58,15 @@ No Rowboat code is imported; it is read at the pinned SHA as a design reference.
 - Coworker presence must remain visibly unavailable rather than synthesizing activity from Coworker configuration.
 - Memory and context changes never create Grants, Connections, package assignments, schedules, Task dispatch or new agent authority.
 
-## Alternatives and unresolved owner decisions
+## Owner decisions and unresolved contracts
 
-- B-24 remains open: minimum durable Coworker memory record and purge semantics. Existing Personal Profile/Workspace Notes support cannot be relabelled Coworker-private memory.
-- B-25 remains open: whether Quick Create pins a default lead binding or leaves the Coworker unbound pending Feature 002 qualification.
-- Do not resolve either blocker in this research note. Record the decision in SPEC and promote the canonical data/API/event/UI contracts in the same reviewed change.
+- **B-24 is ACCEPTED (2026-11-09):** first Coworker memory is owner-authored Coworker-scoped ContextDocument data; automatic LearningCandidate processing is deferred. Personal Profile or Workspace Notes cannot be relabelled as Coworker-private memory. The accepted decision does not mean the create, retrieval, revoke/purge or UI path is implemented.
+- **B-25 is ACCEPTED (2026-11-09):** Quick Create creates the Coworker and first Conversation as separate idempotent commits and leaves the Coworker UNBOUND until Feature 002 provides a qualified binding. The opened Conversation may exist before Send is enabled.
+- **A-18 is ACCEPTED (2026-11-09):** the create enum stays aligned with the current two-kind domain validator until the scoped Coworker/Goal owner paths exist. COWORKER_NOTES remains a Feature 009 target; do not describe it as currently creatable.
+- **A-91 remains OPEN:** B-24 names MemoryRecordMetadata.status for manual Coworker memory, while LEARNING.md §7 reserves MemoryRecordMetadata for automatic entries with a real LearningCandidate source id. The owner must settle one manual-memory provenance/status representation before T01 finalizes its migration or T05 implements storage. Never invent a candidate id or add a second memory lifecycle.
 
 ## Verification
 
-- Source inspection and targeted recursive symbol search completed 2026-11-06.
+- Source inspection and targeted recursive symbol search refreshed 2026-11-12 against active source checkpoint 6adadab539a62ca1c8b70621c7f88e1785cfe8c2 on main.
 - No runtime, Cargo tests, desktop USER flow or real-provider behavior was exercised in this Feature 009 research pass.
 - Structural package, architecture, route and Markdown validators are run after the documentation changes; those validators do not establish runtime or owner acceptance.

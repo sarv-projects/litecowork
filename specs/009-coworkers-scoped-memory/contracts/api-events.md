@@ -1,6 +1,6 @@
 # API and events - Coworkers and Scoped Memory
 
-**Feature:** 009 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification. | **Source cross-check:** 2026-11-06
+**Feature:** 009 | **Status:** Revision 1.0 ACCEPTED/LOCKED; revision 1.1 amendment IN_REVIEW. A-91 gates manual-memory schema/persistence. | **Source cross-check:** 2026-11-12 at source checkpoint 6adadab539a62ca1c8b70621c7f88e1785cfe8c2
 
 ## Currently served Coworker API
 
@@ -20,11 +20,11 @@ These routes persist Coworker configuration. They do not create a Coworker-owned
 
 ## ContextDocument API boundary
 
-The generic Resource upload request accepts create-time `context_document` metadata and the OpenAPI enum names four kinds. Current `domain-workspace::valid_context_document_metadata` accepts only:
+The generic Resource upload request accepts create-time `context_document` metadata. The canonical `ContextDocumentCreateMetadata.kind` enum is narrowed by accepted A-18 to the two kinds the current `domain-workspace::valid_context_document_metadata` accepts:
 - `PERSONAL_PROFILE` with `owner_ref.kind=USER` and the authenticated `principal_id`;
 - `WORKSPACE_NOTES` with `owner_ref.kind=WORKSPACE` and the selected `workspace_id`.
 
-It rejects `COWORKER_NOTES` and `GOAL_NOTES`. Their appearance in the generic schema, event schema or Coworker Settings does not make those create paths served. ContextDocument status and purge routes operate on supported Resource metadata, not on a Coworker-private memory aggregate.
+It rejects `COWORKER_NOTES` and `GOAL_NOTES`. Those values remain in record/read types and Coworker Settings; their appearance there does not make the create paths served. ContextDocument status and purge routes operate on supported Resource metadata, not on a Coworker-private memory aggregate. B-24 accepts manual Coworker memory as a target; A-91 keeps its metadata/status representation open.
 
 ## Not currently served
 

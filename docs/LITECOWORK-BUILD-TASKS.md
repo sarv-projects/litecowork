@@ -2,13 +2,13 @@
 
 This is the working delivery checklist for the active source tree. It is not a Git commit plan. Feature-specific work items belong in specs/NNN-*/TASKS.md. Product semantics remain in owner contracts; current evidence is in IMPLEMENTATION-STATUS.md.
 
-## Status snapshot (refreshed 2026-11-12, review tip 8432397)
+## Status snapshot (refreshed 2026-11-13, active source checkpoint 6adadab)
 
 The tables below are the plan and carry no per-row status. Per-task status lives in specs/NNN-*/TASKS.md; this snapshot only indexes it. Nothing is INTEGRATED with a live agent or QUALIFIED.
 
 | Group | State | Detail |
 |---|---|---|
-| BT-00 | Partly done | Route inventory generated and matches (178 served / 1 local-only / 53 target-only); CURRENT-RUN.md and IMPLEMENTATION-STATUS.md synced 2026-11-10 |
+| BT-00 | Partly done | Route inventory matches (178 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 53 target-only); CURRENT-RUN.md and IMPLEMENTATION-STATUS.md refreshed 2026-11-13 |
 | BT-01 | CODE and SERVED for BT-01.1, 01.2, 01.4; BT-01.3 CODE (ACP client, OpenCode HTTP adapter kept); BT-01.5 and 01.6 partial | 001 DONE/PARTIAL list in CURRENT-RUN.md; live OpenCode run (001-T09) NOT STARTED |
 | BT-02 | Linux storage tests only; Windows tasks DEFERRED to the owner's Windows laptop | 003-T02 PARTIAL |
 | BT-03 | Registry, descriptors, auth observation, Matchmaker CODE/SERVED; Claude Code module BLOCKED; relay (004) not started | 002 statuses |
@@ -225,7 +225,7 @@ The wired schema is v32 (v30 adds REPORTED turn activity records, 001-T25 storag
 | v35 | 003-T09 (W1) | `context_attachments`, `retrieval_receipts` (renumbered from v32) |
 | v36 | 005-T01 (W2) | Plan acceptance, Attempt admission and Effect records |
 | v37 | 007-T01 (W2) | `artifact_export_receipts`, source Conversation columns |
-| v38 | 009 (W2) | Conversation Coworker origin and memory fields |
+| v38 | 009 (W2) | Reserved for Conversation Coworker origin and manual-memory fields; no migration is written, and A-91 blocks finalizing those fields until the Memory/Coworker owners resolve provenance and status |
 | v39 | 013 (W2/W3) | Package approvals and operation receipts |
 | v40 | 006-T01 (W3) | `connections` rebuild with `REVOKED` and `remote_revocation`, Connection records, and `auth_attempts` (state/expiry/digests only; no verifier or token bytes) |
 | v41 | 008-T01 (W3) | Browser session/lease/receipt and terminal session/receipt |
