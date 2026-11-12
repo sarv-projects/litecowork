@@ -302,7 +302,7 @@ Validation evidence from the connected Windows development machine:
 | Design-depth audit | Passed **0 structural findings** | Inventory and ownership structure only |
 | Feature package validator | Passed **20/20 packages** | SDD structure, not owner acceptance |
 | Markdown link audit | Passed; **0 broken relative links** | Limited literal Markdown-link parser; excludes archives, derived reading notes and reference repositories |
-| Active documentation corpus | 369 Markdown files / 77,084 lines | `python scripts/audit_v1_markdown.py` on 2026-11-13; 0 broken relative links (7,555,775 bytes; full report in `docs/audit/V1-MARKDOWN-AUDIT.md`) |
+| Active documentation corpus | 369 Markdown files / 77,085 lines | `python scripts/audit_v1_markdown.py` on 2026-11-13; 0 broken relative links (7,556,176 bytes; full report in `docs/audit/V1-MARKDOWN-AUDIT.md`) |
 | Frontend production build | Passed; API type check, TypeScript and Vite completed | Main JS bundle 1.05 MB minified / 287 KB gzip; Vite warns over 500 KB |
 | Focused Conversation + responsive tests | **24 passed, 0 failed** | Includes list cursor pagination, pending-create journal retry affordance, repeated-cursor protection, drawer semantics and responsive navigation/canvas assertions |
 | WorkspaceRoot route filter on Windows | **6 passed, 0 failed** | Real SQLite route fixture now uses canonical platform-specific locator and file identity data; no production locator validation was relaxed |
@@ -319,7 +319,7 @@ The Windows workspace and prior 633-test UI suite above are dated evidence from 
 - `.specify/scripts/validate_feature_package.py`: **20/20** structural checks passed; this is not owner approval.
 - `scripts/audit_v1_contracts.py --strict`: **0 errors** (231 OpenAPI operations, 178 mounted OpenAPI routes, 4 authenticated routes served outside OpenAPI, 0 separate local-only registrations, 53 target-only operations); `scripts/audit_served_routes.py` confirms the composed-router inventory.
 - `scripts/validate_architecture.py`: passed with one warning because optional `openapi-spec-validator` is not installed.
-- `scripts/validate_design_owner_consistency.py`: 373 documents / 77,474 lines scanned, 36 encoded assertions passed, 0 issues. `scripts/audit_v1_design_depth.py`: 372 files / 77,063 lines, 0 structural findings. `scripts/audit_v1_markdown.py`: 369 files / 77,084 lines, 7,555,775 bytes, 0 broken relative links. These tools are structural inventories, not semantic line-by-line review.
+- `scripts/validate_design_owner_consistency.py`: 373 documents / 77,475 lines scanned, 36 encoded assertions passed, 0 issues. `scripts/audit_v1_design_depth.py`: 372 files / 77,064 lines, 0 structural findings. `scripts/audit_v1_markdown.py`: 369 files / 77,085 lines, 7,556,176 bytes, 0 broken relative links. These tools are structural inventories, not semantic line-by-line review.
 
 No packaged desktop/provider E2E was run. No fresh native Windows Task, WorkspaceRoot ingestion, Computer capture/input, Browser, PTY, Artifact export or restore qualification was established.
 

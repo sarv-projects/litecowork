@@ -4,7 +4,7 @@ This is the current source and design handoff. It distinguishes the shipped chec
 
 ## Current repository state
 
-- Repository: LiteCowork; branch `main`; source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; documentation HEAD at continuation start `815ec0ffeb2e9b1f7fe55e602e049224f75826a7`. `origin/main` remains at the source checkpoint; `main` was 11 local commits ahead before this documentation tranche.
+- Repository: LiteCowork; branch `main`; source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; documentation tranche commit `769307b` is local. At that commit, `main` was 12 commits ahead of `origin/main`, which remains at the source checkpoint. This handoff note records the delivery outcome below.
 - One worktree. This tranche changes design/status documentation, generated audit inventories and one generated TypeScript API description only; it changes no Rust/Tauri behavior, database migration or runtime route. The global semantic audit remains open; exact Feature 005/009 coverage and current validation evidence are recorded below.
 - Prior normal pushes after `cd5b21f` and `0c556fc` failed: Git Credential Manager cancelled its credential dialog, then Git could not read the GitHub username because `/dev/tty` is unavailable in this non-interactive shell. `gh` is not installed. No authentication change has been observed since those attempts; current edits are not pushed. Do not force-push or rewrite history.
 - The root `AGENTS.md` is already tracked and contains the current operating rules plus next-agent reading order. On this Windows filesystem `agents.md` resolves to the same case-insensitive path; do not add a second case-colliding file.
@@ -35,10 +35,11 @@ The following checks were run against this documentation tranche. They validate 
 - `python .specify/scripts/validate_feature_package.py` — PASS, 20 packages.
 - `python scripts/audit_v1_contracts.py --strict` — PASS, 0 errors; 231 OpenAPI operations (178 mounted, 4 served outside OpenAPI, 53 target-only).
 - `python scripts/validate_architecture.py` — PASS with one warning: optional `openapi-spec-validator` is not installed; 149 typed events and repository checks passed.
-- `python scripts/validate_design_owner_consistency.py` — PASS; 373 documents, 77,474 lines, 36 assertions and 0 issues.
-- `python scripts/audit_v1_design_depth.py --write` — PASS; 372 files, 77,063 lines, 12 domains, 254 function signatures, 201 settings rows, 231 routes (178 served, 4 outside OpenAPI, 53 target-only), 107 tables, 20 packages and 0 findings.
-- `python scripts/audit_v1_markdown.py` — PASS; 369 files, 77,084 lines, 7,555,775 bytes and 0 broken links.
+- `python scripts/validate_design_owner_consistency.py` — PASS; 373 documents, 77,475 lines, 36 assertions and 0 issues.
+- `python scripts/audit_v1_design_depth.py --write` — PASS; 372 files, 77,064 lines, 12 domains, 254 function signatures, 201 settings rows, 231 routes (178 served, 4 outside OpenAPI, 53 target-only), 107 tables, 20 packages and 0 findings.
+- `python scripts/audit_v1_markdown.py` — PASS; 369 files, 77,085 lines, 7,556,176 bytes and 0 broken links.
 - `git -c core.whitespace=cr-at-eol diff --check` — PASS, no whitespace errors.
+- Delivery: commit `769307b` (`docs: reconcile workspace design and audit handoff`) contains the 50 reviewed intended paths. The normal push stalled waiting for GitHub credentials; `git -c credential.interactive=never push origin main` confirmed authentication is unavailable (`fatal: unable to get password from user`). `origin/main` remains unchanged; no force-push or history rewrite was used.
 
 No product test suite, native-provider session, packaged desktop journey or platform qualification was run for this documentation tranche.
 
