@@ -5,7 +5,7 @@ This is the current source and design handoff. It distinguishes the shipped chec
 ## Repository state at review checkpoint
 
 - Repository: LiteCowork; branch `main`; reviewed HEAD `64c435149a82ba952c6c3bf3049e26cf2d9344b1`; `origin/main` is `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`. Local main is three commits ahead of origin.
-- One worktree. The working tree had 141 changed paths at this checkpoint (137 tracked paths and 4 new design/audit documents). These are the ongoing, owner-authorized source, documentation, specification and audit changes. They have not yet been committed or pushed.
+- One worktree. The reviewed 141-path set (137 tracked paths and 4 new design/audit documents) was committed locally as `a6caa8b` (`docs: align workspace design and implementation handoff`). The push attempt failed because Git Credential Manager authentication was canceled/unavailable in this non-TTY session; `origin/main` did not move. This status-only handoff update is also committed locally. At handoff, `main` is five commits ahead of `origin/main` and the working tree is clean.
 - Preserve `audit-output/`, `archives/`, `.agents/`, `repo_take/`, ignored build/dependency data, stashes and other user work. Stage only the reviewed intended paths. No reset, clean, force-push or history rewrite.
 - Active implementation is in `apps/` and `crates/`: Rust daemon/domain/storage, Tauri v2 desktop and React UI. This is not a documentation-only checkout.
 
