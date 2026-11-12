@@ -8,7 +8,25 @@ nodes:
     owner: authenticated Operator
     kind: service
   - id: "owner"
-    owner: domain owner service
+    owner: TaskService
+    kind: service
+  - id: "task-runtime"
+    owner: Task Runtime
+    kind: service
+  - id: "planner"
+    owner: Feature 001 native lead session
+    kind: external
+  - id: "runtime-private"
+    owner: Runtime-private incarnation-scoped Environment state
+    kind: service
+  - id: "trust"
+    owner: Trust / Approval owner
+    kind: service
+  - id: "effect-owner"
+    owner: Effect / CapabilityInvocation owner
+    kind: service
+  - id: "evidence-owner"
+    owner: Evidence owner
     kind: service
   - id: "storage"
     owner: Storage
@@ -17,7 +35,10 @@ nodes:
     owner: Environment provider (Linux bubblewrap first; Windows B-35 PROPOSED)
     kind: external
   - id: "reconciler"
-    owner: Effect Reconciler and independent Verifier
+    owner: Effect Reconciler
+    kind: service
+  - id: "verifier"
+    owner: independent Verification owner
     kind: service
 edges:
   - id: "e-ui-op"
@@ -28,46 +49,147 @@ edges:
     from: "operator"
     to: "owner"
     kind: request
+  - id: "e-op-task-runtime"
+    from: "operator"
+    to: "task-runtime"
+    kind: request
+  - id: "e-task-runtime-planner"
+    from: "task-runtime"
+    to: "planner"
+    kind: request
+  - id: "e-planner-taskservice"
+    from: "planner"
+    to: "owner"
+    kind: proposal
+  - id: "e-op-trust"
+    from: "operator"
+    to: "trust"
+    kind: request
   - id: "e-owner-storage"
     from: "owner"
+    to: "storage"
+    kind: transaction
+  - id: "e-runtime-storage"
+    from: "task-runtime"
     to: "storage"
     kind: transaction
   - id: "e-storage-ui"
     from: "storage"
     to: "ui"
     kind: projection
-  - id: "e-owner-env"
-    from: "owner"
+  - id: "e-runtime-env-provision"
+    from: "task-runtime"
+    to: "env"
+    kind: request
+  - id: "e-env-runtime-private"
+    from: "env"
+    to: "runtime-private"
+    kind: result
+  - id: "e-runtime-private-read"
+    from: "task-runtime"
+    to: "runtime-private"
+    kind: request
+  - id: "e-runtime-private-proof"
+    from: "runtime-private"
+    to: "task-runtime"
+    kind: result
+  - id: "e-runtime-env-write"
+    from: "task-runtime"
     to: "env"
     kind: effect
-  - id: "e-env-owner"
-    from: "env"
-    to: "owner"
-    kind: result
-  - id: "e-owner-reconciler"
-    from: "owner"
-    to: "reconciler"
+  - id: "e-runtime-trust"
+    from: "task-runtime"
+    to: "trust"
     kind: request
-  - id: "e-reconciler-storage"
-    from: "reconciler"
+  - id: "e-trust-effect"
+    from: "trust"
+    to: "effect-owner"
+    kind: decision
+  - id: "e-runtime-effect"
+    from: "task-runtime"
+    to: "effect-owner"
+    kind: request
+  - id: "e-effect-storage"
+    from: "effect-owner"
     to: "storage"
     kind: transaction
+  - id: "e-trust-storage"
+    from: "trust"
+    to: "storage"
+    kind: transaction
+  - id: "e-runtime-reconciler"
+    from: "task-runtime"
+    to: "reconciler"
+    kind: request
+  - id: "e-env-reconciler-result"
+    from: "env"
+    to: "reconciler"
+    kind: result
+  - id: "e-reconciler-effect"
+    from: "reconciler"
+    to: "effect-owner"
+    kind: request
+  - id: "e-reconciler-evidence"
+    from: "reconciler"
+    to: "evidence-owner"
+    kind: request
+  - id: "e-evidence-storage"
+    from: "evidence-owner"
+    to: "storage"
+    kind: transaction
+  - id: "e-reconciler-verifier"
+    from: "reconciler"
+    to: "verifier"
+    kind: request
+  - id: "e-verifier-storage"
+    from: "verifier"
+    to: "storage"
+    kind: transaction
+# tx-attempt records Attempt/lease lifecycle. It does not, by itself, authorize an
+# external Effect or the B-18 file mutation. The dispatch boundary must atomically
+# satisfy the canonical Invocation/Trust/Effect/ApprovalUse/lease admission rule;
+# A-88 leaves the direct writer's exact mapping open for T01.
 transactions:
   - id: "tx-task"
     owner: TaskService
-    atomic_records: ["task","task_spec_revision"]
+    atomic_records: ["task","task_spec_revision","task.created.v1","idempotency_receipt"]
     external_calls_inside: false
   - id: "tx-attempt"
     owner: Task Runtime
-    atomic_records: ["attempt","lease","grant","invocation_intent","idempotency_receipt"]
+    atomic_records: ["attempt","execution_lease","step_current_attempt","attempt.created.v1","lease.acquired.v1","idempotency_receipt"]
     external_calls_inside: false
   - id: "tx-plan-accept"
     owner: TaskService
-    atomic_records: ["plan_revision","steps","task_plan_revised_event","idempotency_receipt"]
+    atomic_records: ["task_aggregate_and_current_plan_pointer","plan_revision","steps","task.plan.revised.v1","step.created.v1","idempotency_receipt"]
+    event_contract: "one step.created.v1 event for each committed Step; see docs/EVENTS.md"
     external_calls_inside: false
-  - id: "tx-effect-settle"
-    owner: Effect Reconciler
-    atomic_records: ["effect","evidence","verification_run"]
+  - id: "tx-effect-propose"
+    owner: Effect owner
+    atomic_records: ["effect","effect_aggregate_state","effect.proposed.v1","idempotency_receipt"]
+    external_calls_inside: false
+  - id: "tx-effect-transition"
+    owner: Effect owner
+    atomic_records: ["effect","effect_aggregate_state","idempotency_receipt"]
+    event_contract: "one applicable canonical non-STARTED Effect transition event; see docs/EVENTS.md"
+    external_calls_inside: false
+  - id: "tx-mediated-invocation-dispatch"
+    owner: Invocation + Trust + Effect + ApprovalUse + lease owners
+    atomic_records: ["capability_invocation","effect","approval_use_consumption","execution_lease_admission_and_fence","aggregate_state_snapshots","idempotency_receipt"]
+    required_atomic_gates: ["Trust authorization decision","Effect transition to STARTED","ApprovalUse consumption","ExecutionLease admission and fence"]
+    event_contract: "canonical Invocation status and effect.started.v1 events; see docs/EVENTS.md"
+    external_calls_inside: false
+  - id: "tx-evidence-append"
+    owner: Evidence owner
+    atomic_records: ["evidence","evidence_aggregate_state","evidence.created.v1","idempotency_receipt"]
+    external_calls_inside: false
+  - id: "tx-verification-create"
+    owner: Verification owner
+    atomic_records: ["verification_run","pinned_resource_inputs","dependency_edges","verification.started.v1","aggregate_state","idempotency_receipt"]
+    external_calls_inside: false
+  - id: "tx-verification-settle"
+    owner: Verification owner + Evidence owner
+    atomic_records: ["verification_run","verified_evidence_if_passed","aggregate_state","idempotency_receipt"]
+    event_contract: "verification.completed.v2 and evidence.created.v1 when PASSED; see docs/EVENTS.md"
     external_calls_inside: false
 external_boundaries:
   - id: "outside-sqlite"
@@ -80,19 +202,39 @@ recovery:
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
 
-# Current source boundary checked 2026-11-06
+# Current source boundary cross-checked 2026-11-12
 # The graph above is the target sequence, not currently integrated execution wiring.
-# In the active checkout, create_task commits only Task + TaskSpecRevision.
-# get_task_planning_readiness prepares a read-only preflight and returns dispatch_available=false;
-# LocalPlanningPreflight::require_dispatch remains dead-code and fails closed.
-# No production daemon caller of admit_step_attempt was found. Attempt process-scope
-# journaling is staged/dead-code. Plan submission, Attempt, Effect and Environment
-# provision/control routes are target-only. Do not mark the env/effect edges INTEGRATED
-# or QUALIFIED until the real provider and end-to-end write/reconciliation tests exist.
+# In the active checkout, Task create/spec edit and read-only planning readiness are served.
+# The readiness path returns dispatch_available=false; LocalPlanningPreflight::require_dispatch
+# remains dead-code and fails closed. No production daemon caller of admit_step_attempt was found.
+# Environment probes do not provision a Task Environment or produce an attestation; on Windows
+# the provider reports no Task-capable LocalWorkspace class/lifetime, and a trusted Bubblewrap
+# candidate on Linux is discovery evidence only. Attempt process-scope journaling is staged/dead
+# code. Plan submission, Attempt admission, Effect dispatch, reconciliation and Environment
+# provision/control routes are target-only. Do not mark execution edges INTEGRATED or QUALIFIED
+# until the real provider and packaged write/recovery journey exist.
+# The planner readiness gate also requires private current-incarnation Environment evidence. A-70
+# leaves open whether this gate's Environment is reused for the execution Attempt or provisioned
+# separately; the native lead receives no Environment handle or attestation.
 
 # Owner acceptance 2026-11-09 (docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md): status ACCEPTED/LOCKED
 # authorizes implementation of this target wiring. It does not make any edge SERVED, INTEGRATED
-# or QUALIFIED. Every edge above remains TARGET until TASKS.md evidence exists. The env node is
+# or QUALIFIED. Every execution edge above remains TARGET until TASKS.md evidence exists. The env node is
 # the Linux bubblewrap provider first; on the Windows row the env edges stay unavailable until
-# B-35 (PROPOSED, pending owner) is accepted and qualified. tx-plan-accept, tx-effect-settle and
-# the reconciler node are accepted target wiring added in revision 1.0, not yet in source.
+# B-35 (PROPOSED, pending owner) is accepted and qualified. Plan/Attempt/effect/reconcile/verify
+# nodes and transactions are TARGET and not yet integrated in source.
+#
+# A-88/A-90: docs/STORAGE.md and docs/TRUST.md define Task Attempt/lease, Effect,
+# Evidence, VerificationRun, grant, and ApprovalUse owner boundaries. STORAGE also
+# requires mediated invocation dispatch to bind Trust, Effect, ApprovalUse and lease
+# admission atomically. T01 must resolve whether the direct B-18 writer uses that path or
+# another owner-approved atomic composition; do not infer a sequential post-admission
+# lease check is sufficient. Its exact action, durable payload and Attempt-bound grant
+# remain open. A request-supplied grant-shaped object is not authority. Environment
+# attestation remains in Runtime-private incarnation-scoped state and must not enter a
+# public request, event, aggregate snapshot, or Agent packet. VerificationRun start uses
+# the canonical verification.started.v1 event; terminal settlement uses the applicable
+# canonical verification.completed event.
+# The Effect transition transaction above excludes STARTED; Storage currently rejects
+# that transition until the canonical atomic mediated-dispatch transaction is available.
+# Its direct use by the B-18 file writer remains unresolved at A-88.

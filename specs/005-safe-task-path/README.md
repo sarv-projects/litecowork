@@ -1,8 +1,8 @@
 # 005 - Safe Task Path
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Revision:** 1.0 | **Updated:** 2026-11-11
-**Implementation state (2026-11-11):** Partial foundations are served for Task create/read, plan acceptance storage, planning readiness and presentation. T02 now consolidates shared Environment types and trust-checked Bubblewrap discovery (Windows CODE evidence only). A complete admitted Task execution path is not implemented. T14 has a partial Windows UNAVAILABLE implementation; T16 (B-35), T17 and T18 remain owner-blocked/deferred. See TASKS.md and docs/IMPLEMENTATION-STATUS.md.
+**Revision:** 1.0 | **Updated:** 2026-11-12
+**Implementation state (2026-11-12):** Partial foundations are served for Task create/read, plan acceptance storage, planning readiness and presentation. T02 has consolidated shared Environment types and trust-checked Bubblewrap discovery (CODE only; it does not provision or attest a Task Environment). A complete admitted Task execution path is not implemented. T14 has a partial Windows UNAVAILABLE implementation; T16 (B-35), T17 and T18 remain owner-blocked/deferred. T01 remains NOT STARTED and precedes further implementation. The current cross-layer review found unresolved planner/Attempt Environment identity and lifecycle (A-70), durable-payload, Attempt/Effect transaction-mapping and FileWriteGrant authority-semantics gaps (A-87/A-88/A-90) that T01 must settle. See TASKS.md and docs/IMPLEMENTATION-STATUS.md.
 **Owners:** Task Runtime, Environments, Trust, Storage, Desktop UI. Accepted by the repository owner via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md).
 
 ## User outcome

@@ -9,9 +9,10 @@ Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs
 1. The owner explicitly creates a Task from a standalone objective or a separately reviewed Conversation promotion action. Ordinary Conversation Send never creates a Task.
 2. Home shows the exact selected Workspace, lead/Coworker, pinned input Resource revisions and the durable Task-save action. A successful save confirms only Task + TaskSpecRevision creation.
 3. Work shows Task objective/spec history and planning readiness. The owner reviews an immutable proposed plan and explicitly accepts a version-pinned PlanRevision before any Attempt can start.
-4. The execution view distinguishes plan Steps, Attempt state, selected Environment and its exact isolation attestation, scoped grants/approvals, proposed/started/ambiguous/reconciled Effects, Evidence and verification runs.
-5. A file change is not shown as successful until the exact admitted write is reconciled and independently verified. UNKNOWN/AMBIGUOUS remains visibly unresolved. Restart does not replay an ambiguous write automatically.
-6. Cancel/pause/resume/recover controls exist only when their owning Operator handlers are served and their state-transition preconditions can be confirmed. UI does not encode its own Task state machine.
+4. The execution view distinguishes plan Steps, Attempt state, selected Environment, the four enforcement statuses and an owner-approved safe evidence summary, scoped grants/approvals, proposed/started/ambiguous/reconciled Effects, Evidence and verification runs. The private attestation body and provider handles stay Runtime-local.
+5. Before approval, Work presents a bounded preview of the exact proposed path change and binds the user's approval to the path, base digest, new-content digest and plan action digest. If the base changes, content is unavailable, or the preview cannot be verified, approval is unavailable and no write starts. The durable payload reference and replay behavior remain open at A-87. Work displays only owner-projected grant/approval scope; a UI request or caller-supplied `FileWriteGrant` object cannot create or assert authority (A-90).
+6. A file change is not shown as successful until the exact admitted write is reconciled and independently verified. UNKNOWN/AMBIGUOUS remains visibly unresolved. Restart does not replay an ambiguous write automatically.
+7. Cancel/pause/resume/recover controls exist only when their owning Operator handlers are served and their state-transition preconditions can be confirmed. UI does not encode its own Task state machine.
 
 ## Current UI implementation crosswalk (not the target)
 
@@ -37,6 +38,7 @@ Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs
 - Plan acceptance is version-pinned and precedes Attempt admission; stale TaskSpec/producer scope is rejected.
 - Environment status distinguishes capability probe, provisioned state, exact enforcement evidence and unavailable/unknown dimensions.
 - During a write, cancellation and restart require exact quiescence and Effect reconciliation. AMBIGUOUS is never presented as success or safe-to-retry.
+- Approval is bound to the exact preview digest; a changed base or content invalidates it, and unavailable/stale preview states expose no approval action.
 - Output/result labels distinguish committed Artifact, Evidence, and independently PASSED verification.
 
 ## Validation

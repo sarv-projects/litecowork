@@ -12,7 +12,7 @@ The tables below are the plan and carry no per-row status. Per-task status lives
 | BT-01 | CODE and SERVED for BT-01.1, 01.2, 01.4; BT-01.3 CODE (ACP client, OpenCode HTTP adapter kept); BT-01.5 and 01.6 partial | 001 DONE/PARTIAL list in CURRENT-RUN.md; live OpenCode run (001-T09) NOT STARTED |
 | BT-02 | Linux storage tests only; Windows tasks DEFERRED to the owner's Windows laptop | 003-T02 PARTIAL |
 | BT-03 | Registry, descriptors, auth observation, Matchmaker CODE/SERVED; Claude Code module BLOCKED; relay (004) not started | 002 statuses |
-| BT-04 | Not started | 005; Windows Environment provider B-35 still PROPOSED |
+| BT-04 | Not started | 005; T02 has partial CODE ahead of its T01 dependency; A-70 planner/Attempt Environment lifecycle and A-87/A-88/A-90 require owner resolution before execution/write-path implementation; B-35 remains PROPOSED |
 | BT-05 | 013 part: whole package DEFERRED by the owner (A-62). 006 part: BLOCKED on B-19/A-82 owner decisions; E2E-05 Task-write row order remains OPEN under A-80 | See the DEFERRED note in specs/013-litespm-package-lifecycle-bridge/TASKS.md and A-80/A-82 in the contradiction register |
 | BT-06 to BT-09 | Existing foundations only; 010-T19 deferred out of V1. Feature 016 baseline acceptance is pending; A-84 separates its revision 0.2 extension decision and A-85 blocks MCP proposal exposure pending a canonical tool-input/sequence contract. | 007, 016, 008, 009, 010 |
 | BT-10 | Partly done for Linux; Windows and packaged rows DEFERRED | 011 DONE T01, T04, T05, T07, T08, T09, T10, T21 |
@@ -64,6 +64,8 @@ The tables below are the plan and carry no per-row status. Per-task status lives
 | BT-03.4 | Preserve native model/mode/effort/options and unsupported behavior | Descriptor freshness/conformance tests |
 
 ## BT-04 — Safe Task execution (Feature 005)
+
+Implementation gate: complete 005-T01 first. Resolve A-70's planner and Attempt Environment identity/lifecycle with Feature 015. T05 may not treat unmediated native tools as a disclosed-only limitation (A-89). Before 005-T08, Task Runtime, Trust and Storage must resolve the durable exact file-content input (A-87), Attempt/Effect/ApprovalUse transaction map (A-88), and request-versus-authority semantics for FileWriteGrant (A-90). Preserve Linux-first qualification and the Windows UNAVAILABLE posture until B-35 qualifies.
 
 | ID | Task | Exit evidence |
 |---|---|---|

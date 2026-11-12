@@ -319,3 +319,50 @@ Supplemental total: **44 files / 5,384 lines**. Features 006 and 007 were partly
 ### Scope remains open
 
 This supplement does not complete the user's all-document/all-code line-by-line request. The original ledger still includes inventory-only and partial coverage for other feature packages; most global design documents and the active Rust/Tauri/React source have not received a complete semantic reread. Keep the overall audit OPEN and continue with explicit path/range/hash accounting; do not claim a full repository audit from this supplement or from structural validators.
+
+## Supplemental Feature 005 review — 2026-11-12
+
+The reviewer read all 11 current Feature 005 normative files line by line before the latest corrections below. The table's counts and hashes are for the reviewed post-correction content; edited paragraphs and the full intended-path diff were reread after each correction. Per-file SHA-256 values hash the exact current file bytes. The package manifest is recomputed from UTF-8/LF records sorted by repository path, each record `<raw-file-SHA-256><two spaces><repository-path><LF>`.
+
+| Feature | Files | Lines | Current full-file review coverage | Package manifest SHA-256 |
+|---|---:|---:|---|---|
+| 005 Safe Task Path | 11 | 1,430 | `README.md` 1-28; `SPEC.md` 1-393; `PLAN.md` 1-49; `TASKS.md` 1-446; `DATA-MODEL.md` 1-47; `RESEARCH.md` 1-105; `WIRING.yaml` 1-240; `contracts/README.md` 1-9; `contracts/api-events.md` 1-30; `contracts/errors-recovery.md` 1-37; `contracts/ui-behavior.md` 1-46 | `259b72204b31fba6da4bf181131ebd6b916e06a21936de25ce7124462ab6161a` |
+
+Per-file SHA-256:
+
+| File | Lines | SHA-256 |
+|---|---:|---|
+| `specs/005-safe-task-path/README.md` | 28 | `f699572f659abc824b2a9f0c2a0f4427cbbc5c42933e87fcb03a8ebab854eaa5` |
+| `specs/005-safe-task-path/SPEC.md` | 393 | `c012298daa897699577be4ee910a1082fc68b2965c024a88e6cd775719d4bc2b` |
+| `specs/005-safe-task-path/PLAN.md` | 49 | `0e3d977b33ccc2777c80c45673430cf56ad2a181931d4b4f76b1c6b0b8e6fd8b` |
+| `specs/005-safe-task-path/TASKS.md` | 446 | `df9ac27946ea8c4f4b4643ce8217487c41954ae61dfec51c318a819e210777b0` |
+| `specs/005-safe-task-path/DATA-MODEL.md` | 47 | `c328765ae929f7b47dc3ea4935e47f0e9d4fa617cf7d568c709fdaa106b303df` |
+| `specs/005-safe-task-path/RESEARCH.md` | 105 | `eefcc259dddfbda56e482e589259a0938f661c0127f128e8357512c7bad6eed6` |
+| `specs/005-safe-task-path/WIRING.yaml` | 240 | `cb37e18d11be31224fdc49169296c8fe37b1a9836ce7d6390fed765ba8d86b2e` |
+| `specs/005-safe-task-path/contracts/README.md` | 9 | `17f83e0c247dded860f400051fd12885da0fce956fb02f922cc37779c26f205c` |
+| `specs/005-safe-task-path/contracts/api-events.md` | 30 | `ac2d7d80355cca8fc5f933a2016f8df8d40ef173eb9c74327b14006af89f4a9b` |
+| `specs/005-safe-task-path/contracts/errors-recovery.md` | 37 | `a44b577d74304cca37b3758168af61571955f68a2d78b3b251337399d193e5c8` |
+| `specs/005-safe-task-path/contracts/ui-behavior.md` | 46 | `6576389cc74ca846bdd30aa4bc756a624945286e04b77c2e0961d29dbab440c3` |
+
+### Source and owner-contract cross-check
+
+- `apps/litecoworkd/src/agents/planning.rs` prepares the bounded packet but sets `dispatch_available: false`; `require_dispatch()` fails closed. `apps/litecoworkd/src/operator.rs` planning readiness checks Workspace ownership and Task version, and returns the four dispatch/planning/session/plan booleans as false. This is a read-only preflight, not a planner journey.
+- `apps/litecoworkd/src/environment_provider.rs::probe_environment_provider` reports observations. A trusted Linux Bubblewrap candidate can expose a candidate LocalWorkspace class, but the probe does not provision or attest a Task Environment. The Windows branch reports no Task-capable LocalWorkspace class/lifetime; Job Object support remains process-lifetime evidence only.
+- `crates/storage-sqlite/src/lib.rs::accept_initial_plan_transaction` is CODE: it checks authenticated Workspace ownership, Task/spec/status/version, the current lead planner's active session/runtime/host binding, request digest/replay, and commits Task aggregate/current-plan pointer, PlanRevision, Steps, `task.plan.revised.v1`, `step.created.v1` events and receipt in one immediate transaction. The submit route is target-only and the planner cannot currently start; missing negative/replay/race/rollback coverage is not implied by the active-producer test.
+- `crates/storage-sqlite/src/effect_evidence.rs` has separate Effect proposal, non-STARTED transition, and Evidence append writers; the STARTED transition fails closed while atomic Invocation/Trust/ApprovalUse admission is missing. `docs/STORAGE.md` requires mediated invocation dispatch to bind Trust, Effect, ApprovalUse and lease admission atomically.
+- `rg admit_step_attempt apps crates` found the port/domain/storage definitions and no production daemon caller. `apps/litecoworkd/src/attempt_process_scope.rs` remains `allow(dead_code)`; neither a production Environment attestation producer nor the recovery journal is wired.
+- `apps/litecowork-ui/src/App.tsx` has a standalone Home “Save a Task” flow and read-only Task detail. `apps/litecowork-ui/src/conversations/ConversationsPage.tsx` has no Conversation-to-Task promotion action. The sidebar renders four permanent workspace destinations, Needs You, Recent Chats/New Chat and footer Settings; secondary routes are grouped under More, while the More disclosure key changes on a secondary route and can remount/drop focus (M17).
+- Re-read `docs/TASK-RUNTIME.md`, `docs/ENVIRONMENTS.md`, `docs/TRUST.md`, `docs/STORAGE.md` and `docs/EVENTS.md` against the feature. The planner gate and Attempt admission require Runtime-private current-incarnation Environment evidence, but their Environment identity and lifecycle relation remains open under A-70; provider actions stay outside SQLite. Do not assume the direct B-18 writer can commit Attempt/lease and then perform a later independent Trust check: A-88 must resolve how it satisfies Storage's atomic mediated-dispatch rule.
+
+### Corrections and open owner decisions
+
+- M06/A-71 described the baseline conflict between a bundled invocation-intent record and WIRING. The current Feature 005 SPEC no longer prescribes an `invocation_intent` record in Attempt admission, and WIRING now lists owner-separated Attempt, Effect, Evidence and verification boundaries. This removes the baseline mismatch; it does not settle whether the direct B-18 writer needs an intent or which transaction admits it. A-88 remains OPEN, and no intent can substitute for a mediated Effect receipt.
+- A-86 removes caller-supplied `IsolationAttestation`/Environment handles from the target request; the proof is Runtime-private and current-incarnation scoped. A-89 keeps unmediated native capabilities as a hard planning blocker, not a disclosed-only limitation.
+- A-87 remains OPEN: the approved exact new bytes have no canonical durable content reference, bounded preview, digest binding, lost-response replay or restart lookup.
+- A-88 remains OPEN: the prior bundled Attempt/lease/grant/`Effect PROPOSED` prose and grouped settlement inventory conflicted with owner transaction boundaries. The wiring now lists owner boundaries, but the direct writer must still be mapped to mediated Invocation dispatch or another owner-approved atomic composition. Storage's Trust/Effect/ApprovalUse/lease atomicity cannot be weakened by Feature 005.
+- A-90 remains OPEN: `AdmitFileWriteAttempt.grant` is not defined as an untrusted scope request versus a durable Trust-issued grant. T01 must define owner lookup/creation, Attempt binding and one-time ApprovalUse semantics; request data cannot assert authority.
+- A-70 remains OPEN across Features 005/015 for the planner-gate versus Attempt Environment identity/lifecycle, child Attempt provisioning order and cleanup owner. The Feature 005 source checkpoint has T02's safe type/probe CODE slice ahead of its T01 dependency; preserve it but do not extend it into provider integration or admitted execution. The T03 storage transaction is CODE only, not a served plan submission or usable planner.
+- The supplied intelligent-UI essay was compared with existing Feature 016, `docs/RICH-RESPONSE.md`, `docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md` and `docs/ACP-PRESENTATION-PIPELINE-LLD.md`. The useful declarative registered renderer, deterministic local computation, semantic fallback, inline-to-Canvas continuity and provenance are already represented. ACP itself does not define a component tree; an optional narrow proposal tool remains blocked by A-85/provider-session evidence. Arbitrary generated React/HTML/JS, a hidden second model pass, global BYOK router, Next.js/PostgreSQL replacement and duplicate UI schema are not adopted. Feature 016's persistent state/conversational modification remains revision 0.2 IN_REVIEW, not accepted V1 scope.
+- The Computer proposal already specifies a user-picked display/window, separate local-preview / agent-disclosure / input permits, newest-frame-only bounded delivery, no recording by default, measured adaptive quality, a persistent in-app **Take over / Stop run** strip and a qualified out-of-app emergency path. Take over fences input while leaving reasoning active; Stop run separately requests Conversation or Task cancellation. These remain TARGET/IN_REVIEW and provider-gated; the current Computer panel is unavailable.
+
+This remains a bounded module supplement. Other feature packages still have inventory-only or partial semantic coverage, and most active source plus global owner documents have not been read line by line. The full repository audit is still OPEN; the exact ledger, not the word “supplement,” determines coverage.

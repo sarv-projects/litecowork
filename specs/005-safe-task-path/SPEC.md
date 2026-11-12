@@ -3,7 +3,7 @@
 **ID:** 005
 **Status:** ACCEPTED/LOCKED
 **Owners:** Task Runtime, Environments, Trust, Storage, Desktop UI
-**Updated:** 2026-11-09
+**Updated:** 2026-11-12 (source crosswalk and open owner-mapping review; accepted revision remains 1.0)
 **Revision:** 1.0
 **Owner acceptance:** accepted 2026-11-09 by the repository owner (sarv-projects) via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md) (PR #1), including every "ACCEPT (scoped)" caveat and the B-17 rider as binding conditions.
 **Revision note:** revision 1.0 adds V1 gap coverage per owner acceptance 2026-11-09: the Conversation-to-Task promotion control (AC-013), the Windows-row UNAVAILABLE posture for Task execution (AC-014), the observed-launch Linux attestation rule (AC-015), the atomic-replace crash rule (AC-016) and the PROPOSED Windows Environment provider B-35 (AC-017, pending owner).
@@ -41,7 +41,7 @@ The active checkout contains a partial Task record/specification/read model, a r
 | Task/specification read and edit | CODE/SERVED: Task list/get, `POST /v1/tasks/{task_id}/spec-revisions`, plan-revision list, Step list, Conversation Task list, Task artifacts, presentation/progress, capability-invocation and verification-run read views | These are durable records and read projections. Reading existing Steps/Attempt/Evidence is not an Attempt admission path. |
 | Task lead selection | CODE/SERVED: Task create resolves explicit preferred binding, then selected Coworker default, then Workspace default; missing lead fails `AGENT_UNAVAILABLE`. Owner Task lead handoff is served via `POST /v1/tasks/{task_id}/lead-agent` and commits a Task lead change. | Changing the lead does not start planning or create an Attempt. There is no substitute-agent execution fallback. |
 | Planning readiness | CODE/SERVED: `GET /v1/tasks/{task_id}/planning-readiness` validates Workspace ownership and `If-Match`, prepares a bounded internal planning packet, and returns a read-only projection | Response hardcodes `dispatch_available=false`, `planning_started=false`, `agent_session_started=false`, `plan_created=false`. Current blockers include isolation, unmediated native capabilities, protocol/process qualification, planning context materialization and session settlement. No provider is invoked. |
-| Plan acceptance | Only `GET /v1/tasks/{task_id}/plan-revisions` is served; `POST /v1/tasks/{task_id}/plan-revisions` (`submitTaskPlan`) is target-only | No authenticated Operator plan-acceptance handler or user acceptance flow. `PlanRevision` and `Step` types/storage exist but are not produced by the current Task UI flow. |
+| Plan acceptance | Only `GET /v1/tasks/{task_id}/plan-revisions` is served; `POST /v1/tasks/{task_id}/plan-revisions` (`submitTaskPlan`) is target-only. CODE: `accept_initial_plan_transaction` checks Workspace ownership, Task/spec versions and state, active planner session/runtime/host binding, request digest/replay; then atomically writes Task aggregate/current-plan pointer, PlanRevision, Steps, their events and a receipt. | No authenticated Operator plan-acceptance handler or usable live planner exists. The planner dispatch gate remains closed, so this storage transaction is not an integrated plan-production path; negative/replay/concurrency/rollback acceptance coverage remains incomplete. |
 | Attempt admission and recovery | Attempt/lease admission state types and SQLite storage methods exist in domain/storage crates with unit tests | No Task daemon route or production caller of `admit_step_attempt` was found. Attempt list, Effect list, recovery, pause/resume/cancel/steer and environment control routes are target-only. `attempt_process_scope.rs` explicitly says its containment/journal remains staged and is `allow(dead_code)`. |
 | Environment provider | CODE (checked 2026-11-12): `probe_environment_provider` reports platform/provider observations. Windows reports no Task-capable `LocalWorkspace` class or supported lifetime and returns a typed planning blocker. Linux only reports a local workspace class if the canonical trust-checked Bubblewrap probe finds an eligible candidate; that probe does not attest isolation. | Provider probe is not provisioning or Task invocation. Budget enforcement is `Unavailable`; checkpoint/restore and persistent Workspace lifetime are false. No Task API provisions or attaches an Environment. Job Object support in `windows-local-security` is a process-lifetime primitive only, not a Windows Environment provider. |
 | Isolation/quiescence evidence | CODE: `IsolationAttestation`, enforcement dimensions and fail-closed admission checks exist in `environment_isolation.rs`; process-scope journal/proof types exist | Search found no production caller wiring those attestations into Task Attempt admission or recovery. A Windows Job Object is process-tree containment evidence; by itself it does not prove filesystem-root confinement, network denial or resource-budget enforcement. |
@@ -83,6 +83,8 @@ B-17 and B-18 were accepted by the repository owner on 2026-11-09 via [docs/OWNE
 | B-18 | First mediated file-operation class | **ACCEPTED (2026-11-09): The one write primitive is atomic whole-file replacement of exactly one approved file.** Contract: input is a new-content blob bound to the approved plan digest; the base is the pinned prior revision digest; maximum 1 MiB; the path must resolve inside the admitted WorkspaceRoot with no symlink escape; the provider writes to a temporary file, fsyncs, then atomically renames over the target; on an `INTEGRITY_FAILURE` or ambiguous result it rolls back and reconciles before any retry; an independent post-write verifier recomputes the digest against the approved content. Arbitrary shell commands and general workspace writes are not an equivalent first slice. | [TASK-RUNTIME.md](../../docs/TASK-RUNTIME.md), [ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md), [TRUST.md](../../docs/TRUST.md). The write runs outside SQLite after the Attempt/lease/grant/receipt commit; the verifier makes success independently provable. |
 | B-35 | Windows Environment provider for safe Task execution | **PROPOSED (pending owner): a Windows local Environment provider built from an AppContainer (filesystem and object-namespace confinement to the admitted roots through explicit capability SIDs and ACLs), a restricted token (no privileges, deny-only administrator and user groups), a Job Object (process-tree lifetime, KILL_ON_JOB_CLOSE, active-process, memory and CPU limits) and a Windows Filtering Platform egress policy (default-deny outbound for the AppContainer package SID), with all four isolation dimensions (filesystem, process-tree, network, resource-limit) ENFORCED and attested in a current-incarnation `IsolationAttestation` from an observed launch.** Delivered as a V1 task after the Linux bubblewrap slice qualifies. A Job Object alone is never described or attested as a sandbox; any dimension that is UNKNOWN or NOT_ENFORCED fails admission closed. | [ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md), [TRUST.md](../../docs/TRUST.md), [NETWORK-SECURITY.md](../../docs/NETWORK-SECURITY.md). Until B-35 is owner-accepted and its provider qualifies on the exact Windows build, Task execution and the daemon-owned terminal on the Windows release row remain visibly UNAVAILABLE (AC-014). Owner: Environments with Security; decision needed from the repository owner. |
 
+The accepted B-18 outcome remains one exact, bounded, independently verified file replacement. Its summary wording about Attempt/lease/grant/receipt ordering does not settle the database transaction composition or define whether `FileWriteGrant` is request data or durable Trust authority; A-88/A-90 remain open. AC-005's phrase “invoke the Environment” must distinguish provisioning/attestation before Attempt admission from the file mutation after the owner-approved dispatch admission. The planner readiness gate and Attempt admission both require current-incarnation Environment evidence, but their Environment identity and lifecycle relationship is unresolved at A-70. T01 must clarify these boundaries without weakening STORAGE/TRUST atomicity; any changed accepted interface or AC requires a renewed SPEC revision and owner review.
+
 B-17 and B-18 are owner-accepted and the package is ACCEPTED/LOCKED. B-35 is PROPOSED only; its tasks stay BLOCKED until the owner accepts it. Implementation and qualification status are unchanged by acceptance and are tracked in §4 and [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md).
 
 ## 6. High-level design
@@ -93,22 +95,30 @@ UI promotes work with an explicit command. TaskService commits Task and TaskSpec
 
 ```mermaid
 flowchart TD
-  UI[Desktop Work UI: promote, accept plan, approve] --> OP[Authenticated Operator]
+  UI[Desktop Work UI: promote, accept plan, review file diff, approve] --> OP[Authenticated Operator]
   OP --> TS[TaskService]
-  TS --> DB[(SQLite Task/Plan/Attempt/Effect store)]
-  TS --> PL[Planner session Feature 001 native lead]
-  OP --> AA[Attempt Admission transaction]
+  TS --> DB[(Durable Task / Plan records)]
+  TS --> TR[Task Runtime: planning admission + Attempt lifecycle]
+  TR --> PL[Planning session: Feature 001 native lead]
+  PL --> TS
+  OP --> TRUST[Trust / Approval owner]
+  TRUST --> DB
+  TR --> PROV[Environment Provider: provision + observed probe outside SQLite]
+  PROV --> PRIVATE[Runtime-private current-incarnation Environment evidence]
+  PRIVATE -. local planner-admission gate; no handle to lead .-> TR
+  TR --> AA[Attempt / lease and file-dispatch admission OPEN A-88]
+  TRUST --> AA
+  PRIVATE -. resolve and validate locally .-> AA
   AA --> DB
-  AA --> ENV[Environment Provider + IsolationAttestation]
-  ENV -. attestation .-> AA
-  ENV --> FW[Atomic file write outside SQLite]
-  FW --> REC[Effect Reconciler]
-  REC --> VER[Independent Verifier digest compare]
+  AA --> FW[Admitted file-write call outside SQLite]
+  FW --> ENV[Environment Provider: atomic whole-file replacement]
+  ENV --> REC[Effect Reconciler]
   REC --> DB
+  REC --> VER[Independent Verifier: fresh confined handle + digest]
   VER --> DB
 ```
 
-The Attempt-admission transaction, the Environment provider attestation gate, the reconciler and the independent verifier are the feature-specific components; Task/Plan records and Trust decisions remain owned by TASK-RUNTIME/TRUST and are not redefined.
+The planning admission also requires a current-incarnation Environment attestation, but the target does not establish whether that Environment is retained for execution or whether an Attempt receives a newly provisioned Environment. Resolve the required scope, identity, owner and recovery sequence under A-70; until then planning stays blocked. Provisioning and observed probes run outside SQLite. The provider's attestation is stored only in Runtime-private state; the UI, public request and planning lead never receive its body or a provider handle. The user reviews the exact bounded file diff before approval binds the path/base/content/plan digest. Task Runtime and Trust retain their owner responsibilities; the transaction composition that admits an Attempt/lease and authorizes direct B-18 dispatch remains open under A-88. Storage requires mediated capability dispatch to bind Trust, Effect, ApprovalUse and lease admission atomically. The diagram marks that composition as unresolved rather than implying that sequential transactions are acceptable. The file mutation is a later provider call outside SQLite.
 
 ### Trust boundaries
 
@@ -117,21 +127,23 @@ The desktop UI is untrusted; the authenticated Operator is the only command path
 ### Actor sequence (target)
 
 1. Owner explicitly promotes a Conversation outcome or submits a standalone objective; TaskService commits Task + TaskSpecRevision (no Attempt).
-2. Planner admission revalidates a current-incarnation `IsolationAttestation`; without it, planning returns `DEPENDENCY_UNAVAILABLE`.
+2. Before planner admission, the Runtime must have the current-incarnation Environment evidence required by the readiness gate and revalidate it from private state; without it, planning returns `DEPENDENCY_UNAVAILABLE`. The planning lead receives no Environment handle or attestation. T01 must define whether this Environment is reused for execution or is separate from an Attempt-bound Environment (A-70).
 3. Owner accepts an immutable PlanRevision and Steps atomically (If-Match on TaskSpec head).
-4. Attempt admission commits Attempt + ExecutionLease + grant + idempotency receipt in one transaction; the Environment is attached before that commit.
-5. The provider performs the atomic whole-file replace outside SQLite.
-6. The reconciler settles the Effect; the independent verifier recomputes the digest; cancel/restart fence the lease and never report success without verification.
+4. The Runtime provisions/attaches the Environment bound to the next Attempt and validates its current-incarnation attestation before Attempt admission; a failure leaves no admitted Attempt. Its identity and lifecycle relationship to the planning-gate Environment remain unresolved under A-70.
+5. T01 defines the owner-approved atomic admission boundary for the Attempt/lease and direct B-18 Effect/Trust/ApprovalUse dispatch. Every record and decision required to authorize that file dispatch, its exact action digest, current lease fence and durable replay receipt must commit together before file mutation. Any approved transactions before or after this boundary must not split STORAGE's atomic mediated-dispatch invariant or authorize a later write from a separately committed lease alone.
+6. The provider performs the atomic whole-file replace outside SQLite.
+7. The reconciler settles the Effect and the independent verifier recomputes the digest; cancel/restart fence the lease and never report success without verification.
 
 ### Ownership
 
 | Owner | Responsibility | Excluded responsibility |
 |---|---|---|
-| Desktop UI | Promote command, plan acceptance, approval, durable receipt display | Starting execution on its own |
+| Desktop UI | Promote command, plan acceptance, exact file-diff review, approval, durable receipt display | Starting execution on its own |
 | Operator | Auth, Workspace scope, plan-acceptance and attempt validation | Running the filesystem write |
 | TaskService | Task/spec/plan commits, lead resolution | Isolation enforcement |
 | Environment Provider | Attestation, confined roots, process-tree/network/limits | Task outcome authority |
-| Attempt Admission | Atomic Attempt/lease/grant/receipt commit | External call inside the transaction |
+| Attempt Admission | Atomic Attempt/lease admission and current-incarnation binding | External call inside the transaction |
+| Trust / Effect admission | Exact-action approval, grant use and dispatch admission under canonical owner transactions | Accepting model/provider assertions as approval |
 | Effect Reconciler + Verifier | Reconcile ambiguous writes, independent digest verify | Inferring success from intent |
 | Storage | Atomic commits, fences, receipts | External process/network calls |
 
@@ -139,7 +151,7 @@ Trust boundary: the desktop UI is untrusted; the authenticated Operator is the o
 
 ## 7. Low-level design and interfaces
 
-CreateTaskRequest fields follow TASK-RUNTIME. Plan acceptance is atomic. Attempt, lease, grant, invocation intent and idempotency receipt commit together before the Environment is invoked. The write happens outside SQLite. Reconciliation updates Effect and Evidence after the external result is known.
+CreateTaskRequest fields follow TASK-RUNTIME. Plan acceptance atomically commits Task state, PlanRevision, Steps and their events. Attempt/lease admission follows TASK-RUNTIME; Effect proposal/transition, Evidence append and VerificationRun creation follow STORAGE. Trust/ApprovalUse dispatch must satisfy the canonical STORAGE/TRUST admission invariant. Whether the direct B-18 writer uses that mediated invocation path or another owner-approved atomic composition, and how it relates to Attempt/lease admission, remain open at A-88. Every external provider or filesystem call stays outside SQLite; reconciliation never treats intent as success.
 
 ### 7.1 Existing signatures (CODE)
 
@@ -158,7 +170,6 @@ pub struct AdmitFileWriteAttempt {
     pub task_id: String,
     pub plan_revision_id: String,
     pub step_id: String,
-    pub attestation: IsolationAttestation,   // all four dimensions ENFORCED
     pub lease: ExecutionLeaseRequest,
     pub grant: FileWriteGrant,               // one path, base digest, max 1 MiB
     pub idempotency_key: String,             // 1..=200 printable ASCII
@@ -180,9 +191,43 @@ pub trait FileWriteVerifier: Send + Sync {
 }
 ```
 
+The request does not accept an `IsolationAttestation`, Environment handle, provider
+observation, or other caller assertion. The Task Runtime resolves the selected
+Environment and its current-incarnation attestation from Runtime-owned state and
+revalidates the binding at admission, as required by [ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md)
+and [TASK-RUNTIME.md](../../docs/TASK-RUNTIME.md). Any caller-supplied attestation is
+rejected.
+
+**Open contract gap (A-87):** `AdmitFileWriteAttempt` does not yet carry or identify the
+`ApprovedFileReplacement` bytes. The accepted B-18 decision requires the exact new-content
+blob to be bound to the approved action digest, but no canonical request, durable blob
+reference, preview, or recovery lookup currently connects that content to the Attempt and
+Effect records. T01 must resolve this payload path with Task Runtime, Trust and Storage
+before promoting an API or migration. Do not infer the bytes from a prompt, Task plan,
+Artifact, or provider result.
+
+**Open transaction mapping (A-88):** the earlier T08 wording combined Attempt/lease
+admission with grant use and `Effect PROPOSED`. The review separates the canonical
+Attempt/lease admission, Effect proposal/transition, Evidence append and VerificationRun
+creation boundaries in `WIRING.yaml`, while preserving Storage's requirement that
+mediated invocation dispatch atomically binds Trust, Effect, ApprovalUse and lease
+admission. T01 must determine whether the direct B-18 writer uses that invocation path or
+another owner-approved atomic composition; do not infer that a later sequential check of
+an already admitted lease is sufficient. Identify exact records, events, digests, fences
+and replay receipts before dispatch. Until then, no side effect may be dispatched.
+
+**Open grant-request semantics (A-90):** `AdmitFileWriteAttempt.grant: FileWriteGrant`
+does not say whether this field is an untrusted request for a scope or a durable
+Trust-issued grant. T07 makes the grant Attempt-bound, while the Task Runtime admits the
+Attempt/lease as a separate transaction. A caller-supplied grant-shaped object must never
+be treated as authority. T01 must define the accepted request representation and show
+how the owner resolves or creates the durable grant, binds it to the admitted Attempt,
+and consumes any ApprovalUse atomically. Do not promote the shown field unchanged until
+Trust and Task Runtime resolve this lifecycle.
+
 Typed errors (accepted target, not yet in source): `AttemptAdmissionError::{AttestationNotEnforced, StalePlanVersion, StaleFence, LeaseConflict}`; `FileWriteError::{IntegrityFailure, PathEscape, OverBound, AmbiguousResult}`.
 
-Ordering: authorize, compare expected version, commit the durable receipt, then perform any external call, then reconcile. Payload fields stay accepted target interfaces until the canonical owner document and machine schema change together.
+Proposed T01 sequencing (A-70/A-88/A-90; not a new accepted transaction contract): authorize and compare expected versions; provision/attest the required Environment outside storage; atomically admit the Attempt/lease and exact Effect/Trust/ApprovalUse dispatch under the owner-approved composition; commit all required receipts before the external file call; then reconcile. Any owner-approved pre- or post-dispatch transaction must preserve that atomic dispatch set, with its own replay identity and crash boundary; a separately committed lease is never enough to authorize a later write. Payload fields stay accepted target interfaces until the canonical owner document and machine schema change together.
 
 Conversation-to-Task promotion (accepted target interface, not yet in source): the existing `POST /v1/tasks` (`createTask`) request already names `conversation_id` and `source_message_refs[]` in TASK-RUNTIME `CreateTaskRequest`. Promotion reuses that operation; it does not add a second create route. Storage must append the originating ConversationMessage reference and the Task in one admission transaction before `validate_task_create_commit` stops refusing a Conversation origin.
 
@@ -241,7 +286,7 @@ Log ids, versions, statuses and denial reasons. Do not log secret bytes, native 
 Positive:
 - **AC-002:** WHEN the owner explicitly promotes an outcome, THE SYSTEM SHALL commit Task and TaskSpecRevision without an Attempt. Verify: Task-creation storage test.
 - **AC-004:** WHEN the owner accepts a plan, THE SYSTEM SHALL commit an immutable PlanRevision and Steps before any Effect. Verify: plan-acceptance atomicity test.
-- **AC-005:** WHEN the Attempt runs, THE SYSTEM SHALL invoke the Environment only after lease, grant and idempotency receipt are committed, and the external call SHALL stay outside that transaction. Verify: admission-ordering test.
+- **AC-005:** WHEN the Attempt runs, THE SYSTEM SHALL invoke the Environment only after lease, grant and idempotency receipt are committed, and the external call SHALL stay outside that transaction. Verify: admission-ordering test. **Owner clarification required at A-88:** this accepted wording must be read consistently with TASK-RUNTIME Environment preparation and STORAGE/TRUST dispatch atomicity; T01 must record the exact interpretation in a renewed revision before promotion.
 
 Negative:
 - **AC-001:** WHEN the owner sends an ordinary Conversation message, THE SYSTEM SHALL NOT create a Task. Verify: no-Task assertion.
@@ -291,6 +336,10 @@ Further gates after ACCEPTED/LOCKED are the cargo filters named in TASKS.md. The
 - Verification for this slice is an independent digest recompute of the approved file (B-18 accepted).
 - Open: which native lead harness and version the Linux row declares for planning. OpenCode v2.0.32 is the only harness the supervisor dispatches today; the Linux row reuses it unless the release matrix names another.
 - Open: whether the 006 golden connector write, which is a broker-only STRUCTURED_API Step with no filesystem effect, needs an admitted Environment. If it does, E2E-05 inherits the Windows-row UNAVAILABLE posture. The decision belongs to the Trust and Environments owners and is recorded in 006 SPEC §18.
+- Open (A-70): define the Environment identity/scope and lifecycle for planner readiness, Attempt execution and delegated child admission; do not assume the planning-gate Environment is reused for an Attempt or provisioned separately. Keep Environment evidence Runtime-private and expose no handle to the planning lead.
+- Open (A-87): define the durable source/reference for exact replacement bytes and how Work previews/replays them before T01 promotes the API or migration.
+- Open (A-88): align the direct B-18 writer with Task Runtime Attempt/lease admission and Storage Effect/Trust/ApprovalUse transaction owners before T08 implementation.
+- Open (A-90): define `FileWriteGrant` as untrusted requested scope versus durable Trust authority, including its relationship to Attempt admission and one-time ApprovalUse; caller-supplied grant data cannot authorize a write.
 
 Accepted decisions are recorded in §5. Implementation tasks: 005-T01 through 005-T20 in [TASKS.md](TASKS.md); B-35 work is 005-T16, 005-T17 and 005-T18.
 
@@ -315,6 +364,7 @@ Read from TASK-RUNTIME, ENVIRONMENTS, DELEGATION, and STATE-MACHINES.
 - Task create/spec edit and planning-readiness read are served; plan submission, Attempt admission/listing, Effect list/dispatch, recovery, Task pause/resume/cancel/steer and Environment provision/control remain target-only.
 - The current Task composer is a standalone Home “New task” form. It creates a Task envelope and pins selected Coworker/default lead plus Resource revision refs. It is not an in-Conversation promotion control; ordinary Conversation messages do not create Tasks.
 - Task planning readiness only builds an internal bounded preflight packet. It hardcodes dispatch/planning/session/plan booleans false. `LocalPlanningPreflight::require_dispatch()` remains unused and always refuses dispatch. No production `admit_step_attempt` call site exists in the daemon.
+- SQLite plan acceptance is CODE only: `accept_initial_plan_transaction` checks owner, version/spec/status and active producer scope, then commits the Task aggregate, PlanRevision, Steps, events and receipt atomically. The target submit route is absent and no live planning session can currently produce a plan; T03 still needs its negative/replay/race/rollback cases.
 - `probe_environment_provider()` reports provider observations, not an attached Environment. On Windows it reports no Task-capable `LocalWorkspace` class or supported Task lifetime and returns `WINDOWS_ENVIRONMENT_PROVIDER_UNAVAILABLE`; a Job Object is only a process-lifetime primitive. On Linux, LocalWorkspace discovery requires a root-owned, non-group/world-writable Bubblewrap candidate from `linux-process-scope`; even that trusted candidate does not attest isolation. The probe reports no budget enforcement, checkpoint/restore, or workspace-persistent lifetime.
 - IsolationAttestation and quiescence proof types exist with strict comparisons, but they are not connected to production Task admission/recovery. The attempt process-scope journal is compiled as staged/dead code until exact Runtime scope evidence is wired.
 - The only currently served capability grant is the bounded Task-planning Resource-read grant. It does not authorize a file write. Trust evaluation and Effect reconciliation are not connected to a live Attempt execution path.

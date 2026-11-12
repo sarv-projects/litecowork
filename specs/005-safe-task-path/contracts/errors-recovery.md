@@ -8,7 +8,7 @@
 - A stale Task aggregate or TaskSpec head blocks plan acceptance. A producer who is no longer the authorized planning session/leased lead cannot commit a plan.
 - Plan acceptance is distinct from Task creation and Attempt admission. A Task record, readiness preflight or READY status does not start execution.
 - Isolation attestation must be from the current Runtime incarnation and match the exact Environment, Workspace, Task, normalized policy, pinned input set and readable/writable roots. Any UNKNOWN/NOT_ENFORCED enforcement field fails closed.
-- Attempt/lease/grant/invocation intent/receipt must commit before an external write. The Environment call runs outside SQLite. An unknown external result is reconciled against the exact target digest before any retry.
+- Environment provisioning and private attestation validation happen outside SQLite and before Attempt admission. T01 must define an owner-approved atomic composition for the direct B-18 write. STORAGE requires mediated invocation dispatch to bind Trust, Effect, ApprovalUse and lease admission atomically; A-88 leaves the direct writer mapping open, but it cannot split that required dispatch set into sequential transactions. Any additional pre- or post-dispatch transaction needs its own replay and recovery contract. Before an external write, recheck the exact Attempt, lease fence, durable grant, approval and action digest and commit all required durable receipts. Whether an invocation-intent record applies is open at A-88/A-90; do not infer grant authority from request fields. Every Environment/provider/filesystem call runs outside SQLite. An unknown external result is reconciled against the exact target digest before any retry.
 - Cancellation fences late work. Writer lease release and Environment destruction require a positive QUIESCENT observation bound to the exact Runtime incarnation and process scope. Unknown quiescence leaves the Attempt fenced.
 - Runtime restart must recover durable receipts and reconcile unfinished Effects. A new Runtime incarnation cannot renew an old lease. An ambiguous write is never automatically reissued.
 - Verification success requires independently generated Evidence pinned to the exact TaskSpec/plan/write subject. A worker response or process exit is not verification.
@@ -21,6 +21,7 @@
 - IsolationAttestation and QuiescenceObservation types/checks are not wired into a production Task Attempt path; the process-scope journal is staged/dead code.
 - Capability grants are presently limited to Task-planning Resource reads. There is no admitted write grant, Effect dispatcher/reconciler or independent write-verification pipeline connected to an Attempt.
 - UI only exposes Task creation, spec editing, read-only readiness, Task/Step/progress/Artifact read views. No plan/Attempt/Environment/cancel/recover actions are live.
+- The accepted target request must not accept caller-supplied `IsolationAttestation` (resolved by A-86 against ENVIRONMENTS/TASK-RUNTIME). The exact replacement bytes/ref required for restart-safe replay, the transaction boundary between Attempt admission and Effect/Trust approval, and whether `FileWriteGrant` is request data or durable authority are unresolved at A-87/A-88/A-90; no implementation can safely dispatch the write until T01 settles them.
 
 ## Platform availability
 
