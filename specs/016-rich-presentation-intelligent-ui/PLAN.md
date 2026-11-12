@@ -1,6 +1,6 @@
 # Implementation Plan - Rich Presentation, Intelligent UI and Generated Media
 
-**Feature:** 016 | **Spec revision:** 0.1
+**Feature:** 016 | **Spec revision:** 0.2 (proposed)
 **Status:** IN_REVIEW - authored for owner review; does not authorize implementation until owner acceptance (TASKS T01).
 
 ## 1. Delivery strategy
@@ -41,7 +41,9 @@ flowchart LR
   T12 & T13 & T14 --> T15[T15 traces]
   T15 --> T16[T16 E2E-11 both rows]
   T16 --> T17[T17 docs]
-  T17 --> T18[T18 VERIFIED]
+  T17 --> T19[T19 baseline VERIFIED]
+  T06 --> T18[T18 Markdown degradation]
+  T18 --> T19
   F001[Feature 001 final commit] -.-> T08
   F007[Feature 007 Artifact create] -.-> T10
   F011[Feature 011 preferences, CSP] -.-> T09
@@ -59,7 +61,7 @@ flowchart LR
 | 5 Media and interactive posture | T10-T11 | Provenance Artifacts; inert preview |
 | 6 Hardening | T12-T14 | No-exec gate, recovery and performance green |
 | 7 Trace and qualification | T15-T16 | E2E-11 USER evidence on Windows x64 and Linux x64 |
-| 8 Docs and VERIFIED | T17-T18 | Status rows match evidence |
+| 8 Docs and baseline VERIFIED | T17-T19 | Status rows match evidence |
 
 ## 4. Scope and file ownership (candidate paths)
 
@@ -104,3 +106,9 @@ Stop if any path executes model content, a rendered element changes host state, 
 ## 9. Handoff
 
 Feature 007 consumes the media Artifacts; a later revision (after E08-S09) may open the Interactive Artifact Runtime.
+
+## 10. Revision 0.2 gated extension sequence
+
+[Pipeline LLD](../../docs/ACP-PRESENTATION-PIPELINE-LLD.md) is the implementation decomposition target. T20 resolves exact provider ingress, research pins, calculation intent, metrics and canonical promotion after T01/T02. T21 depends on T04/T05/T07/T08/T20 and introduces one controller for inline/Workbench Canvas, without persistence. T22 is a separately reviewed persistence slice: consent/privacy/backup/deletion/quota, migration allocation, authenticated typed commands and expected-revision/receipt transactions. T23 depends on T22/T20 and Feature 001 new-turn dispatch, and adds explicit snapshot review plus new-message modification lineage. T24 depends on T20-T23 and performs hostile/recovery/accessibility/packaged evidence. T19 baseline verification is not evidence of extension completion; extension acceptance requires all additional ACs and owner sign-off.
+
+No persistence rollout begins under the existing no-table baseline paragraph: that statement applies only to original B-40 scope. T22 must allocate the migration through the global allocation owner, promote API/event/schema/UI trace contracts together, and provide backup/deletion/rollback handling before a write endpoint or UI switch can ship. Flags default off and cannot bypass acceptance. Rollback disables extension commands, retains semantic messages and immutable presentations, and preserves authorized saved data until explicit retention/deletion policy applies. Never erase user data as rollback.

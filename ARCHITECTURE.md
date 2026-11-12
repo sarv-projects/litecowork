@@ -632,6 +632,19 @@ requires review/confirmation. Advanced Agent, Model, Run location, Tools, budget
 access controls are progressive disclosures. Runtime start/stop controls are separate
 from closing the Operator window.
 
+**User-requested experience revision (2026-11-12): IN_REVIEW, not yet an accepted change
+to this baseline.** The owner requests four persistent destinations (Work, Coworkers,
+Library, Automations), a compact Needs You inbox, and secondary destinations in a collapsed
+More menu, with a contextual right Workbench for Computer, Browser, Terminal, Files,
+Changes, and Canvas. The proposal is mapped in
+[`docs/WORKSPACE-EXPERIENCE-REVISION-2026-11.md`](docs/WORKSPACE-EXPERIENCE-REVISION-2026-11.md)
+and the proposed computer provider lifecycle is detailed in
+[`docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md`](docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md).
+These documents record TARGET requirements and open provider/owner gates. They do not
+silently supersede the accepted navigation baseline, B-32 computer-use deferral, or any
+provider qualification requirement. Promote the change here only after owner review and
+contract alignment.
+
 Live Desk shows actual Task/Step/Attempt state, real capability use, Runtime placement,
 artifacts, verification, and blocked/needs-user state. It must not invent agent activity,
 fake third-party interfaces, imply that a process teleported, or show verification before
@@ -657,6 +670,14 @@ runtime, or a massive built-in skill catalog. Integrate these as external agents
 capabilities, LiteSPM packages, or EnvironmentProviders. The bounded factual World Index
 and deterministic search over selected Workspace resources remain first-party. Core stays
 capable by composing replaceable parts rather than implementing every domain.
+
+The user-requested Computer surface is an **IN_REVIEW integration proposal**, not a reversal
+of this boundary: a qualified EnvironmentProvider may capture a selected real display or
+window and mediate authorized input while the native agent retains reasoning and its own
+tools. LiteCowork must not invent a computer-use model, claim control of unmediated native
+input, or expose capture/input until the provider, consent, host input fence, recovery, and
+exact OS qualification contracts are accepted and evidenced. See the experience revision
+and Feature 008's revision under review.
 
 ## 14. Implementation and release sequence
 

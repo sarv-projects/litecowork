@@ -1,7 +1,7 @@
 # Research and Decision Log - Task Control and Heterogeneous Delegation
 
 **Feature:** 015 | **Status:** IN_REVIEW - authored for owner review; does not authorize implementation.
-**Checked:** 2026-11-09, source audit of branch `docs/audit-competitor-superset`; upstream pins taken from the reference indexes, not re-fetched.
+**Checked:** 2026-11-12 against HEAD `64c435149a82ba952c6c3bf3049e26cf2d9344b1` plus shared working-tree changes on `main`; upstream pins remain sourced from reference indexes and were not re-fetched.
 
 ## 1. Repository sources inspected
 
@@ -11,12 +11,12 @@
 | Delegation | `docs/DELEGATION.md` | DelegationProfile fields, depth 2 and 8 children platform limits, Coworker `enabled_delegation_profile_ids`, LeadFailoverPolicy, escalation, budgets, native harness integrity |
 | State machines | `docs/STATE-MACHINES.md` | Task states including PAUSE_REQUESTED and PAUSED; Attempt; VerificationRun; RuntimeMesh Handoff (V2 scope) |
 | Delegation schema | `docs/schemas/delegation.schema.json` | `escalation_policy.on_exhaustion` enum RETURN_TO_LEAD, NEEDS_YOU marked TARGET-not-yet-wired (register A-37) |
-| Domain code | `crates/domain-task/src/` | Child admission, lead failover, lead handoff, packets, escalation, result service exist; no production caller |
+| Domain code | `crates/domain-task/src/` | Child admission, lead failover, lead handoff, packets, escalation and result service foundations exist; no production delegation producer. Result publishing validates terminal session/Attempt scope, runtime/incarnation and revision but does not fence against the current Step Attempt/live lease epoch. |
 | Daemon | `apps/litecoworkd/src/task_lead_handoff_operator.rs`, `verification_runs_operator.rs`, `delegation_profiles_operator.rs` | Lead change CAS only; verification read-only; profile CRUD |
-| Storage | `crates/storage-sqlite/src/execution.rs`, `lead_handoff_boundary.rs`, `verification_runs.rs`, `delegation_results.rs` | SQLite admission guard reads Coworker allowlist and budget; verification write paths unrouted |
+| Storage | `crates/storage-sqlite/src/execution.rs`, `lead_handoff_boundary.rs`, `verification_runs.rs`, `delegation_results.rs` | SQLite admission guard reads Coworker allowlist and budget; verification write paths unrouted. Feature 005 T08 specifies a bounded `admit_file_write` Attempt, and T09 a file verifier/reconciler; neither defines the generic native provider worker/verifier AgentSession lifecycle assumed by this feature. |
 | UI | `apps/litecowork-ui/src/App.tsx` (`WorkPage`, `TaskDetailPanel`), `src/tasks/` | No timeline, Workers view or controls |
 | Status | `docs/IMPLEMENTATION-STATUS.md` | Task pause/resume/cancel/steer target-only; allowlist read only by the guard |
-| Release | `docs/V1-PRODUCT-RELEASE-CONTRACT.md` section 6 item 3, gate E | Handoff starts an authorized new Attempt and fences late results |
+| Release | `docs/V1-PRODUCT-RELEASE-CONTRACT.md` section 6 item 3, gate E; `docs/TASK-RUNTIME.md` "Lead-agent change" | Assigned lead change creates a fresh planning session without Attempt; existing Attempts retain original binding/lease; execution replacement is separately admitted after prior lease and Effects settle. Served lead-agent route only changes binding. |
 
 ## 2. Pinned external references
 
@@ -54,10 +54,10 @@ No upstream code is imported. Upstream repositories are not cloned into `repo_ta
 
 ## 4. Optimization notes (language and module placement)
 
-- Domain decisions already live in Rust (`delegation_admission.rs`, `lead_failover.rs`); wiring them is composition, not new logic. Keep them pure and call them from new daemon services.
+- Some policy decisions already live in Rust (`delegation_admission.rs`, `lead_failover.rs`), but provider-session admission, quiescence, result fencing, verification, dispatch and recovery are not mere composition. Keep pure decisions at the domain layer and obtain an owner decision for the generic execution/session seam (SPEC O-06) before wiring provider work.
 - Replace string Task statuses with a Rust `TaskStatus` enum in `storage-core` (T03); this removes duplicated string matches in `lead_failover_service.rs` and storage guards.
 - Map `ChildAdmissionDenial` to wire codes in one exhaustive Rust function so a new variant cannot silently map to a generic error.
-- Keep the Work-screen state logic in pure TypeScript modules (`task-control-state.ts`, `task-activity.ts`) outside the 4,523-line `App.tsx`, testable with `node --test`.
+- Keep new Work-screen state logic in pure TypeScript modules (`task-control-state.ts`, `task-activity.ts`) instead of expanding `App.tsx`; the UI package's current test command is Node's built-in `--test` runner through `pnpm test`.
 - Paginate the Activity projection in the daemon (limit 1..200, cursor) rather than streaming the full journal to the WebView.
 
 ## 5. Open research and decision register
@@ -67,4 +67,7 @@ No upstream code is imported. Upstream repositories are not cloned into `repo_ta
 | R-01 | Claude Code CLI result and interrupt fixture for a delegated Step | Open, Feature 004 |
 | R-02 | OpenCode bridge path for issuing a delegate request without native config edits | Open |
 | R-03 | Reference hardware for AC-020 | Open, Feature 019 |
-| B-39 | First pair, Environment sharing rule, V1 bounds, A-37 default | PROPOSED, pending owner |
+| B-39 | First pair, Environment sharing rule, V1 bounds, A-37 default | ACCEPTED as proposed 2026-11-10; whole SPEC still IN_REVIEW |
+| O-06 | Generic Attempt/session admission seam for child, verifier and control paths | OPEN/BLOCKED: Feature 005's file-write admission contract is not a generic provider-session contract |
+| O-07 | Lead binding change versus execution replacement operation | OPEN/BLOCKED: canonical Task Runtime requires distinct operations; served route performs binding CAS only |
+| O-08 | A-37 exhaustion producer ownership and persisted location | OPEN/BLOCKED: keep owner-accepted TARGET-not-yet-wired field until Feature 004/005 dispatcher owner implements it |

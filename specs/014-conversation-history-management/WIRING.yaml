@@ -2,7 +2,7 @@ feature_id: "014"
 name: "Conversation History Management"
 status: "IN_REVIEW"
 spec_revision: "0.1"
-notes: "All new edges are proposed target wiring, not served. Only Conversation create, list, get, turn and agent-binding routes exist today."
+  notes: "Search, deletion and all desktop history commands are proposed target wiring. Operator rename/archive/unarchive/status-list routes and the v31 lifecycle side table are CODE/SERVED; no packaged history-management journey is qualified."
 nodes:
   - id: "sidebar-ui"
     owner: "Desktop UI (sidebar)"
@@ -15,7 +15,7 @@ nodes:
     owner: "Desktop UI (Conversation header)"
     kind: "component"
     responsibility: "Title display and More options (rename, archive, delete)"
-    implementation_status: "PARTIAL: More options button has no handler"
+    implementation_status: "PARTIAL: title fallback is truthful; More options is explicitly disabled as unavailable; no history action handler"
     inputs: ["selected Conversation"]
     outputs: ["typed history-management commands"]
   - id: "tauri-bridge"
@@ -34,13 +34,14 @@ nodes:
     owner: "Conversation history service"
     kind: "domain service"
     responsibility: "Rename, archive, search, deletion impact and delete orchestration"
-    implementation_status: "TARGET_ONLY"
+    implementation_status: "PARTIAL: no standalone service; Operator calls storage methods for rename/archive/unarchive/list; search and delete orchestration are absent"
     inputs: ["validated command"]
     outputs: ["storage commands"]
   - id: "sqlite-store"
     owner: "Storage"
     kind: "transaction boundary"
-    responsibility: "Conversation status CAS, search index maintenance, tombstone, sealed manifest, read fences, receipts, events"
+    responsibility: "Conversation status CAS, rename/archive events and status-aware list (existing); search index, tombstone, sealed manifest, delete fences, receipts and deletion events (target)"
+    implementation_status: "PARTIAL: v31 side table and rename/archive/list exist; search and deletion records do not"
     inputs: ["typed storage command"]
     outputs: ["committed result"]
   - id: "purge-reconciler"
@@ -59,7 +60,7 @@ nodes:
   - id: "turn-path"
     owner: "Feature 001 Conversation turn path"
     kind: "upstream writer and reader"
-    responsibility: "Message insert (index hook), context package loading (status fence), single-flight check"
+    responsibility: "Message insert (future index hook), context package loading (future status fence), single-flight and Conversation AgentSession closure/host-binding release before delete"
     inputs: ["status predicate"]
     outputs: ["committed messages"]
   - id: "consuming-readers"

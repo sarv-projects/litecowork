@@ -16,13 +16,13 @@ No new global model-catalog or provider route is introduced. The UI reads model/
 
 ## Operations used by revision 1.0 tasks
 
-| Operation (OpenAPI operationId) | Current state (2026-11-09) | Task |
+| Operation (OpenAPI operationId) | Current source state (rechecked 2026-11-12) | Task |
 |---|---|---|
-| `probeLocalAgentProfile` | SERVED; OpenCode offer always `compatible=false` | 002-T01 |
-| `createAgentBinding`, `enableAgentBinding`, `disableAgentBinding` | SERVED; enable lacks the fresh-descriptor gate | 002-T06 |
-| `getAgentControlDescriptor`, `refreshAgentProfileControl` | SERVED for the OpenCode module; module-less profiles `503` | 002-T05 |
+| `probeLocalAgentProfile` | SERVED; exact OpenCode 2.0.32 + complete probe + observed host stop yields a CODE-compatible `STARTABLE` offer; no native provider journey is qualified | 002-T01 |
+| `createAgentBinding`, `enableAgentBinding`, `disableAgentBinding` | SERVED; enable applies descriptor-revision CAS when its module declares a descriptor; no live auth/bind/send qualification | 002-T06 |
+| `getAgentControlDescriptor`, `refreshAgentProfileControl` | SERVED for the trusted OpenCode module; module-less profiles return `503`; descriptor writes reuse the migration-16 table | 002-T05 |
 | `submitAgentCredential` | mounted, returns `503`; no SecretStore write | 002-T08 |
-| `beginAgentAuthentication` | SERVED (fail-closed: declared methods only; V1 modules declare none; unqualified launcher) | 002-T07 |
+| `beginAgentAuthentication` | SERVED (fail-closed: declared methods only; OpenCode declares none; production launcher is unqualified; observations are in-memory) | 002-T07 |
 | `getAgentSessionOptions`, `getAgentHarnessCapabilities` | OpenAPI target-only, not served | 002-T05, 002-T09 |
 | `openAgentNativeConfiguration` | SERVED (fail-closed: declared targets only; V1 modules declare none; unqualified opener) | 002-T10 |
 | install / update under `/agent-registry/{registryAgentId}` | OpenAPI target-only, not served; V1 shows them unavailable | 002-T11 |

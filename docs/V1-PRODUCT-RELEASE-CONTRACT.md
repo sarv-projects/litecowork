@@ -48,7 +48,7 @@ Native agent and provider support is qualified by exact agent build, transport, 
 
 First use: launch → choose Workspace → detect an eligible native agent → select native sign-in/setup if needed → blank Conversation with optional attachment and agent/model/effort controls. Never force Coworker creation, Task plan, capability wizard or workflow-builder.
 
-Persistent sidebar: **New Chat**, conversation search/history, **Coworkers**, **Needs You**, **Work**, **Automations**, **Library**, **Discover**; Settings/Agent management and Inspector are progressive disclosure. The default desktop layout shows the right Workbench beside the composer, using the approved compact Browser/Terminal/File start surface. The owner may collapse, resize or expand it; restore the last explicit per-Workspace choice only after authorization checks. New Chat and Coworker chats use one composer and Conversation model. No separate Code/Cowork worlds.
+Persistent sidebar: **New Chat**, conversation search/history, four workspace destinations **Work**, **Coworkers**, **Library**, **Automations**, plus compact **Needs You**. Discover and secondary pages remain in **More** or contextual links; Settings/Agent management and Inspector are progressive disclosure. The default desktop layout shows the right Workbench beside the composer, using the approved compact Browser/Terminal/File start surface. The owner may collapse, resize or expand it; restore the last explicit per-Workspace choice only after authorization checks. New Chat and Coworker chats use one composer and Conversation model. No separate Code/Cowork worlds.
 
 Composer: attach files; choose **native agent first** → show that agent's valid native models/modes/effort only; send; optional actions (Run as Task, Schedule, Save as Routine) through explicit review, not permanent forced pills. Sending a message creates a Conversation turn; it does not create a Task by inference alone. A Task admitted later links its origin message and carries independent durable state.
 
@@ -84,3 +84,7 @@ Use **TARGET_ONLY**, **CODE_IMPLEMENTED**, **SERVED**, **INTEGRATION_PROVEN**, *
 Gate order inside V1: (A) real native Conversation; (B) one verified durable Task; (C) LiteSPM observe/adopt/install + scoped use; (D) Coworker/Workbench/files/artifacts; (E) heterogeneous delegation and learning; (F) local automation and recovery; (G) platform/security/performance/backup and real-user release matrix. Independent qualifying tracks may overlap; no later gate makes an unproven earlier operation true.
 
 **No amount of documentation or compile-only tests replaces production proof.** See [acceptance crosswalk](archive/legacy-implementation-c7e9c05/V1-PRODUCT-ACCEPTANCE-MATRIX.md).
+
+## Requested experience revision - 2026-11-12
+
+The [Workspace experience revision](WORKSPACE-EXPERIENCE-REVISION-2026-11.md) records the owner-requested compact navigation, selected computer live view and immediate takeover intent, real terminal defaults and inline-to-Canvas interaction. These requirements revise the former browser-only interpretation. A live Computer tab remains provider-gated; listing the scope does not qualify capture/input or remove the Windows Task containment gate. Persistent interactive state is a proposed extension to the accepted view-local B-40 baseline, not silently included by prose.

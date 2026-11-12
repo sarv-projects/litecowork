@@ -13,6 +13,7 @@ Canonical entity definitions live in [docs/DATA-MODEL.md](../../docs/DATA-MODEL.
 | `plan_revisions`, `steps` | `sqlite-v1.sql` | accepted plan pin, Step status READY |
 | `attempts` | `sqlite-v1.sql` | `parent_attempt_id`, `delegation_profile_id`, `delegation_profile_revision`, `execution_lease_id`, state (`AttemptState`) |
 | `execution_leases` | `sqlite-v1.sql` | `epoch` with `UNIQUE(step_id, epoch)` and immutable identity trigger |
+| `agent_sessions`, Runtime and Environment identities | canonical owner schemas | Session is distinct from Attempt, Runtime incarnation and Environment; opaque native handles stay outside public records |
 | `delegation_profiles`, `delegation_profile_revisions` | `sqlite-v1.sql` | status, `max_concurrency`, `max_host_delegation_depth`, policies |
 | `coworker_revisions` | `sqlite-v1.sql`, `sqlite-v28.sql` | `enabled_delegation_profile_ids_json`, `delegation_budget_policy_json` |
 | `delegation_results` | `sqlite-v24.sql` | ResultEnvelope per child Attempt |
@@ -25,12 +26,12 @@ Canonical entity definitions live in [docs/DATA-MODEL.md](../../docs/DATA-MODEL.
 |---|---|---|---|
 | `task_control_requests` | `control_request_id` | workspace_id, task_id, command (PAUSE, RESUME, STEER, CANCEL), class (for STEER), requested_by, expected_task_version, idempotency key digest, state (ACCEPTED, WAITING_QUIESCENCE, SETTLED, SUPERSEDED, FAILED), outcome code, created_at, settled_at | One nonterminal PAUSE or CANCEL per Task; CANCEL may supersede PAUSE; rows are append-then-settle, never deleted while the Task exists |
 | `task_resume_packets` | `resume_packet_id` | task_id, task_spec_revision, current_plan_revision, source_attempt_id, packet digest, packet blob ref, generated_at | Immutable; contains no grant, lease, SecretLease or handle; digest checked on resume |
-| escalation `on_exhaustion` | stored with the delegation packet or profile revision | `RETURN_TO_LEAD` or `NEEDS_YOU` | Missing in legacy rows reads as `NEEDS_YOU` (B-39 item 4) |
+| escalation `on_exhaustion` | owner-defined location in the delegation packet/profile contract | TARGET-not-yet-wired enum `RETURN_TO_LEAD` or `NEEDS_YOU`; no separate Feature 015 column is assumed | Optional legacy field remains valid and resolves to `NEEDS_YOU` when the owning dispatcher is implemented (accepted A-37/B-39); storage location and producer remain open under SPEC O-08 |
 
 ## 3. Lifecycles
 
 - **Task (control subset):** `READY|RUNNING|WAITING_USER|BLOCKED|VERIFYING -> PAUSE_REQUESTED -> PAUSED -> (prior state)`; any nonterminal including PAUSE_REQUESTED and PAUSED `-> CANCEL_REQUESTED -> CANCELLED`. No STEER state: steering produces spec revisions or notes.
-- **Attempt:** `CREATED -> PREPARING -> RUNNING -> ... -> COMPLETED|FAILED|ABANDONED|CANCEL_REQUESTED -> CANCELLED`. A replacement (handoff, escalation, resume continuation) is always a new Attempt id with lease epoch + 1.
+- **Attempt:** `CREATED -> PREPARING -> RUNNING -> ... -> COMPLETED|FAILED|ABANDONED|CANCEL_REQUESTED -> CANCELLED`. Replacement execution and ordinary interrupted continuation use a new Attempt id with a higher lease epoch. Only the canonical confirmed `INPUT_REQUIRED` same-Attempt continuation may retain the Attempt on the same Runtime incarnation and Environment, after Effect reconciliation, with a fresh AgentSession and higher lease; it is unavailable after restart, Runtime handoff, Environment replacement or plan invalidation.
 - **Control request:** `ACCEPTED -> WAITING_QUIESCENCE -> SETTLED | SUPERSEDED | FAILED`.
 - **VerificationRun:** `PENDING -> RUNNING -> PASSED | FAILED | INCONCLUSIVE`; none starts while the Task is PAUSE_REQUESTED or CANCEL_REQUESTED.
 
@@ -47,7 +48,7 @@ Canonical entity definitions live in [docs/DATA-MODEL.md](../../docs/DATA-MODEL.
 |---|---|
 | Request pause | Task PAUSE_REQUESTED, control request, `task.pause.requested.v1`, receipt |
 | Confirm paused | Task PAUSED, ResumePacket row, lease releases, control request SETTLED, `task.paused.v1` |
-| Resume | Task prior state, Attempts ABANDONED, control request SETTLED, `task.resumed.v1`, receipt |
+| Resume | Task prior state, normally interrupted Attempts ABANDONED (or eligible INPUT_REQUIRED Attempt renewed under the narrow TASK-RUNTIME exception), control request SETTLED, `task.resumed.v1`, receipt |
 | Steer (spec change) | TaskSpecRevision(n+1), control request, `task.steering.recorded.v1`, receipt |
 | Child admission | child Attempt CREATED, Step binding, ExecutionLease, budget reservation, `task.child_attempt.admitted.v1`, receipt |
 | Fence late result | fenced observation, `task.child_result.fenced.v1` |
@@ -60,4 +61,4 @@ Steering text is user content stored with the Task and deleted with it; it is ne
 
 ## 7. Migration and compatibility
 
-Additive migration only. Existing Tasks have no control requests and no resume packets. Stored statuses are parsed by `TaskStatus`; an unknown value fails closed. Legacy delegation packets without `on_exhaustion` remain valid (register A-37).
+Additive migration only. The allocated Feature 015 migration is v42 and covers control requests and resume packets; it does not assume a new `on_exhaustion` column because the DELEGATION owner owns its contract/storage shape. Existing Tasks have no control requests and no resume packets. Stored statuses are parsed by `TaskStatus`; an unknown value fails closed. Legacy delegation packets without `on_exhaustion` remain valid and the accepted field stays TARGET-not-yet-wired until the owning dispatcher is implemented (A-37).

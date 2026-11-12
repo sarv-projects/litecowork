@@ -49,9 +49,10 @@ Conversation turn, is bounded and ephemeral, creates no CapabilityInvocation, Ef
 Artifact, Grant, or DomainEvent, and is not available to Task planning or worker Attempts
 by default.
 
-Implementation status (2026-10-22): `litecowork.presentation.propose` has no
-implementation anywhere in this repository (no route, adapter or client call). Presentation
-documents reach the store only through the ordinary committed-message path.
+Implementation status (source audit 2026-11-12): `litecowork.presentation.propose` has no
+implementation (no route, adapter or client call), and no production caller publishes a
+RichPresentation document. Read projections can return a stored presentation if one exists;
+the storage publication validator is exercised by tests, not a mounted write path.
 
 ```text
 RichPresentationIntent {
@@ -149,41 +150,54 @@ The renderer schema separates model-safe blocks from host-bound blocks.
 
 ```text
 ModelSafeBlock =
-  TEXT_SLICE | LAYOUT | CARD | CALLOUT |
-  MEDIA | GALLERY | CODE | TABLE | CHART | DIAGRAM | TIMELINE |
-  CHECKLIST | DELIVERABLE_GROUP | ARTIFACT_COLLECTION
+  TEXT_SLICE | LAYOUT | CARD | CALLOUT | TABLE | CHART | DIAGRAM |
+  MEDIA | CHECKLIST | DELIVERABLE_GROUP | ARTIFACT_COLLECTION
 
 HostBoundBlock =
   HOST_PROJECTION | MCP_APP
 ```
 
-### Multi-Layer Block Alignment & Progression
+The v1 wire schema has exactly 13 `kind` variants. `CODE`, `GALLERY`, and `TIMELINE`
+are not RichPresentation v1 wire kinds. A gallery- or timeline-like arrangement may be
+composed from registered blocks only where their source and semantics satisfy the v1
+schema; it must not be emitted as an invented variant. Adding a new block kind requires a
+schema/renderer-contract revision and owner review.
 
-The 14 normative block kinds map directly to wire stream frames and desktop React components with deterministic fallbacks:
+### Block schema and renderer status
 
-| Block Kind | Wire Schema Variant | Desktop React Component | Deterministic Fallback if Unsupported |
-|---|---|---|---|
-| `TEXT_SLICE` | `text_slice` | `TextSliceView` (Markdown) | Plain text extract from message |
-| `LAYOUT` | `layout` (`STACK`/`ROW`/`GRID`) | `LayoutContainer` | Vertical stack |
-| `CARD` | `card` | `RichCard` | Title, summary, and action links |
-| `CALLOUT` | `callout` | `CalloutBanner` | Blockquote (`> [!NOTE]`) |
-| `MEDIA` | `media` | `ResourceImageViewer` | Alt text + local file download button |
-| `GALLERY` | `gallery` (composite) | `MediaGalleryGrid` | Sequential media cards |
-| `CODE` | `code` | `SyntaxHighlightedBlock` | Monospace fenced code block |
-| `TABLE` | `table` | `VirtualTable` | Accessible Markdown table |
-| `CHART` | `chart` | `SandboxedChart` | Bounded data table + accessible summary |
-| `DIAGRAM` | `diagram` | `MermaidDiagramViewer` | Textual diagram description / source code |
-| `TIMELINE` | `timeline` (composite) | `TimelineList` | Chronological bulleted list |
-| `CHECKLIST` | `checklist` | `InteractiveChecklist` | Textual checkbox list (`- [ ]`) |
-| `DELIVERABLE_GROUP` | `deliverable_group` | `ArtifactGroupCard` | Pinned Artifact links and versions |
-| `ARTIFACT_COLLECTION`| `artifact_collection` | `ArtifactCollectionView`| Paginated list of artifact links |
-| `HOST_PROJECTION` | `host_projection` | `HostProjectionViewer` | Sanitized system status badge |
-| `MCP_APP` | `mcp_app` | `SandboxedAppFrame` | Structured tool result card |
+`docs/schemas/rich-presentation.schema.json` is the canonical v1 document vocabulary. The
+table separates the schema declaration from current desktop support; it does not claim a
+component exists merely because the schema names a kind.
 
-The complete JSON schema is the versioned document vocabulary. The durable SQLite publisher stores
-the validated RFC 8785 JSON representation of the complete document (bounded to max depth 6 and 512 KiB).
-If a desktop client encounters an unrecognized or unsupported block kind, it isolates that specific block
-and renders its deterministic fallback without discarding the enclosing document or conversational transcript.
+| Block kind | v1 schema | Current desktop and Rust validator |
+|---|---|---|
+| `TEXT_SLICE` | Declared | Supported |
+| `LAYOUT` | Declared | Supported |
+| `CARD` | Declared | Supported |
+| `CALLOUT` | Declared | Supported |
+| `TABLE` | Declared | Supported |
+| `CHART` | Declared | Not supported by the current validators/renderer |
+| `DIAGRAM` | Declared | Not supported by the current validators/renderer |
+| `MEDIA` | Declared | Not supported by the current validators/renderer |
+| `CHECKLIST` | Declared | Not supported by the current validators/renderer |
+| `DELIVERABLE_GROUP` | Declared | Not supported by the current validators/renderer |
+| `ARTIFACT_COLLECTION` | Declared | Not supported by the current validators/renderer |
+| `HOST_PROJECTION` | Declared; requires a trusted host binder | Not supported by the current validators/renderer |
+| `MCP_APP` | Declared; requires the separate qualified MCP Apps host boundary | Not supported by the current validators/renderer |
+
+The detailed behavior below for CHART, DIAGRAM, MEDIA, deliverable, checklist, citation and
+action families is target contract material unless the table marks the kind as supported.
+Schema declaration alone does not make those features available in the current desktop.
+
+The Rust storage validator and desktop TypeScript parser currently accept the same five
+display-only kinds listed above under a 512 KiB document limit and maximum block nesting
+depth of 8. The recursive JSON Schema documents the broader target vocabulary, but it does
+not replace owner-side source binding, provenance checks, or runtime qualification. If a
+document contains a schema-declared kind that the current validators do not support, either
+validator rejects the complete RichPresentation and the client renders the complete
+semantic message. The promised per-block isolation/fallback is not implemented and is not
+the current v1 behavior; introduce it only with an explicit contract/version and compatible
+Rust, TypeScript, schema, stream, and acceptance updates.
 
 Agents may request a host-bound projection by kind only where the host API permits it;
 the compiler resolves the actual projection from authenticated Core state. Agents cannot
@@ -207,10 +221,10 @@ CitationRef {
 `CODE_RANGE`. Page and line values are 1-based. Text offsets are zero-based UTF-8 byte
 offsets within the exact extracted segment/version. Page-region x/y/width/height are
 normalized to `[0,1]`. Every citation is resolved against an authorized pinned Resource
-revision; a changed head never silently changes the cited revision. (Implementation status
-2026-10-22: the desktop client has no citation resolver — a document carrying any non-empty
-citation ref is rejected in full and falls back to the semantic message.) A citation is a source
-reference, not proof that the associated claim is true.
+revision; a changed head never silently changes the cited revision. (Source audit 2026-11-12:
+neither the storage publisher nor desktop renderer has an authorized citation resolver; a
+document with any non-empty citation list is rejected in full and falls back to the semantic
+message.) A citation is a source reference, not proof that the associated claim is true.
 
 ### Tables and charts
 
@@ -243,9 +257,9 @@ must be validated at 200% zoom and narrow desktop window sizes.
 
 `DELIVERABLE_GROUP` and `ARTIFACT_COLLECTION` bind exact `ArtifactVersionRef`s. The host
 renders titles, media-type icons, provenance, verification state, and permitted OPEN,
-PREVIEW, DOWNLOAD, or OPEN_IN_WORKBENCH actions from real Artifact metadata. (Implementation
-status 2026-10-22: both kinds are rejected by the desktop parser, so none of these cards or
-actions is reachable in this build.) Collection
+PREVIEW, DOWNLOAD, or OPEN_IN_WORKBENCH actions from real Artifact metadata. (Source audit
+2026-11-12: both kinds are rejected by the storage validator and desktop parser, so none of
+these cards or actions is reachable in this build.) Collection
 lists are virtualized and paginated; a large Resource or CSV is never copied into the
 presentation document.
 
@@ -264,13 +278,15 @@ does not change an already-built ZIP.
 
 Checklist selections are `LOCAL_TRANSIENT` or `LOCAL_DURABLE` Operator UI state, never
 Task Steps or Verification. V1 local durable state stays in the desktop's local UI store
-and is not Workspace-replicated. (Implementation status 2026-10-22: CHECKLIST is rejected
-by the desktop parser and no checklist store or component exists, so neither selection
-kind is implemented.) Task progress is shown only through a host-bound trusted
+and is not Workspace-replicated. (Source audit 2026-11-12: CHECKLIST is rejected by both
+the storage validator and desktop parser, and no checklist store/component exists, so
+neither selection kind is implemented.) Task progress is shown only through a host-bound trusted
 Task projection. Safe navigation actions may open exact authorized Artifact/Resource,
 Task, or Conversation identities; external navigation is HTTPS-only and passes the
 Operator confirmation/egress rules. Mutating operations route only through their owning
-service. There is no generic execute action.
+service. There is no generic execute action. (Source audit 2026-11-12: the storage publisher
+and desktop parser reject every non-empty `actions` list because no authorized action
+resolver is available.)
 
 ## Deterministic presentation and cost
 

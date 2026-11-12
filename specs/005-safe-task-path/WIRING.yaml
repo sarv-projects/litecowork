@@ -59,7 +59,7 @@ transactions:
     external_calls_inside: false
   - id: "tx-attempt"
     owner: Task Runtime
-    atomic_records: ["attempt","lease","grant","idempotency_receipt"]
+    atomic_records: ["attempt","lease","grant","invocation_intent","idempotency_receipt"]
     external_calls_inside: false
   - id: "tx-plan-accept"
     owner: TaskService

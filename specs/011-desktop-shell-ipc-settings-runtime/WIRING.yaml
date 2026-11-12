@@ -17,7 +17,7 @@ nodes:
     owner: Runtime lifecycle and native OS bridge
     kind: service
   - id: "local-preferences"
-    owner: target desktop presentation preference store; current SettingsView uses component-local React state only
+    owner: App-owned validated localStorage preferences; settings/local-preferences.ts
     kind: store
   - id: "usage"
     owner: Observability UsageIngestor/projections (target only)
@@ -47,7 +47,7 @@ edges:
   - id: "e-settings-local-preference"
     from: "settings-ui"
     to: "local-preferences"
-    kind: local-presentation-preference-target-only-no-domain-authority
+    kind: local-presentation-preference-no-domain-authority
   - id: "e-settings-runtime"
     from: "operator"
     to: "runtime"
@@ -86,7 +86,7 @@ transactions:
     atomic_records: ["runtime_incarnation", "drain_state"]
     external_calls_inside: false
   - id: "tx-local-preference"
-    owner: target desktop preference store (not implemented by current SettingsView)
+    owner: App-owned localStorage preference snapshot (best-effort local write; not SQLite)
     atomic_records: ["local_display_preference"]
     external_calls_inside: false
   - id: "tx-domain-setting"
@@ -119,9 +119,9 @@ external_boundaries:
 recovery:
   owner: Runtime lifecycle and canonical domain owners
   source_of_truth: committed-owner-records-plus-fresh-native-os-observations
-  restart_action: reload target persisted preferences when that store is implemented (current SettingsView values reset with component state); re-probe-runtime-and-os-assertions; clear-stale-ephemeral-assertion; reconcile-domain-mutations; usage-read-from-durable-leaves-without-double-counting
+  restart_action: reload validated local preferences with safe defaults on corruption or storage failure; re-probe-runtime-and-os-assertions; clear-stale-ephemeral-assertion; reconcile-domain-mutations; usage-read-from-durable-leaves-without-double-counting
 
 # Owner-accepted 2026-11-09: status ACCEPTED/LOCKED authorizes implementation only.
-# Stop-gate, power and rename edges are revision 1.0 targets; none is served. The
+# Rename and read-only stop preview are served; stop request and OS power wiring remain targets. The
 # authenticated stop route stays unmounted until Task/Attempt, Effect, lease and local
 # service-reference settlement is proven (apps/litecoworkd/src/runtime.rs).

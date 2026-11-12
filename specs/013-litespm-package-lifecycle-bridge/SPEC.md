@@ -5,7 +5,7 @@
 - **Change control:** once accepted, any change to this contract requires a new revision and renewed owner approval (SPECIFICATION-STANDARD section 7).
 - **Target:** LiteCowork V1 Area 5 items 5.1 to 5.4, master plan P5 package exit, LiteSPM lane section 3 steps 1 to 7, gate C, E2E-06.
 - **Owners:** LiteSPM boundary (Capability Fabric), Operator/API, Storage, Trust/Approval, Desktop UI, Security, Product. Upstream LiteSPM owns package catalog, inventory, host registration, mutation and lifecycle.
-- **Dependencies:** pinned LiteSPM daemon service contract (B-36); one qualified host compatibility profile (B-37); Feature 011 local IPC and Runtime readiness; Feature 002 host/agent identity; Feature 006 Core assignment, grant and invocation; Feature 005 Trust/approval primitives.
+- **Dependencies:** the published, pinned LiteSPM bridge contract (B-36); one qualified host compatibility profile (B-37); Feature 011 Runtime readiness and process ownership; Feature 002 host/agent identity; Feature 006 Core assignment, grant and invocation; Feature 005 Trust/approval primitives.
 
 ## 1. Problem and user outcome
 
@@ -17,8 +17,8 @@ LiteSPM, not LiteCowork, is the package manager. LiteCowork must never become a 
 
 ## 2. Goals
 
-- G-01 Connect to one pinned LiteSPM daemon service version over OS-local IPC, negotiate the protocol, and record the exact per-OS peer-authentication result without upgrading it.
-- G-02 Use only operations the pinned service descriptor advertises; every other verb is visibly unavailable with a reason.
+- G-01 Use only the published, pinned LiteSPM bridge contract authorized by ARCHITECTURE.md and AGENTS.md section 6; negotiate its protocol and record only the exact authentication/conformance evidence that this bridge actually exposes. A direct daemon RPC client requires an explicit Architecture revision and owner approval before it can be used.
+- G-02 Use only lifecycle semantics supported by the pinned published MCP tool manifest and the qualified host profile; every other verb is visibly unavailable with a reason.
 - G-03 Project LiteSPM's live inventory (observed, managed, adopted, drifted, broken) per host and scope in Discover without persisting a LiteCowork copy of it.
 - G-04 Evaluate one host compatibility profile (host x version x OS x scope x kind x operation) before offering any mutation.
 - G-05 Plan before write: LiteSPM produces the immutable plan; LiteCowork shows the exact diff and binds a single-use owner approval to its digest, host, scope and expiry. An agent can request but never approve.
@@ -30,7 +30,7 @@ LiteSPM, not LiteCowork, is the package manager. LiteCowork must never become a 
 
 ## 3. Non-goals
 
-No LiteCowork package database, resolver, catalog cache, CAS or host-config writer. No direct reads or writes of LiteSPM's SQLite, lockfile, ledger or files. No parsing of `litespm` CLI output and no RPC names inferred from CLI output, marketplace pages or the 13-tool MCP stdio bridge (that bridge remains the agent-facing ABI and is not this client's transport). No HTTP endpoint for package management. No Connection/OAuth/SecretStore work (Feature 006). No Coworker assignment or Task/Conversation grant semantics (Features 006 and 009). No invocation of package tools (Feature 006). No LiteSPM service install, signed update or uninstall by LiteCowork (ServiceSupervisor and ACSR agent-bridge registration from LITESPM-INTEGRATION-PLAN sections 2 and 3 are deferred; see O-04). No catalog publication or skill authoring (LEARNING section 15b). No universal `/marketplace` slash-command promise. No `connector` package kind (deferred upstream).
+No LiteCowork package database, resolver, catalog cache, CAS or host-config writer. No direct reads or writes of LiteSPM's SQLite, lockfile, ledger or files. No parsing of `litespm` CLI output or wire/RPC names inferred from CLI output or marketplace pages. The published local MCP stdio bridge is the current architecture boundary; LiteCowork must not bypass it with private daemon methods. No HTTP endpoint for package management. No Connection/OAuth/SecretStore work (Feature 006). No Coworker assignment or Task/Conversation grant semantics (Features 006 and 009). No invocation of package tools (Feature 006). No LiteSPM service install, signed update or uninstall by LiteCowork (ServiceSupervisor and ACSR agent-bridge registration from LITESPM-INTEGRATION-PLAN sections 2 and 3 are deferred; see O-04). No catalog publication or skill authoring (LEARNING section 15b). No universal `/marketplace` slash-command promise. No `connector` package kind (deferred upstream).
 
 ## 4. Current implementation and evidence boundary
 
@@ -46,7 +46,7 @@ No LiteCowork package database, resolver, catalog cache, CAS or host-config writ
 | LiteSPM client, transport, peer auth | ABSENT: no `LiteSpm*` type in `apps/` or `crates/` | Whole bridge is target |
 | Package approval and receipt records | ABSENT: no table after `docs/schemas/sqlite-v32.sql` | Target |
 | Reusable primitives | CODE: `crates/operator-ipc` (`BudgetedBody`, `InFlightBodyBudget`, framed read/write), `crates/windows-local-security` (`current_logon_sid`, `connect_operator_pipe`) | Built for LiteCowork's own Operator pipe; reuse for a LiteSPM client is unproven |
-| Upstream LiteSPM | Pins disagree: REF-LITESPM `9f42b25d` ([REFERENCE-IMPLEMENTATIONS.md](../../docs/REFERENCE-IMPLEMENTATIONS.md)); interop LLD header `111fd9b8`; LLD Appendix A/B study `f77a3a3`. Appendix A records that upstream publishes no approval-recording method (A1), no package `operation.get` (A2), no reconcile/unmanage (A3), no service descriptor (A4) and no agreed health meaning (A5) | Bridge contract not pinned; see B-36 |
+| Upstream LiteSPM | Source SHAs `9f42b25d`, `111fd9b8`, `f77a3a3` and research snapshot `84d5fab` describe different dates/interfaces. `84d5fab` is research only, not the owner-approved LiteCowork MCP pin. Current root Architecture identifies published local MCP stdio as the boundary; exact schemas and operation coverage have not been requalified | MCP bridge/tool manifest not pinned; see B-36 and O-01 |
 
 The served-route and Discover facts above are also recorded in [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md) ("Discover and LiteSPM").
 
@@ -63,7 +63,7 @@ The served-route and Discover facts above are also recorded in [docs/IMPLEMENTAT
 | L-05 | LiteSPM wire names, version and authentication come from its published pinned bridge contract; never from CLI output or listings. | AGENTS.md section 6 |
 | L-06 | LiteSPM observes before writing; an adopted installation may be un-managed without uninstalling; user edits win by default. | V1 release contract section 6 invariant 5 |
 | L-07 | A failed inventory read is an explicit unavailable error, never an empty successful list. | interop LLD section 3, LITESPM-INTEGRATION-PLAN section 4 |
-| L-08 | An owner-only Windows named-pipe DACL is a transport boundary, not verified application identity. | interop LLD "upstream bridge evidence", LITESPM-INTEGRATION-PLAN section 4 |
+| L-08 | Upstream daemon pipe/socket credentials are research facts only; they do not establish LiteCowork's process identity when the product boundary is MCP stdio. | Root ARCHITECTURE.md; Runtime/process owner contract (O-08) |
 | L-09 | Filesystem mutation and SQLite bookkeeping are not one atomic medium; a request timeout is never success. | interop LLD section 6, LITESPM-INTEGRATION-PLAN section 6 |
 | L-10 | A Discover catalog entry is never authoritative. | `DiscoverCatalogEntry::validate` in `crates/storage-core/src/discover.rs` |
 
@@ -80,7 +80,7 @@ The served-route and Discover facts above are also recorded in [docs/IMPLEMENTAT
 
 | ID | Topic | Proposed resolution | Consequence |
 |---|---|---|---|
-| B-36 | Pinned LiteSPM bridge version, transport and peer authentication | **PROPOSED (pending owner).** Pin candidate confirmed 2026-11-09 as HEAD `84d5fab` (v0.6.0, protocol `2026-07-28`), see [LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md); owner still accepts B-36 formally at 013-T01. (1) **Version:** pin one LiteSPM release tag or commit, re-read at implementation time and recorded in RESEARCH.md; REF-LITESPM `9f42b25d` is only the research baseline, and the conflicting LLD pins (`111fd9b8`, `f77a3a3`) are reconciled in the same change. The bridge contract counts as pinned only when that revision publishes a versioned daemon service descriptor and machine schemas for the operations LiteCowork uses (upstream parity requests A1, A2 and A4 in the interop LLD Appendix A). (2) **Transport:** the per-user LiteSPM daemon's own local IPC (Windows owner-only named pipe; Linux Unix-domain socket 0600 in a 0700 directory), attach-only to an existing daemon, with the descriptor's framing and LiteCowork-side byte caps, deadlines and bounded pagination. Never HTTP, never the 13-tool MCP stdio bridge, never CLI output, never a shell command built from package, user or model input. (3) **Peer authentication:** LiteCowork verifies that the server endpoint is owned by the current OS user (Windows: pipe server process SID equals `current_logon_sid`; Linux: socket owner uid and `SO_PEERCRED` uid equal the daemon user) and records LiteSPM's handshake `peerAuth` result verbatim. A Windows `peerAuth.verified=false` is stored as `TRANSPORT_ACL_ONLY` and is never labelled verified. (4) **Negotiation:** an unpinned protocol version, a missing descriptor or an unadvertised operation fails closed with `LITESPM_PROTOCOL_INCOMPATIBLE`; only advertised operations are offered. (5) **Approval:** LiteCowork never spawns `litespm approve` or any interactive CLI; until the pinned revision advertises an approval-recording operation bound to the plan digest, apply stays UNAVAILABLE and connect-or-install keeps returning `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED`. | Unblocks 013-T02 to 013-T05. If upstream does not publish A1/A2/A4, the package ships observe-only inventory and every mutation stays visibly unavailable. |
+| B-36 | Pinned LiteSPM MCP bridge, tool coverage, process identity and approval semantics | **PROPOSED (pending owner).** The 2026-11-09 checkout at `84d5fab` is a research snapshot only; see [LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md). Root ARCHITECTURE.md and AGENTS.md set the published local MCP stdio bridge as the integration boundary; direct daemon IPC is not authorized. At T01/T02, pin one published release and exact MCP protocol/server/tool schemas, resolve the Runtime/process owner's supervised session and per-OS identity evidence, and determine whether its tools support LiteCowork's exact owner-approved plan/apply/idempotency/reconciliation path. No invented service descriptor or daemon wire method. Until accepted, all Feature 013 work stays deferred. | Unblocks T02-T05 only after the boundary and operation schemas are reviewed. If the selected pinned bridge lacks an operation or cannot preserve required consent/recovery, keep that verb unavailable or reduce scope. |
 | B-37 | First package kind and host for plan/apply | **PROPOSED (pending owner).** First mutating pair: **kind `skill`** (a `SKILL.md` directory, installed by LiteSPM by copy with its provenance ledger and path confinement; only `runtime_verified` listings) for host **OpenCode v2.0.32, user scope**, on **Windows 11/10 x86_64-pc-windows-msvc** (release row 1), then the same pair on **Linux x86_64** (row 2). Order: inventory observe (all kinds the host profile reports, read-only) -> install -> adopt of an already present skill -> remove/rollback -> unmanage -> update/repair. `mcp` install follows only after LiteSPM publishes the agreed health/qualification meaning (Appendix A5), because an MCP install launches a provider process. Project scope and copy-to-another-agent wait for a second host profile (Claude Code after Features 002/004). If the pinned LiteSPM host adapter does not advertise skill lifecycle for OpenCode v2.0.32 on a row, plan/apply stays UNAVAILABLE on that row and the owner chooses between `mcp` on OpenCode and `skill` on the second qualified agent. | Fixes the compatibility profile for 013-T05 and the qualification rows for 013-T18. Keeps the first mutation free of provider processes and secrets. |
 
 These proposals are not owner decisions. This package remains IN_REVIEW until the owner accepts or amends B-36 and B-37 through 013-T01.
@@ -94,7 +94,9 @@ flowchart TD
   OP --> PS[PackageLifecycleService]
   PS --> DB[(LiteCowork SQLite: approvals, operation receipts, service observation)]
   PS --> CL[LiteSpmClient]
-  CL -->|OS-local IPC, pinned protocol| LS[LiteSPM daemon]
+  CL -->|injected pinned MCP session| RT[Feature 011 Runtime process/session owner]
+  RT -->|published local MCP stdio| BRG[LiteSPM bridge]
+  BRG --> LS[LiteSPM daemon]
   LS --> LDB[(LiteSPM-owned DB, ledger, CAS)]
   LS --> HOST[Native host config: OpenCode skills dir]
   PS --> CB[classify_agent_capability_route]
@@ -105,7 +107,7 @@ flowchart TD
 ### Trust boundaries
 
 - Desktop WebView to Operator: authenticated local IPC (Feature 011). The UI sends typed commands only; it never talks to LiteSPM.
-- Operator to LiteSPM daemon: a second OS-local IPC boundary. LiteSPM responses are untrusted input until size-checked, schema-validated and correlated to the request, host, scope and plan digest.
+- Operator to LiteSPM: use the published local MCP stdio bridge from ARCHITECTURE.md; do not add a second private daemon-RPC boundary. Process launch/supervision and the exact authentication evidence are not yet fully specified (O-08). Tool results are untrusted until size-checked, validated against the pinned published schema and correlated to the request, host, scope and plan digest.
 - LiteSPM to native host files: LiteSPM's authority only. LiteCowork never writes host config.
 - Approval: only an authenticated owner action from the desktop creates an approval; agent, model, Conversation or Task input can create a plan request at most.
 - Package contents (skill text, manifests, diffs) are untrusted data and are never executed or rendered as markup.
@@ -117,7 +119,7 @@ flowchart TD
 3. UI shows the plan review dialog. Owner approves. Daemon commits `PackageOperationApproval` (owner, plan digest, host, scope, expiry, single-use) with an idempotency receipt in one transaction.
 4. Daemon commits a `PackageOperationReceipt` intent row (state `DISPATCHING`, stable apply key) and only then calls LiteSPM apply outside any transaction, passing the plan digest, the approval correlation required by the pinned protocol and the stable key.
 5. LiteSPM revalidates freshness, mutates, writes its own receipt and read-back. Daemon records the LiteSPM operation ID, terminal state and read-back fingerprint (`SUCCEEDED`, `FAILED`, or `UNKNOWN` on timeout/lost response).
-6. `UNKNOWN` is reconciled by querying the original LiteSPM operation identity before any other mutation for that host and scope. Startup resumes reconciliation.
+6. `UNKNOWN` is reconciled by querying the original operation identity only if the pinned published MCP bridge exposes a qualified lookup/reconcile tool. If it does not, preserve UNKNOWN and block further mutation for that host and scope. Startup resumes only supported reconciliation.
 7. Daemon refreshes inventory; Discover shows Managed. Assignment and grant are offered separately by Feature 006.
 
 ### Ownership
@@ -128,7 +130,7 @@ flowchart TD
 | Tauri bridge | Typed commands, bounded responses | Retries that change intent |
 | Operator | Auth, Workspace/Runtime scope, idempotency, If-Match, typed errors | LiteSPM wire details |
 | PackageLifecycleService | Profile check, plan/approve/apply orchestration, reconciliation, Discover projection | Package mutation, inventory storage |
-| LiteSpmClient | Handshake, version negotiation, peer check, bounded framed calls | Authorization decisions |
+| LiteSpmClient | MCP initialization and pinned tool-manifest validation, bounded tool calls through the supplied Runtime-owned session | Process launch/identity authority; LiteCowork authorization decisions |
 | Storage | Approval and receipt rows, CAS, idempotency receipts | External calls inside transactions |
 | LiteSPM daemon | Inventory, plan, apply, receipts, read-back, rollback, host writes | LiteCowork grants or Effects |
 | Feature 006 | Assignment, grant, invocation | Package lifecycle |
@@ -163,17 +165,14 @@ pub fn classify_agent_capability_route(input: &AgentCapabilityBridgeInput)
 ### 7.2 Proposed target signatures (not yet in source)
 
 ```rust
-// apps/litecoworkd/src/litespm/ (new)
-pub struct LiteSpmServiceDescriptor { pub protocol_version: String, pub daemon_identity: String,
-    pub operations: BTreeSet<LiteSpmOperation>, pub max_request_bytes: usize,
-    pub max_response_bytes: usize, pub peer_auth: PeerAuthObservation }
-pub enum PeerAuthObservation { OsCredentialVerified { uid_or_sid: String },
-    TransportAclOnly { reason: String }, Refused { reason: String } }
+// apps/litecoworkd/src/litespm/ (new; transport-neutral facade over the published MCP stdio bridge)
+// The exact MCP session launcher, peer identity evidence and process owner are blocked by B-36/O-08;
+// do not add a private LiteSPM daemon endpoint or invent a descriptor/RPC.
+pub struct LiteSpmClient { session: PinnedMcpSession, tools: PinnedToolCatalog, budgets: CallBudgets }
 pub enum LiteSpmOperation { Inventory, Describe, Plan, RecordApproval, Apply, OperationGet,
-    Adopt, Unmanage, Remove, Update, Repair, Reconcile } // semantic names; wire names come from the pinned descriptor
-pub struct LiteSpmClient { /* endpoint, descriptor, budgets, deadlines */ }
+    Adopt, Unmanage, Remove, Update, Repair, Reconcile } // semantic names; tool names/schemas come from the pinned published bridge
 impl LiteSpmClient {
-    pub async fn connect(endpoint: &LiteSpmEndpoint, pin: &ProtocolPin) -> Result<Self, LiteSpmError>;
+    pub fn from_pinned_session(session: PinnedMcpSession, tools: PinnedToolCatalog) -> Result<Self, LiteSpmError>;
     pub async fn inventory(&self, q: InventoryQuery) -> Result<InventoryPage, LiteSpmError>;
     pub async fn plan(&self, r: PlanRequest) -> Result<PackagePlan, LiteSpmError>;
     pub async fn apply(&self, r: ApplyRequest) -> Result<ApplyOutcome, LiteSpmError>; // Timeout => Unknown
@@ -202,7 +201,7 @@ Proposed Operator routes (target, not yet in source), all requiring the selected
 
 | Route | Purpose |
 |---|---|
-| `GET /v1/package-service/status` | Descriptor, protocol pin, peer-auth observation, advertised operations |
+| `GET /v1/package-service/status` | Pinned MCP protocol/server information, tool-manifest digest, Runtime-owned process-identity class/evidence reference, observed time; no invented LiteSPM descriptor or daemon peer-auth claim |
 | `GET /v1/package-inventory?host_profile_id=&scope=&cursor=&limit=` | Live LiteSPM inventory page (read-through) |
 | `POST /v1/package-operations/plans` | Ask LiteSPM for a plan (install, adopt, unmanage, remove, update, repair) |
 | `POST /v1/package-operations/approvals` | Owner approval bound to `plan_digest`, host profile, scope, expiry |
@@ -220,13 +219,13 @@ See [DATA-MODEL.md](DATA-MODEL.md). LiteCowork stores only the service observati
 
 ## 9. Wiring
 
-See [WIRING.yaml](WIRING.yaml): UI -> Tauri bridge -> Operator -> PackageLifecycleService -> Storage (approval, receipt intent, settlement) and LiteSpmClient -> LiteSPM daemon; no external call inside a transaction.
+See [WIRING.yaml](WIRING.yaml): UI -> Tauri bridge -> Operator -> PackageLifecycleService -> Storage (approval, receipt intent, settlement) and LiteSpmClient -> the published LiteSPM MCP stdio bridge; no external call inside a transaction. Direct daemon RPC is out of bounds unless B-36 is amended through an Architecture owner review.
 
 ## 10. Security, trust and privacy
 
 - Authenticate and owner-scope every route; reject a foreign Runtime (`RUNTIME_MISMATCH`, existing behaviour) and foreign Workspace.
 - Approval is created only by an authenticated owner command from the desktop; approval IDs and any LiteSPM approval token are single-use, never logged, never returned to an agent and never placed in model-visible context.
-- The client refuses an endpoint whose owner is not the current OS user and records Windows transport-ACL-only results as such.
+- The integration uses only the pinned published bridge. The bridge launch owner, process identity proof and per-OS authentication evidence are explicit open decisions; do not claim OS peer verification from stdio transport alone.
 - Byte caps before JSON parse; deadlines on connect, call and stream; bounded pagination. Malformed or oversized LiteSPM responses are errors, not partial success.
 - No shell interpolation; no environment secrets passed to LiteSPM; raw skill contents never logged.
 - Display-name matches never set `lite_spm_managed` or `package_digest_verified`.
@@ -238,39 +237,39 @@ See [contracts/errors-recovery.md](contracts/errors-recovery.md). Rules: unavail
 
 ## 12. Configuration and compatibility
 
-- One `ProtocolPin` (LiteSPM revision, protocol version) compiled in; a mismatch fails closed.
-- Endpoint discovery follows the pinned descriptor's documented location only; no guessing.
+- One owner-approved `McpBridgePin` (LiteSPM release, negotiated MCP protocol version, server identity/version and tool-manifest schema digest) is recorded at T02; a mismatch fails closed.
+- The LiteCowork client consumes a session from the process/session owner defined by Feature 011/O-08. It does not discover a private LiteSPM endpoint, create a daemon descriptor or spawn an unmanaged process.
 - Host compatibility profile is data: host, host version, OS/build, scope, kind, operation, evidence ref. Only rows qualified in 013-T18 are enabled.
-- Deadlines and caps are finite; proposed initial values (connect 5 s, call 30 s, response 4 MiB, inventory page 200) are confirmed against the descriptor in 013-T04.
+- Deadlines and caps are finite; proposed initial values (MCP initialization 5 s, tool call 30 s, response 4 MiB, inventory page 200) are checked against the pinned MCP bridge contract in 013-T04.
 - Migration: one forward-only `sqlite-vNN.sql` (allocated v39 in docs/LITECOWORK-BUILD-TASKS.md; the chain currently ends at `sqlite-v32.sql`).
 
 ## 13. Observability
 
-Record correlation ID, LiteSPM operation ref, plan digest prefix, host profile, scope, state transitions, durations, peer-auth classification and LiteSPM error code. Never record approval tokens, package contents, environment values or host file contents.
+Record correlation ID, LiteSPM operation ref, plan digest prefix, host profile, scope, state transitions, durations, Runtime-owned process-identity classification/evidence reference and LiteSPM error code. Never record approval tokens, package contents, environment values, host file contents or native process/session handles.
 
 ## 14. EARS acceptance criteria
 
-- AC-001 WHEN the daemon connects to LiteSPM, THE SYSTEM SHALL negotiate the pinned protocol version and offer only operations the descriptor advertises; IF the version is not pinned, the descriptor is missing or an operation is not advertised, THEN THE SYSTEM SHALL fail closed with `LITESPM_PROTOCOL_INCOMPATIBLE` or `LITESPM_OPERATION_NOT_ADVERTISED` and show the verb unavailable. Verify: client unit tests with fixture descriptors.
-- AC-002 WHEN a LiteSPM handshake completes, THE SYSTEM SHALL verify the endpoint is owned by the current OS user and store the exact peer-auth result; IF the result is Windows `peerAuth.verified=false`, THEN THE SYSTEM SHALL record `TRANSPORT_ACL_ONLY` and SHALL NOT display or log it as verified; IF the owner differs, THEN THE SYSTEM SHALL refuse the connection. Verify: per-OS peer tests (Windows and Linux).
-- AC-003 THE SYSTEM SHALL reach LiteSPM only through the pinned OS-local IPC endpoint and SHALL NOT call HTTP, parse CLI output or build a shell command from package, user or model input. Verify: code review checklist plus a test asserting no process spawn in the client.
+- AC-001 WHEN the Runtime-owned MCP session initializes, THE SYSTEM SHALL verify the negotiated MCP protocol version, server information and bounded `tools/list` result against the owner-approved pin and manifest; IF the version, server or tool schema is missing, mismatched or unpinned, THEN THE SYSTEM SHALL fail closed with `LITESPM_PROTOCOL_INCOMPATIBLE` or `LITESPM_OPERATION_NOT_ADVERTISED` and keep the affected verb unavailable. Verify: client conformance fixtures made from the pinned published MCP schemas.
+- AC-002 WHEN the MCP session is established, THE SYSTEM SHALL record only process-identity evidence supplied by the owning Runtime/process boundary; IF that owner cannot establish the required local process identity for the exact OS row, THEN THE SYSTEM SHALL keep the integration unavailable and SHALL NOT label stdio or MCP metadata alone as OS-authenticated. Verify: Runtime-owned process identity tests and per-OS qualification evidence.
+- AC-003 THE SYSTEM SHALL access LiteSPM only through its pinned published MCP stdio bridge session and SHALL NOT call a private daemon IPC method, HTTP endpoint, parse CLI output or interpolate package/user/model input into a shell command. The LiteSPM client SHALL NOT launch a process outside the approved Runtime/process owner. Verify: transport-boundary review and negative tests for direct IPC, HTTP and unauthorized process launch.
 - AC-004 WHEN the owner opens Installed / native or Managed, THE SYSTEM SHALL return LiteSPM's live inventory with host, scope, locator, provenance, management state, observed fingerprint and observed time; IF the LiteSPM read fails or times out, THEN THE SYSTEM SHALL return `PACKAGE_INVENTORY_UNAVAILABLE`, not an empty page; and THE SYSTEM SHALL persist no inventory rows. Verify: route tests and schema inspection.
 - AC-005 WHEN two entries share a display name across hosts or scopes, THE SYSTEM SHALL keep them distinct by LiteSPM identity and SHALL NOT merge or infer identity from names. Verify: fixture test.
 - AC-006 WHEN the owner requests a plan, THE SYSTEM SHALL check the host compatibility profile first and return LiteSPM's immutable plan digest, exact diff, hazards and expiry with no mutation; IF the profile row is not qualified, THEN THE SYSTEM SHALL return `PACKAGE_HOST_PROFILE_UNSUPPORTED`. Verify: service tests with fake client.
 - AC-007 WHEN the authenticated owner approves a plan, THE SYSTEM SHALL atomically record one single-use approval bound to owner, plan digest, host profile, scope and expiry; IF the request originates from an agent, model, Conversation or Task path, or the plan is expired or changed, or the approval was already consumed, THEN THE SYSTEM SHALL refuse it with no mutation. Verify: storage and route negative tests.
 - AC-008 WHEN apply is requested twice with the same idempotency key, or concurrently for the same approval, THE SYSTEM SHALL dispatch at most one LiteSPM apply and return the same receipt. Verify: concurrency test with a counting fake client.
-- AC-009 IF the apply response is lost or times out after dispatch, THEN THE SYSTEM SHALL record UNKNOWN, query the original LiteSPM operation identity, block further mutation for that host and scope until reconciled, and resume that reconciliation after daemon restart. Verify: fault-injection and restart tests.
+- AC-009 IF the apply response is lost or times out after dispatch, THEN THE SYSTEM SHALL record UNKNOWN and block further mutation for that host and scope. Query the original operation and resume reconciliation after restart only when the pinned published MCP manifest includes a qualified operation lookup/reconcile tool; otherwise keep UNKNOWN and report reconciliation unavailable. Verify: fault-injection and restart tests for both tool-present and tool-absent profiles.
 - AC-010 WHEN LiteSPM reports a terminal success, THE SYSTEM SHALL show success only after recording LiteSPM's operation ref and read-back fingerprint and refreshing inventory, and SHALL NOT create any assignment, grant or invocation. Verify: integration test asserting no Feature 006 records.
 - AC-011 WHEN the owner adopts an observed native entry, THE SYSTEM SHALL require a LiteSPM plan that leaves host config byte-identical, and WHEN the owner un-manages it, THE SYSTEM SHALL preserve the originally present native entry; IF the host entry drifted, THEN THE SYSTEM SHALL present keep-local as the default. Verify: host fixture byte comparison (CODE) and release-row SYSTEM test.
 - AC-012 IF an apply fails or the owner rolls back, THEN THE SYSTEM SHALL obtain a LiteSPM remove or rollback plan for owned nodes only and SHALL NOT write host config or LiteSPM storage itself. Verify: test asserting the daemon has no host-path write capability.
 - AC-013 WHEN an update or repair is requested, THE SYSTEM SHALL require a new plan against the current fingerprint, and WHEN the package permission or tool-schema fingerprint changes, THE SYSTEM SHALL notify Feature 006 to invalidate dependent grants. Verify: service tests.
 - AC-014 WHILE Discover is loading, empty, unavailable, offline, stale, awaiting approval, applying or UNKNOWN, THE SYSTEM SHALL show a distinct accessible state, keep each lifecycle verb (Use existing, Manage with LiteSPM, Install to agent, Update, Repair, Stop managing, Remove installation) a separate control with its own preview, disable unavailable verbs with an accessible reason, and show no irreversible action before the exact diff is confirmed. Verify: UI state tests and keyboard/screen-reader audit.
 - AC-015 WHEN a Discover row is rendered, THE SYSTEM SHALL show package availability, Connection authentication, Coworker assignment and use permission as separate facts and SHALL keep `authoritative` false. Verify: decoder and render tests.
-- AC-016 WHEN an inventory page or plan is requested on the release row, THE SYSTEM SHALL enforce the response cap, page limit and deadline, and the first inventory page for up to 500 entries SHALL render within 2 s at p95 (proposed budget, confirmed in 013-T04). Verify: bounded fake-daemon benchmark and release-row measurement.
+- AC-016 WHEN an inventory page or plan is requested on the release row, THE SYSTEM SHALL enforce the response cap, page limit and deadline, and the first inventory page for up to 500 entries SHALL render within 2 s at p95 (proposed budget, confirmed in 013-T04). Verify: bounded fake-MCP-server benchmark and release-row measurement.
 - AC-017 WHEN any request, event, receipt, log line or projection is serialized, THE SYSTEM SHALL exclude approval tokens, environment values and raw package contents. Verify: redaction tests.
 - AC-018 WHEN `classify_agent_capability_route` is called for a package, THE SYSTEM SHALL set `lite_spm_managed` and `package_digest_verified` only from a settled LiteSPM receipt matched to current inventory by LiteSPM identity and digest. Verify: producer unit tests.
 - AC-019 WHILE B-36 and B-37 are not accepted or the release-row route is not qualified, THE SYSTEM SHALL keep connect-or-install returning `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED` and every new verb disabled with that reason. Verify: route and UI negative tests.
 - AC-020 WHEN Discover reports `checked_at` or uses a current time, THE SYSTEM SHALL use an RFC 3339 clock value, not a correlation identifier. Verify: route test parsing `checked_at`.
-- AC-021 WHEN the LiteSPM bridge is pinned (task P-17), THE SYSTEM SHALL take its wire names, version and authentication only from the published pinned bridge contract (reconciling the three SHAs 9f42b25d, 111fd9b8 and f77a3a3), SHALL mirror the LiteSPM preview, backup, transaction and byte-exact-restore safety contract so a failed mutation restores byte-for-byte, and SHALL use single-flight plus backoff for Discover read-through; while the published bridge is unreachable the pin SHALL be recorded as TARGET-pending-published-bridge and no wire name SHALL be inferred from CLI output or a listing. Verify: RESEARCH pin record and single-flight read-through test.
+- AC-021 WHEN the LiteSPM bridge is pinned (013-T02/T20), THE SYSTEM SHALL take MCP protocol details, server/tool schemas, version and authentication/process assumptions only from the published pinned bridge contract; SHALL mirror only upstream preview, backup, transaction and byte-exact-restore guarantees evidenced at that pin; and SHALL use single-flight plus backoff for Discover read-through. IF a required plan, owner approval, apply or reconciliation operation is absent or lacks an owner-approved contract, THEN THE SYSTEM SHALL leave that lifecycle verb unavailable. Verify: RESEARCH pin record, published schema citations and single-flight read-through test.
 
 ## 15. Executable acceptance command
 
@@ -280,7 +279,7 @@ Record correlation ID, LiteSPM operation ref, plan digest prefix, host profile, 
 cargo test -p litecoworkd --test litespm_package_lifecycle --locked -- --nocapture
 ```
 
-Do not mark this package VERIFIED until the target exists, covers AC-001 to AC-020 against a fake daemon and the pinned real LiteSPM build, and passes on Windows x64 + OpenCode v2.0.32 and then Linux x64 with owner USER evidence for E2E-06.
+Do not mark this package VERIFIED until the target exists, covers AC-001 to AC-021 against a fake MCP server/session and the pinned real LiteSPM build, and passes on Windows x64 + OpenCode v2.0.32 and then Linux x64 with owner USER evidence for E2E-06. If the published MCP bridge cannot supply a required semantic operation, reduce scope and acceptance before qualification; do not add a private daemon API to satisfy this target.
 
 ## 16. Out-of-bounds paths and side effects
 
@@ -290,12 +289,14 @@ While IN_REVIEW, no implementation path is in bounds. After acceptance, each tas
 
 | ID | Question | Evidence/limitation | Owner | Gate |
 |---|---|---|---|---|
-| O-01 | Will the pinned LiteSPM revision publish a service descriptor, approval recording and package `operation.get`? | Appendix A1, A2, A4 of the interop LLD say not at `f77a3a3` | LiteSPM owner | B-36 / 013-T02 |
+| O-01 | Does the owner-selected pinned MCP bridge expose the exact inventory, plan, owner-approved mutation, operation lookup and recovery operations needed by Feature 013? | The 2026-11-09 research describes both upstream daemon methods and MCP tools; it did not prove the tool schemas or owner-approval semantics needed by this UI path. Revalidate only against the published pin. | LiteSPM owner, Capability Fabric, Product | B-36 / 013-T02 |
 | O-02 | Does LiteSPM's host adapter support skills for OpenCode v2.0.32 on Windows? | Upstream notes cite OpenCode v2.2.5 host UX, not v2.0.32 | LiteSPM owner, Agent Runtime | B-37 / 013-T05 |
 | O-03 | Retire `connect-or-install` or keep it as the Connection-only entry? | Name conflates install and Connection (L-04) | Capability Fabric, Feature 006 | 013-T03 |
 | O-04 | Who installs and updates the LiteSPM service binary in V1 (ServiceSupervisor, ACSR)? | Deferred here; LITESPM-INTEGRATION-PLAN sections 2 and 3 | Product, Feature 019 | 013-T01 |
-| O-05 | Which pin is authoritative today? | RESOLVED 2026-11-09: HEAD `84d5fab` (v0.6.0), read-only, recorded in [LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md); the three earlier SHAs are historical | Capability Fabric | 013-T02 |
-| O-06 | Does reconcile/unmanage exist upstream (A3)? | Not at `f77a3a3` | LiteSPM owner | 013-T10 |
+| O-05 | Which upstream release is the owner-approved LiteCowork MCP bridge pin? | The `84d5fab` checkout is a 2026-11-09 research snapshot, not an owner-approved LiteCowork integration pin. Re-read the published bridge contract at T02 and record an immutable release/protocol/schema digest. | Product, Capability Fabric, LiteSPM owner | 013-T01/T02 |
+| O-06 | Do the selected published MCP tools expose reconcile/unmanage with the required ownership and recovery semantics? | The older `f77a3a3` daemon study is not a current bridge contract; verify each tool and schema at the owner-selected MCP pin. | LiteSPM owner, Capability Fabric | 013-T02/T10 |
+| O-07 | May Feature 013 bypass the published LiteSPM MCP stdio bridge with direct daemon IPC? | RESOLVED AGAINST direct IPC by current root ARCHITECTURE.md and AGENTS.md. Direct IPC is out of scope unless an Architecture amendment and explicit owner decision changes the authority boundary. | Product / Architecture owner | Closed for current revision; revisit only with Architecture amendment |
+| O-08 | Who launches and supervises the LiteSPM MCP stdio bridge, and what per-OS peer/process identity evidence is available? | MCP stdio does not itself prove process ownership or establish the daemon's user identity. Do not claim an endpoint-owner check or add process spawning outside the Runtime/service lifecycle owner. | Runtime Lifecycle, Security, LiteSPM owner | B-36 / 013-T01/T04 |
 
 ## 18. Requirement traceability
 
@@ -304,7 +305,7 @@ While IN_REVIEW, no implementation path is in bounds. After acceptance, each tas
 | Owner acceptance of B-36 and B-37 | OWNER-ACCEPTANCE-REVIEW-PACKET | 013-T01 | AC-019 |
 | Re-pin LiteSPM and reconcile pins | REFERENCE-IMPLEMENTATIONS, interop LLD | 013-T02 | AC-001 / AC-003 |
 | Contract promotion | API, EVENTS, SCHEMAS, STORAGE, error registry | 013-T03 | AC-001 / AC-007 / AC-019 |
-| Client, transport, handshake, peer auth | LITESPM-INTEGRATION-PLAN section 4, LOCAL-OPERATOR-IPC | 013-T04 | AC-001 / AC-002 / AC-003 / AC-016 / AC-017 |
+| Client, MCP initialization, pinned tool manifest and bounded calls | Root ARCHITECTURE, Feature 011 Runtime process ownership, pinned LiteSPM MCP contract | 013-T04 | AC-001 / AC-002 / AC-003 / AC-016 / AC-017 |
 | Host compatibility profile | interop LLD section 4 | 013-T05 | AC-006 |
 | Live inventory projection | interop LLD section 3, CAPABILITY-FABRIC | 013-T06 | AC-004 / AC-005 / AC-015 / AC-016 |
 | Approval and receipt storage | STORAGE, TRUST | 013-T07 | AC-007 / AC-008 |

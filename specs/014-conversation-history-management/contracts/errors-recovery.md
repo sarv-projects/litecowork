@@ -13,7 +13,7 @@
 | Replay conflict | same key, different payload | `IDEMPOTENCY_CONFLICT` | new key only for changed intent |
 | Invalid input | empty or over-long title, control characters, oversized query | `INVALID_ARGUMENT` | keep the edit open with the reason |
 | Active turn | archive or delete while a turn is nonterminal | `CONVERSATION_TURN_IN_PROGRESS` | disable control with reason until settled |
-| Not quiescent | unsettled Conversation-scoped invocation, grant, activation or open UserRequest | `CONVERSATION_NOT_QUIESCENT` with blocker list | show blockers in impact preview |
+| Not quiescent | unsettled Conversation-scoped invocation, grant, activation or open UserRequest; AgentSession not CLOSED/LOST or Runtime-local host binding cleanup unknown | `CONVERSATION_NOT_QUIESCENT` with blocker list | show blockers in impact preview; keep Delete disabled until known settled |
 | Archived | submit, retry, binding change, rename on ARCHIVED | `CONVERSATION_ARCHIVED` | offer Unarchive |
 | Deleted | any read or write after tombstone | 410 `CONVERSATION_DELETED` | show deleted state; remove from lists |
 | Index building | backfill running | 200 with `index_state=BUILDING` | show "Search index is building" |
@@ -52,4 +52,4 @@
 
 ## 5. Never
 
-Never show content after the tombstone, never acknowledge a target before physical removal, never delete Tasks, Artifacts, Evidence or memory as a side effect, never log titles or query text, never treat `BUILDING` as an empty result.
+Never show content after the tombstone, never acknowledge a target before physical removal, never delete Tasks, Artifacts, Evidence or memory as a side effect, never log titles or query text, never treat `BUILDING` as an empty result, and never claim LiteCowork deletion erases native-harness or external-channel copies.

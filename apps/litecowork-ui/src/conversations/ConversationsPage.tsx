@@ -772,19 +772,20 @@ export function ConversationsPage({
   const stopping = stopTarget(currentSnapshot?.active_turn);
   const retrying = retryTarget(currentSnapshot?.active_turn, currentSnapshot?.retryable_turn, sendingTurn || retryPending);
 
-  // A-24 disabled-until-qualified gate (docs/V1-UI-SCREEN-CONTRACT.md "Conversation screen" steps 1/3):
-  // Send requires a qualified (selectable) AgentBinding, not merely a non-empty draft. A binding is
-  // qualified only when buildConversationAgentChoices admits it (current workspace, enabled, lead-eligible).
+  // A-24 disabled-until-dispatch-eligible UI gate (docs/V1-UI-SCREEN-CONTRACT.md "Conversation screen" steps 1/3):
+  // Send requires a selectable AgentBinding, not merely a non-empty draft. Selection checks
+  // Workspace, enabled/lead-eligible state and a known Conversation dispatch branch; it does not
+  // prove provider authentication, native-session readiness, or qualification of the user journey.
   // When no Conversation is selected yet, the composer creates one via `create()`; eligibility is
-  // re-checked against the resulting Conversation's binding, so a draft with no qualified binding
+  // re-checked against the resulting Conversation's binding, so a draft with no dispatch-eligible binding
   // cannot submit a turn.
   const selectedAgentBindingId = selected?.active_agent_binding_id ?? null;
-  const selectedBindingQualified = selectedAgentBindingId !== null
+  const selectedBindingEligible = selectedAgentBindingId !== null
     && agentChoices.some(choice => choice.agentBindingId === selectedAgentBindingId && choice.selectable);
-  // For an unstarted Conversation (no selectedId) a qualified binding still must exist to submit; the
+  // For an unstarted Conversation (no selectedId) a dispatch-eligible binding still must exist to submit; the
   // workspace default (when selectable) or any selectable choice makes Send eligible after creation.
-  const hasQualifiedBindingForNewConversation = agentChoices.some(choice => choice.selectable);
-  const bindingEligibleForSend = selectedId ? selectedBindingQualified : hasQualifiedBindingForNewConversation;
+  const hasEligibleBindingForNewConversation = agentChoices.some(choice => choice.selectable);
+  const bindingEligibleForSend = selectedId ? selectedBindingEligible : hasEligibleBindingForNewConversation;
   const sendEligible = isSendEligible({
     activeTurn: currentSnapshot?.active_turn ?? null,
     transientStreaming,
@@ -1117,7 +1118,7 @@ export function ConversationsPage({
                   which owns its own reasoning, models and tools.
                 </p>
                 <p>
-                  Choose a qualified agent in the composer below, then type your message. Ordinary chat does
+                  Choose an available agent in the composer below, then type your message. Ordinary chat does
                   not create a Task or require a Coworker.
                 </p>
               </div>
@@ -1253,7 +1254,7 @@ export function ConversationsPage({
                     : !operatorReady
                       ? "Operator is not ready"
                       : !bindingEligibleForSend
-                        ? "Select a qualified agent to send"
+                        ? "Select an available agent to send"
                         : sendingTurn
                           ? "Sending…"
                           : "Send message"

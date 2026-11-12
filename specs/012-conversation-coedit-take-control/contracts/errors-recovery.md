@@ -26,9 +26,9 @@ Reload the last committed Conversation turn, control events and side-notes. Do n
 
 ## Current gaps
 
-- The Feature 001 cancel path does not observe native interrupt/quiescence and the UI Stop is ineffective for the OpenCode path (register A-25). Take-control recovery cannot be called reliable until those defects are closed.
-- There is no control-event or side-note store today; the accepted target records are not persisted.
-- The context-package builder has no side-note exclusion yet; the exclusion is a new requirement under AC-007.
+- Feature 001 has Stop/cancellation/quiescence CODE foundations; integrated provider quiescence and Feature 012 atomic owner-control settlement/recovery still need qualification.
+- ConversationCoeditStore and migration v32 persist control events and side notes. The user-facing authoring/takeover service and route are not served.
+- The ordinary context builder reads Conversation messages, not the separate side-note table. AC-007 still requires an end-to-end exclusion regression when the authoring service is wired.
 
 ## Qualification gate
 

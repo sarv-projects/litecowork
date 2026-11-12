@@ -117,6 +117,18 @@ recovery:
   source_of_truth: last-committed-runtime-observation-and-workspace-binding-receipt
   restart_action: re-probe-runtime-incarnation-and-install-auth-descriptor-independently; preserve-binding; reconcile-in-flight-lifecycle-before-new-side-effect
 
-# Status note (2026-11-09): ACCEPTED/LOCKED records owner acceptance of this target graph. Edges are target
-# wiring, not a claim that they are served. The probe -> offer -> binding -> conversation path is broken today
-# (SPEC section 4a) until 002-T01 lands; descriptor and auth edges stay target-only until 002-T05 and 002-T07.
+# Status note (checked 2026-11-12): this graph remains the accepted TARGET wiring; it is not evidence that
+# every edge is fully implemented or qualified. CODE/SERVED cross-check:
+# - The profile probe -> computed OpenCode offer -> disabled AgentBinding path is implemented for the exact
+#   2.0.32/complete-probe/observed-host-stop tuple (002-T01); no packaged native bind/send journey is qualified.
+# - Descriptor GET/refresh is served for the OpenCode module through `agent_control_operator.rs` and
+#   `AgentDescriptorService`; persistence reuses the migration-16 `agent_control_descriptors` table (002-T04/T05).
+#   Probe throttling is in-memory; `getAgentSessionOptions` and `getAgentHarnessCapabilities` remain target-only.
+# - Enable uses a fresh descriptor-revision CAS for descriptor-backed profiles; legacy module-less profiles do
+#   not enforce that check yet (002-T06).
+# - Auth-begin/native-config routes and ID-only bridges exist, but the production launcher/opener fail closed;
+#   OpenCode declares no method/target. Auth observations are in-memory and restart to UNKNOWN (002-T07/T10).
+# - Credential submit still uses `NoAgentDescriptorSource` and returns 503 before SecretStore mutation; durable
+#   replay/reconciliation is not implemented (002-T08).
+# - The ACP client and Matchmaker are code-level components but are not wired to a qualified provider flow
+#   (002-T17/T18). Install/update and model-option projection routes remain target-only.

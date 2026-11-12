@@ -7,7 +7,7 @@ Boundary: this package owns one GitHub account Connection, one scoped read, one 
 
 ## Current baseline
 
-Source checked 2026-11-09 on branch `docs/audit-competitor-superset`.
+Historical source crosswalk checked 2026-11-09 on branch `docs/audit-competitor-superset`; current route and storage status re-checked 2026-11-12 against `docs/IMPLEMENTATION-STATUS.md` and the generated served-route inventory. The source boundary remains unchanged: no Connection service/storage writer, OAuth journey or external provider dispatch is served; B-19 remains the recipe blocker.
 
 - **Discover and connect:** `apps/litecoworkd/src/discover_operator.rs` `connect_or_install_capability` always returns 503 `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED` with no receipt; `test_capability_connection` returns `health=UNKNOWN`. `apps/litecowork-ui/src/discover/DiscoverPage.tsx` renders the Connections tab as "Connections cannot be read here"; `connectActionOutcome` in `discover-state.ts` disables every row action.
 - **Connection storage:** `connections` table exists in `docs/schemas/sqlite-v1.sql` with `status CHECK (... 'DISCONNECTED')` (no `REVOKED`) and `secret_refs_json`; no Rust store reads or writes it. OpenAPI `listConnections`, `getConnection`, `disconnectConnection` are target-only.

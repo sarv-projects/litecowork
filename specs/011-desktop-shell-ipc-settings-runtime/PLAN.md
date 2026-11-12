@@ -28,7 +28,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-Workspace rename needs no migration: the Workspace record already has `name` and `version` (`docs/schemas/sqlite-v1.sql`, OpenAPI `Workspace`). Local preferences use a desktop-local file, not SQLite. A later schema change uses the next immutable SQLite migration. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
+Workspace rename needs no migration: the Workspace record already has `name` and `version` (`docs/schemas/sqlite-v1.sql`, OpenAPI `Workspace`). Local display preferences use the existing validated device-local localStorage snapshot, not SQLite or domain policy storage. A later schema change uses the next immutable SQLite migration. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
 
 ## Risks
 

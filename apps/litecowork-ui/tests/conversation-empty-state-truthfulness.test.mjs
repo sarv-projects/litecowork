@@ -65,18 +65,18 @@ test("the empty Conversation canvas advertises no capability this build cannot p
   }
 });
 
-test("the Send control is gated on a qualified binding, not merely a non-empty draft", () => {
-  // A-24 disabled-until-qualified gate: the Send button's disabled expression must depend on the
-  // composed eligibility predicate (which includes binding qualification), not only draft/operator.
+test("the Send control is gated on a dispatch-eligible binding, not merely a non-empty draft", () => {
+  // The current UI's dispatch-eligibility gate includes the binding predicate; this does not prove
+  // provider authentication, native-session readiness, or the accepted disabled-until-qualified gate.
   assert.match(
     source,
     /disabled=\{!sendEligible\}/,
-    "Send button must be disabled unless sendEligible (includes a qualified binding) is true",
+    "Send button must be disabled unless sendEligible (includes a dispatch-eligible binding) is true",
   );
   assert.match(
     source,
     /bindingEligibleForSend/,
-    "send eligibility must incorporate a binding-qualification predicate",
+    "send eligibility must incorporate a dispatch-eligibility predicate",
   );
 });
 

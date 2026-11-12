@@ -1,7 +1,7 @@
 # 013 - LiteSPM Package Lifecycle Bridge
 
 - **Status:** IN_REVIEW - authored 2026-11-09; not owner-accepted; does not authorize implementation; not a claim of implementation or qualification.
-- **Revision:** 0.1 | **Updated:** 2026-11-09 | **Open blockers:** B-36 (pinned LiteSPM bridge version, transport, peer auth) and B-37 (first package kind and host for plan/apply), both PROPOSED, pending owner.
+- **Revision:** 0.1 | **Updated:** 2026-11-12 | **Open blockers:** B-36 (owner-approved MCP bridge pin/tool schemas, Runtime-owned process identity and consent/recovery path) and B-37 (first package kind and host for plan/apply), both PROPOSED, pending owner.
 - **Implementation state (2026-11-10):** DEFERRED by the owner on 2026-11-10 (A-62): every LiteSPM task. Nothing implemented; migration v39 allocated and unused. See the DEFERRED note at the top of TASKS.md for why, what unblocks it and where to test later.
 - **Owners:** Capability Fabric (LiteSPM boundary), Operator/API, Storage, Trust/Approval, Desktop UI, Security and Product. Upstream LiteSPM owns catalog, inventory, host registration, mutation and lifecycle.
 
@@ -13,7 +13,7 @@ The owner sees in Discover what LiteSPM reports as already on this computer and 
 
 Discover serves Workspace-local skills and up to 50 Runtime capability-host observations (`apps/litecoworkd/src/discover_operator.rs`, `crates/storage-sqlite/src/discover.rs`). `POST /v1/capabilities/{capability_id}/connect-or-install` always returns 503 `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED`. The desktop Managed and Connections tabs say "Not available" and every row action is disabled (`apps/litecowork-ui/src/discover/`). `classify_agent_capability_route` exists with no caller. No LiteSPM client exists, and the corpus carries three different LiteSPM pins.
 
-Under this package's IN_REVIEW status, proposed task P-17 is folded in as 013-T20: pin the LiteSPM bridge from its published package or protocol (reconciling the three SHAs), mirror its preview/backup/transaction/byte-exact-restore safety contract, and adopt single-flight plus backoff for Discover read-through. The external LiteSPM repository was read read-only at HEAD `84d5fab` (v0.6.0) and its published contract transcribed in [docs/LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md); the pin is recorded in [RESEARCH.md](RESEARCH.md) and re-read at implementation time. Source: [docs/REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md](../../docs/REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md) section 8.
+Under this package's IN_REVIEW status, proposed task P-17 is folded in as 013-T20: pin the published MCP bridge package/protocol, mirror only the upstream safety guarantees verified at that pin, and adopt single-flight plus backoff for Discover read-through. HEAD `84d5fab` (v0.6.0) is a research snapshot, not an owner-approved integration pin. The 2026-11-09 study's direct-daemon-client conclusion is superseded by its 2026-11-12 architecture correction; Feature 013 must not invent a private daemon transport. Re-read [RESEARCH.md](RESEARCH.md) and [docs/LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md) before any future implementation.
 
 ## Package
 

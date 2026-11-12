@@ -14,8 +14,8 @@ The UI renders Conversation pages, search results and deletion status, and sends
 | Sidebar | Active / Archived filter | `list_conversations` with status | absent |
 | Sidebar | Recent Chats rows | `list_conversations` | present in `App.tsx`; selected row shows literal "now" |
 | Sidebar row | Row menu: Rename, Archive or Unarchive, Delete | `rename_conversation`, `archive_conversation`, `unarchive_conversation`, `get_conversation_deletion_impact`, `delete_conversation` | absent |
-| Conversation header | Title | from Conversation record | falls back to "AI Capabilities Overview" |
-| Conversation header | More options: Rename, Archive, Delete | same commands | button has no handler |
+| Conversation header | Title | `conversationTitle(selected?.title)` | `Untitled conversation` when no title is committed |
+| Conversation header | More options: Rename, Archive, Delete | same commands | explicitly disabled and labelled unavailable; no handler |
 | Delete dialog | Impact summary, Delete, Cancel | `delete_conversation` | absent |
 | Deleted view | "This conversation was deleted" | `get_conversation_deletion_status` | absent |
 
@@ -34,7 +34,7 @@ The UI renders Conversation pages, search results and deletion status, and sends
 2. Escape in search clears the query and restores the Recent Chats list.
 3. Rename -> inline field with current title, Enter saves, Escape cancels, focus returns to the row.
 4. Archive -> row leaves Active list with a polite announcement; it appears under Archived; Unarchive reverses.
-5. Delete -> impact loads -> dialog lists linked Tasks, Artifacts and memory sources that will be kept, states that deletion cannot be undone and that older backups are not changed -> Delete -> row removed -> open view shows deleted state.
+5. Delete -> impact loads -> dialog lists linked Tasks, Artifacts and memory sources that will be kept, says it deletes LiteCowork-owned local history only (native-harness transcripts and external-channel copies are not erased), and states deletion cannot be undone and older backups are not changed -> Delete -> row removed -> open view shows deleted state.
 6. App restart -> lists reload; deleted rows absent; pending purges are invisible to the user beyond the deletion status route.
 
 ## 4. Rules

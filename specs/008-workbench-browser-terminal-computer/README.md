@@ -1,8 +1,10 @@
 # 008 - Workbench Browser Terminal and Computer
 
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Revision:** 1.0 | **Updated:** 2026-11-11 | **Owner acceptance:** repository owner, 2026-11-09, via [OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md)
-**Implementation state (2026-11-11):** Partial CODE only. T02 truthfulness slice is partial: Activity has an explicit empty state, Computer is status-only UNAVAILABLE, and Terminal names the Windows/Linux Environment blocker; the full UI suite passed 633/633. No BrowserSession, browser stream/provider, PTY, real Activity source, or Diff provider is served. T09 is BLOCKED on a Feature 005 Linux Environment; T12 is BLOCKED on B-35 (Windows); migration v41 is allocated. The owner-requested observation/takeover refinement is now recorded: ephemeral managed-browser viewport only, browser-lease Take over is separate from Conversation Take control, and whole-desktop capture remains deferred under B-32. No route/provider/UI control exists; this decision is not implementation or qualification evidence.
+> **Revision 1.1 scope revision (2026-11-12): IN_REVIEW / TARGET.** The user explicitly requested whole-laptop Computer observation and immediate manual takeover, rejecting the earlier browser-only substitution. Revision 1.0 owner acceptance (2026-11-09) and B-32 deferral below are historical authority for that revision; they are not acceptance of this extension. Implementation remains unchanged and Computer remains UNAVAILABLE. The revised owner design is [Computer observation and control LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md). No new provider, transport, route or qualification is approved by this documentation pass.
+
+**Status:** IN_REVIEW (revision 1.1); revision 1.0 ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Revision:** 1.1 IN_REVIEW (1.0 accepted history below) | **Updated:** 2026-11-12 | **Owner acceptance:** repository owner, 2026-11-09, via [OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md)
+**Implementation state (2026-11-11):** Partial CODE only. T02 truthfulness slice is partial: Activity has an explicit empty state, Computer is status-only UNAVAILABLE, and Terminal names the Windows/Linux Environment blocker; the full UI suite passed 633/633. No BrowserSession, browser stream/provider, PTY, real Activity source, or Diff provider is served. T09 is BLOCKED on a Feature 005 Linux Environment; T12 is BLOCKED on B-35 (Windows); migration v41 is allocated. The 2026-11-11 browser-only refinement is historical and superseded as requested scope by revision 1.1; actual laptop Computer observation/control is now specified for review. Browser takeover remains separate from Conversation Take control. No route/provider/UI control exists; this decision is not implementation or qualification evidence.
 **Component owners:** Desktop shell, Environments, Browser provider, Trust, Desktop UI.
 
 ## User outcome
@@ -30,3 +32,7 @@ By owner approval on 2026-11-09 (see [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](..
 ## Canonical owners
 
 [Architecture](../../ARCHITECTURE.md), [Product](../../docs/PRODUCT.md), [V1 release](../../docs/V1-PRODUCT-RELEASE-CONTRACT.md), [Master plan](../../docs/IMPLEMENTATION-MASTER-PLAN.md), [Specification standard](../../docs/SPECIFICATION-STANDARD.md). Domain narrative: [RESEARCH.md](RESEARCH.md).
+
+## Requested revision 1.1 target
+
+The Computer tab must show the real selected laptop display/window and native apps. Browser remains a separate managed-tab view. Local preview, disclosure to an exact agent and input each have separate authority; manual takeover does not by itself stop local observation. Persistent Take over remains reachable outside captured content and while Canvas/Terminal is selected. Compact object tabs and **+** open authorized views without automatic capture/process spawn. Terminal defaults resolve against actual OS/Runtime and never lend a manual user's host shell to an agent. See SPEC section 20 and new stable tasks T22..T27. This revision is IN_REVIEW; no provider or new acceptance is claimed.

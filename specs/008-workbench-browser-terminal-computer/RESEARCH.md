@@ -1,6 +1,8 @@
 # Research - Workbench Browser Terminal and Computer
 
-**Feature:** 008 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+> **Revision 1.1 scope revision (2026-11-12): IN_REVIEW / TARGET.** The user explicitly requested whole-laptop Computer observation and immediate manual takeover, rejecting the earlier browser-only substitution. Revision 1.0 owner acceptance (2026-11-09) and B-32 deferral below are historical authority for that revision; they are not acceptance of this extension. Implementation remains unchanged and Computer remains UNAVAILABLE. The revised owner design is [Computer observation and control LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md). No new provider, transport, route or qualification is approved by this documentation pass.
+
+**Feature:** 008 | **Status:** IN_REVIEW (revision 1.1); revision 1.0 ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 **Checked:** 2026-11-06 (active source, route composition, Tauri bridge and visible Workbench UI); re-checked 2026-11-09 for register A-51 (see SPEC §4).
 
 ## Sources inspected
@@ -92,3 +94,21 @@ Read-depth limits from the study (do not over-trust): `scripts/` about 58% read,
 Plugin-architecture lessons (see [plugin study](../../docs/DEEPSEEK-HARNESS-PLUGIN-ARCHITECTURE-DEEP-DIVE-2026-11.md) Section 8):
   - Capability seam (ADR P-20): [docs/capability-seams.md](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/docs/capability-seams.md). Class **ADAPT**. Terminal and Browser providers as seams. Reuse: pattern only, reimplement; no upstream code imported.
 
+
+## Revision 1.1 official OS/API cross-check (observed 2026-11-12)
+
+No new external code imported; these are live documentation observations, not pinned versions/SHAs or integration evidence. [Computer LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md) records the detailed selection tradeoffs and limits.
+
+| Primary source | Observed implication / decision status |
+|---|---|
+| [Microsoft Windows capture](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture) | User-selected display/window and D3D frame pool support the recommended laptop capture spike; no dependency pin or proof of Tauri delivery. |
+| [Microsoft Desktop Duplication](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/desktop-dup-api) | GPU frame/dirty-region metadata is an alternative to measure; not accepted as provider. |
+| [Microsoft SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) | UIPI and partial insertion prohibit assuming unrestricted target control or external success. Separate permit/last-hop fence required. |
+| [XDG ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html) | Source selection/PipeWire is separate from device/input permission; deployed compositor/portal versions must be recorded later. |
+| [XDG RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html) | Independent device selection and permission; capture alone cannot authorize input. |
+| [Apple ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit) | Future candidate only; retrieved page JavaScript-gated, detailed minimum OS/API behavior unverified here. |
+| [VS Code terminal profiles](https://code.visualstudio.com/docs/terminal/profiles) | Explicit default profile and automation-profile distinction inform UX; no Electron/Node architecture imported. |
+
+Cross-check against active source: WorkbenchTab has launcher/files/terminal/browser/diffs/activity, no actual Computer/Canvas object tab or + chooser; ComputerStatusNotice is status-only; Browser is an iframe with local URL state; TerminalPane has no stdin/output/provider. environment_computer_use probe is never Available; authorize_computer_action refuses capture whenever Human owns input and relies on label-based sensitive matching, so it cannot implement independent observation or prove pixel privacy unchanged. browser_control_service is policy-only and explicitly does not dispatch. environment_provider offers no working Desktop provider. No capture/input or PTY route/provider was added.
+
+Historical React findings above are 2026-11-06 evidence superseded by the A-51 truthfulness baseline; do not reintroduce fabricated terminal/diff claims as current. The older browser-only decision is superseded as requested scope, not erased as historical acceptance. Open questions: owner acceptance of Desktop attachment/vision scope, manual-host terminal context, exact provider/OS versions, final binary IPC/codec/GPU path, measured low-overhead budgets and physical input detection. Existing pinned browser/OpenHands/DeepSeek research remains useful but does not demonstrate a whole-laptop implementation.

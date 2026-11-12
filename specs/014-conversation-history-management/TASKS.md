@@ -6,25 +6,25 @@
 
 ## Current baseline
 
-Verified against the checkout on branch `docs/audit-competitor-superset` on 2026-11-09.
+Source cross-check completed 2026-11-12 at HEAD `64c4351` plus the shared worktree. The repository is on `main`; branch and migration facts below reflect this checkout, not the superseded 2026-11-09 baseline.
 
-- **Operator:** `apps/litecoworkd/src/conversation_operator.rs` `routes_with_state` mounts `GET/POST /v1/conversations`, `GET /v1/conversations/{conversation_id}`, turn submit/retry/cancel and `PATCH .../agent-binding`. No search, rename, archive, unarchive or delete route. `create_conversation` validates titles as 1-160 printable characters; `list_conversations` pages newest-first by `(created_at, conversation_id)` with limit 1-100. Test `conversation_operator_cursor_paginates_more_than_fifty_and_fences_workspace_and_owner` in `apps/litecoworkd/src/conversation_operator_tests.rs`. The module header comment (lines 1-2) is stale (Feature 001 fixes it).
-- **Storage:** `crates/storage-core/src/conversation.rs` `ConversationRecord` (no status), `ConversationStore` (create, set binding, get, list), `SetConversationAgentBinding` (version-fenced idempotent mutation pattern to reuse). `crates/storage-sqlite/src/conversations.rs` implements them with single-statement SQL. `conversation_messages.content_json` is plaintext; `conversation.message.added.v1` carries `content_digest`; `conversation.created.v1` carries no title. Precedents: `crates/storage-sqlite/src/context_document_purge.rs` (tombstone, sealed manifest, per-target receipts) and `crates/storage-sqlite/src/resource_index.rs` (HMAC term tokens, `MAX_QUERY_TERMS = 32`). Migration chain ended at `docs/schemas/sqlite-v28.sql` when this baseline was written; v31 (`conversation_history_state` side table) now exists and the chain ends at `sqlite-v32.sql`.
+- **Operator:** `apps/litecoworkd/src/conversation_operator.rs` `routes_with_state` mounts create/list/get, turn submit/retry/cancel, agent-binding change, rename, archive, unarchive and a status filter. Search, deletion impact, delete and deletion-status routes are absent. Default list is ACTIVE and accepts ARCHIVED; the existing cursor remains newest-first by `(created_at, conversation_id)`, limit 1-100. Test `conversation_operator_cursor_paginates_more_than_fifty_and_fences_workspace_and_owner` plus history route tests in `conversation_operator_tests.rs`.
+- **Storage:** `ConversationRecord` still has no status fields. Migration v31 (`conversation_history_state`) and `ConversationHistoryStore` implement version-fenced rename/archive/unarchive/status listing; the migration chain is wired through v32. Search index, tombstone and purge records are absent. `conversation_messages.content_json` is plaintext; `conversation.message.added.v1` carries `content_digest`; `conversation.created.v1` carries no title. Precedents: ContextDocument purge and Resource HMAC term index.
 - **Tauri:** `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs` exposes list, create, get, set binding, turn commands, presentation; none for history management.
-- **UI:** sidebar "Recent Chats" in `apps/litecowork-ui/src/App.tsx` maps `conversationsByWorkspace[selectedWorkspaceId]` with `conv.title || "Untitled"` and the literal "now" on the selected row; no search field or row actions; no virtualization. `apps/litecowork-ui/src/conversations/ConversationsPage.tsx` header falls back to "AI Capabilities Overview" and its "More options" button has no handler.
+- **UI:** sidebar "Recent Chats" in `apps/litecowork-ui/src/App.tsx` maps loaded conversations with `conv.title || "Untitled"` and still shows literal "now" on the selected row; no history search, row actions or virtualization. `ConversationsPage.tsx` now uses `conversationTitle` (`Untitled conversation` when empty) and renders More options disabled with an unavailable label. The new compact navigation does not implement Conversation history actions.
 - **Error registry:** `docs/schemas/error-codes.schema.json` has `STALE_VERSION`, `IDEMPOTENCY_CONFLICT`, `INVALID_ARGUMENT`, `FORBIDDEN`, `NOT_FOUND`, `WORKSPACE_ARCHIVED`; no Conversation archive/delete code.
 
 Gaps to V1: every goal in SPEC section 2, plus qualification on both rows.
 
 ## 014-T01 - Owner acceptance of SPEC and blockers
 
-- **Status:** PARTIAL - B-38 accepted as proposed (2026-11-10, sarv-projects) and treated as unblocking implementation by owner instruction; the whole-SPEC ACCEPTED/LOCKED flip, O-02 and O-03 remain pending, so SPEC and WIRING statuses are unchanged and this task is not DONE.
+- **Status:** PARTIAL - B-38 accepted as proposed (2026-11-10, sarv-projects) and treated as unblocking implementation by owner instruction; whole-SPEC ACCEPTED/LOCKED flip and O-02, O-03, O-06 and O-07 remain pending, so SPEC and WIRING statuses are unchanged and this task is not DONE.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE (orchestrator records B-38 in the register and review packet).
 - **Owner:** Product (repository owner); Conversation and Privacy reviewers.
 - **Allowed paths:** this package; `docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md` and the register rows (orchestrator only).
 - **Contract:** SPEC sections 2, 3, 5, 17; AC-009, AC-020.
-- **Change intent:** owner accepts or amends B-38 (tombstone with immediate fenced purge, or the 30-day restore-window alternative) and answers O-02 and O-03. On acceptance set SPEC `**Status:** ACCEPTED/LOCKED`, revision 1.0, and WIRING `status: "ACCEPTED/LOCKED"`.
+- **Change intent:** owner accepts or amends B-38 (tombstone with immediate fenced purge, or the 30-day restore-window alternative) and resolves O-02, O-03, O-06 and O-07. On acceptance set SPEC `**Status:** ACCEPTED/LOCKED`, revision 1.0, and WIRING `status: "ACCEPTED/LOCKED"`.
 - **Acceptance:**
   - [x] B-38 recorded ACCEPTED as proposed (sarv-projects, 2026-11-10).
   - [ ] SPEC and WIRING statuses match; validator passes.
@@ -39,9 +39,9 @@ Gaps to V1: every goal in SPEC section 2, plus qualification on both rows.
 - **Depends on:** T01
 - **Cross-package prerequisites:** Feature 001 contract promotion of `CONVERSATION_TURN_IN_PROGRESS` (001 T01); Feature 017 review of tombstone and manifest backup inclusion.
 - **Owner:** API, State Machines, Events, Storage owners.
-- **Allowed paths:** `docs/API.md`, `docs/STATE-MACHINES.md`, `docs/EVENTS.md`, `docs/STORAGE.md`, `docs/DATA-MODEL.md`, `docs/SCHEMAS.md`, `docs/DESKTOP-SHELL-LLD.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, `docs/schemas/sqlite-v29.sql` (new; use the next free number at implementation time), this package.
+- **Allowed paths:** `docs/API.md`, `docs/STATE-MACHINES.md`, `docs/EVENTS.md`, `docs/STORAGE.md`, `docs/DATA-MODEL.md`, `docs/SCHEMAS.md`, `docs/DESKTOP-SHELL-LLD.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, a forward-only migration using the then-current number allocated in `docs/LITECOWORK-BUILD-TASKS.md`, this package.
 - **Contract:** SPEC sections 7.2, 8, 12; AC-001, AC-004, AC-009.
-- **Change intent:** add a Conversation lifecycle section to STATE-MACHINES (`ACTIVE <-> ARCHIVED`, `-> DELETION_PENDING -> DELETED`); promote the eight routes, error codes `CONVERSATION_ARCHIVED`, `CONVERSATION_DELETED`, `CONVERSATION_NOT_QUIESCENT`, the `index_state` field, events `conversation.renamed.v1`, `conversation.archived.v1`, `conversation.unarchived.v1`, `conversation.deletion_requested.v1`, `conversation.deleted.v1`; migration adds `conversations.status`, `archived_at`, `deleted_at`, the list index, the search index table, `conversation_purge_plans` and `conversation_purge_receipts`. Each labelled "accepted target interface (not yet in source)" until its task lands.
+- **Change intent:** add a Conversation lifecycle section to STATE-MACHINES (`ACTIVE <-> ARCHIVED`, `-> DELETION_PENDING -> DELETED`); promote the eight routes, error codes `CONVERSATION_ARCHIVED`, `CONVERSATION_DELETED`, `CONVERSATION_NOT_QUIESCENT`, the `index_state` field, events `conversation.renamed.v1`, `conversation.archived.v1`, `conversation.unarchived.v1`, `conversation.deletion_requested.v1`, `conversation.deleted.v1`; use the v31 side-table model for lifecycle state (do not add status columns to `conversations`); a later allocated forward-only migration adds the list index, search index and purge manifest/receipt tables. Each interface remains accepted-target/not-yet-in-source until its implementation lands.
 - **Acceptance:**
   - [ ] Each name defined once in its owner doc and machine schema.
   - [ ] Migration is the next immutable `sqlite-vNN.sql`; earlier migrations byte-identical; existing rows migrate to `ACTIVE`.
@@ -92,13 +92,13 @@ Gaps to V1: every goal in SPEC section 2, plus qualification on both rows.
 
 - **Status:** NOT STARTED (unblocked by B-38 per owner instruction 2026-11-10; not reached in this slice; formerly BLOCKED on owner acceptance, T01; B-38). PARTIAL precedent: `context_document_purge.rs` `begin_context_document_purge`.
 - **Depends on:** T01, T03, T04
-- **Cross-package prerequisites:** Feature 001 context loader (`load_conversation_context_for_turn`) and presentation readers accept the status check; Feature 006 provides the "unsettled Conversation-scoped invocation/grant/activation" query.
+- **Cross-package prerequisites:** Feature 001 context loader and presentation readers accept the status check; Agent Runtime proves every Conversation AgentSession CLOSED/LOST and its Runtime-local host binding released before the tombstone; Feature 006 provides the unsettled Conversation-scoped invocation/grant/activation query.
 - **Owner:** Storage, Privacy.
 - **Allowed paths:** `crates/storage-sqlite/src/conversation_purge.rs` (new), `crates/storage-sqlite/src/conversations.rs`, `crates/storage-sqlite/src/rich_presentations.rs` (status check only), `crates/storage-sqlite/src/lib.rs`, `crates/storage-core/src/conversation.rs`, `crates/storage-sqlite/src/conversation_purge_tests.rs` (new).
 - **Contract:** SPEC B-38, sections 7.2, 8, 10; AC-009, AC-010, AC-015.
 - **Change intent:** `request_conversation_deletion` checks quiescence and version, then in one IMMEDIATE transaction sets `DELETION_PENDING`, clears the title, seals the manifest (targets listed in B-38 item 3, bounded like the ContextDocument manifest) and writes `conversation.deletion_requested.v1` and the receipt; `conversation_deletion_impact` counts linked Tasks, Artifacts and memory sources; every reader (`get_conversation`, `list_conversations`, messages, presentation, `rich_presentations`, `load_conversation_context_for_turn`, search) checks status inside its own transaction.
 - **Acceptance:**
-  - [ ] Delete with an active turn or unsettled scoped invocation writes nothing (AC-009).
+  - [ ] Delete with an active turn, unsettled scoped invocation, or active/unknown AgentSession host-binding cleanup writes nothing (AC-009).
   - [ ] After the tombstone every reader returns `CONVERSATION_DELETED` (AC-010).
   - [ ] A context load started before the tombstone fails its final status check (AC-010).
   - [ ] Submit racing delete: exactly one commits (AC-015).
@@ -216,7 +216,7 @@ Gaps to V1: every goal in SPEC section 2, plus qualification on both rows.
 - **Owner:** Desktop UI.
 - **Allowed paths:** `apps/litecowork-ui/src/conversations/ConversationsPage.tsx`, `apps/litecowork-ui/src/conversations/ConversationHistoryList.tsx`, `apps/litecowork-ui/src/conversations/ConversationDeleteDialog.tsx` (new), `apps/litecowork-ui/src/conversations/conversation-history-state.ts`, `apps/litecowork-ui/tests/conversation-history-actions.test.ts` (new).
 - **Contract:** SPEC sections 6, 14; contracts/ui-behavior.md; AC-017, AC-020.
-- **Change intent:** row menu and header "More options" open Rename (inline field, Enter commits, Escape cancels), Archive/Unarchive and Delete; Delete dialog shows impact counts, irreversible text and the backup limitation, traps focus, Escape cancels, focus returns to the invoker; controls disabled with reason while a turn is active; replace the "AI Capabilities Overview" fallback with "Untitled conversation"; open views of a deleted Conversation show a deleted state.
+- **Change intent:** row menu and header "More options" open Rename (inline field, Enter commits, Escape cancels), Archive/Unarchive and Delete; Delete dialog shows impact counts, says deletion removes LiteCowork-owned local records but not native-harness or external-channel copies, states older backups are unchanged, traps focus, Escape cancels and restores focus; controls disable with a reason while a turn or session cleanup is active; the fabricated header fallback has already been replaced by `conversationTitle` / "Untitled conversation"; open views of a deleted Conversation show a deleted state.
 - **Acceptance:**
   - [ ] Keyboard-only rename, archive and delete paths work; focus restored (AC-017).
   - [ ] Delete requires dialog confirmation and shows impact (AC-017).

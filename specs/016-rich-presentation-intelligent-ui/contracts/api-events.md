@@ -12,7 +12,7 @@
 
 Tauri: `get_rich_presentation` in `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs` checks the envelope with `valid_rich_presentation_response` before returning it to the WebView.
 
-## 2. No new public route
+## 2. Baseline: no new public route
 
 Publishing is daemon-internal (binder after commit). Media ingestion is daemon-internal and creates Artifacts through Feature 007, whose routes serve them. This package adds no desktop-callable write route; a rendered element therefore has nothing to call.
 
@@ -20,7 +20,7 @@ Publishing is daemon-internal (binder after commit). Media ingestion is daemon-i
 
 - `docs/schemas/rich-presentation.schema.json`: renderer contract version 2 adds `SAFE_CALCULATOR`; a V1 allowlist profile names TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE, CHART, SAFE_CALCULATOR; CHART binding limited to a semantic table slice; `chart_kind` limited to BAR, LINE, AREA in the V1 profile.
 - `docs/schemas/calc-ast.schema.json` (new): node kinds LITERAL, VARIABLE, BINARY_OP, UNARY_OP, FUNCTION; at most 64 nodes, depth 12.
-- `docs/schemas/presentation-intent.schema.json`: unchanged; the binder consumes `TABLE`, `COMPARISON` and `CHART_FROM_RESULT` only when the result binding is a semantic table (other elements are ignored in V1).
+- `docs/schemas/presentation-intent.schema.json`: current schema has no calculation variant. T02/T20 must promote the bounded calculation intent before SAFE_CALCULATOR proposals. CHART_FROM_RESULT requires an actual authorized invocation/result; semantic Markdown table charts are deterministic host derivation, never a fabricated invocation.
 
 ## 4. Events
 
@@ -35,3 +35,11 @@ Accepted target codes: `PRESENTATION_REJECTED` (internal, with `reason`), `MEDIA
 ## 6. Security contract
 
 No route, frame or event carries model HTML, scripts or URLs to be fetched. Documents carry no actions or citations in V1.
+
+## 7. Revision 0.2 TARGET interfaces (not served)
+
+[Pipeline LLD](../../../docs/ACP-PRESENTATION-PIPELINE-LLD.md) sections 3 and 7 specify scope, budgets, receipts and transactions. `litecowork.presentation.propose` remains ephemeral and creates no domain write/Effect/CapabilityInvocation. Exact native structured carrier or optional first-party MCP exposure is AgentModule/version-qualified; current ACP sends no MCP servers and normalizes no presentation object. Tool observations are not callable host methods.
+
+Candidate route names for promotion by T22 (not added to OpenAPI or served inventory until reviewed): `GET`, `PUT`, `DELETE /v1/rich-presentations/{presentation_id}/interaction-state`; typed Tauri get/update/forget commands. Principal/device and exact Workspace/message/document namespace are host-derived; update includes expected revision, RequestId, body digest and allowlisted inputs. Read reauthorizes; writes require ACTIVE scope; forget advances a deletion fence. Proposed response distinguishes SAVED, CONFLICT, FORGOTTEN and unavailable; a timeout remains unresolved pending same-receipt reconciliation. Exact wire fields/status/error codes/event names require owner promotion in canonical schemas/OpenAPI/event registry before implementation. Do not treat these prose names as a second wire authority.
+
+State mutation events contain identity/revision/reason only, no input values. New conversational modification is a normal Feature 001 turn; host provenance pins parent presentation/base revision, and a resulting presentation belongs to a new message. No mutation/supersession of an existing immutable RichPresentation. Generic presentation action arrays remain empty; host-owned state/navigation/Send controls do not authorize Task/Effect/Approval operations.

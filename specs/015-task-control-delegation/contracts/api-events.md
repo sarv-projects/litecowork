@@ -23,9 +23,9 @@ All use the authenticate middleware, Workspace-owner check (foreign Task is 404)
 | `GET /v1/tasks/{task_id}/activity` | query `cursor`, `limit` 1..200 | page of entries `{entry_id, occurred_at, actor, kind, attempt_id?, lease_epoch?, state_from?, state_to?, correlation_id}` | Projection of owner events only |
 | `GET /v1/tasks/{task_id}/workers` | none | `{lead, children[], verifiers[]}` each with binding, AgentModule and version, profile revision, Environment class, state, budget used, verification | Native sub-agent reports appear only as `reported_native_activity[]` |
 
-The Task projection gains `allowed_commands[]` (subset of PAUSE, RESUME, STEER, CANCEL, CHANGE_LEAD) and `unavailable_reasons{}` computed by the daemon from the `TaskStatus` transition table and the release-row capability.
+The Task projection gains `allowed_commands[]` (subset of PAUSE, RESUME, STEER, CANCEL, CHANGE_LEAD) and `unavailable_reasons{}` computed by the daemon from the `TaskStatus` transition table and the release-row capability. CHANGE_LEAD calls the existing lead-binding operation: it creates a fresh planning session without an Attempt, while existing Attempts retain their binding/lease. It must not imply execution replacement. The distinct execution-replacement operation is unresolved under SPEC O-07 and requires the generic admission seam in O-06; `HANDOFF_PRIOR_LEASE_ACTIVE` belongs to that future operation, not the binding-CAS route.
 
-Child admission is daemon-internal: the delegate request comes from the parent AgentSession through the adapter, not from the desktop.
+Child admission is daemon-internal: the delegate request comes from the parent AgentSession through the adapter, not from the desktop. O-06 blocks implementation until the owner defines generic native provider AgentSession/Attempt admission and control; Feature 005's current `admit_file_write` contract is a bounded file-write slice and is not implicitly this service.
 
 ## 3. Events
 

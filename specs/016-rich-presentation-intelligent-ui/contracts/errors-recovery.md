@@ -37,3 +37,21 @@ Media: `MEDIA_TYPE_UNSUPPORTED` (SVG, unknown, magic-byte mismatch, URL-only), `
 ## 3. Mandatory behaviour
 
 Presentation never blocks, retries or changes a turn. Validation failure is never shown as an answer failure. No recovery path rewrites a semantic message.
+
+## 4. Revision 0.2 proposed denial and state recovery
+
+LLD sections 3, 7 and 9 are the design reference; exact additional error codes require T20/T22 canonical promotion. Distinguish unsupported ingress, expired/foreign proposal scope, changed-body replay, unregistered kernel, missing metric semantics, state quota/validation refusal, stale expected revision, consent absent, and deleted/revoked namespace. No refusal fails a settled semantic turn.
+
+| Window | Extension behavior |
+|---|---|
+| MCP tool accepted proposal but acknowledgement lost | Replay same digest/identity only inside live scope; no publication claim |
+| Native tool_call carries arbitrary UI operation | Observation only; no execution |
+| Missing unit/time/aggregation or unknown SIP kernel | Table/semantic fallback or explicit clarification |
+| Expand/collapse/remount | Live controller shares state; B-40 unmount/restart discards it |
+| State save commits then timeout | Keep saving/unknown; reconcile same RequestId before retry |
+| Two windows update same state revision | One commits; loser retains draft and reviews current state |
+| Forget races write or late success response | Deletion fence rejects stale write; UI cannot resurrect forgotten data |
+| Restart/revocation/backup restore | Reauthorize exact namespace and consent; no data resurrection or native execution |
+| Agent modification arrives after local edit | Preserve current values; explicit compare/review, new message lineage |
+
+Off-by-default persistence, explicit snapshot sharing, migration allocation, quota, receipt retention and backup deletion semantics are unresolved owner gates; do not ship switches or routes before resolution.

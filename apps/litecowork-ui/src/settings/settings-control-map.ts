@@ -57,7 +57,7 @@ export const AGENT_CATALOG_CONTROL_MAP: Readonly<Record<string, SettingsControlE
   "agent-registry-load-more": { class: "Native", effect: "list_agent_registry next page" },
   "agent-probe-codex": { class: "Native", effect: "probe_agent_profile desktop bridge (CODEX)" },
   "agent-probe-opencode": { class: "Native", effect: "probe_agent_profile desktop bridge (OPENCODE)" },
-  "agent-control-inspect": { class: "LocalOnly", effect: "toggle the AgentControlDescriptor panel (descriptor 503 renders UNAVAILABLE)" },
+  "agent-control-inspect": { class: "LocalOnly", effect: "toggle the module-declared AgentControlDescriptor panel (module-less or stale descriptors render UNAVAILABLE)" },
   "agent-binding-lead-eligible": { class: "LocalOnly", effect: "binding draft: lead eligibility sent with create_agent_binding" },
   "agent-binding-create": { class: "Native", effect: "create_agent_binding desktop bridge" },
   "agent-binding-enable": { class: "Native", effect: "enable_agent_binding desktop bridge" },

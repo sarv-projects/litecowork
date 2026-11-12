@@ -11,7 +11,7 @@ LiteCowork stores stable external refs, owner approvals and operation receipts o
 |---|---|---|
 | Workspace | `workspaces` | Owner and scope for every approval and receipt |
 | DiscoverCatalogEntry (projection) | `crates/storage-core/src/discover.rs` | LiteSPM inventory rows are mapped into it with `DiscoverEntrySource::LiteSpmPackage`, `authoritative: false` |
-| DiscoverProviderStatus (projection) | `crates/storage-sqlite/src/discover.rs` | Becomes a function of the live handshake |
+| DiscoverProviderStatus (projection) | `crates/storage-sqlite/src/discover.rs` | Becomes a function of live MCP initialization, the pinned tool manifest and Runtime-owned process identity evidence |
 | request_dedup | `sqlite-v1.sql` | Idempotency receipts for approval and apply commands |
 | domain_events | `sqlite-v1.sql` | Package operation events (proposed names in SPEC 7.2) |
 
@@ -19,11 +19,11 @@ LiteCowork stores stable external refs, owner approvals and operation receipts o
 
 | Record | Key and scope | Fields | Owner |
 |---|---|---|---|
-| LiteSpmServiceObservation | (runtime_id, local_incarnation_id) | protocol_version, litespm_pin, daemon_identity, advertised_operations, peer_auth_class (`OS_CREDENTIAL_VERIFIED`, `TRANSPORT_ACL_ONLY`, `REFUSED`), peer_auth_reason, observed_at | PackageLifecycleService |
+| LiteSpmServiceObservation | (runtime_id, local_incarnation_id) | mcp_protocol_version, server_info, bridge_pin, tool_manifest_digest, advertised_tools, process_identity_class (`RUNTIME_OWNED`, `UNPROVEN`, `REFUSED`), process_identity_evidence_ref, observed_at | PackageLifecycleService |
 | PackageOperationApproval | approval_id; workspace_id | principal_id, plan_digest (`sha256:`), operation_kind (`INSTALL`, `ADOPT`, `UNMANAGE`, `REMOVE`, `UPDATE`, `REPAIR`), host_profile_id, scope (`USER`), litespm_listing_ref, expected_fingerprint, expires_at, state, version, created_at | Storage / Trust |
 | PackageOperationReceipt | receipt_id; unique approval_id | workspace_id, apply_key, litespm_operation_ref, state, litespm_error_code, readback_fingerprint, dispatched_at, settled_at, version | Storage |
 
-The observation row is Runtime-incarnation-local and is refreshed on every handshake; it is not replicated.
+The observation row is Runtime-incarnation-local and is refreshed on MCP initialize/tool-list validation; it is not replicated. Do not persist native process IDs, stdio handles, credentials or raw tool payloads. `RUNTIME_OWNED` is emitted only from the owning process/session service's evidence, never inferred from stdio alone.
 
 ## 3. Lifecycles
 

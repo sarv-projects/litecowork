@@ -1,6 +1,6 @@
 # Spec, Build TASKS, and USER Test Traceability
 
-**Updated:** 2026-11-09
+**Updated:** 2026-11-12
 
 **Purpose:** one crosswalk between **global build tasks** ([LITECOWORK-BUILD-TASKS.md](LITECOWORK-BUILD-TASKS.md)), **feature SDD tasks** (`specs/NNN-*/TASKS.md`), **acceptance IDs** (SPEC EARS), and **competitor USER cases** ([COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md)).
 
@@ -50,7 +50,7 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | 005 | ACCEPTED/LOCKED 2026-11-09 (B-17 Linux-first rider, B-18); B-35 Windows provider PROPOSED | T01..T20 | 005-T15, 005-T18, 005-T20 | E2E-04 | UC one safe task edit | W2 |
 | 006 | ACCEPTED/LOCKED 2026-11-09 (B-19, B-20); 006-T02 BLOCKED on the client_secret finding | T01..T17 | 006-T15, 006-T17 | E2E-05 | UC one connection write | W3 |
 | 007 | ACCEPTED/LOCKED 2026-11-09 (B-21, B-30, B-31); 007-T06 BLOCKED on the export receipt class | T01..T17 | 007-T15, 007-T17 | E2E-07 | UC one professional format | W2 |
-| 008 | ACCEPTED/LOCKED 2026-11-09 (B-22, B-23, B-32 deferred; folded iframe guard P-06, Git worktree/PR P-13) | T01..T21 | 008-T17, 008-T21 | E2E-08 | UC browser and terminal | W3 |
+| 008 | Revision 1.0 ACCEPTED/LOCKED 2026-11-09 (B-22, B-23, B-32 deferred; P-06/P-13); revision 1.1 IN_REVIEW (selected laptop Computer, compact Workbench, takeover) | T01..T27 | 008-T17, 008-T21 (rev 1.0); 008-T22..T27 (rev 1.1 review/promotion/qualification gates) | E2E-08; revision 1.1 E2E mapping pending owner/schema promotion | UC browser/terminal; selected-screen Computer proposal | W3 |
 | 009 | ACCEPTED/LOCKED 2026-11-09 (B-24, B-25) | T01..T18 | 009-T16, 009-T18 | E2E-09 | UC optional Coworker chat and memory | W2 |
 | 010 | ACCEPTED/LOCKED 2026-11-09 (B-26, B-27); CONNECTOR_EVENT over LOCAL_POLL confirmed 2026-11-10 (010-T09 still needs a qualified 006 Connection; 010-T19 deferred, out of V1) | T01..T19 (T18/T19 outside the V1 gate) | 010-T15, 010-T17 | E2E-10 | UC schedule exactly once | W5 |
 | 011 | ACCEPTED/LOCKED 2026-11-09 (B-28 Windows-first rider, B-29, B-33; folded shell P-05, decomposition P-07/P-19, Settings merge P-08, Workspace Dashboard P-16) | T01..T23 | 011-T17, 011-T23 | E2E-01 shell portion | UC settings honesty and health | W0 |

@@ -1,10 +1,14 @@
 # LiteCowork ↔ LiteSPM — Integrated Service Plan
 
-**Status:** Revision 9 target architecture and delivery plan; not a claim of current qualification.
+**Status:** SUPERSEDED research proposal. Feature 013 remains owner-deferred. This plan's daemon-supervisor/service-descriptor approach is not the current target and is not authorized for implementation.
 **Owners:** LiteSPM owns package/catalog/inventory/config-mutation and package-runtime lifecycle. LiteCowork owns Workspace/Coworker/Task authorization, grants, invocation, Effects, Evidence and the user-facing service supervisor.
-**Current evidence boundary (2026-11-05):** LiteCowork's interop LLD pins upstream LiteSPM main at `111fd9b8e84573f8fce76b6374b4ff9639502539`. **Pin resolved (2026-11-09):** the LiteSPM repository was read read-only at HEAD `84d5faba75bc621a651e0cec0f831e936bb2082d` (`git describe` `v0.6.0-143-g84d5fab`, npm `0.6.0`, Apache-2.0) and its published contract transcribed in [LITESPM-INTEGRATION-STUDY-2026-11.md](LITESPM-INTEGRATION-STUDY-2026-11.md). This HEAD supersedes the earlier `9f42b25d` / `111fd9b8` / `f77a3a3` pins; the historical study notes below are kept for provenance. Confirmed: JSON-RPC line-delimited local IPC, `daemon.handshake` plus 19 methods, protocol `2026-07-28`, `planHash` over RFC 8785 canonical JSON, a 17-action effect taxonomy and a central egress/secret model. The pin is re-read at implementation time (013-T02 / 013-T20); wire names come from the published contract, never inferred (AGENTS.md section 6). Upstream STATUS marks its 13-tool local stdio bridge WIRED, including install/invocation paths for supported package kinds. That is upstream capability, not LiteCowork adapter qualification. The current product/catalog UI reference is `https://lite-spm-nine.vercel.app/#/`; it is not a machine endpoint. LiteCowork has selected no HTTP endpoint. See LITESPM-LITECOWORK-INTEROP-LLD.md for current host UX and peer-auth caveats.
+**Evidence correction (2026-11-12):** this document is a target proposal, not an accepted LiteCowork contract. The upstream checkout at `84d5faba75bc621a651e0cec0f831e936bb2082d` (`v0.6.0-143-g84d5fab`) was read read-only on 2026-11-09, but is not an owner-approved integration pin. The docs disagree on the MCP bridge tool count (12 in the 84d5fab study, 13 at the older 111fd9b8 snapshot), so do not freeze a count or map daemon methods to tool names. Root ARCHITECTURE.md identifies the published local MCP stdio bridge as the integration boundary; direct daemon IPC and the service-descriptor design below are superseded. Feature 013 remains DEFERRED and its Runtime/process ownership, exact published tool schemas, owner approval and recovery semantics remain unresolved. See [LITESPM-INTEGRATION-STUDY-2026-11.md](LITESPM-INTEGRATION-STUDY-2026-11.md) and [Feature 013](../specs/013-litespm-package-lifecycle-bridge/README.md).
 
-## 1. Target architecture
+> **Current boundary:** root ARCHITECTURE.md and AGENTS.md require LiteCowork to use LiteSPM's exact published, pinned local MCP stdio bridge through a Runtime-owned process/session boundary. No LiteSPM daemon IPC, private service descriptor or bridge tool count is approved by this document. Plan approval, tool schemas, process identity and UNKNOWN recovery must be proved at the selected pin before any verb is enabled. Sections below preserve an earlier design exploration only.
+
+## 1. Superseded service proposal (historical; do not implement)
+
+Everything in this plan is TARGET only and remains subject to Product, Architecture, Runtime and LiteSPM owner review. Feature 013 is DEFERRED; this plan does not authorize service installation, package mutation, process spawning or a new LiteCowork transport. If the published bridge cannot preserve LiteCowork approval and recovery guarantees, the supported product scope may be read-only or unavailable.
 
 LiteSPM is a **first-class integrated local service**, not merely an optional CLI button and not a second database embedded in LiteCowork.
 
@@ -42,7 +46,7 @@ A user who declined automatic connection gets NOT_CONNECTED_BY_POLICY and no con
 
 **LiteSPM daemon**
 - Owns its SQLite/package database, catalog/cache, CAS, host registration, deployment mutation, receipts, package provider process and package lifecycle.
-- Publishes an authenticated local IPC descriptor and versioned schemas.
+- Exposes a published local MCP stdio bridge. Do not assume it publishes a separate LiteCowork daemon descriptor or authenticated direct-RPC endpoint.
 - Keeps its standalone CLI and public marketplace fully usable without LiteCowork.
 
 **Per-agent bridge**
@@ -56,22 +60,22 @@ A user who declined automatic connection gets NOT_CONNECTED_BY_POLICY and no con
 - Records the Core-side correlation/receipt and separately projects package state and invocation readiness.
 - Invalidates relevant grants when package tool schema or permission fingerprint changes.
 
-## 4. IPC/client requirements
+## 4. MCP client and process-identity requirements
 
-Implement a typed LiteSpmClient against the exact published LiteSPM protocol release. The service descriptor must identify protocol version, daemon identity, supported operations, endpoint, authentication challenge, limits and health.
+Use only LiteSPM's exact published, pinned MCP stdio bridge contract as the integration boundary. Do not add direct daemon IPC, named-pipe/socket methods, a private service descriptor or an invented authentication challenge. At the owner-selected pin, validate MCP protocol negotiation, server information, bounded tool manifest and each input/output schema. The current documents conflict on whether the bridge exposes 12 or 13 tools; the count and names must be re-read at the selected pin.
 
-Prefer OS-protected local IPC (named pipe on Windows, Unix domain socket on Linux/macOS) with version negotiation and the exact peer-auth guarantee reported by the pinned bridge. Upstream currently describes Windows owner-only Named Pipe DACL as the OS boundary but reports `peerAuth.verified=false` because it does not independently query a peer credential; Linux/macOS credential verification differs. LiteCowork must not claim verified application-level identity where the handshake does not prove it. Reject remote network binding for the local control plane in V1.
+The LiteCowork client consumes a session supplied by the owner of local Runtime/process lifecycle. That owner defines how the stdio process is launched, supervised, stopped and identified on each OS. Stdio and MCP metadata alone do not prove process identity. If exact process identity evidence or an operation's schema is unavailable, keep the integration or that operation unavailable. Do not route around a missing tool through private daemon RPC.
 
 The client must:
-- Verify daemon identity and protocol compatibility. Inspect the peer-auth result and its mechanism; accept only the exact OS-specific boundary recorded by the qualified bridge. If `peerAuth.verified=false`, preserve that state and rely only on the documented OS transport ACL/socket boundary; do not label the application principal verified.
-- Enforce maximum request/response sizes, timeouts and bounded pagination.
-- Preserve original LiteSPM error code and operation ID in diagnostics.
-- Use only operations advertised by that exact version.
+- Enforce maximum request/response sizes, deadlines and bounded pagination.
+- Preserve published LiteSPM error codes and operation identifiers only when the MCP result actually carries them.
+- Use only tools present in the pinned manifest and qualified for the exact host/OS/scope/operation profile.
+- Preserve the owner-approval digest, stable idempotency and UNKNOWN reconciliation contract; if the published tools cannot support it, keep mutation disabled.
 - Never construct arbitrary shell commands from package/user/model input.
-- Never accept a successful empty inventory when the daemon actually failed.
+- Never accept a successful empty inventory when the MCP call actually failed.
 - Never expose tokens, approval values, environment secrets or raw untrusted skill contents in logs.
 
-The LiteSPM service's actual wire methods and schemas are published by LiteSPM. This plan describes semantics, not guessed method names. Do not scrape CLI output or invent RPC names. Preserve LiteSPM's current 13-tool MCP stdio bridge ABI. Host UX is version-specific: OpenCode v2.2.5 exposes `/litespm:marketplace`; Qwen Code 0.14.4 exposes tools under `/mcp` rather than a slash command. Do not assume universal `/marketplace` parity or add an incompatible second ABI.
+Do not scrape CLI output or infer RPC/tool names. Host UX is version-specific: OpenCode v2.2.5 exposes `/litespm:marketplace`; Qwen Code 0.14.4 exposes tools under `/mcp` rather than a slash command. These are upstream host examples, not LiteCowork UI requirements. Do not assume universal `/marketplace` parity or add an incompatible second ABI.
 
 ## 5. Marketplace and package lifecycle
 
@@ -123,8 +127,8 @@ Filesystem mutation and SQLite receipt are not one atomic medium. LiteSPM must p
 | Step | LiteSPM work | LiteCowork work | Exit evidence |
 |---:|---|---|---|
 | 0 | Re-read current HEAD, STATUS, ARCH, schemas, methods, tests and releases | Re-read current routes, migrations and acceptance matrix | Exact baseline and gap matrix |
-| 1 | Freeze/publish IPC handshake and generated client contract | Typed LiteSpmClient, version negotiation, peer auth | Real handshake and compatibility fixtures |
-| 2 | Daemon cold start/attach, autostart, stale-lock recovery, health | ServiceSupervisor, signed install/update/rollback | Cold machine start, one daemon, crash recovery |
+| 1 | Pin the published MCP protocol/tool schemas and process/session owner | Typed LiteSpmClient, bounded manifest validation, exact process-identity evidence | MCP conformance fixtures and owner-reviewed Runtime boundary |
+| 2 | Decide whether LiteCowork owns service install/supervision or only attaches to an existing LiteSPM service | ServiceSupervisor only after Architecture/Runtime/Product approval | Owner decision, cold-start and crash-recovery evidence for each OS |
 | 3 | Harden host prepare/apply/verify/remove/reconcile and receipts | ACSR plus one-time auto-connect consent | Agent install/discovery → bridge handshake; no config clobber |
 | 4 | Machine-readable doctor and host/provider health | Registry status and repair/manual fallback UI | Correct failure isolation and restart behavior |
 | 5 | Catalog sync, release integrity, search/detail IPC | Native Marketplace using same canonical IDs | Catalog parity and stale/offline honesty |

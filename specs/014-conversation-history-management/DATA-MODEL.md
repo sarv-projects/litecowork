@@ -12,6 +12,7 @@ This feature extends the canonical Conversation record. It must not create a sec
 | Conversation | `conversations` (`sqlite-v1.sql`); `ConversationRecord` | Unchanged; status and timestamps live in the `conversation_history_state` side table (v31) |
 | ConversationMessage | `conversation_messages` (plaintext `content_json`) | Search source; purge target |
 | ConversationTurn | `conversation_turns` | Active-turn check; purge of content-bearing fields |
+| AgentSession | `agent_sessions`; Runtime-local `agent_session_host_bindings` | Session metadata may remain as provenance, but every session must be CLOSED/LOST and its local host binding released before tombstone; the opaque native handle is never copied to the purge manifest or public projection |
 | UserRequest / UserRequestResponse | `user_requests`, `user_request_responses` | Quiescence check; purge targets |
 | RichPresentation | `rich_presentations` (`sqlite-v12.sql`) and document blobs | Fence and purge target |
 | AggregateSnapshot | `aggregate_snapshots.blob_ref_json` | Snapshot blobs for Conversation and messages are purge targets |
@@ -45,7 +46,7 @@ ACTIVE | ARCHIVED -> DELETION_PENDING -> DELETED
 
 ## 4. Purge manifest target kinds (B-38)
 
-`MESSAGE_ROW`, `SEARCH_TERMS`, `TURN_CONTENT`, `USER_REQUEST_DETAIL`, `USER_REQUEST_RESPONSE`, `RICH_PRESENTATION_ROW`, `RICH_PRESENTATION_BLOB`, `SNAPSHOT_BLOB`, `REQUEST_RECEIPT_RESPONSE`, `CHANNEL_THREAD_MAPPING`. Bounded like the ContextDocument manifest; an oversized manifest refuses delete with no partial write.
+`MESSAGE_ROW`, `SEARCH_TERMS`, `TURN_CONTENT`, `USER_REQUEST_DETAIL`, `USER_REQUEST_RESPONSE`, `RICH_PRESENTATION_ROW`, `RICH_PRESENTATION_BLOB`, `SNAPSHOT_BLOB`, `REQUEST_RECEIPT_RESPONSE`, `CHANNEL_THREAD_MAPPING`. Bounded like the ContextDocument manifest; an oversized manifest refuses delete with no partial write. `AgentSessionHostBinding` is not a purge target: deletion admission first proves the session CLOSED/LOST and the local binding released; UNKNOWN cleanup blocks tombstoning. Native-harness transcripts and external channel copies remain outside this local purge boundary.
 
 ## 5. Events (proposed)
 

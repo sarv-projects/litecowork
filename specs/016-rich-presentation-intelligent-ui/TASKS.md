@@ -1,14 +1,14 @@
 # Tasks - Rich Presentation, Intelligent UI and Generated Media
 
 **Feature:** 016 | **Status:** IN_REVIEW - authored complete for owner review; implementation not authorized until owner acceptance (T01); tasks not started unless marked.
-**Spec revision:** 0.1 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+**Spec revision:** 0.2 (proposed) | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 **Owners:** Presentation Runtime, Conversation, Artifacts, Storage, Operator/API, Desktop UI, Security, Accessibility, Product.
 
 Cross-package task references inside task fields are written as "Feature NNN Txx" so that each hyphenated cross-package ID appears once in this file (the structural validator rejects a repeated task ID); the hyphenated IDs are listed once in "Cross-package dependencies" below.
 
 ## Current baseline
 
-Verified against branch `docs/audit-competitor-superset`; highest migration file `docs/schemas/sqlite-v32.sql` (016 plans no migration).
+Baseline source cross-check: `main` at `64c435149a82ba952c6c3bf3049e26cf2d9344b1`, 2026-11-12. Original B-40 scope has no new migration; T22 persistence is separately gated on allocation and review.
 
 - **Desktop validator:** `apps/litecowork-ui/src/presentation/rich-presentation.ts` with `MAX_DOCUMENT_BYTES = 512 * 1024`, `MAX_BLOCKS = 200`, `MAX_DEPTH = 8`, `MAX_JSON_VALUES = 30_000`, `MAX_JSON_DEPTH = 32`; accepts TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE; `renderer_contract_version` must be 1; `parseRichPresentationResponse`, `resolveRichResponseContent`.
 - **Rust validator:** `validate_metadata`, `validate_document`, `validate_block` in `crates/storage-sqlite/src/rich_presentations.rs` accept the same five V1 kinds as the desktop validator (TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE) with the same closed keys, and hold CARD titles, CALLOUT summaries and TABLE headers and cells to the committed semantic text; `MAX_RICH_PRESENTATION_BYTES = 524_288` in `crates/storage-core/src/rich_presentation.rs` matches the desktop cap and `document_size_bytes.maximum` in `docs/schemas/operator-stream.schema.json` (the doc comment no longer names a DIVIDER kind neither side accepts). `publish_rich_presentation` is called only from tests in `apps/litecoworkd/src/presentation_operator.rs`.
@@ -17,12 +17,12 @@ Verified against branch `docs/audit-competitor-superset`; highest migration file
 - **Tests:** `apps/litecowork-ui/tests/presentation-runtime-fallback.test.mjs`, `rich-presentation.test.ts`, `rich-response-view-policy.test.ts`; Rust `crates/storage-sqlite/src/rich_presentation_tests.rs`.
 - **Absent:** a shared corpus, a Rust presentation crate, CalcAst, chart and calculator components, a production binder, media ingestion, `PRESENTATION_*` error codes, an Intelligent UI schema in `docs/schemas`, an Artifact create route (Feature 007 B-30), any Interactive Artifact Runtime code. CSP in `apps/litecowork-ui/src-tauri/tauri.conf.json` is `script-src 'self'` with `img-src 'self' asset: http://asset.localhost data:`.
 
-Gaps to V1: owner acceptance (B-40), validator drift, no producer, no chart or Intelligent UI component, no media path, no disable preference, no E2E-11 evidence on either row.
+Gaps to V1: whole-SPEC owner acceptance (B-40 already accepted), shared validation authority, no producer, no chart or Intelligent UI component, no media path, no disable preference, no E2E-11 evidence on either row.
 
 ## 016-T01 - Owner acceptance of SPEC and blockers
 
-- **Status:** BLOCKED - B-40 accepted as proposed (2026-11-10); pending owner acceptance of SPEC revision 0.1 (owner: repository owner, sarv-projects; Presentation Runtime, Product and Security prepare the decision).
-- **DEFERRED/BLOCKED note:** Why: whole-SPEC acceptance of revision 0.1 is pending although B-40 is accepted. Unblocks when: owner reviews and accepts the SPEC. Test later at: decision only.
+- **Status:** BLOCKED - B-40 accepted as proposed (2026-11-10); pending owner acceptance of SPEC revision 0.2 proposal (owner: repository owner, sarv-projects; Presentation Runtime, Product and Security prepare the decision).
+- **DEFERRED/BLOCKED note:** Why: whole-SPEC acceptance of revision 0.2 is pending although B-40 is accepted. Unblocks when: owner reviews and accepts the SPEC. Test later at: decision only.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE
 - **Owner:** Product, Presentation Runtime, Security; decision by the repository owner.
@@ -43,7 +43,7 @@ Gaps to V1: owner acceptance (B-40), validator drift, no producer, no chart or I
 - **Depends on:** T01
 - **Cross-package prerequisites:** NONE
 - **Owner:** Presentation Runtime, API, Events, Schemas owners.
-- **Allowed paths:** `docs/RICH-RESPONSE.md`, `docs/PRESENTATION-RUNTIME.md`, `docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md`, `docs/INTERACTIVE-ARTIFACT-RUNTIME.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/rich-presentation.schema.json`, `docs/schemas/calc-ast.schema.json` (new), `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, this package.
+- **Allowed paths:** `docs/RICH-RESPONSE.md`, `docs/PRESENTATION-RUNTIME.md`, `docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md`, `docs/INTERACTIVE-ARTIFACT-RUNTIME.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/rich-presentation.schema.json`, `docs/schemas/calc-ast.schema.json` (new), `docs/schemas/presentation-intent.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, this package.
 - **Contract:** SPEC sections 5 (B-40), 7.2; AC-001, AC-002, AC-006.
 - **Change intent:** add renderer contract version 2 with `SAFE_CALCULATOR` and a V1 allowlist profile listing exactly TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE, CHART, SAFE_CALCULATOR; CHART binding restricted to `semantic_table_slice` in V1; new `calc-ast.schema.json` with node and depth limits; errors `PRESENTATION_REJECTED`, `MEDIA_TYPE_UNSUPPORTED`, `MEDIA_TOO_LARGE`; event `rich.presentation.rejected.v1`; record 512 KiB as the single document cap. Reconcile RICH-RESPONSE ("generated images or interactive controls" exclusion) with the accepted SAFE_CALCULATOR by owner prose, not by a parallel definition.
 - **Acceptance:**
@@ -127,7 +127,7 @@ Gaps to V1: owner acceptance (B-40), validator drift, no producer, no chart or I
 - **Cross-package prerequisites:** Feature 011 app-wide keyboard and focus baseline.
 - **Owner:** Desktop UI, Accessibility, Presentation Runtime.
 - **Allowed paths:** `apps/litecowork-ui/src/presentation/SafeCalculatorBlock.tsx` (new), `apps/litecowork-ui/src/presentation/RichResponseView.tsx`, `apps/litecowork-ui/src/presentation/rich-response.css`, `apps/litecowork-ui/tests/safe-calculator-block.test.ts` (new), `crates/domain-presentation/src/blocks.rs`.
-- **Contract:** SPEC B-40, G-03; INTELLIGENT-UI section 3.2 `SafeCalculatorNode`; AC-007, AC-009, AC-010.
+- **Contract:** SPEC B-40, G-03; INTELLIGENT-UI section 3; canonical SAFE_CALCULATOR promotion; AC-007, AC-009, AC-010.
 - **Change intent:** labelled `<input type="number">` fields (initial values from the bound table cells), output in an `aria-live="polite"` region formatted per `output_format`, "Reset to original values" button, fallback text always visible below. State lives in a `useReducer` inside the component; no store, no bridge call, no persistence.
 - **Acceptance:**
   - [ ] A bridge-call spy records zero calls during interaction (AC-009).
@@ -145,7 +145,7 @@ Gaps to V1: owner acceptance (B-40), validator drift, no producer, no chart or I
 - **Owner:** Presentation Runtime, Conversation, Storage.
 - **Allowed paths:** `apps/litecoworkd/src/presentation_binder.rs` (new), `apps/litecoworkd/src/agents/supervisor.rs` (one call after the commit returns), `apps/litecoworkd/src/main.rs` (wiring only), `crates/storage-sqlite/src/rich_presentations.rs`, adjacent tests.
 - **Contract:** SPEC L-01, G-05, section 6 sequence; AC-004, AC-014, AC-017.
-- **Change intent:** after `commit_conversation_agent_response` returns, `bind_after_commit` derives a document from the committed semantic text (Markdown tables to TABLE, eligible numeric tables to CHART, validated PresentationIntent CALC elements to SAFE_CALCULATOR), validates it, and publishes in its own transaction with a deterministic presentation id from (message id, binder version) so replays are idempotent. Any error is counted and dropped; the turn is already settled.
+- **Change intent:** after `commit_conversation_agent_response` returns, `bind_after_commit` derives a document from the committed semantic text (Markdown tables to TABLE, eligible numeric tables to CHART, calculation intent only after canonical T02/T20 promotion to SAFE_CALCULATOR), validates it, and publishes in its own transaction with a trusted host-allocated retained publish identity so replays are idempotent and the one-record-per-message uniqueness is preserved. Any error is counted and dropped; the turn is already settled.
 - **Acceptance:**
   - [ ] Binder fault injection leaves the turn and message unchanged (AC-004).
   - [ ] Replay returns the stored record; a different digest under the same id conflicts (AC-014).
@@ -305,7 +305,7 @@ Gaps to V1: owner acceptance (B-40), validator drift, no producer, no chart or I
 - **Cross-package prerequisites:** Feature 001 committed AGENT message text is the input the renderer consumes.
 - **Owner:** Presentation, Desktop UI.
 - **Allowed paths:** `apps/litecowork-ui/src/conversations/StructuredTextPreview.tsx`, `apps/litecowork-ui/src/conversations/RichResponseView.tsx`, `apps/litecowork-ui/tests/`, adjacent tests.
-- **Contract:** SPEC §12; AC-019; INTELLIGENT-UI-AND-IMAGE-CONTENT; AGENTS.md section 8.
+- **Contract:** SPEC §14; AC-019; INTELLIGENT-UI-AND-IMAGE-CONTENT; AGENTS.md section 8.
 - **Change intent:** replace the all-or-nothing Markdown parse with per-block degradation so GFM tables, horizontal rules and nested lists render without a whole-message raw fallback; give each code block a language label, a copy button and lazy highlighting that returns React nodes (never HTML strings); render TEXT_SLICE through the same Markdown renderer; and keep the no-executable-content posture (no `dangerouslySetInnerHTML`, https-only links). Add a golden corpus of real agent answers.
 - **Acceptance:**
   - [ ] The golden corpus of real agent answers renders with no whole-message raw fallback and no HTML strings (AC-019).
@@ -322,7 +322,7 @@ Gaps to V1: owner acceptance (B-40), validator drift, no producer, no chart or I
 - **Cross-package prerequisites:** Feature 019 release evidence bundle accepted.
 - **Owner:** Product, repository owner.
 - **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/`.
-- **Contract:** SPECIFICATION-STANDARD lifecycle; AC-001 to AC-019.
+- **Contract:** SPECIFICATION-STANDARD lifecycle; AC-001 to AC-019 for the baseline. AC-020 to AC-027 belong to the separately gated revision 0.2 extension tasks and do not close under this baseline task.
 - **Change intent:** assemble the evidence bundle; move ACCEPTED/LOCKED to IMPLEMENTING when T02 starts and to VERIFIED when all tasks close and the owner signs off.
 - **Acceptance:**
   - [ ] Every AC has a passing test reference on both rows.
@@ -359,3 +359,83 @@ For each task append a row when it closes: task, code revision (SHA), exact comm
 | Task | Revision | Command | Result | OS/build | Harness/version | Class | Reviewer |
 |---|---|---|---|---|---|---|---|
 | (none yet) | | | | | | | |
+
+## 016-T20 - Native ingress and canonical declarative contract promotion
+
+- **Status:** BLOCKED - revision 0.2 TARGET proposal; whole-SPEC and relevant extension owner approval/promotion required; no implementation authorized.
+- **Depends on:** T01, T02
+- **Cross-package prerequisites:** Feature 001 native provider adapter/turn correlation; Feature 002 current AgentControlDescriptor.
+- **Owner:** AgentModule, Presentation Runtime, Security, Product.
+- **Allowed paths:** docs/ACP-PRESENTATION-PIPELINE-LLD.md; docs/RICH-RESPONSE.md; docs/HOST-GUIDANCE.md; docs/schemas/presentation-intent.schema.json; docs/schemas/rich-presentation.schema.json; owning schemas/events/OpenAPI and AgentModule conformance fixtures.
+- **Contract:** SPEC section 19; pipeline LLD; AC-020, AC-021, AC-023, AC-024.
+- **Change intent:** Pin official research versions/SHAs/licenses; prove exact native structured ingress or optional scoped MCP injection, otherwise text fallback; promote bounded calculation intent in existing schema; define metrics/unit/time/aggregation and reject unknown kernels. A tool observation cannot execute.
+- **Acceptance:**
+  - [ ] Provider ignores guidance, lacks injection, emits foreign/replayed intent or unknown sipFutureValue: safe semantic answer; metric example latest/total/change are distinct.
+  - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
+- **Command:** `python .specify/scripts/validate_feature_package.py; future AgentModule fixture command recorded when implemented`
+- **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
+- **Stop:** Missing exact provider evidence, canonical contract promotion or owner acceptance.
+
+## 016-T21 - One controller for inline and expanded Workbench Canvas
+
+- **Status:** BLOCKED - revision 0.2 TARGET proposal; whole-SPEC and relevant extension owner approval/promotion required; no implementation authorized.
+- **Depends on:** T01, T04, T05, T07, T08, T20
+- **Cross-package prerequisites:** Feature 011 Workbench shell and keyboard/focus owner.
+- **Owner:** Presentation Runtime, Desktop UI, Accessibility.
+- **Allowed paths:** apps/litecowork-ui/src/presentation/; existing Workbench shell; adjacent UI tests; UI ledgers.
+- **Contract:** SPEC section 19; pipeline LLD; AC-022.
+- **Change intent:** Register host Expand/Collapse controls and one digest-bound controller; preserve B-40 transient data without calling an agent or invoking app runtime.
+- **Acceptance:**
+  - [ ] Repeated expand/collapse preserves exact inputs/result/revision; keyboard focus returns; Workspace switch and revocation clear protected content.
+  - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
+- **Command:** `pnpm --dir apps/litecowork-ui test`
+- **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
+- **Stop:** A second controller, hidden agent call, persistent write or unqualified component is required.
+
+## 016-T22 - Separately review and implement opt-in local interaction persistence
+
+- **Status:** BLOCKED - revision 0.2 TARGET proposal; whole-SPEC and relevant extension owner approval/promotion required; no implementation authorized.
+- **Depends on:** T01, T20, T21
+- **Cross-package prerequisites:** Workspace/Conversation retention and deletion owners; Storage migration allocation; Feature 011 authenticated IPC.
+- **Owner:** Storage, Presentation Runtime, Security, Privacy, Product.
+- **Allowed paths:** owning storage core/sqlite; authenticated presentation Operator and Tauri bridge; presentation UI; canonical OpenAPI/event/state schemas; migration allocation; retention/backup docs and tests.
+- **Contract:** SPEC section 19; pipeline LLD; AC-025, AC-026.
+- **Change intent:** First obtain explicit revised owner approval for consent, 32 KiB/5 MiB quota proposal, backup/encryption/deletion/receipt lifetime. Promote exact record/API/events and migration before code. Implement host-only expected-revision writes, receipts, forget fences and exact namespace; never browser storage.
+- **Acceptance:**
+  - [ ] Off by default; no agent exposure; replay/body-conflict, two-window revision conflict, timeout-after-commit, quota, forget/save race, restart/backup/deletion and revocation fail safely.
+  - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
+- **Command:** `future focused storage/Operator/UI test commands recorded before implementation; python .specify/scripts/validate_feature_package.py`
+- **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
+- **Stop:** B-40 is used as persistence authorization, migration unallocated, or privacy/deletion/backup decision unresolved.
+
+## 016-T23 - Explicit conversational modification and immutable lineage
+
+- **Status:** BLOCKED - revision 0.2 TARGET proposal; whole-SPEC and relevant extension owner approval/promotion required; no implementation authorized.
+- **Depends on:** T01, T20, T21, T22
+- **Cross-package prerequisites:** Feature 001 authorized new-turn dispatch and persisted context/provenance contracts.
+- **Owner:** Conversation, Presentation Runtime, Desktop UI, Security.
+- **Allowed paths:** Conversation typed commands/context and provenance owner paths; presentation host chrome; canonical context/intent schemas and UI ledgers; adjacent tests.
+- **Contract:** SPEC section 19; pipeline LLD; AC-027.
+- **Change intent:** Add Ask to change this view with previewed identity/input snapshot and explicit Send; new ordinary native turn produces new semantic message and immutable presentation linked by parent/base revision. Review compatible carryover and preserve stale local drafts.
+- **Acceptance:**
+  - [ ] No send on input change; cancel/retry does not mutate original; stale base prompts review; new message identity and host-assigned lineage; unsupported ingress remains text.
+  - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
+- **Command:** `future focused Conversation/desktop fixture commands recorded before implementation`
+- **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
+- **Stop:** Automatic input transmission, original-message rewrite or inferred approval.
+
+## 016-T24 - Extension negative/recovery/accessibility and packaged evidence
+
+- **Status:** BLOCKED - revision 0.2 TARGET proposal; whole-SPEC and relevant extension owner approval/promotion required; no implementation authorized.
+- **Depends on:** T01, T20, T21, T22, T23
+- **Cross-package prerequisites:** Feature 001 qualified provider route and Feature 019 release evidence; existing Windows/release deferrals resolved.
+- **Owner:** Security, Accessibility, Release, Product, repository owner.
+- **Allowed paths:** presentation/AgentModule/storage test fixtures; release evidence bundle; CURRENT-RUN.md; implementation status and Feature 016 contracts.
+- **Contract:** SPEC section 19; pipeline LLD; AC-020 through AC-027.
+- **Change intent:** Exercise source-to-render, scope fencing, misleading metrics, unknown kernel, controller identity, consent, quotas, receipts, timeout/crash/restart, forget/save race, revocation, stale revision and explicit new-message modification on exact packaged provider route.
+- **Acceptance:**
+  - [ ] Record build/OS/WebView/provider/model/version/auth/ingress, fixture counts, SYSTEM captures and owner USER review; no extension VERIFIED until every AC has evidence.
+  - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
+- **Command:** `python .specify/scripts/validate_feature_package.py; exact future packaged E2E command supplied by release owner`
+- **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
+- **Stop:** Any authority leak, content resurrection, stale overwrite, hidden native/model dispatch or missing owner evidence.

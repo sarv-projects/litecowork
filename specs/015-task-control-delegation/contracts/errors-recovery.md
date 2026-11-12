@@ -32,7 +32,7 @@ Canonical codes: [docs/schemas/error-codes.schema.json](../../../docs/schemas/er
 | Window | Required behaviour |
 |---|---|
 | Crash after PAUSE_REQUESTED commit, before quiescence | Startup sweep: prior leases cannot be renewed; Attempts ABANDONED; Effects reconciled; then PAUSED commits from the durable control request |
-| Crash after child admission commit, before worker start | Child Attempt CREATED with no session: sweep marks it ABANDONED and releases the reservation; escalation may admit a new Attempt |
+| Crash after child admission commit, before worker start | Child Attempt CREATED with no session: generic session-admission recovery is blocked on O-06; once owner-defined, sweep must reconcile the durable reservation and mark the Attempt ABANDONED before any replacement |
 | Timeout after worker dispatch | Effect AMBIGUOUS; Feature 005 reconciler settles it before any replacement |
 | Late ResultEnvelope after handoff or replacement | Fenced observation; no state change |
 | Duplicate command replay | Stored receipt returned; no second effect |
@@ -40,7 +40,10 @@ Canonical codes: [docs/schemas/error-codes.schema.json](../../../docs/schemas/er
 | Pause racing cancel | One CAS wins; cancel supersedes a pending pause |
 | Quiescence never observed | Bounded wait then forceful stop of LiteCowork-owned processes only; Task stays in the requested state with a typed blocker until settled |
 | Verifier timeout | VerificationRun INCONCLUSIVE |
+| Resume of confirmed `INPUT_REQUIRED` | Same-Attempt continuation is permitted only under canonical TASK-RUNTIME same-incarnation/same-Environment, fresh-session, higher-lease and Effect-reconciliation conditions; after restart or resource/binding replacement, reconcile/cancel the prior operation and use a fresh Attempt |
 
 ## 3. Mandatory behaviour
 
 UNKNOWN is never success. No retry resends a native prompt to repair a storage write. Recovery never replays recorded actions.
+
+Feature 005's current bounded file-write admission/recovery path is not a generic native provider session manager. O-06 blocks any delegation, verifier or Task-level quiescence recovery claim until the owning contract specifies those lifecycle operations. Native direct actions must not be represented as LiteCowork Effect receipts unless they actually cross the mediated Effect boundary.

@@ -31,10 +31,16 @@ flowchart LR
   T16 --> T17[T17 Linux qualification]
   T17 --> T18[T18 Windows after B-35]
   T17 --> T19[T19 docs sync]
-  T18 & T19 --> T20[T20 VERIFIED]
-  F005[Feature 005 admission, cancel, Linux provider] -.-> T04
+  T13 & T16 --> T20[T20 Mission Control + Compare]
+  O09[Owner decision: Compare Agents surface and provider contract] -.-> T20
+  T18 & T19 & T20 --> T21[T21 VERIFIED]
+  F005[Feature 005 safe file-write Attempt slice] -.-> T04
   F005 -.-> T08
   F004[Feature 002/004 Claude Code] -.-> T08
+  O06[Owner decision: generic provider Attempt/session admission seam] -.-> T07
+  O06 -.-> T08
+  O06 -.-> T10
+  O07[Owner decision: lead binding vs execution replacement] -.-> T07
 ```
 
 ## 3. Phases and exit gates
@@ -48,7 +54,8 @@ flowchart LR
 | 4 UI | T12-T14 | All states tested; accessibility audit clean; Windows UNAVAILABLE posture |
 | 5 Recovery | T15 | Crash, restart, timeout-after-dispatch, duplicate replay and cancel races pass |
 | 6 Trace and qualification | T16-T18 | Linux row QUALIFIED; Windows row UNAVAILABLE or QUALIFIED after B-35 |
-| 7 Docs and VERIFIED | T19-T20 | Status rows match evidence; owner sign-off |
+| 7 Docs and Mission Control | T19-T20 | Status rows match evidence; Mission Control/Compare only after real runtime source exists |
+| 8 VERIFIED | T21 | Every acceptance item has evidence and owner sign-off |
 
 ## 4. Scope and file ownership (candidate paths, re-inspect before implementation)
 
@@ -62,7 +69,7 @@ flowchart LR
 
 ## 5. Persistence, migration, rollout
 
-One forward-only migration (allocated v42 in docs/LITECOWORK-BUILD-TASKS.md; chain ends at `sqlite-v32.sql`) adds `task_control_requests` and `task_resume_packets` and stores `on_exhaustion` with the escalation policy. No existing column changes type; `tasks.status` stays text and is parsed by the new enum. Rollout is behind the Task projection's `allowed_commands`: a control is invisible to the UI until its route and owner path are served.
+One forward-only migration (allocated v42 in docs/LITECOWORK-BUILD-TASKS.md; chain ends at `sqlite-v32.sql`) adds `task_control_requests` and `task_resume_packets`. Any persistence of `on_exhaustion` must preserve the accepted A-37 TARGET-not-yet-wired posture until its dispatcher owner lands; Feature 015 must not remove that label or treat a stored target field as producer support. No existing column changes type; `tasks.status` stays text and is parsed by the new enum. Rollout is behind the Task projection's `allowed_commands`: a control is invisible to the UI until its route and owner path are served.
 
 ## 6. Operational risks
 
@@ -72,6 +79,8 @@ One forward-only migration (allocated v42 in docs/LITECOWORK-BUILD-TASKS.md; cha
 | Worker writes leak between Attempts | `ATTEMPT_PRIVATE` only (B-39); shared scope denied |
 | Late result accepted after handoff | Lease epoch and Attempt id fence in `DelegationResultService` and Effect receipts |
 | Claude Code result format unstable | Pin version in Feature 002; adapter normalization fixture |
+| Attempt/session interface mismatch | Feature 005 T08 is `admit_file_write`, not a generic native-session Attempt service; keep execution tasks blocked pending O-06 owner/API alignment |
+| Lead reassignment conflated with execution replacement | TASK-RUNTIME keeps binding change, planning-session replacement and execution Attempt replacement distinct; keep T07/UI semantics gated by O-07 |
 | Verifier collusion (same binding) | Storage-level check that verifier binding differs from producer binding |
 | Windows users see missing features | Visible UNAVAILABLE reason, no hidden partial path |
 

@@ -172,13 +172,13 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
 
 ## 003-T09 - ContextAttachment and retrieval-receipt stores
 
-- **Status:** NOT STARTED (no table, store trait or event exists; `CONTEXT_ATTACHMENT` appears only as an AgentControl capability enum)
+- **Status:** BLOCKED (2026-11-12, A-65) - the accepted ContextAttachment requires a `turn_id`, but the proposed standalone `tx-attach` API does not provide that identity. Feature 001 inserts USER message, OPEN Turn and UNCLAIMED dispatch intent atomically; a separate attachment transaction cannot bind to the not-yet-committed turn while preserving the accepted admission boundary. No schema or store implementation is authorized until the owners approve a revised transaction-scoped admission contract.
 - **Depends on:** T01, T02
 - **Cross-package prerequisites:** NONE
 - **Owner:** Storage, Conversation context owner
 - **Allowed paths:** `crates/storage-core/src/context_attachment.rs` (new), `crates/storage-core/src/lib.rs`, `crates/storage-sqlite/src/context_attachments.rs` (new), `crates/storage-sqlite/src/context_attachment_tests.rs` (new), `crates/storage-sqlite/src/lib.rs`
 - **Contract:** SPEC §7.2; DATA-MODEL; AC-018, AC-012, AC-016, AC-004, AC-005
-- **Change intent:** Implement `ContextAttachmentStore::commit_context_attachment` and a `RetrievalReceiptStore::commit_retrieval_receipt` in one SQLite IMMEDIATE transaction (`tx-attach`): verify the root is ACTIVE, the revision is pinned and its digest matches, the Conversation version matches `expected_conversation_version`, then insert receipt, attachments and idempotency receipt. Add a `list_context_used(conversation_id, turn_id)` projection.
+- **Change intent:** Proposed after A-65 resolution: make ContextAttachment/retrieval-receipt writes part of Feature 001's atomic Conversation admission transaction (or another owner-approved durable gate), while keeping retrieval and filesystem work outside SQLite. Verify the root is ACTIVE, pin exact revisions/digests, and expose `list_context_used(conversation_id, turn_id)` only from committed records. The accepted standalone `tx-attach` sequence is not implementable against the current turn foreign key and outbox boundary.
 - **Acceptance:**
   - [ ] AC-018: attachments persist and reload identically after reopening the database.
   - [ ] AC-012: digest mismatch returns `INTEGRITY_FAILURE` and writes nothing.
@@ -187,25 +187,25 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
   - [ ] Wrong Workspace, foreign principal and stale Conversation version fail with no partial write.
 - **Command:** `cargo test -p storage-sqlite --locked context_attachment` and `cargo test -p storage-core --locked context_attachment` (filter to be added by this task)
 - **Evidence:** test names in CURRENT-RUN.md
-- **Stop:** any external call inside `tx-attach` halts the task.
+- **Stop:** no new DDL, API or event until A-65's owner-approved shared transaction and crash/replay contract is recorded; no external call inside an admission transaction.
 
 ## 003-T10 - Call retrieval from Send and commit the receipt before dispatch
 
-- **Status:** NOT STARTED (`rag_retrieval_operator.rs` is not called by `conversation_operator.rs`)
+- **Status:** BLOCKED (2026-11-12, A-65) - retrieval is not called from Send, and the current target sequence asks for a turn-bound receipt before the dispatch outbox row even though Feature 001 atomically creates both the turn and outbox. Requires a new owner-reviewed admission contract before implementation.
 - **Depends on:** T09
 - **Cross-package prerequisites:** Feature 001 composer attachments handler and B-08 ResourceRef materialization (the prompt encoder must stop refusing refs); Feature 001 durable dispatch outbox.
 - **Owner:** Conversation, Resource
 - **Allowed paths:** `apps/litecoworkd/src/context_attachment_service.rs` (new), `apps/litecoworkd/src/conversation_operator.rs` (turn admission call site only, coordinated with the 001 owner), `apps/litecoworkd/src/rag_retrieval_operator.rs` (extract a callable retrieval function from `grounded_retrieval`), `apps/litecoworkd/src/conversation_operator_tests.rs`
 - **Contract:** SPEC §6 actor sequence steps 4 and 5; CONTEXT; AC-016, AC-018, AC-006
-- **Change intent:** Extract the body of `grounded_retrieval` into a service function; at turn admission, when the owner enabled grounding or attached explicit refs, run retrieval outside SQLite, then commit receipt + attachments via T09 before the 001 dispatch outbox row is written, and hand only the committed pinned refs to 001 materialization. Insufficient evidence is committed as an outcome, never as a fake citation.
+- **Change intent:** Proposed after A-65 resolution: extract the body of `grounded_retrieval` into a service function; run the bounded, read-only retrieval outside SQLite; then pass its immutable candidate to the shared Conversation-admission transaction so the USER message, turn, receipt, attachments, dispatch intent and idempotency receipt commit together before dispatch. If a pre-commit crash occurs, the read-only lexical query may be repeated; only one durable admission/receipt may commit for the RequestId. Exact replay after commit returns the stored receipt without retrieval or redispatch. Insufficient evidence is committed as an outcome, never as a fake citation.
 - **Acceptance:**
-  - [ ] AC-016: every grounded turn has exactly one receipt committed before dispatch.
+  - [ ] AC-016: every grounded turn has exactly one receipt committed atomically with admission and before dispatch.
   - [ ] AC-006: the context package sent to the agent contains only committed attachments.
   - [ ] Retrieval provider unavailable commits PROVIDER_UNAVAILABLE and the turn proceeds without grounding, labelled.
   - [ ] Duplicate Send with the same idempotency key does not run retrieval twice.
 - **Command:** `cargo test -p litecoworkd --locked conversation_turn_retrieval_receipt` (filter to be added by this task)
 - **Evidence:** test names; cross-layer trace in T14
-- **Stop:** if 001 turn admission cannot place the receipt before dispatch, stop and resolve with the 001 owner.
+- **Stop:** no implementation until the 001/003 owners approve the combined admission or durable-gate contract recorded as A-65.
 
 ## 003-T11 - @-reference ResourceRef picker in the Feature 001 composer
 

@@ -310,7 +310,7 @@ GET  /v1/rich-presentations/{presentation_id}
 GET  /v1/conversations/{id}/usage
 GET  /v1/conversations/{id}/tasks?cursor=
 
-Implementation status (source audit reconciled 2026-11-06). Message append/list and Conversation usage
+Implementation status (source audit reconciled 2026-11-12). Message append/list and Conversation usage
 operations remain **target-only**: they are declared in OpenAPI but no handler is mounted.
 The mounted Conversation routes include create/list/get, AgentBinding mutation,
 presentation/rich-presentation/tasks, and the three turn routes below.
@@ -320,28 +320,35 @@ observations (tool, file, permission, todo, step) the native agent said it perfo
 rebuild activity cards after restart. They are never Effects, receipts or grants (001-T25, AC-029).
 
 The context package builder, SQLite turn-prefix reader, STARTING reservation,
-`activate_conversation_agent_session`, and atomic final-response writer exist in the active
-source. The Operator now calls an OpenCode-only `AgentSessionSupervisor` path: after the
-USER+OPEN transaction commits, a detached Tokio task reserves/activates a session, loads
-and sends bounded context to OpenCode Server v2.0.32, consumes its event stream, and commits
-the final AGENT response/terminal turn. This is **CODE-level integration**, not route
-qualification. The submit transaction has no durable dispatch outbox/claim and exact replay
-returns the receipt without proving dispatch resumed; same-Conversation single-flight is
-not enforced in storage; retry currently transitions the turn to RUNNING before the
-STARTING reservation that requires OPEN; RUNNING cancellation settles without observed
-native stop/quiescence; and startup recovery is not wired. Pre-dispatch supervisor errors
-can also be logged by the detached caller without settling the OPEN turn. Only OpenCode has
-a dispatch branch; no exact Windows/provider/auth/UI route is qualified. Conversation
-usage accounting and a complete correlated native token-stream projection are not wired.
-Keep Send/API eligibility fail-closed until these gaps and CODE/SYSTEM/owner USER gates
-are closed. See `specs/001-conversation-session-supervisor/` for the detailed source audit.
+`activate_conversation_agent_session`, atomic final-response writer, durable dispatch
+intent/claim, storage-enforced single-flight admission, and startup recovery sweep exist in
+the active source. The Operator calls an OpenCode-only `AgentTurnCoordinator` path which
+delegates to the per-turn `AgentSessionSupervisor`: after
+USER+OPEN admission, a detached Tokio task claims the durable intent, reserves/activates a
+session, sends bounded context to OpenCode Server v2.0.32, consumes its event stream, and
+commits the final AGENT response/terminal turn. This is **CODE-level integration**, not
+route qualification. Exact submit replay returns the original receipt; it does not prove a
+detached dispatcher is alive or re-admit a lost worker. The startup sweep settles prior-
+incarnation UNCLAIMED/CLAIMED turns FAILED with `RUNTIME_RESTARTED` and releases unexplained
+STARTING sessions; it does not resume a native session or redispatch work. The commit-to-
+spawn crash window therefore remains a known limitation. Retry/stop lifecycle and races
+have CODE coverage but lack packaged provider qualification; Stop currently supports the
+RUNNING adapter path; the desktop now renders Stop only for a projected RUNNING turn, while
+WAITING_USER/WAITING_DEPENDENCY continuation and cancellation remain unsupported pending
+provider evidence. Some pre-dispatch errors can still leave the claimed intent
+unsettled until restart recovery. Only OpenCode has a dispatch
+branch; no exact Windows/provider/auth/UI route is qualified. Conversation usage accounting
+and a complete correlated native token-stream projection are not wired. Keep Send/API
+eligibility fail-closed until the remaining lifecycle and CODE/SYSTEM/owner USER gates are
+closed. The current UI's dispatch-branch predicate does not enforce this target gate and can
+enable Send before exact-route qualification; track that as a release blocker, not as current
+fail-closed behavior. See `specs/001-conversation-session-supervisor/` for the detailed
+source audit.
 
-**Single-flight nuance:** `create_conversation_turn` serializes concurrent append transactions
-and assigns the actual next Conversation revision, but that is not a one-active-turn guard.
-The existing regression test `conversation_turn_creation_serializes_appends_from_the_same_stale_snapshot`
-commits two distinct OPEN-turn candidates for one Conversation from the same revision-1
-snapshot and asserts two turns/messages. This is consistent with append serialization, but
-it does not enforce the target B-01 rule that concurrent active turn submissions conflict.
+**Single-flight:** the Conversation turn creation transaction rejects a second active
+turn with `CONVERSATION_TURN_IN_PROGRESS`; v29 database triggers backstop the same lane.
+This is CODE evidence for admission serialization, not provider dispatch or release
+qualification.
 ```
 
 Conversation creation requires the selected Workspace, a bounded optional title, and an
@@ -373,8 +380,10 @@ bindings.
 The selector chooses a configured AgentBinding and preserves the draft; per-harness
 model/session-option selection and child-agent routing remain separate unfinished work. It
 only persists this route choice and does not submit a message or claim that a harness/model
-is running. Send remains disabled until E03-S01 native session admission and E03-S02 turn
-execution are connected. An exact owner-scoped create
+is running. TARGET: Send remains disabled until E03-S01 native session admission and E03-S02
+turn execution are connected and the exact provider route qualifies. Current source does
+not enforce that target gate: the mounted UI may enable Send from dispatch-branch eligibility
+alone, so this is a release blocker. An exact owner-scoped create
 receipt replay is resolved before the active-Workspace check, so a lost-response retry still
 returns the committed Conversation after archival; a fresh create in an archived Workspace
 remains rejected. A rejected create response in the 4xx range has no committed Conversation,
@@ -539,31 +548,38 @@ A `task.lead_agent.changed.v1` event records `cause=OWNER_REQUEST` or
 the trigger observation when applicable. Lead failover never transfers a Grant, Approval,
 SecretLease, native session handle, or active Attempt.
 
-**Implementation status (source audit 2026-11-06) — read before using the three turn routes.** The
+**Implementation status (source audit 2026-11-12) — read before using the three turn routes.** The
 following route prose defines the target contract; it is not a statement that every
 transition is correctly implemented. The active `submitConversationTurn` handler commits
-the USER message and OPEN turn, then starts a detached `AgentSessionSupervisor` task and
+the USER message, OPEN turn and durable dispatch intent, then dispatches through
+`AgentTurnCoordinator` and
 returns `202` when the supervisor is configured. The current native dispatch branch is
 OpenCode Server v2.0.32 only. The route's exact replay returns the stored 202 receipt
 without re-admitting a worker or proving that dispatch continues.
 
-Several live code paths violate the target contract and are release blockers. Storage does
-not enforce the accepted single-flight rule across concurrent turn submissions. The retry
-handler changes FAILED to RUNNING and pins a new session ID before dispatch, while the
-STARTING reservation path requires an OPEN turn with no current session pointer; this
-combination is inconsistent. The RUNNING cancel handler commits CANCEL_REQUESTED and then
-immediately CANCELLED without asking the native adapter to stop or observing quiescence.
-No daemon-start recovery sweep or durable Conversation dispatch outbox/claim is wired.
-Failures before the supervisor's inner execution error handler can be logged by the
-Operator's detached task while leaving the OPEN turn unsettled. These routes therefore
-provide source-level integration, not a qualified native Conversation journey. Keep
-Send/API eligibility fail-closed until the recovery, concurrency, retry, cancellation,
-provider, Windows packaging and owner USER gates pass.
+Several live code paths still violate or lack evidence for the target contract. Storage
+enforces strict single-flight admission, and migration v29 records a durable dispatch
+intent; the daemon claims it before reserving a session. Startup recovery is wired and
+fails prior-incarnation unsettled turns closed as `FAILED` with `RUNTIME_RESTARTED` rather
+than resuming opaque native state. These are CODE-level mechanisms only. Recovery does not
+close the commit-to-detached-spawn crash window by redispatching a committed turn. Retry and
+Stop have CODE paths, but their concurrent races and packaged-provider behavior remain
+unqualified. RUNNING Stop commits CANCELLED only after adapter-reported quiescence; an
+unconfirmed stop remains `CANCEL_REQUESTED`. The desktop hides Stop for
+WAITING_USER/WAITING_DEPENDENCY because the route does not handle those states; provider
+continuation and cancellation remain unimplemented pending evidence for the required event.
+Some pre-dispatch errors still need exact settlement/race qualification. These routes
+therefore provide source-level integration, not a qualified native Conversation journey.
+The target requires Send/API eligibility to fail closed until the remaining lifecycle,
+provider, Windows packaging and owner USER gates pass. Current source does not yet enforce
+the exact-route portion of that gate; the mounted UI may enable Send on dispatch-branch
+eligibility alone, as recorded above.
 
 The internal AgentSessionStore supports turn-pinned Conversation STARTING reservation,
 keyset-paginated recovery enumeration (exclusive `agent_session_id` cursor, pages of 1–100),
-and expected-version LOST settlement. Those are storage primitives; the active daemon does
-not yet wire them into a Conversation startup recovery sweep.
+and expected-version LOST settlement. The active daemon startup path calls the recovery
+sweep before accepting Operator commands; it settles prior-incarnation dispatch intents
+and releases stranded STARTING sessions. It does not resume an old native session.
 
 `POST /v1/conversations/{id}/turns` first resolves and checks the Conversation override or
 Workspace default AgentBinding/endpoint. If none is eligible, it returns

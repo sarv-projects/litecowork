@@ -114,7 +114,7 @@ export function AgentControlDescriptorPanel({
       <div className="agent-control-panel__heading">
         <div>
           <h4 id={`agent-controls-${safeId(profileId)}`}>Native controls</h4>
-          <p>Verified controls for {displayName}. Reading these does not start or authorize a conversation.</p>
+          <p>Module-declared controls for {displayName}. Reading these does not start or authorize a conversation.</p>
         </div>
         <button type="button" onClick={refresh} disabled={visible.status === "LOADING" || actionState?.status === "BUSY"}>
           {visible.status === "LOADING" ? "Checking…" : "Refresh controls"}

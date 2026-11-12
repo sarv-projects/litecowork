@@ -1,7 +1,7 @@
 # Research and Decision Log - Conversation History Management
 
 **Feature:** 014 | **Status:** IN_REVIEW - not owner-accepted; does not authorize implementation; not a claim of implementation or qualification.
-**Checked:** 2026-11-09 - repository source and docs read; no web research; no external code copied.
+**Checked:** 2026-11-12 - repository source and owner docs re-checked at HEAD `64c4351` plus the shared worktree; no web research; no external code copied. The current source facts below were verified against this checkout, not copied from the older audit.
 
 ## 1. Pinned external sources
 
@@ -18,9 +18,9 @@ SQLite FTS5 behaviour (deleted terms remain in segments unless `secure-delete` i
 
 | Source | Path | Finding |
 |---|---|---|
-| Routes | `apps/litecoworkd/src/conversation_operator.rs` | No search/rename/archive/delete; title bound 1-160; list cursor `(created_at, conversation_id)` |
-| Storage types | `crates/storage-core/src/conversation.rs` | `ConversationRecord` title only; `SetConversationAgentBinding` mutation pattern |
-| SQLite | `crates/storage-sqlite/src/conversations.rs` | Single-statement list query; no status |
+| Routes | `apps/litecoworkd/src/conversation_operator.rs` | Rename, archive, unarchive and status-filtered list are served with version/idempotency checks; search and deletion routes remain absent |
+| Storage types | `crates/storage-core/src/conversation.rs` | `ConversationRecord` still has no status fields; `ConversationHistoryStore` provides version-fenced rename/archive/list operations |
+| SQLite | `crates/storage-sqlite/src/conversations.rs`; `docs/schemas/sqlite-v31.sql` | `conversation_history_state` side table stores lifecycle status; no search index, tombstone or purge manifest is implemented |
 | Schema | `docs/schemas/sqlite-v1.sql`, `sqlite-v12.sql` | Tables with `conversation_id` enumerated in SPEC section 4; plaintext message content; snapshot blobs |
 | Events | `docs/EVENTS.md`; `conversation_operator.rs` payloads | Created event has no title; message event has digest only |
 | Purge precedent | `crates/storage-sqlite/src/context_document_purge.rs`; STATE-MACHINES Resource section; API ContextDocument deletion | Sealed manifest, per-target receipts, restart resume |
@@ -28,14 +28,14 @@ SQLite FTS5 behaviour (deleted terms remain in segments unless `secure-delete` i
 | Shell rules | `docs/DESKTOP-SHELL-LLD.md` left sidebar | Search permission-scoped and capped; missing index differs from no results; no cascade |
 | Search scope | `docs/RICH-RESPONSE.md` "Search, export, and channels" | Index semantic content only |
 | Coworker chats | `docs/COWORKERS-TARGET.md` | Deletion/archive must separate removing a view from deleting Task artifacts and memories; activity ordering |
-| UI | `apps/litecowork-ui/src/App.tsx` Recent Chats; `ConversationsPage.tsx` header | No search; "now" text; inert More options; fabricated fallback title |
+| UI | `apps/litecowork-ui/src/App.tsx` Recent Chats; `ConversationsPage.tsx`; `conversation-turn-state.ts` | No history search or row actions; selected row still displays literal "now"; header fallback is `Untitled conversation`; More options is disabled with an unavailable label |
 
 ## 3. Alternatives
 
 | Alternative | Decision | Rationale |
 |---|---|---|
 | Immediate hard delete in one transaction | Reject | Blobs and WAL cannot be removed atomically with rows; no receipts; crash leaves orphans |
-| Tombstone with immediate fenced purge | Select (B-38 proposal) | Matches the ContextDocument precedent; content unreadable at once; receipts prove removal |
+| Tombstone with immediate fenced purge | ACCEPTED as proposed (B-38, owner 2026-11-10) | Matches the ContextDocument precedent; content unreadable at once; receipts prove removal; external/native copies are outside LiteCowork purge |
 | Tombstone with 30-day restore window | Owner option | Keeps content on disk; Archive already covers reversible removal |
 | Plaintext FTS5 index | Flexible, not preferred | Second plaintext copy; segment remnants after delete |
 | HMAC term-token index | Preferred (F-01) | Shares tokenizer with Resource index; purge is a row delete |

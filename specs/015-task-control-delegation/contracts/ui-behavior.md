@@ -15,9 +15,11 @@ The UI renders daemon projections and sends typed commands. It does not compute 
 | Resume | Controls toolbar > Resume | Enabled only when PAUSED; status returns to prior state |
 | Steer | Controls toolbar > Steer opens dialog (class radio group, text area, Send) | TASK_SPEC_CHANGE shows the new spec revision number; CHAT_ONLY shows "Note sent to lead" |
 | Cancel | Controls toolbar > Cancel opens confirm dialog naming active workers | "Cancelling" until CANCELLED is projected |
-| Change lead | Controls toolbar > Change lead opens binding picker (eligible bindings only) | Shows "Waiting for current lead to stop" until replacement Attempt RUNNING |
+| Change lead | Controls toolbar > Change lead opens binding picker (eligible bindings only) | Confirms the assigned lead binding changed. Existing Attempts continue under their original binding/lease; the new lead is used for a fresh planning session. Do not show it as execution replacement. The separate execution-replacement operation is blocked under SPEC O-07. |
 | Inspect worker | Workers view row > Details | Opens Attempt detail with profile revision, Environment class, verification |
 | Browse history | Activity view > Load older | Next cursor page |
+| Open Mission Control | Work > Task detail > Mission Control (secondary view) | Available only after the first bounded workflow has produced records; nodes open their real Step/Attempt/Effect/Artifact/Evidence detail |
+| Compare Agents | No control is exposed until O-09 defines the owning screen and command | After O-09, an explicit action runs a read-only comparison; it never becomes a Task or delegated Attempt |
 
 ## 2. UI states
 
@@ -27,6 +29,8 @@ The UI renders daemon projections and sends typed commands. It does not compute 
 | Activity | loading, empty ("No activity yet"), page, error, offline, stale (resync), recovery ("Recovering after restart") | Only owner events; no percent or ETA |
 | Workers | loading, empty ("Only the lead is working"), list, UNAVAILABLE (Windows row), error | Native sub-agent reports in a separate "Reported by the agent" list |
 | Windows row | UNAVAILABLE | "Task execution is not available on Windows yet: no qualified Windows Environment provider." |
+| Mission Control (T20) | hidden until a bounded workflow has real owner records; then opens the Task's read-only canvas | No runtime records means UNAVAILABLE, never synthesized activity |
+| Compare Agents (T20) | BLOCKED; no control until O-09 defines exact owner surface and request/response/recovery contract | After owner approval, read-only fan-out outside Task authority; no Step, Attempt, grant, or Task mutation |
 
 ## 3. Validation and failure presentation
 
@@ -60,6 +64,8 @@ The UI renders daemon projections and sends typed commands. It does not compute 
 ## 6. Accessibility
 
 Toolbar is a `role="toolbar"` with arrow-key navigation; each control has an accessible name and, when disabled, `aria-describedby` pointing at the reason. Dialogs trap focus and return it to the invoking control. Status changes are announced in one `aria-live="polite"` region. Activity is a list with each entry's time in a `<time>` element. Colour is never the only state signal. Target: no axe violations at serious or critical level.
+
+Task-level Pause/Cancel controls govern Task lifecycle. A Computer “Take over” control, when delivered by Feature 008, transfers desktop input authority only; it does not pause or cancel a Task. A user message is not a takeover or a substitute for Stop. Keep those controls in their owning surfaces and link to the [Computer observation/control contract](../../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md). Mission Control is a secondary view within Task detail; do not add another permanent left-rail destination. Compare Agents remains hidden pending O-09.
 
 ## 7. Tests
 

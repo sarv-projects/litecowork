@@ -10,22 +10,35 @@
 
 Status: NORMATIVE TARGET, not evidence of implemented Operator endpoints. Owners: E03-S01/S02/S06–S11, E08-S01/S04/S06 and E04-S06. Authority: AGENT-CONTROL, AGENT-FABRIC, TASK-RUNTIME, API, SCHEMAS, STATE-MACHINES, TRUST, EXPERIENCE. This document defines UI/local orchestration algorithms; machine endpoints/events must be promoted atomically to API/OpenAPI/Events/schema/storage and tested before serving.
 
-## Current implementation boundary (source audit reconciled 2026-11-06)
+## Current implementation boundary (source audit reconciled 2026-11-12)
 
-The active Conversation submit route commits USER+OPEN, then starts a detached per-turn
-supervisor task and returns 202 when that supervisor is configured. Only the OpenCode
-Server v2.0.32 provider branch is wired. This is CODE-level integration, not a qualified
-native Send route. The route currently lacks durable dispatch intent/claim and commit-to-
-spawn recovery; exact replay returns the stored 202 receipt without proving the dispatcher
-is alive or re-admitting it. Storage does not enforce the target strict single-flight rule;
-retry moves FAILED to RUNNING before the reservation path that requires OPEN; RUNNING cancel
-settles without observed adapter interruption/quiescence; pre-dispatch supervisor failures
-can leave OPEN turns unsettled; and no daemon-start Conversation recovery sweep is wired.
-Runtime inventory (ONLINE, incarnation READY, Workspace EXECUTOR) is still not native
-SESSION_READY evidence. Keep Send disabled until the complete lifecycle and exact OS,
-provider, auth and owner USER route are qualified.
+The active Conversation submit route commits the USER message, OPEN turn and UNCLAIMED
+dispatch intent atomically, then gives the turn to a detached per-turn coordinator and
+returns 202 when the supervisor is configured. The daemon uses a durable compare-and-swap
+claim before reserving a session; storage rejects a second nonterminal turn in the same
+Conversation; and startup recovery settles prior-incarnation work fail-closed as FAILED
+with `RUNTIME_RESTARTED`, releasing unexplained STARTING sessions. Only the OpenCode Server
+v2.0.32 dispatch branch is wired. These are CODE-level mechanisms, not a qualified native
+Send route. Exact replay returns the prior 202 receipt but does not prove dispatch is live
+or redispatch a lost worker. The commit-to-detached-spawn crash window remains. Errors
+before the supervisor's inner attempt handler can leave a claimed intent and unsettled turn
+until restart recovery. Retry atomically reopens FAILED to OPEN, clears the prior session
+pointer and creates a new retry-ordinal intent; its races still need qualification. RUNNING
+Stop requests interruption and settles CANCELLED only after the adapter reports quiescence;
+an unconfirmed stop remains `CANCEL_REQUESTED`, with recovery owning a later restart. These
+mechanisms have focused CODE tests but no packaged native provider journey, exact Windows,
+provider/auth route or owner USER qualification. Runtime inventory (ONLINE, incarnation
+READY, Workspace EXECUTOR) is not native SESSION_READY evidence. Keep Send gated on the
+actual release qualification decision.
 
-**Current UI gate mismatch:** the mounted ConversationsPage still enables Send when the draft is non-empty and its local isTurnRunning predicate is false. It does not require a qualified AgentBinding/provider route or Operator readiness; with no Workspace default binding it can still submit and rely on the backend error. The only daemon dispatch branch is OpenCode. This UI does not meet the disabled-until-qualified target gate and must not be described as a qualified Send experience.
+**Current UI gate:** the mounted Conversation composer requires a non-empty draft, Operator
+readiness, no active turn and an eligible current-Workspace AgentBinding whose provider key
+has a native dispatch branch. Today that filter admits OpenCode only. It does **not** prove
+provider authentication, exact route qualification or native session readiness. The current
+Send button can therefore be enabled before the exact route is qualified; this violates the
+TARGET gate above and is a release blocker. Describe the current predicate as dispatch
+eligibility, not as a QUALIFIED provider route. The screen and acceptance contract must keep
+those facts distinct and must not report the target gate as implemented.
 
 The internal AgentSessionStore now exposes typed
 start_conversation_agent_session, list_starting_conversation_agent_sessions, and
@@ -37,10 +50,11 @@ one immediate transaction. It atomically stores the Conversation-scoped STARTING
 event, and principal-scoped request receipt. An exact request replay returns its original
 receipt before mutable host eligibility is re-evaluated. Storage exposes keyset-paginated enumeration of Conversation STARTING rows in binary
 `agent_session_id` order, with an exclusive `after_agent_session_id` cursor and a 1–100
-page bound, plus expected-version LOST settlement that does not alter the turn. The
-specified sweep algorithm (advance to last returned ID, repeat until empty, then restart
-from the beginning) is a recovery-coordinator requirement; no active daemon startup caller
-for these Conversation storage operations was found in this audit.
+page bound, plus expected-version LOST settlement that does not alter the turn. The daemon
+startup caller now enumerates dispatch intents and STARTING sessions before accepting
+Operator commands. It settles prior-incarnation turns FAILED with `RUNTIME_RESTARTED` and
+releases unexplained STARTING sessions LOST. This is fail-closed recovery; native sessions
+are not resumed and pending turns are not redispatched.
 
 The active source contains a dedicated
 `activate_conversation_agent_session` storage operation. After the native OpenCode session
@@ -55,11 +69,11 @@ and snapshots. Generic OPEN-to-RUNNING transition remains forbidden.
 The active Operator calls an OpenCode-only per-turn supervisor after USER+OPEN admission.
 That branch creates the OpenCode Server v2.0.32 session, activates it, loads/sends bounded
 context, consumes SSE events and calls the atomic SQLite final-response writer. This is
-CODE-level integration, not a qualified native Send route. It does not establish the target
-AgentTurnCoordinator/AgentHostSupervisor ownership split. The commit-to-detached-spawn gap,
-missing startup recovery, missing transactional single-flight guard, retry's RUNNING-versus-
-OPEN reservation mismatch, immediate RUNNING cancellation without native quiescence, and
-pre-dispatch errors that can leave OPEN turns unsettled all remain release blockers.
+CODE-level integration, not a qualified native Send route. It does not establish the complete
+qualified AgentTurnCoordinator/AgentHostSupervisor journey. The commit-to-detached-spawn
+gap, pre-handler errors that can leave a claimed intent unsettled until restart, and
+provider/auth/packaged-user evidence remain release blockers. Retry and cancellation
+mechanisms exist in CODE but are not thereby qualified.
 
 The SQLite schema represents a Conversation-scoped AgentSession pinned to exactly one
 turn, enforces one active session per turn, and keeps opaque host/session bindings local.
@@ -74,8 +88,9 @@ the immutable turn-created event, reads only the same owner's same-Workspace Con
 messages through that turn's user message, and strips native session handles. The active
 supervisor sends the bounded package to OpenCode; Codex transport helpers remain staged and
 are not wired to this route. The active Operator does not emit a complete correlated native
-token-delta stream or usage ingestion. Keep Send disabled until the full lifecycle and exact
-route are qualified.
+token-delta stream or usage ingestion. TARGET: Send remains disabled until the full lifecycle
+and exact route are qualified. Current UI can still enable Send on dispatch eligibility alone,
+as recorded above; that mismatch remains a release blocker.
 
 For an exact idempotent submit replay, the route checks the authenticated principal's
 payload-digest receipt before consulting the current AgentBinding selection. It reuses the

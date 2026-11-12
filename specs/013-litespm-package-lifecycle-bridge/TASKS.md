@@ -5,8 +5,8 @@
 **Owners:** domain owners named in SPEC.md. Blockers B-36 and B-37 are PROPOSED, pending owner.
 
 **DEFERRED note (owner decision A-62, 2026-11-10; applies to every task in this file, T01 to T21 including the folded LiteSPM pin task T20):**
-- *Why:* the owner deferred all LiteSPM-dependent work. The bridge needs an upstream LiteSPM build that publishes a descriptor, an approval-recording method and package `operation.get` (interop LLD Appendix A; absent at pinned `84d5fab`), and B-36 and B-37 are PROPOSED, not accepted.
-- *What unblocks it:* (1) owner accepts B-36 and B-37 (task T01); (2) a pinned LiteSPM release with the missing methods, or an owner decision to adapt to the current surface; (3) a machine with that LiteSPM build installed.
+- *Why:* the owner deferred all LiteSPM-dependent work. B-36 and B-37 are PROPOSED, not accepted. The 2026-11-09 research selected direct daemon IPC, which conflicts with current root ARCHITECTURE.md / AGENTS.md; this is corrected in the 2026-11-12 Feature 013 research/spec. The published MCP tool surface and its ability to preserve owner-approved plan/apply/reconciliation semantics have not been requalified for the current pin.
+- *What unblocks it:* (1) owner accepts B-36 and B-37 (task T01); (2) a re-read, immutable pin of the published MCP bridge and tool schemas; (3) Runtime/process owner defines and qualifies bridge launch, supervision and process identity; (4) the published tools support the required owner approval and recovery path, or unavailable verbs are removed from scope; (5) a machine with that exact LiteSPM build installed.
 - *Where to test later:* the owner's native Windows x64 laptop first (release matrix row 1), then native Linux x64; WSL2 and containers do not count. Test the real LiteSPM service over its pinned transport, plan/approve/apply/receipt, lost-response reconcile, and the Discover Managed and Connections tabs.
 - *Today:* Discover shows truthful `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED` unavailable states; migration v39 is allocated but nothing is written. Nothing here is claimed done.
 
@@ -20,7 +20,7 @@ Verified against the checkout on branch `docs/audit-competitor-superset` on 2026
 - **Tauri:** `apps/litecowork-ui/src-tauri/src/discover_bridge.rs` `discover_request` supports operations `search` and `item` only (registered in `apps/litecowork-ui/src-tauri/src/lib.rs`).
 - **UI:** `apps/litecowork-ui/src/discover/DiscoverPage.tsx` (tabs Explore, "Installed / native", Managed, Connections; Managed and Connections render "Not available"), `discover-state.ts` (`connectActionOutcome()` disables every row action), `discover-api.ts`, `desktop-discover-api.ts`; test `apps/litecowork-ui/tests/discover-catalog-state.test.ts`.
 - **Reusable:** `crates/operator-ipc` (`BudgetedBody`, `InFlightBodyBudget`, framed `read_response`), `crates/windows-local-security` (`current_logon_sid`, `connect_operator_pipe`).
-- **LiteSPM client:** absent. Earlier pins disagreed (`9f42b25d`, `111fd9b8`, `f77a3a3`); resolved 2026-11-09 to HEAD `84d5fab` (v0.6.0) in [LITESPM-INTEGRATION-STUDY-2026-11.md](../../docs/LITESPM-INTEGRATION-STUDY-2026-11.md); upstream lacks a published descriptor, approval-recording method and package `operation.get` per interop LLD Appendix A.
+- **LiteSPM client:** absent. HEAD `84d5fab` (v0.6.0) is only a 2026-11-09 research snapshot, not an owner-approved integration pin. The old study describes daemon IPC and methods but those are not LiteCowork's allowed transport/API. Re-read the published MCP bridge at T02 and determine which semantic operations it actually exposes; plan/apply/reconciliation that cannot meet the owner approval contract remain unavailable.
 
 Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/receipt, reconcile, adopt/unmanage, rollback/remove/update/repair, UI) plus CODE/SYSTEM/USER qualification on both rows.
 
@@ -32,7 +32,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Owner:** Product (repository owner); Capability Fabric reviewer.
 - **Allowed paths:** this package; `docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md` and the register rows (orchestrator only).
 - **Contract:** SPEC sections 2, 3, 5, 17; AC-019; SPECIFICATION-STANDARD section 7.
-- **Change intent:** owner accepts or amends B-36 (pin, transport, peer auth, approval rule) and B-37 (skill on OpenCode v2.0.32 user scope, Windows row first) and answers O-04 (who installs the LiteSPM service). On acceptance set SPEC `**Status:** ACCEPTED/LOCKED`, revision 1.0, and WIRING `status: "ACCEPTED/LOCKED"`.
+- **Change intent:** owner accepts or amends B-36 (published MCP bridge pin, tool surface, Runtime-owned process identity, approval rule) and B-37 (skill on OpenCode v2.0.32 user scope, Windows row first) and answers O-04/O-08 (service and stdio bridge process ownership). Direct daemon IPC is outside the current architecture boundary. On acceptance set SPEC `**Status:** ACCEPTED/LOCKED`, revision 1.0, and WIRING `status: "ACCEPTED/LOCKED"`.
 - **Acceptance:**
   - [ ] B-36 and B-37 recorded ACCEPTED with date and owner, or amended text recorded.
   - [ ] SPEC and WIRING statuses match and the validator passes.
@@ -43,20 +43,20 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 
 ## 013-T02 - Re-pin LiteSPM and record the bridge contract baseline (lane steps 0-1)
 
-- **Status:** DEFERRED (owner A-62, 2026-11-10; see the package DEFERRED note) and BLOCKED (owner acceptance, T01; upstream publication of descriptor/approval/operation-get, LiteSPM owner).
+- **Status:** DEFERRED (owner A-62, 2026-11-10; see the package DEFERRED note) and BLOCKED (owner acceptance, T01; pinned MCP tool schemas and owner-approval/reconciliation capability, LiteSPM owner).
 - **Depends on:** T01
 - **Cross-package prerequisites:** NONE; upstream LiteSPM parity requests A1-A6 (LiteSPM owner).
 - **Owner:** Capability Fabric; LiteSPM owner for the published contract.
 - **Allowed paths:** `specs/013-litespm-package-lifecycle-bridge/RESEARCH.md`, `docs/LITESPM-LITECOWORK-INTEROP-LLD.md`, `docs/LITESPM-INTEGRATION-PLAN.md`, `docs/REFERENCE-IMPLEMENTATIONS.md`.
 - **Contract:** SPEC section 5 B-36, section 17 O-01, O-05, O-06; AC-001, AC-003; AGENTS.md section 6.
-- **Change intent:** read (do not build or run) the chosen LiteSPM revision; record the SHA, license, the published descriptor fields, wire operation names for inventory, describe, plan, approval recording, apply, operation get, adopt, remove, update, reconcile, unmanage, error vocabulary and peer-auth mechanism per OS. Replace the three disagreeing pins with one. Mark each semantic operation in SPEC 7.2 as ADVERTISED or ABSENT at that pin.
+- **Change intent:** read (do not build or run) the owner-selected LiteSPM revision; record the immutable pin, license, negotiated MCP protocol/server info, exact published tool schemas, process-launch assumptions and error vocabulary. Replace conflicting research SHAs with one explicitly owner-approved integration pin. Map each semantic operation in SPEC 7.2 to an exact published tool schema or mark it ABSENT; record whether the published tools support plan digest approval, idempotent apply and original-operation reconciliation. Do not infer daemon RPC names, endpoint descriptors or OS peer-auth methods from the upstream daemon implementation.
 - **Acceptance:**
   - [ ] One pin recorded in RESEARCH.md and both LiteSPM owner docs; old pins marked historical.
   - [ ] Every wire name cites an upstream schema or source file at the pin; none comes from CLI output.
   - [ ] Negative: any operation without a published schema is recorded ABSENT and its verb stays UNAVAILABLE.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
 - **Evidence:** RESEARCH.md pin table; diff of the two LiteSPM owner docs.
-- **Stop:** upstream publishes no descriptor or approval operation; record observe-only scope and continue only T03-T06 and T13 in read-only form.
+- **Stop:** the pinned MCP bridge lacks a published tool needed for owner-approved plan/apply/recovery; record the exact missing semantic operation and keep its verb unavailable. Read-only inventory work may proceed only if its tool schema, process ownership and Runtime session are qualified.
 
 ## 013-T03 - Promote accepted interfaces into owner docs and schemas
 
@@ -76,24 +76,24 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Evidence:** PR link and command output in Completion evidence.
 - **Stop:** a promoted name collides with an owner definition; resolve at the owner.
 
-## 013-T04 - LiteSpmClient: transport, handshake, version negotiation and peer authentication
+## 013-T04 - LiteSpmClient: pinned MCP session conformance and bounded tool calls
 
 - **Status:** DEFERRED (owner A-62, 2026-11-10; see the package DEFERRED note) and BLOCKED (owner acceptance, T01). Nothing exists; reusable framing in `crates/operator-ipc`, SID helper in `crates/windows-local-security`.
 - **Depends on:** T01, T02, T03
-- **Cross-package prerequisites:** Feature 011 local IPC peer-identity profile (Wave 0).
+- **Cross-package prerequisites:** Feature 011 Runtime/process owner supplies the approved local stdio session and process-identity evidence contract (O-08); Security reviews the exact OS evidence. No private LiteSPM daemon IPC boundary is added.
 - **Owner:** Capability Fabric, Security.
-- **Allowed paths:** `apps/litecoworkd/src/litespm/mod.rs` (new), `apps/litecoworkd/src/litespm/client.rs` (new), `apps/litecoworkd/src/litespm/descriptor.rs` (new), `apps/litecoworkd/src/litespm/transport.rs` (new), `apps/litecoworkd/src/litespm/client_tests.rs` (new), `apps/litecoworkd/src/main.rs` (module declaration only), `apps/litecoworkd/Cargo.toml`.
+- **Allowed paths:** `apps/litecoworkd/src/litespm/mod.rs` (new), `apps/litecoworkd/src/litespm/client.rs` (new), `apps/litecoworkd/src/litespm/tool_manifest.rs` (new), `apps/litecoworkd/src/litespm/client_tests.rs` (new), `apps/litecoworkd/src/main.rs` (module declaration only), `apps/litecoworkd/Cargo.toml`; the injected MCP session owner remains Feature 011's scope.
 - **Contract:** SPEC B-36, sections 7.2, 10, 12; AC-001, AC-002, AC-003, AC-016, AC-017.
-- **Change intent:** implement `LiteSpmClient::connect` (async; `tokio::net::windows::named_pipe::ClientOptions` on Windows, `tokio::net::UnixStream` on Linux), `ProtocolPin`, `LiteSpmServiceDescriptor`, `PeerAuthObservation`; verify endpoint owner (pipe server process SID vs `current_logon_sid`, socket uid and `SO_PEERCRED`); cap every response with an `InFlightBodyBudget` before JSON parse; wrap every call in `tokio::time::timeout`; return `LiteSpmError::Unknown` (not `Failed`) when a mutating call times out after the request was written.
+- **Change intent:** implement a transport-neutral `LiteSpmClient::from_pinned_session` over an MCP session provided by the approved Runtime/process owner. Verify negotiated MCP protocol/server information and bounded `tools/list` results against the immutable tool-manifest pin. Validate tool inputs/outputs and correlation against published schemas; cap content before parsing, enforce finite initialization/call deadlines, and classify timeout after a mutating tool dispatch as `UNKNOWN`. Do not connect to private pipes/sockets, create an invented service descriptor, spawn an unmanaged bridge process or infer any tool schema from CLI output.
 - **Acceptance:**
-  - [ ] Fixture descriptors: pinned version accepted; other versions and missing descriptor refused (AC-001).
-  - [ ] Windows `peerAuth.verified=false` recorded `TRANSPORT_ACL_ONLY`; foreign-owner endpoint refused (AC-002).
-  - [ ] Client spawns no process and has no HTTP dependency (AC-003).
+  - [ ] MCP fixtures: pinned protocol/server/tool-manifest accepted; mismatched or missing protocol/server/tool schemas rejected with typed errors (AC-001).
+  - [ ] Runtime process identity evidence is accepted only from the owning Feature 011 boundary; absent or foreign-owner evidence fails closed, and the client never labels stdio/MCP metadata as OS-authenticated (AC-002).
+  - [ ] Client has no private daemon IPC, HTTP, CLI parsing or unmanaged process launch (AC-003).
   - [ ] Oversized and malformed responses fail with typed errors; deadlines fire (AC-016).
   - [ ] Debug/Serialize of requests never print approval tokens (AC-017).
 - **Command:** `cargo test -p litecoworkd --locked litespm_client` (filter to be added by this task)
 - **Evidence:** test output; IMPLEMENTATION-STATUS.md LiteSPM row moves to CODE (client only).
-- **Stop:** pinned protocol needs a capability the OS boundary cannot provide; return to owner.
+- **Stop:** the published MCP bridge lacks a required schema/operation, or Runtime cannot provide the approved supervised session and process-identity evidence; keep affected operations unavailable and return to owners.
 
 ## 013-T05 - Host compatibility profile and advertised-operation gating
 
@@ -103,7 +103,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Owner:** Capability Fabric, Agent Runtime.
 - **Allowed paths:** `apps/litecoworkd/src/litespm/host_profile.rs` (new), `apps/litecoworkd/src/litespm/mod.rs`, adjacent tests.
 - **Contract:** SPEC B-37, section 12; AC-006.
-- **Change intent:** add `HostCompatibilityProfile { host, host_version, os_build, scope, kind, operation, evidence_ref, qualified }` as compiled data, one row per B-37 pair and verb; `profile_allows(&descriptor, &profile, operation)` returns the operation only when LiteSPM advertises it and the row is qualified.
+- **Change intent:** add `HostCompatibilityProfile { host, host_version, os_build, scope, kind, operation, evidence_ref, qualified }` as compiled data, one row per B-37 pair and verb; `profile_allows(&tool_manifest, &profile, operation)` returns the operation only when the pinned MCP tool manifest supports it and the row is qualified.
 - **Acceptance:**
   - [ ] Skill install on OpenCode v2.0.32 user scope allowed only when advertised and qualified (AC-006).
   - [ ] Project scope, `mcp` install and unknown host versions return `PACKAGE_HOST_PROFILE_UNSUPPORTED` (AC-006).
@@ -120,7 +120,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Owner:** Capability Fabric, Operator.
 - **Allowed paths:** `apps/litecoworkd/src/package_lifecycle_operator.rs` (new), `apps/litecoworkd/src/package_lifecycle_service.rs` (new), `apps/litecoworkd/src/operator.rs` (route merge only), `crates/storage-sqlite/src/discover.rs`, `crates/storage-core/src/discover.rs`, adjacent tests.
 - **Contract:** SPEC sections 4, 7.2; AC-004, AC-005, AC-015, AC-016.
-- **Change intent:** add `GET /v1/package-service/status` and `GET /v1/package-inventory`; map LiteSPM items to `DiscoverCatalogEntry` with `DiscoverEntrySource::LiteSpmPackage`, `authoritative: false` and the observed fingerprint; derive `DiscoverProviderStatus.package_service_qualified` from the live handshake instead of the hard-coded default. No inventory persistence.
+- **Change intent:** add `GET /v1/package-service/status` and `GET /v1/package-inventory`; map LiteSPM items to `DiscoverCatalogEntry` with `DiscoverEntrySource::LiteSpmPackage`, `authoritative: false` and the observed fingerprint; derive `DiscoverProviderStatus.package_service_qualified` from live pinned MCP initialization/tool-manifest validation plus Runtime-owned process-identity evidence instead of the hard-coded default. No inventory persistence.
 - **Acceptance:**
   - [ ] Inventory page carries host, scope, locator, provenance, management state, fingerprint and observed time (AC-004).
   - [ ] LiteSPM read failure returns `PACKAGE_INVENTORY_UNAVAILABLE`, never an empty page (AC-004).
@@ -174,7 +174,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Owner:** Capability Fabric, Storage, Runtime.
 - **Allowed paths:** `apps/litecoworkd/src/package_lifecycle_service.rs`, `apps/litecoworkd/src/package_lifecycle_operator.rs`, `apps/litecoworkd/src/runtime.rs` (one call into the package reconciler), adjacent tests.
 - **Contract:** SPEC section 6 steps 4-6, section 11; AC-008, AC-009, AC-010.
-- **Change intent:** `apply` = `begin_apply` (transaction) -> `LiteSpmClient::apply` (outside) -> `settle_apply` (transaction) with LiteSPM operation ref and read-back fingerprint; timeout after write settles `UNKNOWN`; `reconcile` and the startup sweep call `operation_get` for every `DISPATCHING`/`UNKNOWN` receipt; a `DISPATCHING` row with no evidence the request was written is reconciled through `operation_get` by apply key, never re-sent blindly.
+- **Change intent:** `apply` = `begin_apply` (transaction) -> a pinned, advertised `LiteSpmClient::apply` tool (outside) -> `settle_apply` (transaction) with LiteSPM operation ref and read-back fingerprint; timeout after dispatch settles `UNKNOWN`. Reconcile and startup recovery use a pinned, advertised operation-lookup/reconcile tool only when present; otherwise preserve `UNKNOWN`, block further mutation and show reconciliation unavailable. Never query an inferred daemon method or re-send blindly.
 - **Acceptance:**
   - [ ] Success visible only after receipt and read-back; inventory refreshed (AC-010).
   - [ ] Lost response produces UNKNOWN and blocks further mutation for that target (AC-009).
@@ -223,7 +223,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 
 - **Status:** DEFERRED (owner A-62, 2026-11-10; see the package DEFERRED note) and BLOCKED (owner acceptance, T01).
 - **Depends on:** T01, T06, T08, T09
-- **Cross-package prerequisites:** Feature 011 packaged sidecar and Windows named-pipe IPC.
+- **Cross-package prerequisites:** Feature 011 approved Runtime/process lifecycle and local stdio MCP session owner; no Feature 013 private Windows named pipe.
 - **Owner:** Desktop bridge.
 - **Allowed paths:** `apps/litecowork-ui/src-tauri/src/package_lifecycle_bridge.rs` (new), `apps/litecowork-ui/src-tauri/src/lib.rs` (command registration only).
 - **Contract:** SPEC section 7.2; AC-014, AC-017.
@@ -295,7 +295,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Owner:** Capability Fabric, Testing.
 - **Allowed paths:** `apps/litecoworkd/tests/litespm_package_lifecycle.rs` (new), `apps/litecoworkd/tests/support/fake_litespm.rs` (new).
 - **Contract:** SPEC section 11; contracts/errors-recovery.md; AC-008, AC-009, AC-012.
-- **Change intent:** a fake LiteSPM daemon over a real local socket/pipe that can drop responses, delay past deadlines, return oversized or malformed frames, restart, change fingerprints and report drift; scenarios: kill daemon after `begin_apply`, after request write, before `settle_apply`; LiteSPM restart mid-apply; duplicate approval replay; concurrent apply; plan expiry during approval; inventory failure.
+- **Change intent:** a fake published MCP server/session fixture that can drop tool responses, delay past deadlines, return oversized or malformed tool results, restart, change fingerprints and report drift; scenarios: lose response after `begin_apply`, after tool dispatch and before `settle_apply`; LiteSPM restart mid-apply; duplicate approval replay; concurrent apply; plan expiry during approval; inventory failure. Runtime process-launch/identity fault cases remain in the owning Feature 011 suite. If the pinned bridge has no operation lookup/reconcile tool, the expected result is durable UNKNOWN and blocked subsequent mutation, never an invented daemon query.
 - **Acceptance:**
   - [ ] Every scenario ends with exactly one LiteSPM apply or none, and a terminal or reconciled receipt (AC-008, AC-009).
   - [ ] No scenario reports success without receipt and read-back.
@@ -327,10 +327,10 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Owner:** Product, Testing, Capability Fabric.
 - **Allowed paths:** this package; evidence report path chosen by Feature 019.
 - **Contract:** ACCEPTANCE-AND-E2E-PLAN E2E-06; LITESPM-INTEGRATION-PLAN section 9 (LSI-012, LSI-014, LSI-017 to LSI-030, LSI-034, LSI-035); AC-002, AC-011, AC-016.
-- **Change intent:** run CODE, SYSTEM and owner USER evidence on Windows 11/10 x64 + OpenCode v2.0.32 (skill, user scope) then Linux x64: discover existing skill, adopt with byte-identical config, install a new skill, kill during apply and recover, unmanage, remove, then hand to Feature 006 for grant/use; include denial (agent self-approval, expired plan) and recovery.
+- **Change intent:** run CODE, SYSTEM and owner USER evidence on Windows 11/10 x64 + OpenCode v2.0.32 (skill, user scope) then Linux x64: discover existing skill, adopt with byte-identical config, install a new skill, interrupt during apply and exercise only the recovery operations actually published by the pin, unmanage/remove if supported, then hand to Feature 006 for grant/use; include denial (agent self-approval, expired plan) and recovery. If the pinned tool set lacks lookup/reconcile, prove UNKNOWN remains visible and blocks another mutation.
 - **Acceptance:**
   - [ ] Packaged desktop E2E-06 passes on row 1 with owner USER sign-off, then row 2.
-  - [ ] Peer-auth class recorded per row (AC-002); adopt byte-identical on the real host (AC-011); p95 budget measured (AC-016).
+  - [ ] Runtime process-identity evidence class recorded per row (AC-002); adopt byte-identical on the real host (AC-011); p95 budget measured (AC-016).
   - [ ] LSI rows listed above pass or are recorded UNAVAILABLE with reason.
 - **Command:** `cargo test -p litecoworkd --test litespm_package_lifecycle --locked -- --nocapture` and `python3 scripts/v1_platform_matrix.py`
 - **Evidence:** Feature 019 evidence bundle; IMPLEMENTATION-STATUS.md row per release row.
@@ -360,7 +360,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 - **Owner:** Package Lifecycle, Connections, Storage.
 - **Allowed paths:** `specs/013-litespm-package-lifecycle-bridge/RESEARCH.md`, `apps/litecoworkd/src/`, adjacent tests.
 - **Contract:** SPEC sections 5-7; AC-018, AC-021; AGENTS.md section 6; RESEARCH pinned sources.
-- **Change intent:** pin the LiteSPM bridge from its published package and protocol, reconciling the three observed SHAs 9f42b25d, 111fd9b8 and f77a3a3; mirror the LiteSPM preview, backup, transaction and byte-exact-restore safety contract so a package mutation is previewed, backed up and either committed atomically or restored byte-for-byte; and adopt single-flight plus backoff for Discover read-through. Wire names, version and authentication come only from the published pinned bridge contract (LiteSPM publishes it at `ARCH/06-API-CONTRACTS.md` and `ARCH/11-LOCAL-RUNTIME-IPC.md`), never inferred from CLI output or a marketplace listing (AGENTS.md section 6). RESEARCH.md records the pin as TARGET-pending-published-bridge because the pin source is LiteSPM's own published package or protocol release, which must be confirmed against that published contract at implementation time; reading a reference clone during research does not make its checkout the authoritative pin.
+- **Change intent:** re-read and pin the published MCP bridge package/protocol and exact tool schemas, recording the older SHAs (`9f42b25d`, `111fd9b8`, `f77a3a3`) and `84d5fab` research snapshot as historical observations rather than the selected integration pin. Mirror only preview, backup, transaction and byte-exact-restore guarantees verified at the owner-approved pin, and adopt single-flight plus backoff for Discover read-through. MCP wire names, protocol and authentication/process assumptions come only from the published pinned bridge contract, never from daemon internals, CLI output or a marketplace listing (AGENTS.md section 6). Reading a reference clone during research does not make that checkout the authoritative pin.
 - **Acceptance:**
   - [ ] RESEARCH.md records the pin with the three reconciled SHAs and the TARGET-pending-published-bridge status, and the exact wire names come only from the published bridge contract (AC-021).
   - [ ] The preview, backup, transaction and byte-exact-restore safety contract is mirrored; a failed mutation restores byte-for-byte (AC-021).
@@ -391,7 +391,7 @@ Gaps to V1: the whole bridge (client, profile, inventory, plan/approval/apply/re
 Findings from reading the source. They are folded into the tasks above and add no scope.
 
 - **Correlation ID used as a timestamp (Rust, T15):** `test_capability_connection` returns `checked_at: new_id("cor")` and `search_discover` passes a correlation ID as `now` to `search_catalog`. Any freshness or expiry logic built on that value would be wrong; use one clock helper.
-- **Async client, no blocking pool (Rust, T04):** Discover handlers already push SQLite work to `spawn_blocking`. The LiteSPM client should be fully async (tokio named pipe / `UnixStream`) with `tokio::time::timeout`, so a slow LiteSPM never occupies a blocking thread and deadlines are cheap.
+- **Bounded MCP session (Rust, T04):** Discover handlers already push SQLite work to `spawn_blocking`. Calls through the owner-supplied MCP session should remain async with finite deadlines and bounded tool results; this does not authorize a second daemon socket/pipe or independent process lifecycle.
 - **Reuse bounded framing (Rust, T04):** `crates/operator-ipc` already has `InFlightBodyBudget` and `BudgetedBody`. Reusing them caps memory before JSON parse instead of reading an unbounded body into `Vec<u8>`.
 - **Database-level single mutation per target (Rust/SQLite, T07):** a partial unique index on receipts in `DISPATCHING`/`UNKNOWN` per `(workspace_id, host_profile_id, scope)` enforces "UNKNOWN blocks further mutation" in one index lookup, without an application lock.
 - **No inventory persistence (Rust, T06):** read-through with an optional per-request page cache keyed by observed fingerprint keeps LiteCowork from becoming a second package DB and avoids cache invalidation bugs.
@@ -405,12 +405,12 @@ T01 -> T02 -> T03 -> T04 -> T05 -> T06. T03 -> T07. (T05, T06, T07) -> T08 -> T0
 
 | This task | Other package task | Reason |
 |---|---|---|
-| T04 | Feature 011 local IPC peer-identity profile (Wave 0) | Same OS peer-identity rules for the second IPC boundary |
+| T04 | Feature 011 Runtime/process ownership and local stdio-session contract (Wave 0) | LiteCowork cannot invent process launch or claim identity for a child bridge |
 | T05, T18 | Feature 002 OpenCode v2.0.32 binding creatable (probe fix) | Host profile row needs exact agent identity and version |
 | T07 | Feature 005 Trust/approval primitives | Approval semantics must not fork from Trust |
 | T03, T11, T14 | Feature 006 Connection/assignment/grant and grant invalidation | Installed is not granted; 006 consumes the fingerprint notification |
 | T09 | Feature 011 Runtime startup recovery hook | Startup sweep for UNKNOWN receipts |
-| T12 | Feature 011 packaged sidecar and Windows named pipe | Desktop path for E2E-06 |
+| T12 | Feature 011 packaged Runtime/process lifecycle and local stdio-session owner | Desktop path for E2E-06; no Feature 013 private LiteSPM pipe |
 | T13 | Feature 011 keyboard and focus baseline | Shared accessibility rules |
 | T18, T20 | Feature 019 release matrix rows and evidence bundle | Qualification is per release row |
 

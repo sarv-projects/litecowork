@@ -765,13 +765,16 @@ operation. Both `start_task_planning_session` and `activate_task_planning_sessio
 produced and rechecked at the storage boundary. Start rejection occurs before aggregate
 blob writes, session/event insertion, or RequestId receipt creation; activation rejection
 occurs before session lookup or Task mutation. This fail-closed statement applies to
-TASK_PLANNING only. Conversation session activation and an atomic final-response writer
-are implemented in SQLite and are called by the current OpenCode-only daemon supervisor
-path. This establishes CODE-level integration, not a qualified desktop route. Conversation
-admission still lacks a durable dispatch outbox/claim and transactional single-flight guard;
-retry/cancel state transitions are inconsistent with the target lifecycle, and daemon-start
-recovery is not wired. Do not infer route qualification from the existence of these storage
-operations.
+TASK_PLANNING only. Conversation turn admission now atomically writes the USER message,
+OPEN turn, durable UNCLAIMED dispatch intent, and request receipt, with a transactional
+single-flight guard; SQLite also exposes compare-and-swap intent claiming and settlement.
+The daemon has a startup sweep that fails prior-incarnation unsettled turns closed and
+releases stranded STARTING sessions rather than resuming native sessions. Retry creates a
+new intent atomically with reopening the FAILED turn. The current OpenCode-only supervisor
+uses these operations, but CODE-level integration is not a qualified desktop route: the
+commit-to-detached-spawn gap, pre-handler error settlement, provider stop/retry races,
+exact provider route and packaged user journey remain open. Do not infer route
+qualification from these storage operations.
 FOREIGN KEY capability_activations(runtime_id,runtime_incarnation_id) -> runtime_incarnations
 CapabilityActivation scope tuple must satisfy its tagged-union CHECK and point to the same Workspace as its scope entity
 CapabilityActivation scope, Runtime/incarnation, and CapabilityRef must match the session/invocation at admission

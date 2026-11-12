@@ -1,6 +1,6 @@
 # Data Model - Rich Presentation, Intelligent UI and Generated Media
 
-**Status:** IN_REVIEW - authored for owner review; does not authorize implementation. No migration is planned; see section 6.
+**Status:** IN_REVIEW, revision 0.2 design proposal. Baseline B-40 requires no new migration; opt-in persistence requires a separately approved migration and retention design (T22).
 
 Canonical definitions: [docs/RICH-RESPONSE.md](../../docs/RICH-RESPONSE.md), [docs/PRESENTATION-RUNTIME.md](../../docs/PRESENTATION-RUNTIME.md), [docs/STATE-MACHINES.md](../../docs/STATE-MACHINES.md) "RichPresentation", [docs/schemas/rich-presentation.schema.json](../../docs/schemas/rich-presentation.schema.json), [docs/ARTIFACTS-EVIDENCE.md](../../docs/ARTIFACTS-EVIDENCE.md).
 
@@ -13,7 +13,7 @@ Canonical definitions: [docs/RICH-RESPONSE.md](../../docs/RICH-RESPONSE.md), [do
 | Artifact, ArtifactVersion | `crates/storage-core/src/artifact.rs` (`ArtifactVersionRecord { artifact_id, version, resource_revision_id, input_refs, content, provenance, created_by_attempt, verification_refs, created_at }`) | Generated media is a new Artifact version; create path from Feature 007 |
 | `conversation_messages` | Feature 001 | Authoritative semantic text; never modified here |
 
-## 2. Document shape (V1 profile, accepted target after T02)
+## 2. Document shape (proposed V1 profile; requires T02 promotion and whole-SPEC acceptance)
 
 | Field | Bound |
 |---|---|
@@ -29,7 +29,7 @@ Canonical definitions: [docs/RICH-RESPONSE.md](../../docs/RICH-RESPONSE.md), [do
 
 ## 3. Lifecycle
 
-A RichPresentation is immutable. Identity is (message_id, presentation_id); the binder derives presentation_id deterministically from the message id and binder version, so a replay is idempotent and a binder upgrade creates a new presentation. States: absent, published, superseded (a newer presentation for the same message; the desktop shows the newest valid one). Rejected documents are not stored; a `rich.presentation.rejected.v1` event records ids and reason only.
+A RichPresentation is immutable and uniquely bound to one committed message. The trusted publisher allocates and retains its publish identity; replay uses that identity and digest. A binder upgrade does not create a second presentation for the same message. A conversational modification creates a new message and optional presentation; the original remains unchanged. Rejected candidates are not stored; a proposed `rich.presentation.rejected.v1` event requires T02 promotion and contains ids and reason only.
 
 Calculator state is view-local React state: created on render, discarded on unmount, never persisted or transmitted.
 
@@ -52,3 +52,9 @@ Presentation documents are derived from semantic messages and follow their reten
 ## 6. Migration and compatibility
 
 No new migration. The only storage change is the document cap constant (1 MiB to 512 KiB) for new publishes; no production rows exist today. Renderer contract version 1 documents remain valid.
+
+## 7. Revision 0.2 proposed interaction records and lineage
+
+The [pipeline LLD](../../docs/ACP-PRESENTATION-PIPELINE-LLD.md) sections 6-9 define the proposed fields, partition key, revision/idempotency/deletion fences, 32 KiB record/5 MiB Workspace quota proposal, consent, privacy and recovery. These are TARGET only; no table, migration number or served operation is allocated here. `PresentationInteractionState` stores only declared primitive inputs and consent under owner/device + Workspace + Conversation + message + presentation + document digest + renderer/state schema version. Derived values are recomputed; source document and message are immutable. Retention follows parent deletion and authorization, and Forget must fence late saves. Backup policy, encryption, quota and deletion receipt retention are T22 gates.
+
+Transient controller state is shared between inline and expanded Canvas but discarded on unmount/restart under B-40. Persistence is separately opt-in and never implies sharing with the agent. A modification request explicitly snapshots selected inputs and base revision into a new Conversation turn; new-message provenance records parent presentation identity/digest and base state revision. State is not automatically migrated across document/version namespaces.

@@ -14,6 +14,15 @@ Discover, show and let user select qualified shell profiles:
 
 Profiles carry id/display/OS/Runtime/shell kind/version/path identity/default cwd policy/fixed args/environment variable allowlist/trust category/shell integration capability. Hide Unsupported/Unavailable with reason rather than offering an inert terminal. Use system preferred shell only when explicitly resolved to an executable for that Runtime, never assume Linux bash exists on Windows native Runtime.
 
+### Default profile and first-use behavior (Feature 008 revision 1.1 proposal)
+
+- App launch, opening Workbench, and opening the `+` menu never starts a shell. The Terminal tab opens an idle launcher; the user starts a process with **New terminal**. Closing or switching the view does not silently kill an existing user-owned process.
+- For a manual local terminal, use the authenticated local Runtime and the user's selected Workspace root as cwd only after that exact root is available to the Runtime. On Windows, choose a discovered and qualified `pwsh.exe` profile by default; if unavailable, show the shell chooser with Windows PowerShell and `cmd.exe` as explicit choices. Do not silently fall back to a different shell, WSL, Git Bash, or install one. On Linux and macOS, use the account's configured login-shell executable only when it is discovered and qualified for that Runtime; otherwise show the chooser. A distribution's common shell is not proof that the executable is installed.
+- A Task/Attempt terminal is created only after the owning Task admission and Environment attestation. It uses the exact shell profile and cwd authorized for that Environment, not the user's manual-terminal profile. A provider-private terminal is visible only through a qualified native-agent adapter and is not reparented into this PTY service.
+- If the selected Workspace root is missing, revoked, or outside the Runtime's accessible roots, show a repair/selection state; never fall back silently to home or a broader directory. Profile discovery does not execute shell commands or scripts. Launching an explicitly selected interactive user shell may run that user's normal shell startup configuration; that behavior is visible and belongs to the user's manual terminal, not Task execution.
+
+This is a TARGET proposal only. Feature 008 revision 1.1 is IN_REVIEW; it does not create a terminal provider, route, UI, or qualification evidence.
+
 ## Architecture
 
 ~~~text
@@ -129,3 +138,42 @@ VS Code shell integration: https://code.visualstudio.com/docs/terminal/shell-int
 VS Code persistent sessions: https://code.visualstudio.com/docs/terminal/advanced
 
 Borrow profile and rich command UX patterns; do not copy VS Code's Electron/Node PTY process architecture blindly into Tauri Rust or promise process revive after a real Runtime crash. Implementation may select an xterm-compatible renderer and OS PTY broker only after security/conformance tests.
+
+
+## Revision 1.1 default selection and input ownership (IN_REVIEW, 2026-11-12)
+
+The user requested usable terminal defaults and clear manual/agent control alongside the actual laptop Computer view. This section is a proposed design refinement, not renewed B-23/B-35 acceptance or a shipped PTY. Historical accepted Linux-first and Windows-unavailable gates remain in force for implementation until owners record a revision decision. [Computer observation and control LLD](COMPUTER-OBSERVATION-AND-CONTROL-LLD.md) owns desktop capture; a terminal output stream is a different observation source.
+
+### Deterministic defaults
+
+Resolve a profile in this order: explicit **New Terminal with Profile** selection; validated Workspace+Runtime override; validated Runtime user preference; bounded discovered OS recommendation. Default preferences name a profile ID and executable identity/revision, not an arbitrary shell string. The final provider availability/admitted-context check always runs. No eligible profile means NEEDS_SETUP/UNAVAILABLE and **Choose shell**; do not silently downgrade a missing preferred profile, run through an extra shell, install a shell, fall back to HOME or open WSL.
+
+Recommended initial OS selection order, subject to owner review and exact executable validation: Windows PowerShell 7 when installed and qualified, otherwise explicitly offered Windows PowerShell/cmd alternatives; Linux configured login shell resolved under the selected Environment, otherwise an explicitly offered qualified bash/sh profile; macOS qualified login zsh with other shells explicit. WSL, Git Bash, containers and custom profiles are explicit choices with their real Runtime/Environment identity. These are recommendations, not a hardcoded pwsh banner or promise that every listed profile is qualified. Profile discovery uses trusted executable resolution and bounded safe version probes; a generic `--version` is not safe for every shell and must use an allowlisted shell-specific argv. Discovery never loads user startup files. Starting a user-approved manual interactive shell may run its disclosed startup policy; agent profiles remain fixed to their admitted environment/configuration and cannot inherit a manual host profile.
+
+Show resolved shell, execution location, working directory and **You can type** / **Agent controls this terminal** before accepting input. Pin profile/executable/argv/cwd/environment-policy digest for session lifetime. Settings changes affect new terminals only. A stale or replaced executable invalidates admission and requires repair; it never changes an existing shell process.
+
+### Manual, agent and native-private contexts
+
+| Context | Default input owner | Execution boundary / evidence |
+|---|---|---|
+| USER_MANUAL | Authenticated local owner, one active writer window | Explicit admitted context; no agent grant or Task implied. History remains private terminal output, not automatic Task Evidence. |
+| TASK_ATTEMPT | Exact admitted AgentSession/Attempt under current lease | Read-only viewer for user until fenced takeover; all mediated commands use Trust/Effect and current Environment admission. |
+| PROVIDER_PRIVATE | Native harness | Limited display only through a qualified native adapter; cannot claim Core takeover or intercept tools without actual mediation. |
+
+Manual input does not become agent input because the agent can see the terminal. Opening an agent terminal never reuses a USER_MANUAL host shell, its tokens, startup files or ambient cwd. A proposed owner-only host terminal could use a separately disclosed non-isolated native user context with process-lifetime containment, but current Feature 008 B-23 gates require an admitted Environment. That host mode is an explicit unresolved owner decision requiring canonical Environment/API/UI contract promotion; it is not authorized by this LLD and must not silently bypass Windows B-35. Capturing the laptop display independently does not unblock any terminal spawn.
+
+### Single stdin arbiter and takeover
+
+One daemon-owned TerminalSessionService serializes stdin and resize per session. Read subscriptions may be shared across authorized windows; only the authenticated current writer lease can send bytes. Input request binds Workspace, RuntimeIncarnation, terminal incarnation, session revision, writer-window/Principal or exact AgentSession, control epoch, monotonic input sequence, bounded bytes and stable idempotency key. Same key+digest returns the original delivery receipt; changed payload conflicts. Input delivery is not command completion. Never infer command boundaries or success from prompt text/OSC markers.
+
+While an agent owns a mediated terminal, keep its input read-only and show persistent **Take over** in the session header and shell strip when its tab is hidden. Clicking immediately fences new agent writes at the stdin broker, cancels unsent writes and advances the control epoch. Already written command bytes may be running; switching stdin owner is not Ctrl+C, process quiescence or Stop Task. Display that distinction and offer separately scoped **Interrupt** / **Stop process** if authorized. A running program may still consume subsequent human bytes; show process/foreground status and require acknowledgement before forwarding input when it cannot be determined. Do not label a still-running command stopped after takeover.
+
+Partial agent input already written to a shell buffer cannot be recalled reliably. Block automatic Return until a fresh shell/input state is established or the owner explicitly resolves the pending buffer; never automatically send newline, clear an unknown line or replay a command. Shell integration can provide display hints but not proof that the shell is ready. Unknown state keeps agent input blocked and offers a new admitted terminal as a separate user action. For a running foreground process, Return may resume only an explicitly supported, authorized interaction with that exact process; otherwise require settlement first.
+
+Human input focus is explicit: selecting the tab does not send keystrokes; click/keyboard focus enters only when the writer epoch is USER. Pending transfer never buffers user keystrokes for later silent replay. Multi-line/control-character paste is reviewed before write; IME composition submits only committed text. Escape/focus-out shortcut leaves terminal without forwarding the global command. Resize has a separate clamped geometry revision and cannot acquire stdin authority. Disconnect releases writer ownership or blocks further writes according to lease expiry; it does not duplicate the shell.
+
+Return requires explicit confirmation, new epoch, current admitted Attempt/grants and observed terminal/process state. Clear queued old bytes and require agent replanning. Terminal **Close tab** detaches its view; **Stop process**, **Stop Task** and Conversation **Take control** remain distinct owner operations. Keep-alive is disclosed per session; no UI unmount, Workbench **+**, Canvas selection, or browser switch implicitly respawns or kills a process. A daemon restart invalidates cursors/epochs and never replays commands.
+
+### Verification and open gates
+
+Add default-resolution fixtures for missing/replaced profiles and distinct Runtime/OS; shell-specific no-startup probes; same-key and conflicting replay; two windows racing stdin; takeover before/after write; input sequence duplication; partial-line Return; foreground-process ambiguity; OS process crash; output backpressure independent of takeover; Unicode/IME/paste/focus escape; hide/tab/Canvas switch; and stop/restart. Run real packaged PTY/ConPTY and admitted provider tests per native OS. No new source behavior or qualification is claimed here. Feature 008 tasks T22/T23/T26/T27 own review, promotion, implementation and evidence.

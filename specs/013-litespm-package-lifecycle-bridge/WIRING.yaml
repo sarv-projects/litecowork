@@ -39,15 +39,23 @@ nodes:
   - id: "litespm-client"
     owner: "LiteSpmClient (Capability Fabric)"
     kind: "protocol client"
-    responsibility: "Handshake, pinned version negotiation, endpoint owner check, bounded framed calls, deadlines"
-    implementation_status: "TARGET_ONLY: no LiteSPM client exists in apps/ or crates/"
+    responsibility: "Pinned published MCP tool catalog, bounded typed calls, schema validation, deadlines"
+    implementation_status: "BLOCKED: no LiteSPM client exists; direct daemon IPC is not authorized by root ARCHITECTURE.md"
     inputs: ["semantic operation request"]
     outputs: ["untrusted bounded LiteSPM responses"]
+  - id: "runtime-mcp-session"
+    owner: "Feature 011 Runtime/process lifecycle owner"
+    kind: "process and session boundary"
+    responsibility: "Supply the approved local stdio MCP session and exact per-OS process-identity evidence; launch/supervision policy remains open in Feature 013 O-08"
+    implementation_status: "BLOCKED: Feature 013 has no authorized LiteSPM bridge process/session owner yet"
+    inputs: ["approved local service/runtime lifecycle" ]
+    outputs: ["pinned MCP session", "process-identity evidence reference"]
   - id: "litespm-daemon"
-    owner: "Upstream LiteSPM"
+    owner: "Upstream LiteSPM published MCP stdio bridge and its daemon"
     kind: "external process"
-    responsibility: "Inventory, plan, apply, receipts, read-back, rollback, host config writes"
-    inputs: ["pinned protocol request"]
+    responsibility: "Published tool operations; upstream owns inventory, plan, apply, receipts, read-back, rollback and host config writes"
+    implementation_status: "TARGET ONLY: exact pinned tools and process lifecycle remain subject to B-36/O-08"
+    inputs: ["pinned MCP tool call"]
     outputs: ["inventory", "plan", "operation receipt"]
   - id: "native-host-config"
     owner: "Native agent host (OpenCode v2.0.32)"
@@ -90,9 +98,14 @@ edges:
     contract: "outside any SQLite transaction; deadline and byte caps"
   - id: "e05"
     from: "litespm-client"
+    to: "runtime-mcp-session"
+    kind: "injected-mcp-session"
+    contract: "pinned protocol and tool manifest; no private daemon RPC"
+  - id: "e05a"
+    from: "runtime-mcp-session"
     to: "litespm-daemon"
-    kind: "os-local-ipc"
-    contract: "pinned LiteSPM daemon protocol (B-36); never HTTP, CLI output or stdio bridge"
+    kind: "published-mcp-stdio"
+    contract: "Runtime-owned process/session to published pinned bridge; launch and identity evidence blocked by B-36/O-08"
   - id: "e06"
     from: "litespm-daemon"
     to: "native-host-config"
@@ -145,24 +158,24 @@ transactions:
     atomic_records: ["LiteSpmServiceObservation for this Runtime incarnation"]
     external_calls_inside: false
 external_boundaries:
-  - id: "litespm-handshake"
-    owner: "LiteSpmClient"
+  - id: "litespm-mcp-initialize"
+    owner: "Feature 011 Runtime process/session owner plus LiteSpmClient conformance adapter"
     input_trust: "external-process"
-    timeout: "finite; proposed 5 s, confirmed in 013-T04"
-    retry: "reconnect with backoff; never downgrade protocol"
+    timeout: "finite; proposed 5 s, confirmed against the pinned MCP bridge in 013-T04"
+    retry: "request a fresh session only through the owning Runtime/process service; never downgrade protocol or spawn a second unmanaged bridge"
   - id: "litespm-inventory"
     owner: "LiteSpmClient"
     input_trust: "untrusted"
     timeout: "finite; proposed 30 s"
-    retry: "safe read retry; failure is PACKAGE_INVENTORY_UNAVAILABLE"
+    retry: "safe tool retry only if the published MCP tool semantics permit it; failure is PACKAGE_INVENTORY_UNAVAILABLE"
   - id: "litespm-apply"
     owner: "PackageLifecycleService"
     input_trust: "external-mutation"
     timeout: "finite; timeout after write is UNKNOWN"
-    retry: "never re-send; reconcile by original operation identity"
+    retry: "never re-send; use a published operation lookup/reconcile tool by original operation identity when present; otherwise remain UNKNOWN and block mutation"
 recovery:
   owner: "PackageLifecycleService"
   source_of_truth: ["LiteSPM operation receipt", "PackageOperationReceipt", "PackageOperationApproval"]
   implementation_status: "TARGET_ONLY"
-  restart_action: "list_unsettled_package_operations; operation_get for DISPATCHING and UNKNOWN; settle or keep UNKNOWN; block new mutation per target"
+  restart_action: "list_unsettled_package_operations; use a published operation lookup/reconcile tool for DISPATCHING and UNKNOWN only when available; otherwise keep UNKNOWN and block new mutation per target"
   ui_action: "show UNKNOWN with Reconcile; refresh inventory after settlement"

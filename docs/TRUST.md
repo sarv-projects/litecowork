@@ -320,3 +320,7 @@ CHROME-BROWSER-LLD.md clarifies consent, high-trust attach to signed-in Chrome, 
 ## Non-normative plugin-sandbox reference - 2026-10-31
 
 The [Desktop Reference Implementation Audit](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) identifies ZCode's Main-owned guest sandbox, application-scoped partition, strict origin/owner binding, restrictive CSP and MessagePort bridge as relevant implementation patterns for interactive content. They are not a replacement for TrustService, Grant/Approval, Environment isolation or Effect mediation. A browser partition or renderer prompt alone is not an OS sandbox or authorization proof; existing TRUST and INTERACTIVE-ARTIFACT-RUNTIME owner semantics remain unchanged.
+
+## Computer observation, disclosure and input revision - 2026-11-12
+
+Feature 008's [Computer LLD](COMPUTER-OBSERVATION-AND-CONTROL-LLD.md) separates permission to preview a selected screen/window locally, disclose selected observations to an agent/provider, and inject input. None follows from selecting a tab, starting chat, approving a package or enabling an Automation. Revoke fences future capture/disclosure/input as appropriate and invalidates buffered frames. Takeover intent blocks new agent input immediately; completion requires provider-confirmed fencing and reconciliation of dispatched effects. Unknown is not manual ownership or a stopped process. Native tools outside this mediated provider retain only their reported/observed provenance.

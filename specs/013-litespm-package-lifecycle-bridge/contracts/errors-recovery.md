@@ -10,20 +10,20 @@
 |---|---|---|---|
 | Owner/scope denial | foreign principal, foreign Workspace, `RUNTIME_MISMATCH`, archived Workspace | deny before any LiteSPM call | show denial; no retry |
 | Service not qualified | B-36/B-37 not accepted, row not qualified | 503 `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED` | verb disabled with reason |
-| Protocol mismatch | unpinned version, missing descriptor, unadvertised op | `LITESPM_PROTOCOL_INCOMPATIBLE` / `LITESPM_OPERATION_NOT_ADVERTISED` | show update-required or unavailable |
-| Peer refused | endpoint owner differs from current user | refuse connection; record `REFUSED` | show service unavailable; no fallback |
+| MCP contract mismatch | unpinned/mismatched MCP protocol or server, invalid/missing tool manifest, unadvertised operation | `LITESPM_PROTOCOL_INCOMPATIBLE` / `LITESPM_OPERATION_NOT_ADVERTISED` | show update-required or unavailable |
+| Process identity unproven/refused | Runtime process owner cannot prove the expected local bridge identity, or evidence names a different owner | refuse service readiness; record `UNPROVEN` or `REFUSED` | show service unavailable; no fallback and no claim that MCP stdio alone authenticates the process |
 | Inventory unavailable | LiteSPM read failed or timed out | `PACKAGE_INVENTORY_UNAVAILABLE`; never empty page | show unavailable with Retry |
 | Profile unsupported | project scope, `mcp`, unknown host version | `PACKAGE_HOST_PROFILE_UNSUPPORTED` | verb disabled with reason |
 | Plan stale | expired plan, changed fingerprint | `PACKAGE_PLAN_EXPIRED` | re-plan; old approval unusable |
 | Approval conflict | consumed approval, replay with changed payload | `PACKAGE_APPROVAL_CONSUMED` / `IDEMPOTENCY_CONFLICT` | refresh receipt |
 | Target busy | another receipt `DISPATCHING`/`UNKNOWN` for the target | `PACKAGE_OPERATION_UNKNOWN_PENDING` | show Reconcile first |
-| Apply uncertain | timeout or lost response after request write | settle `UNKNOWN`; query operation identity | show "Outcome unknown, checking" |
+| Apply uncertain | timeout or lost response after MCP tool dispatch | settle `UNKNOWN`; query operation identity only if the pinned published MCP bridge exposes a qualified lookup/reconcile tool; otherwise keep `UNKNOWN` and block further mutation | show "Outcome unknown"; show Reconcile only when that tool is supported |
 | LiteSPM terminal failure | precondition changed, write refused | settle `FAILED` with LiteSPM code | show cause; offer re-plan or rollback plan |
 | Drift | host entry edited outside LiteSPM | read-only diff; keep-local default | owner chooses resolution |
 
 ## 2. Retry classes
 
-- **SAFE_READ_RETRY:** status, inventory, describe, operation get.
+- **SAFE_READ_RETRY:** status, inventory, describe; operation lookup only when the pinned tool manifest advertises it and its semantics are safe to retry.
 - **SAFE_LOCAL_REPLAY:** same principal, key and payload for approval or apply returns the stored record.
 - **RECONCILE_BEFORE_RETRY:** any apply in `DISPATCHING` or `UNKNOWN`; never re-send apply.
 - **NEW_INTENT_ONLY:** a changed plan, scope or host requires a new plan and approval.
@@ -33,9 +33,9 @@
 | Window | Recovery |
 |---|---|
 | After approval commit, before apply | Approval stays GRANTED until expiry; no mutation happened |
-| After `begin_apply` commit, before request write | Startup sweep queries operation by apply key; absent upstream record means settle FAILED (not dispatched) only when LiteSPM proves the key unknown |
-| After request write, before response | `UNKNOWN`; query original operation identity |
-| After LiteSPM success, before `settle_apply` | Query returns terminal success; settle with read-back |
+| After `begin_apply` commit, before MCP tool dispatch | Startup recovery queries by apply key only if the pinned tool surface supports lookup; otherwise retain `UNKNOWN` because absence of evidence is not proof that no write occurred |
+| After MCP tool dispatch, before response | `UNKNOWN`; query original operation identity only through a published pinned lookup/reconcile tool |
+| After LiteSPM success, before `settle_apply` | Published operation lookup returns terminal success; settle with read-back, otherwise retain `UNKNOWN` |
 | LiteSPM restart mid-apply | LiteSPM's own journal recovers; LiteCowork queries after reconnect |
 | UI closed during apply | Receipt state survives; UI rehydrates from `GET /v1/package-operations/{receipt_id}` |
 

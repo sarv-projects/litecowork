@@ -8,15 +8,15 @@ Cross-package task references inside task fields are written as "Feature NNN Txx
 
 ## Current baseline
 
-Verified against the checkout on branch `docs/audit-competitor-superset`; highest migration file `docs/schemas/sqlite-v32.sql` (none of v29 to v32 touches task control; 015 is allocated v42).
+Source-checked 2026-11-12 at HEAD `64c435149a82ba952c6c3bf3049e26cf2d9344b1` plus shared working-tree changes on branch `main`; highest migration is wired `docs/schemas/sqlite-v32.sql`; Feature 015 migration v42 is allocated.
 
-- **Domain (Rust, CODE, no production caller):** `crates/domain-task/src/delegation_admission.rs` (`decide_child_attempt_admission`, `decide_child_attempt_admission_from_durable_snapshot`, `preview_child_attempt_admission`, `ChildAdmissionDenial` with 15 variants including `ProfileNotEnabledForCoworker`); `crates/domain-task/src/execution.rs` (`StepAttemptCoordinator::preview_delegated_admission`, `admit`); `crates/domain-task/src/lead_failover.rs` (`FailoverPolicy`, `decide_lead_failover`), `lead_failover_service.rs` (`LeadFailoverService::evaluate`), `lead_handoff_packet.rs` (`prepare_lead_handoff_packet`); `crates/domain-task/src/delegation_recovery.rs` (`EscalationPolicy { max_worker_attempts, fallback_profile_ids }`, no `on_exhaustion`, register A-37); `crates/domain-task/src/delegation_result_service.rs`.
+- **Domain (Rust, CODE, no production caller):** `crates/domain-task/src/delegation_admission.rs` (`decide_child_attempt_admission`, `decide_child_attempt_admission_from_durable_snapshot`, `preview_child_attempt_admission`, `ChildAdmissionDenial` with 15 variants including `ProfileNotEnabledForCoworker`); `crates/domain-task/src/execution.rs` (`StepAttemptCoordinator::preview_delegated_admission`, `admit`); `crates/domain-task/src/lead_failover.rs` (`FailoverPolicy`, `decide_lead_failover`), `lead_failover_service.rs` (`LeadFailoverService::evaluate`), `lead_handoff_packet.rs` (`prepare_lead_handoff_packet`); `crates/domain-task/src/delegation_recovery.rs` (`EscalationPolicy { max_worker_attempts, fallback_profile_ids }`, no `on_exhaustion`, retained TARGET-not-yet-wired per accepted A-37); `crates/domain-task/src/delegation_result_service.rs`.
 - **Served:** `POST /v1/tasks/{task_id}/lead-agent` (`owner_handoff` in `apps/litecoworkd/src/task_lead_handoff_operator.rs`) commits only the lead-binding CAS, `task.lead_agent.changed.v1` and the receipt through `TaskStore::commit_task_lead_handoff`; it creates no Attempt and fences nothing. `GET /v1/tasks/{task_id}/verification-runs` (`list_task_verification_runs` in `apps/litecoworkd/src/verification_runs_operator.rs`) is read-only; `start_verification_run` and `settle_verification_run` in `crates/storage-sqlite/src/verification_runs.rs` have no route. Delegation profile routes in `apps/litecoworkd/src/delegation_profiles_operator.rs`.
-- **Storage:** Task status is a `String`; `AttemptState` is typed in `crates/storage-core/src/execution.rs`; `execution_leases.epoch` with `UNIQUE(step_id, epoch)`; `task_spec_revisions.parent_revisions_json`; `coworker_revisions.enabled_delegation_profile_ids_json` read by the SQLite child-admission guard in `crates/storage-sqlite/src/execution.rs`; `delegation_results` (`sqlite-v24.sql`). No ResumePacket or control-request storage.
+- **Storage:** Task status is a `String`; `AttemptState` is typed in `crates/storage-core/src/execution.rs`; `execution_leases.epoch` with `UNIQUE(step_id, epoch)`; `task_spec_revisions.parent_revisions_json`; `coworker_revisions.enabled_delegation_profile_ids_json` read by the SQLite child-admission guard in `crates/storage-sqlite/src/execution.rs`; `delegation_results` (`sqlite-v24.sql`) checks Workspace/parent lineage, terminal Attempt/session, Runtime/incarnation and pinned TaskSpec revision, but not live Step Attempt + lease epoch. No ResumePacket or control-request storage.
 - **Errors present:** `TASK_ALREADY_PAUSED`, `TASK_PAUSE_UNSAFE`, `TASK_TERMINAL`, `DELEGATION_DEPTH_EXCEEDED`, `DELEGATION_CONCURRENCY_EXCEEDED`, `DELEGATION_PROFILE_DISABLED`, `DELEGATION_PROFILE_ARCHIVED`, `STALE_FENCE`. Absent: a wire code for the Coworker allowlist denial, budget exhaustion, sharing denial, `TASK_NOT_PAUSED`.
 - **UI:** `WorkPage`, `TaskListPanel`, `TaskDetailPanel` in `apps/litecowork-ui/src/App.tsx`; `apps/litecowork-ui/src/tasks/` (`TaskSpecRevisionHistory.tsx`, `task-stream.ts`, `planning-readiness.ts`); `apps/litecowork-ui/src/presentation/TaskPresentationPanel.tsx`. No timeline, Workers view or control buttons. No Tauri bridge for handoff, verification runs, pause, resume or steer.
 
-Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/steer, no child-Attempt dispatch, no late-result fence, no independent verifier, no Work-screen controls or timeline, and no CODE/SYSTEM/USER evidence on either row. Everything that executes depends on the Feature 005 Attempt admission and Linux Environment.
+Gaps to V1: B-39 is accepted but whole-SPEC owner acceptance is pending; no typed Task status, no pause/resume/steer, no child-Attempt dispatch, no live lease-epoch result fence, no independent native-agent verifier, no Work-screen controls or timeline, and no CODE/SYSTEM/USER evidence on either row. O-06 blocks worker/verifier/pause/cancel session wiring because Feature 005 defines a bounded file-write Attempt slice, not the generic provider session contract assumed here. O-07 blocks conflated lead-change/Attempt-replacement behavior. O-08 keeps A-37 producer support with its accepted Feature 004/005 dispatcher owner.
 
 ## 015-T01 - Owner acceptance of SPEC and blockers
 
@@ -42,9 +42,9 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 - **Depends on:** T01
 - **Cross-package prerequisites:** Feature 005 contract promotion (its T01) merged first so Attempt, cancel and Environment names are canonical.
 - **Owner:** Task Runtime, Delegation, API, Events, Storage owners.
-- **Allowed paths:** `docs/TASK-RUNTIME.md`, `docs/DELEGATION.md`, `docs/STATE-MACHINES.md`, `docs/API.md`, `docs/EVENTS.md`, `docs/STORAGE.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, `docs/schemas/delegation.schema.json`, `docs/schemas/sqlite-v29.sql` (new; use the next free number at implementation time), this package.
+- **Allowed paths:** `docs/TASK-RUNTIME.md`, `docs/DELEGATION.md`, `docs/STATE-MACHINES.md`, `docs/API.md`, `docs/EVENTS.md`, `docs/STORAGE.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, `docs/schemas/delegation.schema.json`, `docs/schemas/sqlite-v42.sql` (allocated by `docs/LITECOWORK-BUILD-TASKS.md`; use that allocation only if still free at implementation time), this package.
 - **Contract:** SPEC sections 7.2, 8; AC-002, AC-009, AC-011; register A-37.
-- **Change intent:** in one reviewed change promote routes `POST /v1/tasks/{task_id}/pause`, `/resume`, `/steering`, `GET /v1/tasks/{task_id}/activity`, `/workers`; errors `DELEGATION_PROFILE_NOT_ENABLED_FOR_COWORKER`, `DELEGATION_BUDGET_EXHAUSTED`, `DELEGATION_ENVIRONMENT_SHARING_DENIED`, `TASK_NOT_PAUSED`, `HANDOFF_PRIOR_LEASE_ACTIVE`; events `task.pause.requested.v1`, `task.paused.v1`, `task.resumed.v1`, `task.steering.recorded.v1`, `task.child_attempt.admitted.v1`, `task.child_result.fenced.v1`; tables `task_control_requests` and `task_resume_packets`; remove the "TARGET, not yet wired" label from `escalation_policy.on_exhaustion` in owner prose and schema description together (A-37). Each item is labelled "accepted target interface (not yet in source)" until its implementing task lands.
+- **Change intent:** in one reviewed change promote routes `POST /v1/tasks/{task_id}/pause`, `/resume`, `/steering`, `GET /v1/tasks/{task_id}/activity`, `/workers`; errors `DELEGATION_PROFILE_NOT_ENABLED_FOR_COWORKER`, `DELEGATION_BUDGET_EXHAUSTED`, `DELEGATION_ENVIRONMENT_SHARING_DENIED`, `TASK_NOT_PAUSED`, `HANDOFF_PRIOR_LEASE_ACTIVE`; events `task.pause.requested.v1`, `task.paused.v1`, `task.resumed.v1`, `task.steering.recorded.v1`, `task.child_attempt.admitted.v1`, `task.child_result.fenced.v1`; tables `task_control_requests` and `task_resume_packets`. Keep `escalation_policy.on_exhaustion` TARGET-not-yet-wired and optional for legacy packets until the dispatcher owner implements its producer (accepted A-37); do not relabel or rewrite the canonical schema in this task. Each new interface is labelled "accepted target interface (not yet in source)" until its implementing task lands. Resolve O-06/O-07/O-08 before promoting any conflicting generic admission, execution-replacement or exhaustion-producer contract.
 - **Acceptance:**
   - [ ] Every promoted name exists once in its owner doc and machine schema; no parallel definition in this package.
   - [ ] Migration is the next immutable `sqlite-vNN.sql`; older migrations byte-identical; fingerprint test passes.
@@ -61,7 +61,7 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 - **Owner:** Task Runtime, Storage.
 - **Allowed paths:** `crates/storage-core/src/task_status.rs` (new), `crates/storage-core/src/lib.rs`, `crates/domain-task/src/lib.rs`, `crates/domain-task/src/lead_failover_service.rs`, `crates/storage-sqlite/src/lib.rs` (status parse/serialize only), adjacent tests.
 - **Contract:** SPEC section 7.2; STATE-MACHINES "Task"; AC-002, AC-003, AC-013.
-- **Change intent:** add `TaskStatus` (13 states, SCREAMING_SNAKE_CASE serde) and `task_transition(from, &TaskControlCommand)`, generated as an exhaustive match so a missing transition is a compile error; replace string comparisons in domain-task with the enum; keep the stored column text-compatible (no migration).
+- **Change intent:** add `TaskStatus` (13 states, SCREAMING_SNAKE_CASE serde) and `task_transition(from, &TaskControlCommand)`, generated as an exhaustive match so a missing transition is a compile error; replace string comparisons in domain-task with the enum; keep the stored column text-compatible (no migration). Reconcile its complete status/transition list against the current canonical Task state machine before coding; this target enum is not a second authority.
 - **Acceptance:**
   - [ ] Table test covers every (state, command) pair against STATE-MACHINES, including PAUSED to CANCEL_REQUESTED and no VERIFYING to RUNNING.
   - [ ] Unknown stored status fails closed with a typed error, never defaults.
@@ -74,11 +74,11 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 
 - **Status:** NOT STARTED - no `request_pause`/`resume` in source; error codes exist.
 - **Depends on:** T01, T03
-- **Cross-package prerequisites:** Feature 005 T08 (Attempt admission service) and Feature 005 T11 (single-Attempt cancel and quiescence primitive).
+- **Cross-package prerequisites:** O-06 owner-approved generic Attempt/session execution-control seam; Feature 005 T08 currently specifies `admit_file_write` for one bounded file-write Effect and T11 cancels/quiesces that path. Reuse or extension of those APIs for generic native provider sessions requires an owner decision.
 - **Owner:** Task Runtime, Storage.
 - **Allowed paths:** `apps/litecoworkd/src/task_control_service.rs` (new), `crates/domain-task/src/task_control.rs` (new), `crates/domain-task/src/lib.rs`, `crates/storage-core/src/lib.rs`, `crates/storage-sqlite/src/task_control.rs` (new), `crates/storage-sqlite/src/task_control_tests.rs` (new).
 - **Contract:** SPEC L-01, L-02, sections 7.2, 11; TASK-RUNTIME "Pause and resume", "ResumePacket"; AC-001, AC-002, AC-003.
-- **Change intent:** `TaskControlService::request_pause` commits PAUSE_REQUESTED plus a `task_control_requests` row and receipt; outside SQLite it asks each active Attempt (through the Feature 005 service) to stop at a safe boundary, waits for observed quiescence, builds the ResumePacket (fields per TASK-RUNTIME, no grants or leases), stores it in `task_resume_packets` with a digest, releases leases and commits PAUSED. `resume` commits the prior state, marks interrupted Attempts ABANDONED and leaves continuation to a fresh admission with a higher lease epoch. A response arriving during PAUSE_REQUESTED returns `CONFLICT`.
+- **Change intent:** `TaskControlService::request_pause` commits PAUSE_REQUESTED plus a `task_control_requests` row and receipt; outside SQLite it asks each active Attempt through the O-06 owner-approved execution-control interface to stop at a safe boundary, waits for observed quiescence, builds the ResumePacket (fields per TASK-RUNTIME, no grants or leases), stores it in `task_resume_packets` with a digest, releases leases and commits PAUSED. Feature 005's `admit_file_write` signature alone does not provide generic native-session admission/control. Resume normally marks interrupted Attempts ABANDONED and continues with a fresh Attempt and higher epoch; TASK-RUNTIME's narrow same-Attempt INPUT_REQUIRED exception applies only under its full same-incarnation/same-Environment and reconciliation conditions. A response arriving during PAUSE_REQUESTED returns `CONFLICT`.
 - **Acceptance:**
   - [ ] Pause from each allowed state reaches PAUSED only after quiescence and lease release (AC-001).
   - [ ] PAUSED, terminal, unsafe and stale inputs are rejected with the mapped code and no write; exact replay returns the stored receipt; same key with a different body is `CONFLICT` (AC-002).
@@ -122,17 +122,17 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 - **Evidence:** test output in Completion evidence.
 - **Stop:** a child is left RUNNING after the Task reports CANCELLED.
 
-## 015-T07 - Handoff as an authorized new Attempt with late-result fencing
+## 015-T07 - Execution replacement admission and late-result fencing (separate from lead binding change)
 
-- **Status:** PARTIAL - `POST /v1/tasks/{task_id}/lead-agent` and `TaskLeadHandoffService::execute` commit the lead change (`apps/litecoworkd/src/task_lead_handoff_operator.rs`, `crates/domain-task/src/lead_handoff.rs`, safe-boundary checks in `crates/storage-sqlite/src/lead_handoff_boundary.rs`); `prepare_lead_handoff_packet` exists. Missing: replacement Attempt, prior-lease wait, epoch fence on results.
+- **Status:** PARTIAL with blocked target - `POST /v1/tasks/{task_id}/lead-agent` and `TaskLeadHandoffService::execute` commit only the lead-binding change (`apps/litecoworkd/src/task_lead_handoff_operator.rs`, `crates/domain-task/src/lead_handoff.rs`, safe-boundary checks in `crates/storage-sqlite/src/lead_handoff_boundary.rs`); `prepare_lead_handoff_packet` exists. Missing: separately defined execution-replacement command/admission, prior-lease wait, and live lease-epoch fence. O-06/O-07 block implementation of that target; binding change must not create an Attempt.
 - **Depends on:** T01, T03, T04
-- **Cross-package prerequisites:** Feature 005 T08 (Attempt admission with lease epoch).
+- **Cross-package prerequisites:** O-06 generic Attempt/session admission interface and O-07 separate execution-replacement command; Feature 005 T08 supplies only the bounded file-write admission slice unless explicitly extended by its owner.
 - **Owner:** Task Runtime, Delegation, Storage.
 - **Allowed paths:** `apps/litecoworkd/src/lead_handoff_attempt.rs` (new), `apps/litecoworkd/src/task_lead_handoff_operator.rs`, `crates/domain-task/src/lead_handoff.rs`, `crates/domain-task/src/lead_handoff_packet.rs`, `crates/domain-task/src/delegation_result_service.rs`, `crates/storage-sqlite/src/delegation_results.rs`, `crates/storage-sqlite/src/execution.rs`, adjacent tests.
 - **Contract:** SPEC L-05, L-13, section 7.2; release contract section 6 item 3; TASK-RUNTIME "Lead-agent change"; AC-006, AC-007.
-- **Change intent:** after `commit_task_lead_handoff`, `start_replacement_lead_attempt` waits until the prior lease is released, expired or revoked (else `HANDOFF_PRIOR_LEASE_ACTIVE` with retry-after), then admits a new Attempt with epoch + 1 using the prepared handoff packet as context (no grants or handles). In `DelegationResultService` and the Effect-receipt path, compare child Attempt id, lease epoch and `revision_at_start` with current state; on mismatch write a `task.child_result.fenced.v1` observation and return `STALE_FENCE`.
+- **Change intent:** never chain Attempt replacement from `commit_task_lead_handoff`/`change_lead_agent`. Only after O-07 defines a distinct execution-replacement operation and O-06 provides its admission/session contract may the replacement path wait until the prior lease is released, expired or revoked and open Effects settle (otherwise `HANDOFF_PRIOR_LEASE_ACTIVE` with retry-after), then admit a new Attempt with a higher epoch from a bounded handoff projection (no grants or handles). In `DelegationResultService` and the Effect-receipt path, compare source Attempt id and live lease epoch with current Step/lease, plus `revision_at_start`; on mismatch write a fenced observation and return `STALE_FENCE`.
 - **Acceptance:**
-  - [ ] Replacement Attempt has a new id and higher epoch; no grant, Approval, SecretLease or handle row is copied (AC-006).
+  - [ ] Binding change alone creates no Attempt and existing Attempts retain their binding and lease; a separately accepted execution-replacement operation creates a new Attempt id and higher epoch after the prior lease and Effects settle, with no grant, Approval, SecretLease or handle copied (AC-006).
   - [ ] A ResultEnvelope or Effect receipt from the old Attempt after replacement is fenced with no Task, Step, Effect or Artifact change (AC-007).
   - [ ] Two handoffs racing: one wins (AC-013).
 - **Command:** `cargo test -p litecoworkd --locked lead_handoff_attempt` and `cargo test -p domain-task --locked delegation_result` (filters to be added by this task)
@@ -143,11 +143,11 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 
 - **Status:** PARTIAL - decision logic and SQLite guard exist (`crates/domain-task/src/delegation_admission.rs`, `StepAttemptCoordinator::preview_delegated_admission` and `admit` in `crates/domain-task/src/execution.rs`, guard in `crates/storage-sqlite/src/execution.rs`); no production caller in `apps/litecoworkd`, no wire code for `ProfileNotEnabledForCoworker`, no worker dispatch.
 - **Depends on:** T01, T02, T03
-- **Cross-package prerequisites:** Feature 005 T04 (Linux bubblewrap provider) and Feature 005 T08 (Attempt admission); Feature 004 T05 (Claude Code dispatch arm); Feature 002 T12 (Claude Code AgentModule); Feature 009 Coworker revision with `enabled_delegation_profile_ids` editable.
+- **Cross-package prerequisites:** O-06 owner-approved generic Attempt/session admission and execution-control seam; Feature 005 T04 (Linux bubblewrap provider) and its T08 bounded file-write Attempt slice only if the owner confirms reuse/extension; Feature 004 T05 (Claude Code dispatch arm); Feature 002 T12 (Claude Code AgentModule); Feature 009 Coworker revision with `enabled_delegation_profile_ids` editable.
 - **Owner:** Delegation, Task Runtime, Storage.
 - **Allowed paths:** `apps/litecoworkd/src/delegation_admission_service.rs` (new), `apps/litecoworkd/src/main.rs` (service wiring only), `crates/domain-task/src/delegation_admission.rs`, `crates/domain-task/src/execution.rs`, `crates/domain-task/src/task_packet_preparation.rs`, `crates/storage-sqlite/src/execution.rs`, adjacent tests.
 - **Contract:** SPEC L-06 to L-08, B-39, sections 7.1, 7.2, 10; DELEGATION "Depth and concurrency"; AC-008, AC-009, AC-019.
-- **Change intent:** `DelegationAdmissionService::admit_child` validates the delegate request came from the current parent session and lease (`ParentSessionProof`), loads the durable snapshot, calls `decide_child_attempt_admission_from_durable_snapshot`, enforces B-39 bounds (depth 1, concurrency 2) and `ATTEMPT_PRIVATE` sharing, and commits Attempt, Step binding, lease, budget reservation and `task.child_attempt.admitted.v1` in one transaction; only then asks the Feature 005 service to attach the Environment and start the worker session. Map each `ChildAdmissionDenial` variant to a wire code in one exhaustive function.
+- **Change intent:** `DelegationAdmissionService::admit_child` validates the delegate request came from the current parent session and lease (`ParentSessionProof`), loads the durable snapshot, calls `decide_child_attempt_admission_from_durable_snapshot`, enforces B-39 bounds (depth 1, concurrency 2) and `ATTEMPT_PRIVATE` sharing, and commits Attempt, Step binding, lease, budget reservation and `task.child_attempt.admitted.v1` in one transaction; only then uses the O-06 owner-approved seam to attach the Environment and start the worker session. Map each `ChildAdmissionDenial` variant to a wire code in one exhaustive function. Do not treat Feature 005's file-write API as generic worker admission unless its owner explicitly extends that contract.
 - **Acceptance:**
   - [ ] Allowed request commits all five records atomically before any Environment call (AC-008).
   - [ ] One negative test per `ChildAdmissionDenial` variant, each with no partial write (AC-009).
@@ -161,11 +161,11 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 
 - **Status:** PARTIAL - `EscalationPolicy` and `EscalationAttemptOutcome` exist in `crates/domain-task/src/delegation_recovery.rs`; `delegation_budget_policy_json` is read by the SQLite guard; no `on_exhaustion`, no threshold action executor.
 - **Depends on:** T01, T02, T08
-- **Cross-package prerequisites:** Feature 020 Needs You producer (for the NEEDS_YOU destination).
+- **Cross-package prerequisites:** O-08 dispatcher-owner contract for any `on_exhaustion` producer behavior; Feature 020 Needs You producer only for NEEDS_YOU delivery.
 - **Owner:** Delegation.
 - **Allowed paths:** `crates/domain-task/src/delegation_recovery.rs`, `crates/domain-task/src/delegation_envelopes.rs`, `apps/litecoworkd/src/delegation_admission_service.rs`, `crates/storage-sqlite/src/delegation_profiles.rs`, `crates/storage-sqlite/src/execution.rs`, adjacent tests.
 - **Contract:** SPEC L-10, B-39 item 4, section 12; DELEGATION "Verification and escalation", "Cost, budgets, and performance projections"; AC-010, AC-011.
-- **Change intent:** add `OnExhaustion { ReturnToLead, NeedsYou }` to `EscalationPolicy` with serde default `NeedsYou` for stored packets; `DelegationAdmissionService::escalate` admits the next fallback profile as a new Attempt only after the prior Attempt and its Effects settle; on exhaustion return a typed blocker to the lead or create a Needs You item. Budget evaluator resolves the strictest action across Attempt, Task and profile scopes.
+- **Change intent:** implement Feature 015-owned budget threshold evaluation and settled-retry rules. Keep `on_exhaustion` TARGET-not-yet-wired, schema-ahead-of-code and optional on legacy packets as accepted by A-37 until the Feature 004/005 dispatcher owner defines and implements its producer. Do not add the field or claim producer support in this task without that owner decision. Once the owner interface exists, the dispatcher may route exhausted outcomes to the typed lead blocker or Feature 020 Needs You item. Budget evaluator resolves the strictest action across Attempt, Task and profile scopes.
 - **Acceptance:**
   - [ ] Exhaustion with RETURN_TO_LEAD and with NEEDS_YOU each produce the right outcome; a legacy packet without the field reads as NEEDS_YOU (AC-011).
   - [ ] STOP_NEW_DELEGATION refuses new children with `DELEGATION_BUDGET_EXHAUSTED`; out-of-range profile values are rejected, never clamped (AC-010).
@@ -177,11 +177,11 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 
 - **Status:** PARTIAL - `start_verification_run`/`settle_verification_run` in `crates/storage-sqlite/src/verification_runs.rs` and `VerificationRunStatus` in `crates/domain-effects/src/lib.rs` exist; no producer and no independence rule.
 - **Depends on:** T01, T08
-- **Cross-package prerequisites:** Feature 005 T09 (Effect reconciliation and independent file verifier).
+- **Cross-package prerequisites:** O-06 generic Attempt/session admission contract; Feature 005 T09 covers Effect reconciliation and an independent file verifier for its bounded file-write slice, not the independent native-agent verifier defined here.
 - **Owner:** Task Runtime, Delegation.
 - **Allowed paths:** `apps/litecoworkd/src/independent_verification_service.rs` (new), `crates/storage-sqlite/src/verification_runs.rs`, `crates/storage-core/src/verification_run.rs`, `crates/domain-effects/src/lib.rs`, adjacent tests.
 - **Contract:** SPEC L-09, B-39 item 1; STATE-MACHINES "VerificationRun"; AC-012.
-- **Change intent:** `verify_child_result` admits a verifier Attempt whose AgentBinding differs from the producing worker's (checked in storage, not only in the service), with a read-only Environment pinned to the produced revision; settles PASSED, FAILED or INCONCLUSIVE (timeout); refuses to start during PAUSE_REQUESTED or CANCEL_REQUESTED; never moves the Task to COMPLETED.
+- **Change intent:** `verify_child_result` admits a verifier Attempt through the O-06 owner-approved seam, with an AgentBinding different from the producing worker's (checked in storage, not only in the service) and a read-only Environment pinned to the produced revision; settles PASSED, FAILED or INCONCLUSIVE (timeout); refuses to start during PAUSE_REQUESTED or CANCEL_REQUESTED; never moves the Task to COMPLETED.
 - **Acceptance:**
   - [ ] Verifier on the producing worker's binding is rejected in storage (AC-012).
   - [ ] Timeout yields INCONCLUSIVE; a PASS leaves the Task non-terminal (AC-012).
@@ -299,7 +299,7 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 - **Owner:** Product, Release, repository owner (USER evidence).
 - **Allowed paths:** `apps/litecoworkd/tests/task_control_delegation.rs`, `apps/litecowork-ui/tests/` (E2E driver files for this journey), evidence bundle path defined by Feature 019, `CURRENT-RUN.md`.
 - **Contract:** SPEC section 15; ACCEPTANCE-AND-E2E-PLAN (new gate-E delegation row, id assigned by the orchestrator, extends E2E-04); AC-020, AC-021.
-- **Change intent:** create the canonical test target `task_control_delegation`; run the packaged desktop journey on Linux x86_64 with OpenCode v2.0.32 lead and the pinned Claude Code CLI worker: delegate, verify, pause, resume, steer, hand off, cancel; include denial (allowlist miss, sharing request), crash and restart, late-result fence and performance measurements.
+- **Change intent:** create the canonical test target `task_control_delegation`; run accepted E2E-15 on Linux x86_64 with OpenCode v2.0.32 lead and the pinned Claude Code CLI worker in this order: running Task, steer, pause, resume, delegate one Step, independent verification, cancel fan-out. Include denial (allowlist miss, sharing request), crash and restart, late-result fence and performance measurements. Test lead-binding change and any separately scoped execution replacement only after O-07 resolves them; do not make them a hidden part of the lead-binding route.
 - **Acceptance:**
   - [ ] Canonical command passes on the Linux row with recorded build, OS, harness versions and auth routes (AC-021).
   - [ ] AC-020 measurements recorded on the release-row machine.
@@ -343,16 +343,16 @@ Gaps to V1: no owner acceptance (B-39), no typed Task status, no pause/resume/st
 
 ## 015-T20 - Mission Control canvas and read-only Compare Agents fan-out (P-14)
 
-- **Status:** NOT STARTED - added under this package's IN_REVIEW status. Folds proposed task P-14 from docs/REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md section 8 into this package.
-- **Depends on:** T13, T16
+- **Status:** NOT STARTED - added under this package's IN_REVIEW status. Folds proposed task P-14 from docs/REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md section 8 into this package. The Compare Agents half is BLOCKED by O-09 because its Conversation/provider owner path and failure/persistence contract are not defined; do not expose a nonfunctional control.
+- **Depends on:** T13, T16, O-09 for Compare Agents
 - **Cross-package prerequisites:** Feature 001 turn activity records and Feature 005 Attempt records as the runtime read sources.
 - **Owner:** Task Control, Desktop UI.
 - **Allowed paths:** `apps/litecowork-ui/src/`, `apps/litecoworkd/src/`, `specs/015-task-control-delegation/contracts/ui-behavior.md`, adjacent tests.
 - **Contract:** SPEC §12; AC-015, AC-022; V1-UI-SCREEN-CONTRACT; PRESENTATION-RUNTIME.
-- **Change intent:** add a Mission Control canvas that shows the delegation tree, step status, live tool activity, approvals and evidence, bound to real runtime records and shown only after the first bounded workflow is proven; and an explicitly-requested read-only Compare Agents fan-out that runs the same prompt across chosen agents for comparison without mutating a Task or creating authority. An absent runtime record renders unavailable, never fabricated. The list itself defers agent swarms past V1; this task does not add swarm orchestration.
+- **Change intent:** within Work > Task detail, add a secondary Mission Control view that shows delegation tree, Step status, live tool activity, approvals and evidence from owner records, and expose it only after the first bounded workflow is proven. It is a projection, not a second workflow engine. Keep the P-14 Compare Agents feature disabled until O-09 defines its exact screen/control, Conversation/Agent Runtime owner, typed command/route, result identity/retention, partial failure and recovery contract; then implement an explicitly requested read-only fan-out with no Task/Step/Attempt/grant mutation. An absent runtime record renders unavailable, never fabricated. The list itself defers agent swarms past V1; this task does not add swarm orchestration.
 - **Acceptance:**
   - [ ] The canvas renders the delegation tree, step status, live tool activity, approvals and evidence from real runtime records only (AC-022).
-  - [ ] Compare Agents is read-only, explicitly requested, and never mutates a Task or creates authority (AC-022).
+  - [ ] Compare Agents has an owner-approved user control and typed path from O-09; it is explicitly requested, read-only, and never mutates a Task or creates authority (AC-022).
   - [ ] The canvas is shown only after a bounded workflow is proven; an absent record renders unavailable (AC-015, AC-022).
 - **Command:** `python3 .specify/scripts/validate_feature_package.py` and `pnpm --dir apps/litecowork-ui test`
 - **Evidence:** canvas and Compare Agents test output in Completion evidence.
@@ -382,11 +382,11 @@ T01 -> T02 -> T03 -> (T04, T05 in parallel) -> T06 and T07 (both after T04) -> T
 
 | This task | Other package task | Reason |
 |---|---|---|
-| T04, T07, T08 | 005-T08 | Attempt admission with attestation and lease epoch is the only way to start any Attempt |
-| T04, T06, T15 | 005-T11 | Single-Attempt cancel, quiescence and startup sweep are reused by pause and fan-out cancel |
+| T04, T07, T08, T10 | 005-T08 plus O-06 | Feature 005 task T08 currently admits one bounded file-write Attempt only; generic provider AgentSession/Attempt admission, control and verifier lifecycle require owner resolution before reuse or extension |
+| T04, T06, T15 | 005-T11 plus O-06 | Feature 005 task T11 cancel, quiescence and startup sweep cover its single file-write Attempt path; generic session fan-out/recovery requires the O-06 owner interface |
 | T06, T11 | 005-T10 | `cancel_task` route and bridge are extended, not duplicated |
 | T08 | 005-T04 | Linux bubblewrap provider supplies `ATTEMPT_PRIVATE` Environments |
-| T10 | 005-T09 | Independent file verifier and Effect reconciliation |
+| T10 | 005-T09 plus O-06 | Feature 005 task T09 provides an independent file verifier and Effect reconciliation for Feature 005's bounded slice; it does not provide a native-agent verifier Attempt/session |
 | T12, T13 | 005-T13 | Controls and timeline mount in `TaskExecutionPanel.tsx` |
 | T14 | 005-T14 | Same typed Windows UNAVAILABLE reason |
 | T17 | 005-T15 | Linux E2E-04 must pass before delegation qualifies |

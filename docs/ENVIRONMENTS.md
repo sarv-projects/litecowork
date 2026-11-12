@@ -433,3 +433,7 @@ The qualified Chrome/browser provider HLD/LLD is CHROME-BROWSER-LLD.md. Tauri We
 ## Non-normative desktop sandbox comparison - 2026-10-31
 
 See [DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md](DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md) for the ZCode plugin guest boundary comparison. Its Chromium partition/CSP/owner checks are useful defense-in-depth for rendered interactive content, but do not prove LiteCowork's process/filesystem/network isolation. Preserve the Environment contract: exact readable/writable roots, process-tree containment, egress policy, stale-fence rejection and provider attestation must be enforced by the selected provider; a WebView, origin allowlist or Git worktree is not sufficient.
+
+## Requested live-computer scope revision - 2026-11-12
+
+The selected screen/window Computer surface is specified in [Computer observation and control LLD](COMPUTER-OBSERVATION-AND-CONTROL-LLD.md) and Feature 008. Observation, disclosure to a native agent/model and injected input require separate explicit permissions and incarnation-scoped provider support. A manual-host desktop is not an attested Task Environment. Screen capture/input capability must not bypass native Task containment, network, filesystem or credential boundaries. No provider is qualified by this scope revision.

@@ -1,9 +1,23 @@
 # Research and Decision Log - Conversation Session Supervisor
 
 **Feature:** 001 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Checked:** 2026-11-06 — active-source audit; upstream protocol claims are not web-verified.
+**Checked:** historical baseline 2026-11-06; source cross-check refreshed 2026-11-12. Upstream protocol claims are limited to the pinned source links in section 8.1; no live provider behavior is inferred.
 
-## 1. Repository sources inspected
+## 0. Current checkout cross-check (2026-11-12)
+
+The following source facts supersede the older active-source/UI audit in sections 2–6. The current worktree is based on `64c435149a82ba952c6c3bf3049e26cf2d9344b1`; exact test outcomes belong in `CURRENT-RUN.md` and `docs/IMPLEMENTATION-STATUS.md`.
+
+- Turn admission commits USER message, OPEN turn, canonical events, receipt and v29 `conversation_dispatch_intents` row together. Storage rejects another nonterminal same-Conversation turn. An exact replay returns its stored admission receipt and does not create a second intent.
+- The Operator hands admitted and retried turns to `AgentTurnCoordinator::dispatch_admitted_turn`; the coordinator starts the supervisor asynchronously. The supervisor claims the intent before STARTING reservation. It still owns the direct SQLite result settlement; ConversationService and host-supervisor ownership remain target boundaries rather than complete source wiring.
+- `recover_conversation_sessions` runs during daemon startup. Prior-incarnation unsettled intents settle FAILED with `RUNTIME_RESTARTED`; orphan STARTING sessions are released LOST; uncertain prompts are not replayed. This is code-level recovery, not a real process-kill or packaged restart qualification.
+- Retry is `FAILED -> OPEN`, increments `retry_ordinal`, creates an UNCLAIMED intent and obtains a fresh session. Stop sends an interrupt through the selected adapter path and waits for quiescence before CANCELLED; however, OpenCode's completion-vs-interrupt ambiguity is not reconciled fully and can be represented as stopped, contrary to the canonical outcome-wins rule.
+- The UI exposes projected active-turn versions, Stop and Retry, fences all nonterminal turn states, has a text ResourceRef picker/materializer, and shows bounded delta/activity frames. The daemon source produces `turn.delta` and `turn.settled` on the single-Conversation stream; `rich.draft` has no producer. This is CODE, not a packaged/live-provider qualification. Binary and WorkspaceRoot attachments, new-Conversation attachment, durable Context Used receipt, rendered packaged journey and exact provider budget remain open.
+- `dispatch_turn` still has pre-execution `?` error exits for host/binding/profile/intent/session-reservation operations. Those can leave the current attempt unresolved until daemon startup recovery. The coordinator logs a coarse string-derived diagnostic; this is not a typed diagnostic boundary and requires review for redaction.
+- OpenCode Server v2.0.32 is the only Conversation dispatch branch. Its pinned source includes Form and permission reply contracts, but no live provider-generated Form event has been captured or mapped to B-06, and the permission UI/bridge/reply path is not integrated. No OS/provider/auth tuple is QUALIFIED.
+
+Sections 2–6 below preserve the 2026-11-06 audit as historical research; they are not current implementation evidence.
+
+## 1. Repository sources inspected (historical review snapshot)
 
 | Source | Revision/path | Finding | Limit |
 |---|---|---|---|
@@ -18,7 +32,7 @@
 | Composer | `docs/NATIVE-COMPOSER-LLD.md` | UI/native parity and explicit Send eligibility boundary | Native dispatch code now exists for OpenCode, but exact desktop Send qualification remains absent |
 | Testing | `docs/TESTING.md`, `docs/ACCEPTANCE-AND-E2E-PLAN.md` | CODE/SYSTEM/USER and OS-specific qualification | Current OpenCode implementation route is not yet reconciled to an approved/qualified OS-auth tuple |
 
-## 2. Active main-worktree source evidence
+## 2. Active main-worktree source evidence (historical; superseded by section 0)
 
 The audit was performed against the live working tree at `C:\Users\Sonali\Desktop\projectwork\business_Dev\litecowork`; all pre-existing user changes were preserved. No reset, clean, commit or push was performed.
 
@@ -32,17 +46,17 @@ Observed types and call paths:
 
 Storage-level activation and result commits are code evidence. Neither proves a qualified Windows desktop conversation lifecycle.
 
-## 3. Native transport and supervisor boundary
+## 3. Native transport and supervisor boundary (historical; superseded by section 0)
 
 The OpenCode helper is called by the active supervisor and provides session create, context-aware message send and bounded SSE/event reading for the v2.0.32 protocol. The Codex helper exists but was not found in the Conversation supervisor call path. Only the `opencode` provider key is dispatched. The code starts/stops an OpenCode server within the per-turn blocking flow; it does not show the independently owned AgentHostSupervisor, nor does it route through an AgentTurnCoordinator.
 
 The current stream consumer accumulates output for final persistence; the Operator does not forward native token deltas as a complete correlated transient stream. Events are untrusted observations. Exact adapter protocol conformance, stop/quiescence, Windows packaging, credentials and end-to-end owner USER proof remain open.
 
-## 4. Existing UI stream
+## 4. Existing UI stream (historical; superseded by section 0)
 
 Desktop Tauri bridge and resumable Conversation UI reducer already consume bounded durable projection snapshots/upserts with backpressure/cursors. API contract defines transient `turn.delta`, `turn.settled` and `rich.draft`, but local Operator does not emit them. New feature must reuse durable projection and not build an independent provider-to-WebView stream.
 
-## 5. Desktop Conversation UI audit
+## 5. Desktop Conversation UI audit (historical; superseded by section 0)
 
 The desktop source was traced from the active-turn projection through the composer, stop action and generated API contract. The current UI does not complete the target stop/retry contract:
 
@@ -55,7 +69,7 @@ The desktop source was traced from the active-turn projection through the compos
 
 These are source-level UI findings, not a browser USER test. They require UI/API contract changes and rendered regression tests after the backend lifecycle is corrected. Do not paper over them by inventing a version or treating a transient stream sequence as the aggregate version.
 
-## 6. Important contract mismatches/gaps
+## 6. Important contract mismatches/gaps (historical; superseded by section 0)
 
 1. The actual Operator path bypasses the target AgentTurnCoordinator and starts AgentSessionSupervisor directly with detached `tokio::spawn`; no durable dispatch intent/outbox/claim is committed with USER+OPEN.
 2. Exact idempotent replay returns the 202 receipt without proving a dispatch worker exists. No Runtime-startup sweep for orphaned OPEN turns or STARTING Conversation sessions was found.

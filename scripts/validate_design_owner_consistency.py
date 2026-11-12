@@ -82,9 +82,9 @@ need(cow, "No unreviewed group shared memory.")
 need("README.md", "docs/IMPLEMENTATION-STATUS.md")
 need("ARCHITECTURE.md", "The active executable source is in apps/ and crates/")
 need("CURRENT-RUN.md", "**Release posture:** pre-release; V1 is not release-qualified")
-need("docs/V1-UI-SCREEN-CONTRACT.md", "Current terminal is simulated and must not report a command exit")
-need("docs/IMPLEMENTATION-STATUS.md", "Several Conversation lifecycle gaps remain release blockers.")
-need("docs/IMPLEMENTATION-STATUS.md", "one-active-turn-per-Conversation rule")
+need("docs/V1-UI-SCREEN-CONTRACT.md", "Current pane is explicitly unavailable and runs no shell or command.")
+need("docs/IMPLEMENTATION-STATUS.md", "one-active-turn-per-Conversation admission guard")
+need("docs/IMPLEMENTATION-STATUS.md", "The UI now offers Stop only for RUNNING")
 need("docs/IMPLEMENTATION-STATUS.md", "| `CARGO_BUILD_JOBS=1 cargo test --workspace --locked` |")
 
 # Reject obsolete reset-era claims in normative first-party documents.

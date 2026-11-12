@@ -27,9 +27,9 @@ The UI renders LiteSPM inventory and receipts and sends typed commands. It never
 | Surface | States | Meaning |
 |---|---|---|
 | Inventory | `LOADING`, `READY`, `EMPTY`, `UNAVAILABLE`, `OFFLINE`, `STALE` | `EMPTY` only when LiteSPM answered with zero items; `UNAVAILABLE` when the read failed |
-| Verb | `ENABLED`, `DISABLED(reason)` | Reason from profile, descriptor or qualification; shown via `aria-describedby` |
-| Operation | `PLANNING`, `AWAITING_APPROVAL`, `APPLYING`, `SUCCEEDED`, `FAILED`, `UNKNOWN`, `RECONCILING` | `UNKNOWN` never styled as success or failure |
-| Service | `NOT_QUALIFIED`, `READY`, `TRANSPORT_ACL_ONLY`, `INCOMPATIBLE`, `REFUSED` | Peer-auth class shown in details, never as "verified" when ACL-only |
+| Verb | `ENABLED`, `DISABLED(reason)` | Reason from host profile, pinned MCP tool manifest or qualification; shown via `aria-describedby` |
+| Operation | `PLANNING`, `AWAITING_APPROVAL`, `APPLYING`, `SUCCEEDED`, `FAILED`, `UNKNOWN`, `RECONCILING` | `UNKNOWN` never styled as success or failure; when the pinned MCP tools lack operation lookup, explain that reconciliation is unavailable and keep the mutation gate closed |
+| Service | `NOT_QUALIFIED`, `READY`, `PROCESS_IDENTITY_UNPROVEN`, `INCOMPATIBLE`, `REFUSED` | Show MCP protocol/tool-manifest status and the Runtime-owned identity evidence class; never imply stdio or MCP metadata alone proves OS identity |
 
 ## 3. Transitions
 

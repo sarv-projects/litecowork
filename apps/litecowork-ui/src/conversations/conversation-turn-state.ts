@@ -70,12 +70,13 @@ export function turnStatusLabel(status: string | null | undefined): string | nul
 export type StopTarget = { turnId: string; expectedVersion: number };
 
 /**
- * Stop is offered for a projected turn that is still running or waiting, using the
- * projected id and aggregate version. CANCEL_REQUESTED is already stopping, and OPEN has
- * no native work to interrupt yet.
+ * Stop is offered only for RUNNING, the state currently supported by the daemon's
+ * provider-aware cancellation path. Waiting states occupy the composer but their
+ * cancellation/continuation path is not served yet; do not render a control that will
+ * always fail. OPEN has no confirmed native work to interrupt.
  */
 export function stopTarget(activeTurn: ActiveTurnView | null | undefined): StopTarget | null {
-  if (!activeTurn || !["RUNNING", "WAITING_USER", "WAITING_DEPENDENCY"].includes(activeTurn.status)) return null;
+  if (!activeTurn || activeTurn.status !== "RUNNING") return null;
   return { turnId: activeTurn.turn_id, expectedVersion: activeTurn.version };
 }
 

@@ -7,7 +7,7 @@
 
 `POST /v1/conversations/{id}/turns` accepts bounded `content[]` (at most 256 blocks, 1 MiB and 256 ResourceRefs) and optional `presentation_preference: AUTO | SIMPLE | RICH`. Submission uses principal-scoped `Idempotency-Key`; expected Conversation version is validated according to the API owner contract. The USER message and OPEN ConversationTurn are persisted before supervisor admission.
 
-**Current active-source behavior:** when `ConversationApiState` has a supervisor, the Operator commits USER+OPEN and returns `202 Accepted` after starting detached `dispatch_turn`; exact replay returns the stored receipt. When the supervisor is absent, the admission-unavailable path settles FAILED and returns `503 DEPENDENCY_UNAVAILABLE`. A 202 currently means the turn was durably admitted, not that a provider prompt was accepted or that a native response will complete. The detached-dispatch crash window and logged-error paths remain unresolved.
+**Current active-source behavior:** the Operator commits USER+OPEN, events, receipt and the v29 dispatch intent in one SQLite transaction, with the same-Conversation single-flight guard. It returns `202 Accepted` after handing the committed turn to `AgentTurnCoordinator`, which starts the supervisor asynchronously; the supervisor claims the intent before reserving STARTING. Exact replay returns the stored receipt and does not authorize a second prompt. When the supervisor is unavailable, the admission-unavailable path settles FAILED and returns `503 DEPENDENCY_UNAVAILABLE`. A 202 means the turn was durably admitted, not that a provider prompt was accepted or that a native response will complete. Startup recovery settles prior-incarnation unsettled intents FAILED rather than replaying uncertain prompts. Early supervisor lookup/claim/reservation errors can still escape without terminal settlement and are tracked by T20; provider acceptance and packaged recovery qualification remain separate.
 
 Existing routes also include:
 - `PATCH /v1/conversations/{id}/agent-binding` with If-Match and Idempotency-Key; affects future turns.
@@ -23,7 +23,7 @@ Existing routes also include:
 - The idempotency key is stable for one submit payload and principal scope. Exact replay returns original commit; changed payload under same key conflicts.
 - A committed USER message is retained when downstream admission fails. UI must distinguish saved-but-not-sent/failure from successful agent response.
 - Binding is pinned by the immutable `conversation.turn.created.v2` event. Later selector/default changes never reroute it.
-- No new public route or response field exists in source for this package yet. Accepted target interfaces (CONVERSATION_TURN_IN_PROGRESS, active-turn version/retry ordinal in the projection, final-response identity fields, dispatch-intent records, usage records) are not yet in source and are promoted into the owner docs and docs/schemas by TASKS T01 before use.
+- Current CODE includes CONVERSATION_TURN_IN_PROGRESS, version/retry-aware active-turn projection, internal final-response identity, dispatch intent and turn usage records. TASKS T01 tracks remaining public contract promotion; an internal implemented field is not automatically a promoted API or qualification claim.
 
 ## 3. Existing event families
 
@@ -47,15 +47,15 @@ B-04's storage operation exists in storage-core/SQLite and is called by the Open
 3. terminal ConversationTurn projection and `conversation.turn.settled.v1`;
 4. both aggregate snapshots and the response idempotency receipt.
 
-The current `ConversationTurnStore` exposes `commit_conversation_agent_response`, and the OpenCode supervisor invokes it. The typed request does not yet carry explicit retry ordinal/provider-response identity, and author JSON is passed through from the caller; verify/strengthen these provenance checks. Existing tests do not establish all rollback, conflicting-replay, wrong-scope and crash-window cases. This is CODE, not QUALIFIED.
+The current `ConversationTurnStore` exposes `commit_conversation_agent_response`, and the OpenCode supervisor invokes it. The typed request carries explicit retry_ordinal/provider_response_id and checks them at commit. Author JSON/provenance validation and the complete negative/recovery matrix still require their owning task evidence. Existing tests do not establish all rollback, conflicting-replay, wrong-scope and crash-window cases. This is CODE, not QUALIFIED.
 
 ## 5. Presentation and streaming
 
 The durable presentation snapshot/upsert cursor is the canonical reconnect mechanism. Reconnect must re-read an authorized projection. Tauri bridge applies bounded backpressure and resumes by opaque cursor. Duplicate semantic message IDs are idempotently reduced; version/cursor gaps trigger snapshot reconciliation.
 
-If transient `turn.delta` frames are added, their payload must be bounded and carry exact Workspace, Conversation, turn, retry ordinal, AgentSession and monotonic per-session/turn sequence identity. They are local, ephemeral and not domain events. Do not persist partial delta as ConversationMessage. A gap may be replayed only if the adapter guarantees stable replay; otherwise discard delta buffer and resync. A final committed message supersedes any transient text.
+The implemented transient `turn.delta` frames follow this contract: their payload must be bounded and carry exact Workspace, Conversation, turn, retry ordinal, AgentSession and monotonic per-session/turn sequence identity. They are local, ephemeral and not domain events. Do not persist partial delta as ConversationMessage. A gap may be replayed only if the adapter guarantees stable replay; otherwise discard delta buffer and resync. A final committed message supersedes any transient text.
 
-Current local Operator does not emit `turn.delta`, `turn.settled` or `rich.draft`. This must be updated only after an actual producer/contract/UI path is integrated and qualified.
+`transient_frames.rs` implements bounded turn.delta and turn.settled producers consumed by the supervisor/Operator stream path. A production rich.draft publisher and full native-provider qualification remain open under Feature 016 and T09. Source producers are not SYSTEM/USER evidence.
 
 ## 6. Security contract
 

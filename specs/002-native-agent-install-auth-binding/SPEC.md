@@ -5,8 +5,8 @@
 **ID:** 002
 **Status:** ACCEPTED/LOCKED
 **Owners:** Agent Runtime, Security/Trust, Desktop UI, Product
-**Updated:** 2026-11-09
-**Revision:** 1.0 (revision 1.0 adds V1 gap coverage per owner acceptance 2026-11-09: OpenCode binding admission fix, AgentControlDescriptor producer, native sign-in observation, descriptor-declared composer options/commands and Claude Code CLI as the second module; new AC-013 to AC-017)
+**Updated:** 2026-11-12 (source-evidence refresh; no locked target decision changed)
+**Revision:** 1.0 (owner acceptance 2026-11-09 adds OpenCode binding admission, descriptor production, native sign-in observation, descriptor-declared composer options/commands, Claude Code as second module, ACP client and advisory matchmaker; AC-013 to AC-019)
 **Owner acceptance:** accepted 2026-11-09 by the repository owner (sarv-projects) via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md) (PR #1), including each "ACCEPT (scoped)" caveat as a binding condition.
 **Change control:** this contract is locked. Any change to a locked decision, interface or acceptance criterion requires a new revision and renewed owner approval (docs/SPECIFICATION-STANDARD.md §7).
 **Target release:** V1 local desktop
@@ -34,7 +34,7 @@ Observable outcome: The owner detects a real native agent, completes that agent'
 
 ## 4. Current evidence
 
-The active checkout has partial, source-backed Agent Registry, installation-inventory, profile-probe and AgentBinding surfaces. It does not implement the complete install/auth/control-descriptor lifecycle promised by this target. The matrix below is a code/route/UI audit, not owner acceptance or release qualification.
+The active checkout has source-backed discovery, inventory, profile-probe, OpenCode descriptor, and binding operations. It still lacks a complete install/auth/credential lifecycle and a qualified provider journey. This matrix distinguishes CODE/SERVED from INTEGRATED/QUALIFIED; it is not owner acceptance or release qualification.
 
 | Capability | Current source evidence | Limitation / release meaning |
 |---|---|---|
@@ -42,26 +42,24 @@ The active checkout has partial, source-backed Agent Registry, installation-inve
 | Local installation inventory | CODE/SERVED: `GET /v1/agent-installations`; bounded version-only inventory probes and Cline package metadata cover the curated candidate set | Auth is always UNKNOWN and session readiness NOT_PROBED. There is no install/update action. |
 | Workspace profile discovery | CODE/SERVED: `GET /v1/agent-profiles`; explicit `POST /v1/agent-profiles/probe` supports CODEX and OPENCODE after local Runtime enrollment | Probe creates/updates profile, endpoint binding and Runtime offer observations; it does not prove inference or a usable Conversation session. Other curated candidates have no profile probe. |
 | Codex probe | CODE for App Server initialize/account/model-list observations; compatibility and readiness are separate | Conversation safety eligibility is separately reported. Feature 001's active Conversation supervisor does not dispatch Codex, so a Codex binding is not a working Conversation route. |
-| OpenCode probe | CODE for bounded provider/model catalogue observation and process-stop observation | It always records `compatible=false`; endpoint capability flags are false. UI correctly blocks creation of a new Workspace binding. Feature 001 has an OpenCode dispatch code path, but the current UI cannot create the binding needed to reach it. |
-| AgentControlDescriptor | GET descriptor and POST refresh routes are mounted | Both deliberately return `503 DEPENDENCY_UNAVAILABLE`; no qualified AgentModule descriptor producer is wired. |
-| Credential submission | POST credential-slot route is mounted with no-store, bounded body and request validation | It checks for a fresh descriptor and then deliberately returns `503`; SecretStore is not mutated because durable exact replay is not implemented. Native auth-begin and native-config-open are served through ID-only Tauri commands but fail closed without a qualified module action. |
-| AgentBinding | List/get/create/enable/disable are CODE/SERVED; creation is disabled by default; mutations use version checks, idempotency receipts and audit events | Storage checks a fresh compatible Runtime endpoint offer. Enable does not currently require a fresh AgentControlDescriptor, contrary to AC-004. `auth_ref` is rejected on create. |
-| Install/update and native config | OpenAPI target operations exist | `POST /agent-registry/{id}/install`, `/update`, native-config open and auth-begin have no served handlers in the active composed router. |
-| Desktop UI | `AgentCatalogSettings` renders 15 curated candidates, ACP Registry results, local inventory, Codex/OpenCode probes, observed profiles, Workspace bindings/default lead and worker-profile controls | No install/update or native sign-in flow. Auth remains explicitly unknown; Inspect native controls reaches the unavailable descriptor route. This is a catalogue/probe/binding surface, not a complete agent lifecycle UI. |
+| OpenCode probe | CODE/SERVED: admission is computed by `opencode_offer_admission`; only exact CLI 2.0.32 + complete probe + observed host stop is `compatible=true`/`STARTABLE`. The registered executable is shared with dispatch and the endpoint capability records the observed protocol/text input. | This is an offer observation, not a live native session. No packaged Windows/Linux bind/send/recovery journey is INTEGRATED or QUALIFIED. |
+| AgentControlDescriptor | CODE/SERVED for a profile selecting the trusted OpenCode module: GET returns a fresh stored descriptor; POST refresh runs a bounded probe outside the transaction, validates/seals and stores it. Module-less profiles return `503`. | Descriptor storage uses the table created by migration 16; no new descriptor DDL was added. TTL is 900 seconds; the three-per-minute refresh window is in-process and resets on daemon restart. Session-options and harness-capability projection routes remain target-only. |
+| Credential submission | POST credential-slot route is mounted with no-store, bounded body and request validation. | Production wiring still uses `NoAgentDescriptorSource`, so it returns `503` before SecretStore mutation. Durable exact replay/reconciliation is not implemented. No V1 module declares a LiteCowork-owned credential slot. |
+| Authentication and native config | `beginAgentAuthentication` and `openAgentNativeConfiguration` are served through authenticated ID-only Tauri commands and Operator routes. The auth service checks the fresh module descriptor and native opener checks declared targets. | The production launcher/opener are unqualified fail-closed implementations; OpenCode currently declares no auth method or native-config target. Auth observations are in-memory and restart to `UNKNOWN`; no durable auth-observation DDL exists. A served route does not mean sign-in/config opening works. |
+| AgentBinding | List/get/create/enable/disable are CODE/SERVED; creation is disabled by default; mutations use version checks, idempotency receipts and audit events. OpenCode exact-route probe can now create a disabled binding. | Enable enforces descriptor revision CAS for modules declaring a descriptor. The legacy module-less profile path does not enforce AC-004's descriptor gate; no real auth/bind/send journey is qualified. `auth_ref` is rejected on create. |
+| Install/update | OpenAPI target operations exist. | No install/update handler or native lifecycle implementation is served; V1 must present these actions as unavailable. |
+| Desktop UI | `AgentCatalogSettings` renders 15 curated candidates, ACP Registry results, local inventory, Codex/OpenCode probes, observed profiles, Workspace bindings/default lead and worker-profile controls. The descriptor panel calls served OpenCode routes. | No install/update, successful native sign-in, credential-slot form or session-options bridge. Model-picker logic is view-model only and is not mounted. This remains a catalogue/probe/binding surface, not a complete lifecycle UI. |
 
 Code or a route alone does not qualify the feature. The §5 decisions are owner-accepted and this package is ACCEPTED/LOCKED; implementation and qualification status are unchanged by acceptance and are tracked in this §4 and in [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md).
 
-### 4a. Source-verified detail of the OpenCode binding break (checked 2026-11-09)
+### 4a. Resolved OpenCode offer defects and remaining qualification (checked 2026-11-12)
 
-The OpenCode row above was re-traced through source for the V1 P1 prerequisite. These are current-state facts, not fixes:
+The 2026-11-09 audit below was historical and its five source defects were addressed by 002-T01. Current source evidence is:
 
-- `probe_local_opencode_profile` in `apps/litecoworkd/src/operator.rs` always publishes its `RuntimeOfferRecord` with `compatible: false`, and with readiness `DEGRADED` even for a complete probe (otherwise `UNAVAILABLE`). `opencode_endpoint_capabilities()` declares every capability `false` and `protocol_version: null`. `OpenCodeProfileProbe::profile_admission_supported` in `apps/litecoworkd/src/agents/opencode_profile_probe.rs` is fixed `false`, and the OpenAPI/generated TypeScript type (`apps/litecowork-ui/src/api/operator-api.ts`) declares it as the constant `false`.
-- Binding create and enable (`create_agent_binding_transaction`, `enable_agent_binding_transaction` in `crates/storage-sqlite/src/lib.rs`) call `has_fresh_compatible_endpoint`, whose query requires `runtime_offers.compatible = 1` and readiness `AVAILABLE`, `STARTABLE` or `READY`. Conversation admission (`resolve_conversation_session_host_in_transaction` in `crates/storage-sqlite/src/conversations.rs`) applies the same filter. Both gates therefore reject every OpenCode offer, and `AgentCatalogSettings.tsx` disables Create binding when `observation.compatible === false`.
-- The probe records the profile with `provider_key: "OPENCODE"`, but `execute_agent_turn` in `apps/litecoworkd/src/agents/supervisor.rs` matches the lowercase literal `"opencode"`. If only the offer flag were flipped, dispatch would still fall into the `other =>` unsupported arm.
-- The probe resolves the executable with `resolve_local_executable("opencode")`, which joins the bare name onto each `PATH` entry, so on Windows an npm `opencode.cmd` or `opencode.exe` is not found and the probe returns `404 AGENT_UNAVAILABLE`. The supervisor separately re-resolves the executable with `find_opencode_executable` (which does check `.exe`/`.cmd`) and ignores the `endpoint_ref` the probe registered through `register_local_endpoint_binding`. The probed and dispatched executables can therefore differ.
-- The probe accepts OpenCode 2.0.26, 2.0.28 and 2.0.32 (`OpenCodeServerProtocol::for_cli_version`), while the supervisor always dispatches with `OpenCodeServerProtocol::V2_0_32`. Only 2.0.32 is the accepted first route.
-
-002-T01 is the first implementation task and closes all five points without weakening the storage gates.
+- `agents/native_provider.rs` parses the stored provider identity through `NativeProviderKey` and admits only exact OpenCode 2.0.32, a complete probe and observed host stop. The offer is `STARTABLE`; other versions/partial or unobserved-stop probes remain incompatible with a reason.
+- The probe and supervisor use the same canonical executable resolver and the registered `endpoint_ref`; dispatch revalidates that path. `opencode_endpoint_capabilities()` records the observed protocol and only advertises text input.
+- The storage offer gates remain in force. `profile_admission_supported` is generated as a boolean, not a constant false.
+- These are CODE-level corrections only. A real packaged desktop probe→binding→send→stop/retry→restart/recovery journey with exact OpenCode v2.0.32 remains unqualified; do not infer it from the compatible offer or unit tests.
 
 ## 5. LOCKED and FLEXIBLE decisions
 
@@ -151,23 +149,23 @@ Trust boundary: the desktop UI is untrusted; the authenticated Operator is the o
 
 ## 7. Low-level design
 
-Operator routes in docs/AGENT-CONTROL.md §12 and docs/API.md are the authority. This package does not invent operationIds. The active checkout already mounts partial registry, inventory, profile-probe and binding routes. Proposed work must close the missing install/update/auth-begin/native-config operations and the unavailable descriptor/credential producers without duplicating existing routes. Any new field is an accepted target interface (not yet in source) until promoted into AGENT-CONTROL and the OpenAPI document in the same reviewed change.
+Operator routes in docs/AGENT-CONTROL.md §12 and docs/API.md are the authority. This package does not invent operationIds. The active checkout mounts registry, inventory, profile-probe, binding, OpenCode descriptor, auth-begin, native-config-open and credential-submit routes with the limitations recorded in §4. Install/update and session-options/capability projections remain target-only. Any new field is an accepted target interface until promoted into AGENT-CONTROL and the OpenAPI document in the same reviewed change.
 
 Ordering: authorize, compare expected version, commit the durable receipt, then perform any external call, then reconcile. Accepted target payload fields stay target-only until the canonical owner document and machine schema change together.
 
 ### 7.1 Existing signatures (CODE)
 
-- Served: `GET /v1/agent-registry`, `POST /v1/agent-registry/refresh`, `GET /v1/agent-installations`, `GET /v1/agent-profiles`, `POST /v1/agent-profiles/probe` (Codex/OpenCode), binding list/get/create/enable/disable.
-- Mounted but fail-closed: `GET`/`POST` AgentControlDescriptor and credential-slot routes return `503 DEPENDENCY_UNAVAILABLE`; served native-config-open and native-auth-begin routes also fail closed because no qualified action target/method is declared.
-- Target-only: `POST /agent-registry/{id}/install`, `/update`, `getAgentSessionOptions` and `getAgentHarnessCapabilities` exist in `docs/schemas/operator-api.openapi.yaml` but are listed as target-only in `docs/schemas/served-route-inventory.json`.
-- Relevant existing symbols: `probe_local_opencode_profile`, `opencode_endpoint_capabilities` and `resolve_local_executable` (`apps/litecoworkd/src/operator.rs`); `probe_opencode_profile`, `OpenCodeProfileProbe` (`apps/litecoworkd/src/agents/opencode_profile_probe.rs`); `AgentControlDescriptor` and its validator (`apps/litecoworkd/src/agents/control_descriptor.rs`); `AgentModuleRegistry`, `AgentModuleManifest` (`apps/litecoworkd/src/agents/module_registry.rs`, currently `dead_code`); `get_control_descriptor`, `refresh_control_descriptor`, `unavailable_descriptor` (`apps/litecoworkd/src/agent_control_operator.rs`); `CurrentAgentDescriptorSource` with the stub `NoAgentDescriptorSource` (`apps/litecoworkd/src/agent_credentials_routes.rs`); `submit_agent_credential` (`apps/litecoworkd/src/agent_credentials_operator.rs`); `has_fresh_compatible_endpoint` (`crates/storage-sqlite/src/lib.rs`); `CLAUDE_CODE` inventory candidate (`apps/litecoworkd/src/agents/native_cli.rs`).
+- Served: `GET /v1/agent-registry`, `POST /v1/agent-registry/refresh`, `GET /v1/agent-installations`, `GET /v1/agent-profiles`, `POST /v1/agent-profiles/probe` (Codex/OpenCode), binding list/get/create/enable/disable, OpenCode descriptor GET/refresh, auth-begin, native-config-open and credential-submit.
+- Fail-closed limitations: credential-submit uses `NoAgentDescriptorSource` and returns 503 before SecretStore write; auth-begin and native-config-open use production `UnqualifiedLauncher`/`UnqualifiedOpener` and no V1 module declares a method/target. Module-less descriptor requests return 503; OpenCode descriptor requests are served. No V1 module currently declares a credential slot.
+- Target-only: install/update and `getAgentSessionOptions`/`getAgentHarnessCapabilities` remain outside the composed router. Check the generated served-route inventory before relying on this list.
+- Relevant existing symbols: `probe_local_opencode_profile`, `opencode_endpoint_capabilities` (`apps/litecoworkd/src/operator.rs`); `NativeProviderKey`, `opencode_offer_admission`, shared executable resolver (`apps/litecoworkd/src/agents/native_provider.rs`); `probe_opencode_profile`, `OpenCodeProfileProbe` (`apps/litecoworkd/src/agents/opencode_profile_probe.rs`); `AgentControlDescriptor` validator (`apps/litecoworkd/src/agents/control_descriptor.rs`); `AgentModuleRegistry`, `AgentModuleManifest`, OpenCode manifest/descriptor producer (`apps/litecoworkd/src/agents/module_registry.rs`, `agents/modules/opencode.rs`); `get_control_descriptor`, `refresh_control_descriptor` (`apps/litecoworkd/src/agent_control_operator.rs`); `CurrentAgentDescriptorSource` with production `NoAgentDescriptorSource` (`apps/litecoworkd/src/agent_credentials_routes.rs`); `submit_agent_credential` (`apps/litecoworkd/src/agent_credentials_operator.rs`); `has_fresh_compatible_endpoint` and descriptor gate (`crates/storage-sqlite/src/lib.rs`); `CLAUDE_CODE` inventory candidate (`apps/litecoworkd/src/agents/native_cli.rs`).
 
-### 7.2 Accepted target signatures (not yet in source)
+### 7.2 Accepted interface signatures and source promotion status
 
-Every signature below is an accepted target interface (not yet in source). It is promoted only when AGENT-CONTROL and the OpenAPI/schema change together.
+These signatures are accepted target interfaces; source promotion varies by item. Current evidence is summarized in §4 and §7b, while canonical interface ownership remains in AGENT-CONTROL/OpenAPI. Do not interpret a CODE implementation as release qualification.
 
 ```rust
-// Accepted target: fresh descriptor gate for enable (AC-004).
+// Accepted target; promoted and enforced for descriptor-backed profiles (AC-004).
 pub struct EnableBindingWithDescriptor {
     pub principal_id: String,
     pub workspace_id: String,
@@ -184,7 +182,7 @@ pub trait CredentialBroker: Send + Sync {
     ) -> Result<SecretRef, CredentialError>;   // same key + changed body => conflict
 }
 
-// Accepted target: per-module descriptor freshness (B-12).
+// Accepted target; OpenCode manifest declares 900 s TTL and a three-per-minute probe budget (B-12).
 pub struct AgentControlDescriptorFreshness {
     pub module_version: String,
     pub issued_at: Timestamp,
@@ -192,21 +190,20 @@ pub struct AgentControlDescriptorFreshness {
     pub probe_budget_per_minute: u8,            // accepted default 3 (B-12)
 }
 
-// Accepted target (002-T01): closed provider identity parsed once at the boundary,
-// replacing the string match in agents/supervisor.rs::execute_agent_turn.
+// CODE (002-T01): closed provider identity parsed once at the boundary.
 pub enum NativeProviderKey { OpenCode, ClaudeCode, Codex }
 impl NativeProviderKey {
     pub fn from_profile_key(stored: &str) -> Option<Self>; // canonical stored form is upper case
 }
 
-// Accepted target (002-T01): offer compatibility is computed, never hard-coded.
+// CODE (002-T01): offer compatibility is computed, never hard-coded.
 fn opencode_offer_admission(probe: &OpenCodeProfileProbe) -> OfferAdmission; // compatible only for 2.0.32 + Complete + host stop observed
 
-// Accepted target (002-T05): replaces NoAgentDescriptorSource.
+// Accepted target for credential submission; production still uses NoAgentDescriptorSource.
 pub struct StoredAgentDescriptorSource { /* Runtime-local descriptor store + AgentModuleRegistry */ }
 impl CurrentAgentDescriptorSource for StoredAgentDescriptorSource { /* fresh, validated, digest-bound */ }
 
-// Accepted target (002-T07): native sign-in observation, never secret bytes.
+// Target record; the current service has an in-memory observation, not durable storage.
 pub struct AgentAuthObservation {
     pub agent_profile_id: String,
     pub auth_method_id: String,
@@ -216,7 +213,7 @@ pub struct AgentAuthObservation {
 }
 ```
 
-Typed errors (accepted target, not yet in source): `BindingError::{DescriptorStale, OfferIncompatible, NotLeadEligible}`; `CredentialError::{DescriptorStale, ReplayConflict, Unsupported}`; `AuthError::{MethodNotDeclared, Cancelled, Expired, Denied}`.
+Typed error names remain the target contract: `BindingError::{DescriptorStale, OfferIncompatible, NotLeadEligible}`; `CredentialError::{DescriptorStale, ReplayConflict, Unsupported}`; `AuthError::{MethodNotDeclared, Cancelled, Expired, Denied}`. Some mappings are implemented; the credential replay path, durable auth observation and full route/schema parity are not complete. Verify each mapping against `docs/schemas/error-codes.schema.json` and the current handler before claiming promotion.
 
 ## 8. Data
 
@@ -309,7 +306,7 @@ Implementation gates are the cargo and pnpm commands named per task in TASKS.md.
 
 - First GA agent route is accepted (2026-11-09): Windows x64 + OpenCode v2.0.32, shared with feature 001 B-02. Claude Code CLI is the second module.
 - The exact Claude Code CLI version, transport flags and auth method are pinned in its conformance fixture by 002-T12; they are not inferred from the inventory candidate in `native_cli.rs`.
-- The active checkout has partial served registry/inventory/profile/binding handlers. Install/update remain target-only; native auth-begin and native-config-open are served with authenticated ID-only Tauri commands but fail closed without a qualified module action. Descriptor GET/refresh and credential submission are served but fail closed with 503. See §4 and docs/IMPLEMENTATION-STATUS.md.
+- The active checkout has served registry/inventory/profile/binding handlers and OpenCode descriptor GET/refresh. Install/update and session-options/capability projection remain target-only. Auth-begin/native-config-open are served with authenticated ID-only Tauri commands but the production launcher/opener fail closed. Credential submission remains 503 before SecretStore mutation. See §4 and docs/IMPLEMENTATION-STATUS.md.
 
 Each blocker was resolved by owner acceptance on 2026-11-09. Implementation is ordered in TASKS.md, starting with the OpenCode binding fix in 002-T01 and ending with 002-T19 (package VERIFIED).
 
@@ -336,15 +333,16 @@ Read from AGENT-CONTROL, AGENT-FABRIC, AGENT-ACCOUNT-ROUTE-MATRIX, V1-AGENT-DISC
 - Operator routes to cite: GET /agent-registry, POST /agent-registry/refresh, GET /agent-installations, install and update, profile refresh, control-descriptor, begin auth, credential submit, native-config open, binding list, create, configuration, enable, disable. Several remain target-only until served.
 
 
-## 7b. Current source and visible UI boundary — updated 2026-11-11
+## 7b. Current source and visible UI boundary — checked 2026-11-12
 
 - The mounted Settings Agents surface is `AgentCatalogSettings`, not the target Catalog/Installed/Profiles/Workspace bindings/Usage information architecture. It shows 15 curated candidates and ACP Registry distributions; registry entries are read-only metadata and map to `NO_ADAPTER`. Local inventory is bounded version/path observation, with authentication `UNKNOWN` and readiness `NOT_PROBED`.
-- Profile probe is limited to Codex and OpenCode and requires an enrolled local Runtime. Codex App Server initialize/account/model-list observations exist. OpenCode is recorded incompatible with its current offer/capability probe. Neither profile probe proves an end-to-end Conversation session.
-- No native AgentModule install/update/repair action exists in the active UI or a qualified installer route. Native auth-begin and native-config-open are now served and wired through authenticated ID-only Tauri commands, but fail closed because no V1 module declares a qualified method or target. Control-descriptor GET/refresh has no qualified descriptor producer and fails closed; credential submission fails closed before SecretStore mutation because durable replay protection is incomplete.
-- Workspace binding list/create/enable/disable/default-lead operations are served. New bindings are disabled by default. Backend enable checks a fresh compatible Runtime offer but does not enforce the Feature 002 AC-004 fresh `AgentControlDescriptor` gate. The UI therefore exposes a binding lifecycle that is not equivalent to authenticated/descriptor-ready execution.
-- The current Conversation supervisor has an OpenCode dispatch branch only. The current OpenCode profile offer is incompatible, so the visible profile cannot be newly bound through the current gate. Codex can be bound, but there is no Codex Conversation dispatch branch. The exact first GA agent/OS/version/auth route remains unqualified.
-- The composer model/effort picker is target-only: descriptor reads are unavailable and no exact provider dispatch path qualifies it. Do not render a provider model selector or claim a model selection can run merely because a catalogue or native profile exposes model metadata.
-- No Usage projection is served. No Install/Update, native sign-in, credential-slot form, descriptor-driven capabilities matrix or durable profile diagnostics timeline is mounted in the active Settings UI.
+- Profile probe is limited to Codex and OpenCode and requires an enrolled local Runtime. Codex App Server initialize/account/model-list observations exist. OpenCode v2.0.32 now yields a compatible `STARTABLE` offer only for an exact-version, complete probe with observed host stop; this remains an observation and does not prove an end-to-end Conversation session.
+- OpenCode's trusted module now produces a validated descriptor through served GET/refresh routes. The desktop descriptor panel is wired to those routes. The descriptor uses existing migration-16 storage; session-options and harness-capability projections remain target-only. Probe throttling is in-memory and resets after daemon restart.
+- No native AgentModule install/update/repair action exists in the active UI or a served installer route. Native auth-begin and native-config-open are served and wired through authenticated ID-only Tauri commands, but fail closed because OpenCode declares no method/target and production launcher/opener adapters are unqualified. Credential submission still fails closed before SecretStore mutation because the production descriptor source is unavailable and durable replay protection is incomplete.
+- Workspace binding list/create/enable/disable/default-lead operations are served. New bindings are disabled by default. Backend enable checks the fresh descriptor revision for descriptor-backed modules, but the legacy module-less path bypasses that gate and must be resolved before claiming AC-004 globally. A binding does not prove authentication or dispatchability.
+- The Conversation supervisor has an OpenCode dispatch branch; Codex can be bound but is not dispatched by it. The OpenCode profile is now bindable in code for the exact accepted probe tuple, but no packaged native provider journey has been qualified.
+- The composer model/effort picker remains view-model code only: the popover is not mounted, no Tauri command consumes the model options, and the send admission does not revalidate the selection. Do not render a provider model selector or claim a model selection can run merely because a descriptor exposes display options.
+- No Usage projection is served. No Install/Update, successful native sign-in, credential-slot form, or durable profile diagnostics timeline is mounted in the active Settings UI.
 
 ## 19. Requirement traceability
 
@@ -378,7 +376,7 @@ Model and effort choices are descriptor-bound `{optionId, providerModelId, descr
 
 For Task creation, user chooses the eligible Coworker/AgentBinding first; any supported model/effort option is nested under that selected binding. A locally remembered default may preselect but is never admission authority. Server validates Workspace, binding status, descriptor freshness, grants and eligible runtime before creating the Task.
 
-Current route remains target-only: ControlDescriptor endpoints are 503, Codex is not currently dispatched by the Conversation supervisor despite binding support, and OpenCode's current profile probe is incompatible. No active model/effort picker may appear until one exact send path and descriptor is qualified. Descriptor-declared native commands follow the same rule (AC-015): a command renders only when the fresh descriptor's `input_surface` declares it; otherwise the command affordance is shown as unavailable and the placeholder "/ for actions" copy is not an operation. Feature 001 keeps its non-goal of general native command execution; 002 supplies only the declared-command projection.
+Current model-option route remains target-only: the OpenCode ControlDescriptor GET/refresh works, while Codex/module-less descriptor requests return 503. Codex is not dispatched by the Conversation supervisor despite binding support; OpenCode's offer is now bindable in CODE under the exact predicate but its provider journey is not qualified. No active model/effort picker may appear until the session-options projection, admission revalidation and exact send path are implemented and qualified. Descriptor-declared native commands follow the same rule (AC-015): a command renders only when the fresh descriptor's `input_surface` declares it; otherwise the command affordance is shown as unavailable and placeholder copy is not an operation. Feature 001 keeps its non-goal of general native command execution; 002 supplies only the declared-command projection.
 
 ## V1 UI and lifecycle contract — 2026-11-06
 

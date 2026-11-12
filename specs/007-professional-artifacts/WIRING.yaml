@@ -71,15 +71,15 @@ edges:
 transactions:
   - id: "tx-create"
     owner: ArtifactStore
-    atomic_records: ["artifact","artifact_resource","resource_revision","artifact_version","provenance","conversation_origin","event","idempotency_receipt"]
+    atomic_records: ["artifact","artifact_resource","resource_revision","artifact_version","provenance","dependency_edges","conversation_origin","aggregate_snapshot","event","idempotency_receipt"]
     external_calls_inside: false
   - id: "tx-version"
     owner: ArtifactStore
-    atomic_records: ["artifact_version","provenance"]
+    atomic_records: ["resource_revision","resource_head_pointer","artifact_version","artifact_current_version_pointer","provenance","resource.revision.observed.v1","artifact.version.created.v1","idempotency_receipt"]
     external_calls_inside: false
   - id: "tx-export"
     owner: ArtifactStore
-    atomic_records: ["export_receipt"]
+    atomic_records: ["export_receipt","artifact.exported.v1","idempotency_receipt"]
     external_calls_inside: false
 external_boundaries:
   - id: "outside-sqlite"

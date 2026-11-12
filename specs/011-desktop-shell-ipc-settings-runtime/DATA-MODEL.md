@@ -21,7 +21,7 @@ Workspace is the security boundary for Workspace-owned settings and Usage. Runti
 
 ## Persistence and transactions
 
-Target local display preference changes may commit to a desktop preference store without Operator mutation. No such durable preference store is used by the mounted SettingsView today: theme, density, text-scale and reduced-motion values exist only in component-local React state, are not applied globally and reset with component state. Domain settings use the owning service's existing versioned/idempotent transaction and receipt. OS operations happen outside SQLite and require a verified provider response plus release/cleanup behavior. Usage filters are local read selections; the Usage ledger/projections are never modified by dashboard navigation, filtering or refresh.
+Local display preferences are loaded/persisted by App.tsx through settings/local-preferences.ts and applied to document.documentElement. Mounted SettingsView edits the App-owned preference state; theme, density, text scale and reduced motion survive reload when localStorage is available. Storage failures use safe defaults and do not imply domain persistence. Domain settings use the owning service's existing versioned/idempotent transaction and receipt. OS operations happen outside SQLite and require a verified provider response plus release/cleanup behavior. Usage filters are local read selections; the Usage ledger/projections are never modified by dashboard navigation, filtering or refresh.
 
 ## Events, privacy and retention
 
@@ -33,7 +33,7 @@ Use existing event names in docs/EVENTS.md. New durable domain events require sa
 - Runtime stop request: idempotency receipt and incarnation transition rows already used by `persist_incarnation_transition` in `apps/litecoworkd/src/runtime.rs`.
 - PowerAssertion observation: process-scoped, not replicated, cleared at restart.
 - Workspace name (existing `workspaces.name`): owned by the Workspace aggregate; rename is a versioned mutation with event and receipt.
-- Local preferences: desktop-local file, never synced, never a grant.
+- Local preferences: validated device-local localStorage snapshot, never synced, never a grant.
 
 ## Migration
 

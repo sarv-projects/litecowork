@@ -2,8 +2,8 @@
 
 **Feature:** 001 | **Spec:** SPEC.md revision 1.1
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Updated:** 2026-11-09  
-**Rule:** Implementation evidence is recorded separately from qualification. The authoritative ordered work list is [TASKS.md](TASKS.md) (T01 to T23); the phase table below is the summary view.
+**Updated:** 2026-11-12 (sequencing and evidence cross-check)
+**Rule:** Implementation evidence is recorded separately from qualification. The authoritative work list is [TASKS.md](TASKS.md) (T01 to T28, with a dependency graph reviewed 2026-11-12); the phase table below is the summary view.
 
 ## 1. Delivery strategy
 
@@ -27,7 +27,16 @@ flowchart TD
   T4 --> T8
   T6 --> T8
   T7 --> T8
-  T8 --> T9[System and owner qualification]
+  T8 --> T20[Coordinator and failure settlement]
+  T20 --> T21[Cross-layer trace]
+  T21 --> T22[Source evidence sync]
+  T23[Capture pinned provider fixture] --> T24[Confirm event normalization]
+  T24 --> T25[Activity records and UI]
+  T25 --> T27[Permission decision path]
+  T24 --> T27
+  T21 --> T9[System and owner qualification]
+  T22 --> T28[VERIFIED after owner sign-off]
+  T9 --> T28
 ```
 
 ## 3. Phases and exit gates
@@ -40,8 +49,9 @@ flowchart TD
 | D - one adapter | T04 | Version-pinned adapter handshake, prompt transport, normalized terminal/delta/error/stop observations | Provider conformance fixtures and exact readiness proof |
 | E - context dispatch | T05 | Same-Workspace bounded transcript, supported resource preparation and explicit oversize behavior | Context/resource boundary and prompt delivery tests |
 | F - durable result | T06 | Atomic AGENT message + terminal turn + event/snapshot/receipt | Failure injection at every transaction boundary passes |
-| G - user lifecycle and recovery | T07, T08, T10-T18 | Effective Stop/Retry, durable dispatch outbox, single-flight, UserRequest continuation, stream/reconnect, attachments, usage records, composer UI, daemon restart and orphan recovery | UI/daemon/DB integration, race and restart tests |
-| H - qualification and VERIFIED | T09, T19-T23 | Windows x64 + OpenCode v2.0.32 route qualified, then Linux x64; trace, docs sync, VERIFIED | Full CODE/SYSTEM/USER/recovery report; only then enable Send for that tuple |
+| G - user lifecycle and recovery | T07, T08, T10-T18, T20 | Stop/Retry, durable dispatch intent, single-flight, UserRequest, stream/reconnect, attachments, usage, composer and all admitted-failure settlement | UI/daemon/DB integration, race and restart tests |
+| H - event evidence and presentation | T23-T27 | Pinned OpenCode fixture, normalizer, REPORTED activity, scroll behavior and native permission display/reply when supported | Exact event contract, provider fixture, denial and recovery evidence |
+| I - cross-layer evidence and qualification | T21, T22, T09, T28 | Complete operation traces, source status sync, Windows x64 + OpenCode v2.0.32 first, then a separate native Linux row; VERIFIED only after owner sign-off | Full CODE/SYSTEM/USER/recovery report; qualification is per exact tuple |
 
 ## 4. Scope and file ownership (candidate paths, re-inspect before implementation)
 
@@ -61,9 +71,9 @@ Do not edit a candidate path just because it is listed. Only files needed for th
 
 ## 5. Persistence, migration, rollout
 
-- First inspect current sqlite-v1 through sqlite-v32 and schema validators in the chosen implementation worktree.
+- Current storage is sqlite-v1 through sqlite-v32. Reinspect the active chain, migration checksums and validators before any new migration.
 - Reuse existing Conversation and AgentSession identities, event streams, snapshots and idempotency patterns.
-- The activation storage transaction is already present in the preserved dirty worktree; do not reimplement or cherry-pick it without review.
+- The activation transaction, v29 dispatch intent/single-flight/response identity/usage records, and v30 activity records are present in source. Verify their owner contracts and current integration before changing or extending them.
 - The final result commit may require new local schema fields/indexes or no migration if existing tables can satisfy the semantics. Decide only after exact storage model review.
 - Any migration is forward-only, numbered, immutable after release, checksummed and covered by upgrade/rollback-to-old-binary compatibility tests.
 - Do not enable UI Send until operator, supervisor, adapter, final result writer, stream/reload and failure recovery all qualify. A feature flag must not bypass missing server-side capability.
@@ -89,7 +99,7 @@ Do not edit a candidate path just because it is listed. Only files needed for th
 
 | Gate | Exact command/target | Expected result |
 |---|---|---|
-| Storage readiness foundation | `cargo test -p storage-sqlite --locked conversation_activation_commits_session_turn_and_local_host_binding_atomically -- --nocapture` | Existing focused test passes in preserved worktree; not final feature qualification |
+| Storage readiness foundation | `cargo test -p storage-sqlite --locked conversation_activation_commits_session_turn_and_local_host_binding_atomically -- --nocapture` | Focused CODE evidence only; check exact current results in `CURRENT-RUN.md`, not historical results |
 | Storage package regression | `cargo test -p storage-sqlite --locked` | Entire suite passes after final changes, with documented platform-only ignored tests |
 | Daemon supervisor unit/contract | `cargo test -p litecoworkd --locked conversation_session_supervisor` | Bounded lifecycle/error/race tests pass |
 | Feature end-to-end (PROPOSED target) | `cargo test -p litecoworkd --test conversation_session_supervisor --locked -- --nocapture` | Actual daemon+SQLite+adapter fake/fixture e2e passes; test target must be created |

@@ -32,7 +32,7 @@ test("send is fenced for every nonterminal turn status and the gap after the 202
   assert.equal(isSendEligible({ ...ready, transientStreaming: true }), false, "streamed turn visible");
 });
 
-test("send still requires a draft, a Workspace, a ready Operator and a qualified binding (A-24)", () => {
+test("send requires a draft, a Workspace, a ready Operator and a dispatch-eligible binding (A-24)", () => {
   assert.equal(isSendEligible({ ...ready, draft: "   " }), false);
   assert.equal(isSendEligible({ ...ready, hasWorkspace: false }), false);
   assert.equal(isSendEligible({ ...ready, operatorReady: false }), false);
@@ -41,7 +41,8 @@ test("send still requires a draft, a Workspace, a ready Operator and a qualified
 
 test("Stop binds to the projected turn id and aggregate version", () => {
   assert.deepEqual(stopTarget({ turn_id: "turn-1", version: 4, status: "RUNNING", retry_ordinal: 0 }), { turnId: "turn-1", expectedVersion: 4 });
-  assert.deepEqual(stopTarget({ turn_id: "turn-1", version: 5, status: "WAITING_USER", retry_ordinal: 0 }), { turnId: "turn-1", expectedVersion: 5 });
+  assert.equal(stopTarget({ turn_id: "turn-1", version: 5, status: "WAITING_USER", retry_ordinal: 0 }), null, "waiting-user cancellation is not served yet");
+  assert.equal(stopTarget({ turn_id: "turn-1", version: 5, status: "WAITING_DEPENDENCY", retry_ordinal: 0 }), null, "waiting-dependency cancellation is not served yet");
   assert.equal(stopTarget({ turn_id: "turn-1", version: 6, status: "CANCEL_REQUESTED", retry_ordinal: 0 }), null, "already stopping");
   assert.equal(stopTarget({ turn_id: "turn-1", version: 1, status: "OPEN", retry_ordinal: 0 }), null, "nothing to interrupt yet");
   assert.equal(stopTarget(null), null);

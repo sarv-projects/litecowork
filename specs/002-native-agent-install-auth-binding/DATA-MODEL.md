@@ -1,6 +1,6 @@
 # Data model - Native Agent Install, Auth and Binding
 
-**Feature:** 002 | **Updated:** 2026-11-09
+**Feature:** 002 | **Updated:** 2026-11-12 (source-backed persistence refresh)
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -37,8 +37,8 @@ Use existing event names in [docs/EVENTS.md](../../docs/EVENTS.md). A new event 
 
 ## Retention and migration
 
-Follow owner retention rules. Purge removes future visibility of payload bytes; receipts may remain. Revision 1.0 authorizes two Runtime-local stores, created only by their tasks: the AgentControlDescriptor record (digest, module version, issued/expires time, probe-budget counter; 002-T04) and the redacted auth observation (002-T07). Neither carries a Workspace id or secret bytes. The descriptor store is allocated `docs/schemas/sqlite-v33.sql` (002-T04) and the auth observation `docs/schemas/sqlite-v34.sql` (002-T07), renumbered on 2026-11-10 from v30/v31 because 001-T25 (v30), 014-T03 (v31) and 012-T05 (v32) took those numbers first; if another package merges first take the next free number and update the allocation table. Each ships with its canonical model owner, event/schema and tests in the same reviewed change. No 002 migration is wired yet; the Runtime-local descriptor table that exists today was created by migration 16.
+Follow owner retention rules. Purge removes future visibility of payload bytes; receipts may remain. The `agent_control_descriptors` table already exists from migration 16 and `AgentDescriptorStore` now writes validated non-secret descriptors to it with digest/version/runtime-incarnation and expiry; T04 added no migration. The three-per-minute descriptor probe budget is currently an in-process sliding window rather than a durable counter, so daemon restart resets it. Auth observations are currently in-memory and return to `UNKNOWN` after restart; no durable auth-observation table or credential-submission receipt exists. Any new DDL must use the current allocation in `docs/LITECOWORK-BUILD-TASKS.md`, must not duplicate the descriptor table, and must land with its canonical owner contract and tests. Do not treat old v33/v34 task assignments as evidence that migrations exist or are required.
 
 ## Provider identity (002-T01)
 
-`agent_profiles.provider_key` is stored upper case (`CODEX`, `OPENCODE`, validated in `probe_local_agent_profile`). The supervisor must parse it into a closed `NativeProviderKey` before dispatch instead of matching a lowercase literal. Existing rows need no migration if the parser is the only consumer; a test fixture that seeds lowercase `codex` (`apps/litecoworkd/src/conversation_operator_tests.rs`) is aligned in the same task.
+`agent_profiles.provider_key` is stored upper case (`CODEX`, `OPENCODE`, validated in `probe_local_agent_profile`). `NativeProviderKey::from_profile_key` is implemented and the supervisor uses the closed identity for dispatch. Existing rows need no migration; tests cover canonical and legacy lowercase forms and fail closed on unknown keys. This CODE fact does not imply that each enum variant has a qualified module or dispatch path.

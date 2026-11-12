@@ -8,7 +8,7 @@
 SPEC section 5 blockers B-11 and B-12 and the A-35 screen split were owner-accepted on 2026-11-09. Phases now follow TASKS.md:
 
 1. P1 prerequisite: make the OpenCode v2.0.32 profile truthfully bindable (002-T01), so Feature 001 Send is reachable from the UI.
-2. Contract promotion: AGENT-CONTROL, OpenAPI, error codes, events and the allocated immutable `sqlite-v33.sql` / `sqlite-v34.sql` together (002-T02; see the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md).
+2. Contract promotion: AGENT-CONTROL, OpenAPI, error codes and event schemas together (002-T02). The descriptor store reuses the table created by migration 16, so it does not need new descriptor DDL. The accepted durable auth-observation record and replay-safe credential receipt each need additive persistence; coordinate their next unused migration numbers with the global allocator before adding files.
 3. Module registry, descriptor storage and descriptor producer (002-T03 to 002-T05), then the fresh-descriptor enable gate (002-T06).
 4. Native sign-in observation and credential slots (002-T07, 002-T08).
 5. Composer options/commands and Settings operations wired into the Feature 011 screen (002-T09, 002-T10), honest install/update unavailability (002-T11).
@@ -30,11 +30,12 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-Acceptance authorizes the migrations named in TASKS.md (Runtime-local descriptor and auth-observation storage in 002-T04 and 002-T07). Each uses the next unused immutable `docs/schemas/sqlite-vNN.sql` (v28 is the highest present on 2026-11-09) and lands with its owner doc, schema and tests in one change. No migration exists yet. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
+The implementation currently uses the existing `agent_control_descriptors` table (created by migration 16) and has no durable auth-observation table or credential-submission receipt. Do not create duplicate descriptor DDL. If durable auth observations or replay receipts are implemented, allocate the next unused immutable migration through `docs/LITECOWORK-BUILD-TASKS.md` and land it with the owner doc, schema and tests in one change. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
 
 ## Risks
 
-- Flipping the OpenCode offer to compatible without also fixing the provider key, executable resolver and version pin (SPEC §4a), which would expose a binding that cannot dispatch.
+- Confusing the exact OpenCode CODE offer predicate with a qualified native provider journey; the packaged bind/send/stop/restart path remains unproven.
+- Duplicating the descriptor table or creating an unallocated migration because an old task row still names v33 for an already-existing table.
 - Treating archive CODE as current qualification.
 - Collapsing distinct states into one UI boolean.
 

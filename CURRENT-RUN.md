@@ -1,124 +1,84 @@
-# Current engineering handoff
+# Current engineering handoff — 2026-11-12
 
-## 2026-11-11 pinned OpenCode source cross-check
+This is the current source and design handoff. It distinguishes the shipped checkout from the proposed V1 experience and preserves the older dated notes below for provenance. A passing structural check, UI fixture, route, or unit test does not qualify a packaged provider journey.
 
-Official OpenCode tag `v2.0.32` source inspection found session Form request/reply/cancel contracts and a session/request ownership-checked permission reply route. This corrects stale Feature 001 claims that no OpenCode answer API exists. No live OpenCode session, event capture, permission reply, or form answer was performed. T12 remains blocked pending provider-event capture and owner-approved B-06 mapping; T27 remains partial pending correct payload normalization, integrated answer/deny handling, UI and recovery evidence. The old permission fixture shape is inconsistent with the pinned schema and must not be presented as a v2.0.32 capture. Full evidence and source links: `specs/001-conversation-session-supervisor/RESEARCH.md` section 8.1. No source code changed in this cross-check.
+## Repository state at review checkpoint
 
-## 2026-11-11 browser observation and takeover decision
+- Repository: LiteCowork; branch `main`; reviewed HEAD `64c435149a82ba952c6c3bf3049e26cf2d9344b1`; `origin/main` is `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`. Local main is three commits ahead of origin.
+- One worktree. The working tree had 141 changed paths at this checkpoint (137 tracked paths and 4 new design/audit documents). These are the ongoing, owner-authorized source, documentation, specification and audit changes. They have not yet been committed or pushed.
+- Preserve `audit-output/`, `archives/`, `.agents/`, `repo_take/`, ignored build/dependency data, stashes and other user work. Stage only the reviewed intended paths. No reset, clean, force-push or history rewrite.
+- Active implementation is in `apps/` and `crates/`: Rust daemon/domain/storage, Tauri v2 desktop and React UI. This is not a documentation-only checkout.
 
-Resolved from the user's explicit request after cross-checking accepted B-22/B-32, Feature 008, CHROME-BROWSER-LLD, and Feature 012 B-34: the supported live surface is the isolated managed-browser tab viewport only, using ephemeral frames with bounded latest-frame delivery and stale-frame labeling. It is not whole-laptop screen sharing; that remains deferred under B-32. **Browser Take over** is shown only for a live AGENT-owned browser lease and atomically transfers browser input authority after old-epoch input is fenced and dispatched actions are reconciled. It does not stop Conversation generation or a Task. **Conversation Take control** is separate: invoke Feature 001 cancel, wait for native quiescence, settle CANCELLED and record OWNER_TOOK_CONTROL before owner continuation; the next message is a separate turn. Decision is now recorded in Feature 008 UI contract, TASKS, README, CHROME-BROWSER-LLD and IMPLEMENTATION-STATUS. No provider/route/UI takeover implementation exists yet; this is design resolution only, not CODE, INTEGRATED or QUALIFIED evidence.
+## What LiteCowork is building
 
-- **Repository:** LiteCowork
-- **Branch:** main (PR #1 and PR #2 are closed and merged, and the branch-only audit work was merged as PR #3; see docs/HANDOFF-NEXT-AGENT-2026-11.md section 3)
-- **Inspected source revision:** `6adadab539a62ca1c8b70621c7f88e1785cfe8c2` on `main`, inspected 2026-11-12. Handoff corrections are committed locally as `0edf605` (`docs: refresh implementation handoff status`).
-- **Working-tree state:** clean. Local `main` is two documentation commits ahead of `origin/main` (`0edf605`, handoff refresh; `a4eeab4`, push-status correction). Push requires GitHub HTTPS credentials that are not available in this session (`git push` fails with “unable to get password from user”). The commits contain only reviewed handoff and generated Markdown-audit updates. Preserve tracked `audit-output/` plus `.agents/` content and all ignored archives/worktrees; do not rewrite history. The earlier 2026-11-11 status below is a historical snapshot and is superseded by this section and `docs/IMPLEMENTATION-STATUS.md`.
-- **Release posture:** pre-release; V1 is not release-qualified. The checkout has partial CODE and SERVED foundations across Conversation, agent setup, relay, Workspace context, Task/Environment, Workbench, Artifacts and presentation. No complete packaged desktop journey with a live native provider is QUALIFIED. Feature-level remaining work is indexed in `docs/IMPLEMENTATION-STATUS.md` and the active feature TASKS.
+LiteCowork is a local-first, conversation-first, bring-your-own-agent desktop workspace. A normal chat stays a Conversation and does not require a Task or Coworker. Native agent harnesses own their reasoning, authentication, models and native tools; LiteCowork owns Workspace boundaries, Conversation/Task truth, permissions for mediated operations, durable evidence, artifacts, context and recovery.
 
-This file is the current engineering handoff. It records the active repository state and the checks performed against it. It is not a chronological diary and must not preserve stale "previous/latest" status paragraphs. Update the current facts and validation results in place whenever the repository changes.
+The proposed compact shell keeps four primary destinations—Work, Coworkers, Library and Automations—plus a distinct **Needs You** attention inbox. New Chat and Recent Chats remain easy to reach; Settings stays at the bottom; less-used destinations sit under More. The current code has compacted secondary pages under More, while retaining separate Needs You, Work, Coworkers, Automations and Library controls. The complete navigation proposal is still IN_REVIEW.
 
-## Repository state
+The right side is one contextual Workbench, not another permanent navigation rail. Only opened objects should become tabs; **+** offers Computer, Browser, Terminal, Files, Changes and Canvas. Computer shows a native-selected display/window. Browser is a separate managed browser session. Terminal is a real PTY/ConPTY under its admitted Environment. Changes are real version/VCS diffs. Activity comes from records. Inline structured answers can expand into Canvas while preserving the same local document state. Today the Workbench is a fixed launcher/status UI: there are no object tabs/+ flow, live Computer capture/input, managed Browser, actual Terminal, real diffs or Activity provider.
 
-The active checkout contains the Tauri/React desktop application, the Rust daemon and workspace crates, first-party docs and JSON contracts, 20 feature SDD packages (001-012 ACCEPTED/LOCKED, 013-020 IN_REVIEW), scripts (on 2026-11-10 the owner accepted the Part 4 decisions B-38, B-39, B-40, B-41, B-45, D-01, the B-31 destination class, CONNECTOR_EVENT and E2E-14..E2E-17 as proposed, deferred LiteSPM, Windows and release-dependent rows, and left B-42 and the B-19 follow-up open; register A-62; packages 013-020 stay IN_REVIEW) and pinned reference repositories. The repository is not documentation-only.
+For terminal first use, start no process on app launch or when opening **+**. **New terminal** is explicit. Prefer Windows PowerShell 7 only when that exact shell is available inside a qualified admitted Environment; otherwise offer supported profiles. Never silently choose WSL/Git Bash or launch an uncontained host shell. Current Terminal remains unavailable because there is no qualified provider/Environment path.
 
-Primary application paths:
+Computer observation, agent disclosure and computer input are separate permissions. The in-app **Take over** strip is not enough while the target app covers LiteCowork. The proposed safety gate requires a qualified out-of-app global shortcut or native tray action that reaches the same last-hop broker fence; if no such action qualifies, that OS/provider stays observation-only. **Take over** stops further computer input but does not stop reasoning or unrelated work. **Stop run** separately asks the Conversation or Task owner to cancel and reconcile. Sending a message is not takeover or generic steering. No global emergency route, shortcut or tray command is served today (A-78).
 
-- Desktop UI: apps/litecowork-ui
-- Daemon: apps/litecoworkd
-- Shared domain/storage/runtime crates: crates
-- Product and architecture contracts: docs
-- Feature specifications: specs/001 through specs/011
-- Specification templates and validators: .specify
-- Reference implementation snapshots: repo_take (research only; never product source of truth)
+## Intelligent answers and ACP
 
-The local ignored archive and historical documentation archive remain preservation material. They do not replace the active source tree.
+The useful part of the supplied concept is one validated, declarative presentation path: semantic response first; optional registered components for charts, tables, metrics, forms and bounded calculators; deterministic local calculations; accessible text fallback; and Canvas expansion over the same document identity. No arbitrary model HTML/JavaScript runs in the chat WebView, and no hidden second LLM is inserted into BYOA. View persistence and conversational modification are separate proposals requiring renewed Feature 016 review.
 
-## Product authority
+ACP supplies agent lifecycle and event transport, not a UI schema. Current ACP launches do not provide a qualified presentation ingress; the configured MCP server list is empty. A provider proposal tool or structured output needs exact session/turn/retry correlation, host-derived scope, bounded schema validation, cross-session isolation and provider-version evidence. A `tool_call` event is observation, not permission to execute it. A2UI is a candidate adapter into the existing canonical presentation model, not a second renderer/state authority. Official material checked 2026-11-12 reports A2UI 1.0 as stable and lists a React renderer, while README/roadmap still describe 0.9.1 as production and 1.0 as a candidate. GitHub Releases has CLI/core/agent SDK releases; the exact React renderer package/version and its v1.0 conformance remain unpinned. See `docs/ACP-PRESENTATION-PIPELINE-LLD.md` and Feature 016 RESEARCH.
 
-Read these in order before material work:
+## Current progress and remaining work
 
-1. Root ARCHITECTURE.md for ownership, invariants and system boundaries.
-2. docs/PRODUCT.md and docs/V1-PRODUCT-RELEASE-CONTRACT.md for product promise and release scope.
-3. The owning domain contracts and accepted ADRs.
-4. docs/schemas for canonical OpenAPI, event, JSON Schema, migration and generated route inventory contracts.
-5. docs/V1-UI-SCREEN-CONTRACT.md and docs/V1-UI-ACTION-STATE-LEDGER.md for the user-visible experience.
-6. The relevant feature package under specs.
-7. docs/IMPLEMENTATION-STATUS.md for what this checkout actually implements and the available evidence.
-8. docs/ACCEPTANCE-AND-E2E-PLAN.md for required qualification.
+- **Conversation:** durable admission/outbox, single-flight, response commit, text ResourceRef materialization, stream, Stop and Retry have CODE/SERVED evidence. The current OpenCode route is not a packaged, qualified journey. Form/UserRequest and permission event production/reply remain unverified; no second provider is qualified. The accepted disabled-until-qualified Send gate is still open (A-24). Waiting-state Stop is a current gap: accepted AC-024 covers WAITING_USER/WAITING_DEPENDENCY, but the Operator rejects those cancel states and the UI hides Stop (A-79).
+- **Agent setup:** descriptor-driven controls and ID-only opener paths are served fail-closed. No module currently exposes usable native sign-in/configuration methods, credential submission lacks a durable crash-safe receipt, and there is no qualified sign-in → bind → send journey.
+- **Relay:** preserve source identity and bounded portable context, gate on actual dispatchability, qualify a second provider, then prove A→B→A with denial/recovery. A picker or provider registry row is not dispatch qualification.
+- **Workspace context:** text ResourceRefs work partially. Root ingestion/indexing, durable retrieval/send receipt, Context Used, deletion/replay/race recovery and Windows-native qualification remain incomplete. A-65/A-69 are open.
+- **Task execution/control:** Task records and partial planning/control do not constitute a safe execution slice. Still required: admit Attempt, provision/attest Environment, enforce Trust at the actual write boundary, reconcile a receipt, independently verify, and recover cancellation/timeout/restart. Linux is first. Windows Environment remains unavailable (B-35). Delegation and child Attempt gates are tracked in Features 005/015; A-70 remains open.
+- **Workbench:** current Files is a Resource preview, Browser is an empty embedded-page preview, Terminal/Review/Activity/Computer are unavailable or status-only. Real browser, PTY/ConPTY, VCS diff, record-backed Activity, selected-screen capture, safe input and packaged recovery are outstanding. Computer revision 1.1 is IN_REVIEW; A-78 adds the background takeover gate.
+- **Artifacts and presentation:** bounded text/plain editing and native Save As exist, but there is no complete professional Markdown create/edit/publish/export-receipt journey. Feature 016 r0.2 proposes richer registered components/Canvas/persistence; it is not accepted or implemented. Arbitrary custom app execution stays outside V1 until its separate containment contract qualifies.
+- **Other owners:** LiteSPM remains owner-deferred; Automations/notifications, backup/restore and release qualification retain the task-level gaps in `docs/IMPLEMENTATION-STATUS.md` and feature TASKS.
 
-Do not resolve a conflict by choosing whichever file has the newest date. Update the document that owns the semantic decision, then update its dependent contracts, UI maps, indexes and traceability.
+## Documentation audit status
 
-## Current source-backed product status
+The requested complete semantic, line-by-line reread of all documentation and source is **still open**. `docs/audit/MODULE-DESIGN-REVIEW-2026-11-12.md` is explicit about its baseline and coverage: one subreview semantically read 10,356 of 22,910 lines in 18 feature packages, excluding Features 008 and 016; many other sections were inventory-only or partial. Separate review notes found Feature 006 partial and Feature 007 not reviewed in that pass. The 008/016 design findings are captured in their new LLDs, but there is no merged per-line coverage ledger for them. Validators that scan/count files are not substitutes for semantic review. Re-read the exact owner package and cross-layer journey before each implementation task; do not claim the global audit is finished.
 
-The evidence details and implementation boundaries live in docs/IMPLEMENTATION-STATUS.md. The critical distinctions are:
+The follow-up review added A-78 (background Computer takeover reachability) and A-79 (waiting-state Conversation Stop contract gap), and found M17 (secondary-navigation focus loss on route remount). Existing open owner issues A-65 through A-77 remain unresolved, including the separate Task, History, Backup, Update and LiteSPM findings under A-71..A-77. Feature 008 revision 1.1 and Feature 016 revision 0.2 are TARGET/IN_REVIEW proposals, not accepted implementation authority. Check task lifecycle and owner decisions before implementing blocked/deferred work.
 
-- Runtime lifecycle health is not Task execution readiness.
-- Operator API availability is not native-agent integration.
-- A persisted Conversation turn is not proof that a provider completed it.
-- Recent Chats are cursor-paginated; the sidebar loads additional pages only from the active Conversation page and preserves Workspace/list-epoch fencing. An unreadable pending-create journal pauses New Chat until its explicit retry succeeds.
-- A persisted Task is not an admitted Plan or running Attempt.
-- A source route registration is not a qualified user journey.
-- A Workspace resource preview is not a live filesystem editor.
-- A WebView iframe is not Chrome automation or a controlled browser.
-- Terminal UI output is not a real process result unless it came from a real PTY/ConPTY process.
-- A native action is not a Core-mediated Effect unless it passed through the authorized gateway.
-- An Automation trigger host can materialize a READY Task without executing that Task.
-- A Coworker configuration is not a continuously running agent process.
-- A renderer or schema is not evidence that every artifact format or interactive app is usable.
+## Validation on the current working tree
 
-## Handoff status checkpoint (2026-11-12)
+Run on 2026-11-12 at HEAD `64c4351` with the dirty tree described above:
 
-Source baseline: `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; current local handoff commit: `0edf605` (not pushed because GitHub HTTPS credentials are unavailable). A source cross-check found stale 2026-11-09 Feature 001/003 baseline prose: those blocks are now explicitly historical. The composer currently selects existing Resources and submits revision-pinned `resourceRefs`; Feature 001 materializes bounded allowlisted text at dispatch. WorkspaceRoot content ingestion, retrieval at Send, durable ContextAttachment/retrieval receipts, and Context Used remain incomplete. Feature 001 has CODE-level outbox/single-flight/Stop/Retry/text attachment foundations but is not live-provider or packaged-desktop qualified. Pinned OpenCode v2.0.32 source defines Form and permission request/reply APIs; T12 remains BLOCKED until actual provider event evidence and owner mapping, and T27 remains PARTIAL until normalized event, answer/deny path, timeout and recovery are integrated. The right Workbench pane's bounded managed-browser viewport and takeover behavior are TARGET only; no provider/route/UI is implemented. Root `AGENTS.md` is the repository onboarding entrypoint; it records authority, evidence, preservation, exact read order and implementation workflow.
+| Check | Result | Limit |
+|---|---|---|
+| `pnpm test` | 635 passed, 0 failed, 0 skipped at the preceding full-suite checkpoint; latest focused affected tests below | UI/component/unit fixtures; not packaged provider qualification |
+| Focused Conversation/Navigation/Workbench tests | 58 passed across four focused commands after the final UI copy and guard edits | Does not substitute for the full suite or packaged provider qualification |
+| `cargo test -p litecoworkd --locked response_commit_identity_is_stable_scoped_and_contains_no_native_identifier` | 1 passed | Focused test; existing unrelated compiler warnings; not a full Rust suite |
+| `pnpm run build` | API freshness, TypeScript and Vite build passed | Main JS 1,080.62 kB minified / 296.82 kB gzip, above 500 kB advisory |
+| `pnpm exec tsc --noEmit` | Passed | UI type check; not a user journey |
+| `cargo fmt --all -- --check` | Passed | Formatting check only |
+| `pnpm test:browser` | Did not launch | `LITECOWORK_CHROME` is unset, so rendered browser checks remain unverified |
+| `.specify/scripts/validate_feature_package.py` | 20/20 structural checks passed | Not owner acceptance |
+| `scripts/audit_v1_contracts.py --strict` | 0 errors; 231 OpenAPI, 178 served, 4 outside OpenAPI, 53 target-only | Contract/route consistency, not integrated behavior |
+| `scripts/audit_served_routes.py` | Inventory matches composed router | Does not qualify routes |
+| `scripts/validate_architecture.py` | Passed with 1 warning | Optional `openapi-spec-validator` is not installed |
+| `scripts/validate_design_owner_consistency.py` | 373 documents / 77,144 lines scanned; 36 assertions, 0 issues | Structural assertions only |
+| `scripts/audit_v1_design_depth.py` | 372 files / 76,733 lines; 0 structural findings | Structural inventory, not semantic completeness |
+| `scripts/audit_v1_markdown.py` | 369 files / 76,758 lines; 0 broken relative links | Link/corpus audit, not semantic completeness |
+| `git -c core.whitespace=cr-at-eol diff --check` | Passed | CRLF-aware whitespace check; the generated inventory retains its existing line-ending warning |
 
-The broad V1 work remains incomplete. Continue by reading this file, `docs/IMPLEMENTATION-STATUS.md`, `ARCHITECTURE.md`, `docs/PRODUCT.md`, `docs/V1-PRODUCT-RELEASE-CONTRACT.md`, both V1 UI contracts, `docs/ACCEPTANCE-AND-E2E-PLAN.md`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`, then the owning feature's complete package. Do not rely on dated audit snapshots for current truth.
+No packaged desktop, real native-agent sign-in/permission, Computer capture/input, Browser, PTY, Task write/verification, Artifact export, backup/restore or release-matrix qualification was run in this pass. Earlier Windows workspace/UI results remain dated evidence at their own source revisions and must not be combined with this focused run as a full qualification claim.
 
-The current Operator route inventory is docs/schemas/served-route-inventory.json. It records 178 OpenAPI route registrations, four routes served outside OpenAPI and 53 OpenAPI operations that remain target-only (231 OpenAPI operations in total). The four outside are POST /v1/stream (`presentation_operator.rs`) and the three Feature 014 Conversation routes PATCH /v1/conversations/{conversation_id}, POST /v1/conversations/{conversation_id}/archive and POST /v1/conversations/{conversation_id}/unarchive (`conversation_operator.rs`); that is served-but-not-yet-in-OpenAPI debt, not a claim they are outside the product contract. This inventory is generated from the composed daemon router. It is evidence of route mounting, not product qualification.
+## Next handoff sequence
 
-## Validation performed
+1. Finish the remaining semantic document/source audit using explicit coverage accounting; reconcile A-65 to A-79 at their owner documents before any conflicting implementation.
+2. Complete one exact native Conversation path (descriptor/readiness → send → real events → stop/retry → restart/recovery), including provider event evidence and denial. Resolve A-79. Then run the packaged desktop journey.
+3. Complete agent authentication/credential durability and qualify sign-in/bind/send. Add a second genuinely dispatchable provider before A→B→A relay qualification.
+4. Complete Workspace-root ingestion and atomic context admission/receipt/Context Used with the Feature 001 transaction boundary reconciled under A-65.
+5. Build the first safe Task/Attempt/Environment/Trust/write/receipt/independent-verification slice on Linux. Keep Windows execution unavailable until B-35 qualifies.
+6. Promote and implement real Workbench providers, including the out-of-app Computer takeover gate; complete professional Markdown Artifact authoring/export; then implement accepted declarative presentation/Canvas capabilities with fallback.
+7. Finish platform-denial/recovery, backup/restore and release-row evidence; obtain owner USER qualification before marking V1 ready.
 
-The completed full Rust workspace run on the connected Windows development machine (historical; predates the Linux-side audit-repair batches that changed `storage-core`, `storage-sqlite`, `litecoworkd` and the docs, so its per-crate counts are superseded by "Current validation on the working tree" below):
-
-- Command: `$env:CARGO_BUILD_JOBS='1'; cargo test --workspace --locked`
-- **Exit code 0; runtime 1,383.28 seconds; no failed test targets.** All unit tests, integration tests and doc-tests completed successfully.
-- `litecoworkd` unit target: **359 passed, 0 failed, 1 ignored**; `litecoworkd --test cli`: **4 passed**.
-- `storage-core`: **110 passed**; `storage-sqlite`: **555 passed**; `storage-sqlite --test agent_registry_cache`: **2 passed**.
-- `windows-local-security`: **36 passed**; `local-environment-staging`: **24 passed**; `operator-ipc`: **18 passed**.
-- Domain targets passed, including Conversation (8), Effects (14), Environment (24), Invocations (14), RAG (38), Responsibility (99), Task (138), Workspace (7) and Linux process scope (5). Browser control (23) and browser pointer (9) integration targets also passed.
-- The only ignored tests in the Windows run were the daemon's declared ignored test and the Windows Credential Manager integration test that writes uniquely scoped entries to the current user's credential store. Linux Secret Service integration is not run on this Windows target.
-- The six Windows WorkspaceRoot route tests pass with platform-canonical fixture identities; production path validation remains fail-closed. Windows folder scanning remains unqualified.
-- The deterministic cross-platform backup failure-path test passes as part of the 555-test `storage-sqlite` unit target.
-
-Current validation on the working tree:
-
-- 2026-11-11 owner-requested Browser/Conversation takeover contract synchronization: `.specify/scripts/validate_feature_package.py` passed all 20 packages; `scripts/audit_v1_contracts.py --strict` reported 0 errors (231 OpenAPI, 178 served, 4 outside, 53 target-only); `git -c core.whitespace=cr-at-eol diff --check` passed with the existing `operator-api.ts` LF/CRLF warning. Documentation-only check; no browser, Conversation takeover, packaged UI, or provider behavior was exercised.
-- 2026-11-11 Windows Tauri bridge slice: cargo test --locked agent_control_bridge **4 passed**; cargo test --locked agent_binding_bridge **2 passed**; pnpm exec node --test tests/agent-control-descriptor-panel.test.mjs **7 passed**; pnpm exec tsc --noEmit **passed**; cargo fmt --all -- --check **passed**. The Rust target emitted five pre-existing warnings in lib.rs and conversation_create_journal.rs; no new bridge warnings. These are CODE checks, not packaged desktop or live-provider qualification.
-- 2026-11-11 Feature 005-T02 Windows CODE: `cargo test -p domain-environment --locked` (22 unit, 23 browser-control, 9 browser-pointer passed); `cargo test -p linux-process-scope --locked provider_probe` (5 passed); `cargo test -p local-environment-staging --locked` (24 passed); `cargo test -p litecoworkd --locked environment_` (64 passed); `cargo check -p litecoworkd --locked` passed. This does not qualify Linux Bubblewrap, systemd/cgroup enforcement, or Task execution.
-- 2026-11-11 Feature 004 relay CODE: `cargo test -p storage-core --locked relay_context_preserves_each_producer_across_a_to_b_to_a` passed (1; 115 filtered). The bounded portable context test confirms producer identity survives A→B→A and native session handles are excluded. It does not prove SQLite A→B→A relay, resource materialization, provider dispatch, desktop rendering, or E2E qualification. `cargo fmt --all -- --check` passes with the test formatted; unrelated line-ending churn from an earlier direct formatter invocation was removed.
-- 2026-11-11 validation note (historical; checkout has since advanced to 6adadab): `.specify/scripts/validate_feature_package.py` passed 20/20; `scripts/audit_v1_contracts.py --strict` reported 0 errors (231 OpenAPI, 178 served, 4 outside OpenAPI, 53 target-only); `scripts/validate_architecture.py` passed with one warning because optional `openapi-spec-validator` is absent; Markdown audit scanned 366 files / 75,885 lines / 7,189,418 bytes with 0 broken links; `cargo fmt --all -- --check` and `pnpm exec tsc --noEmit` passed. Full serial UI suite previously completed 633/633 on Windows (341.2 sec). These are CODE/structural checks, not packaged desktop or live provider qualification.
-- 2026-11-12 handoff refresh at source revision `6adadab` plus docs: `.specify/scripts/validate_feature_package.py` passed 20/20; `scripts/audit_v1_contracts.py --strict` reported 0 errors (231 OpenAPI, 178 served, 4 outside OpenAPI, 53 target-only); `scripts/audit_v1_markdown.py` scanned 366 files / 75,899 lines with 0 broken links; `scripts/validate_architecture.py` passed with one warning because optional `openapi-spec-validator` is not installed; `cargo fmt --all -- --check` passed. `pnpm exec tsc --noEmit` was unavailable because local `tsc` is not resolvable in this checkout. No packaged desktop/provider E2E was run.
-
-### Product decision: Workbench browser observation and takeover
-
-The Workbench right pane is the target home for the managed browser session. The current UI is only an empty embedded-page preview; no managed browser process, session route, observation stream or lease exists. Per the owner-requested refinement recorded 2026-11-11, the provider-backed view will show only the isolated managed-browser tab viewport through ephemeral frames, a bounded latest-frame queue and stale-frame labeling. A persistent non-modal **Take over** affordance appears only while a live browser lease is agent-owned. After provider-confirmed epoch transfer, old-epoch inputs are fenced and any dispatched browser action is reconciled; unresolved actions remain pending/unknown. Browser takeover transfers browser input only and does not stop Conversation generation or a Task. Conversation **Take control** is distinct: stop via Feature 001, wait for native quiescence, settle the turn and record OWNER_TOOK_CONTROL before enabling owner continuation. The next message is a separate turn. Whole-laptop screen capture/input remains unavailable under B-32. These are target interactions, not implemented or qualified capabilities; no UI should imply they are available before provider routes exist.
-
-
-- Rust workspace: `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets --locked -- -D warnings` **0 diagnostics**; `cargo check --workspace --all-targets --locked` **0 errors**.
-- Test baselines recorded at the 2026-11-10 handoff (Linux container, Rust 1.92.0, `source /projects/sandbox/.work/env.sh`): `cargo test -p storage-sqlite --lib`: **624 passed, 0 failed** (SCHEMA_VERSION 32, includes the v31 history and v32 co-edit storage tests); `cargo test -p litecoworkd --bin litecoworkd`: **656 passed, 0 failed, 1 ignored**; UI `pnpm test`: **5 pre-existing failures** (four rendered page tests that need a live Vite dev server and a browser, and the esbuild lockfile test, identical on the base commit). The esbuild failure has a specific cause found on 2026-11-10: `apps/litecowork-ui/pnpm-workspace.yaml` is committed with CRLF in both the index and the worktree, while `tests/node-version.test.mjs` matches `^allowBuilds:\r\n` and so never matches a `\r\n` line ending; that is housekeeping (either the file's endings or the pattern) and stays open. The older figures in the Windows paragraph above (555 storage-sqlite, 359 litecoworkd) and in dated slice notes below are historical and superseded.
-- Baselines re-measured on 2026-11-10 in the Linux forge container without `/projects/sandbox` (`source ~/.local/env.sh`, Rust 1.92.0, root `/data/home/forge/litecowork`): `cargo test -p storage-sqlite --locked` **627 passed, 1 failed** (`blob::tests::refuses_symlinked_blob_directory_ancestors`, reproduced identically on a clean tree with the day's changes stashed, so it is a root-container artifact and not a regression); `cargo test -p storage-sqlite --locked rich_presentation` **27 passed, 0 failed**; `cargo clippy -p storage-sqlite --all-targets -- -D warnings` **0 diagnostics**; `cargo fmt --all -- --check` **clean with the committed CRLF endings preserved**; `python3 -m unittest discover -s tests` **104 tests OK (skipped=5)**; `python3 scripts/audit_v1_contracts.py --strict` **errors=0 openapi=231 served=178 outside=4 target=53**; `scripts/validate_architecture.py` and `tests.test_architecture_validator` (14 tests) pass. Desktop presentation suites: `rich-presentation.test.ts` **24 passed**; the runtime-fallback, stream, response-policy and task-items suites **43 passed**. Do not read a green presentation family as rendered-UI qualification: the rendered tests that need a browser still fail in that container.
-- Composed Operator inventory: **178 OpenAPI served / 4 outside OpenAPI / 53 target-only**, generated and matching source router composition (`python3 scripts/audit_served_routes.py`).
-- Architecture/schema validator: passed active checks; one warning because the optional `openapi-spec-validator` package is not installed. JSON Schema, 149 event schemas, errors, OpenAPI structure, SQL, Gateway naming, concept and active Markdown checks passed.
-- Cross-owner consistency guard: **36 assertions passed, 0 issues**.
-- V1 contract/route/UI audit: **0 errors** (231 OpenAPI operations; 178 served, 4 outside OpenAPI, 53 target-only).
-- Design-depth audit: **0 findings**; 367 files, 75,159 lines, 12 domains, 254 functions, 201 Settings rows, 231 routes, served 178 / target-only 53, 107 tables, 20 packages.
-- Feature SDD validator: **20/20 packages passed** (001-012 ACCEPTED/LOCKED 2026-11-09; 013-020 IN_REVIEW).
-- Markdown audit: **0 broken relative links** across 364 files / 75,180 lines. The generated active-corpus manifest (docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md) excludes itself and records 367 files / 75,159 lines.
-- Sandbox note: the pinned Rust 1.98.1 toolchain is not installed and rustup/CARGO_HOME are read-only; the workspace builds clean on the newest installed toolchain (1.92.0) through a writable CARGO_HOME seeded from the read-only cache, plus a hand-built dbus pkg-config sysroot and link dir (keyring -> dbus-secret-service -> libdbus-sys needs `dbus-1.pc` and an unversioned `libdbus-1.so`, neither in the base image). The reproducible prefix is sourced from `/projects/sandbox/.work/env.sh` (sets CARGO_HOME, CARGO_TARGET_DIR, TMPDIR, RUSTUP_TOOLCHAIN=1.92.0, PKG_CONFIG_PATH, LIBRARY_PATH, RUSTFLAGS and PYTHONPATH). This does not change the pinned 1.98.1 release target.
-- Frontend production build: passed API type check, TypeScript and Vite. Main JS bundle is 1.05 MB minified (287 KB gzip), above Vite's 500 KB advisory.
-- Focused Conversation + responsive tests: **24/24 passed**, including journal retry, cursor pagination, drawer semantics and mobile canvas sizing.
-- The full serial frontend test command was attempted but did not emit a final TAP summary. It reached test 393 and stalled in the Settings Chrome DevTools check; observed failures included two production-App bootstrap timeouts and, before fixes, the Conversation pagination and responsive assertions. The latter three are now fixed and pass in isolation. Do not report an aggregate full-suite result.
-- The standalone Settings accessibility test passed its static WCAG AA contrast check but failed its rendered-browser phase because Chrome DevTools timed out on `Page.navigate`. This does not establish the production Settings screen's keyboard behavior.
-- Rendered UI, packaged Tauri smoke and real-provider desktop E2E remain unqualified.
-
-The full Windows Rust workspace test suite is green, but that is not a LiteCowork V1 release pass. Do not describe frontend coverage as complete or imply packaged desktop/provider USER qualification.
+The existing local commits and all reviewed work must be preserved. Commit/push are still pending at this checkpoint; if attempted, use a normal push only and record the exact result here.
 
 ## Historical V1 implementation progress snapshot (2026-11-09; superseded)
 
@@ -134,7 +94,7 @@ Deferred with a recorded reason (not done, not faked):
 - **Migration wiring (done in Wave 1, Feature 001).** `SCHEMA_VERSION` is now 32 (v31 adds the Conversation history lifecycle side table, 014-T03; v32 adds Conversation control events and owner side notes, 012-T05; v30 adds REPORTED Conversation turn activity records, 001-T25 storage layer only). v28 (Workspace delegation settings, A-40) is wired together with its production writer: the two `task_spec_revisions` writers in `crates/storage-sqlite/src/lib.rs` resolve and pin `delegation_policy_snapshot_json` from the Workspace settings head, and every full-schema fixture that inserts a TaskSpec revision now supplies a snapshot. v29 (`docs/schemas/sqlite-v29.sql`) adds the Conversation dispatch outbox, response commit identity, usage records and single-flight triggers with their writers (`create_conversation_turn`, `commit_conversation_agent_response`, the dispatch-intent claim/release/list store methods). Verified: storage-sqlite 603 passed, 0 failed; litecoworkd migration-dependent tests green.
 - **Remaining packages.** Superseded by "Handoff status by package (2026-11-10)" below; delivery follows the waves in docs/LITECOWORK-BUILD-TASKS.md.
 
-## Remaining work and handoff priority
+## Historical remaining-work snapshot — superseded by the current status above
 
 The package TASKS are the stable itemized backlog. Recommended next order, after checking current blockers and dependencies:
 
@@ -146,7 +106,7 @@ The package TASKS are the stable itemized backlog. Recommended next order, after
 6. Artifacts and presentation (007/016): first Artifact creation/provenance, a real Markdown edit/publish/export-receipt journey, then the approved rich-presentation path, media provenance, security, fallback/preferences and release qualification.
 7. Close cross-cutting API/schema/UI-map drift and run the exact packaged E2E/security/platform matrix. Route counts and unit tests alone do not qualify release behavior.
 
-## UI/UX and architecture audit findings (2026-11-11)
+## Historical UI/UX and architecture audit findings (2026-11-11; superseded)
 
 - The requested right Workbench is a target place for managed Browser/Files/Terminal/Changes/Activity surfaces, not a live laptop mirror. Current Desktop/Browser UI is preview/status-only; there is no low-overhead desktop capture or real computer-use provider. The design records a bounded ephemeral managed-tab viewport and a persistent browser Take over control only after the provider owns a session and can fence input epochs. Conversation Take control is a different action that cancels generation, waits for provider quiescence, records ownership transfer and enables a new owner turn.
 - Conversation now has durable outbox/single-flight/recovery, version-bound Stop/Retry UI, Activity and a limited text Resource picker at CODE/SERVED levels. Remaining design/logic gaps include pinned provider Form event capture and permission answer normalization, first-message/binary/root attachment coverage, complete ambiguous-error settlement and packaged E2E. The Add context control must not be described as workspace-root ingestion or context retrieval.
@@ -156,7 +116,7 @@ The package TASKS are the stable itemized backlog. Recommended next order, after
 
 Contract audit state: 178 OpenAPI operations are served, four routes remain served outside OpenAPI, and 53 OpenAPI operations are target-only. Promote Feature 014 route contracts and reconcile UI/schema ledgers when implementation is authorized; do not count endpoint registration as a complete journey.
 
-## Preservation and delivery rules
+## Historical preservation and delivery notes — current rules are in AGENTS.md
 
 - Inspect the worktree and ignored/untracked paths before every change.
 - Preserve unrelated user work; never clean, reset, stash, rebase or delete archives.
@@ -197,7 +157,7 @@ Blocker IDs are globally unique across feature packages. The current allocation 
 
 The external workflow graph remains provider-owned. WorkflowBackendAdapter and provider graph authoring are target-only; no Core graph runtime or production adapter is present. OpenBot/n8n/Activepieces research is preserved in the linked reference study and does not authorize a Core workflow engine or direct provider graph mutation.
 
-### Current validation
+### Historical validation — superseded
 
 - Feature package validator: **12/12 passed**; structural checks only, not owner approval or runtime qualification.
 - Cross-owner consistency: **36 assertions passed, 0 issues**.
@@ -210,7 +170,7 @@ The external workflow graph remains provider-owned. WorkflowBackendAdapter and p
 - Whitespace check: **passed** (`check.sh` whitespace stage, exit 0).
 - The full serial frontend suite remains incomplete; the Settings rendered-browser check timed out; packaged Tauri and real-provider USER E2E remain unqualified.
 
-### Next engineering gates
+### Historical next engineering gates — superseded
 
 1. Keep Send disabled until the exact native OS/provider/auth USER path and durable dispatch/single-flight/stop/retry recovery are qualified.
 2. Implement one safe Task vertical slice with accepted plan, Attempt, Environment, Trust, mediated Effect, reconciliation and independent verification.

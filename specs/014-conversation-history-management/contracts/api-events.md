@@ -5,7 +5,7 @@
 
 ## 1. Existing routes (served today)
 
-`POST /v1/conversations` (title 1-160 printable characters, Idempotency-Key), `GET /v1/conversations?cursor=&limit=` (1-100, newest first by creation), `GET /v1/conversations/{conversation_id}`, `PATCH /v1/conversations/{conversation_id}/agent-binding` (If-Match, Idempotency-Key), turn submit, retry and cancel. Source: `apps/litecoworkd/src/conversation_operator.rs`.
+`POST /v1/conversations` (title 1-160 printable characters, Idempotency-Key), `GET /v1/conversations?cursor=&limit=&status=` (1-100, newest first by creation, `ACTIVE` default or `ARCHIVED`), `GET /v1/conversations/{conversation_id}`, `PATCH /v1/conversations/{conversation_id}/agent-binding` (If-Match, Idempotency-Key), turn submit/retry/cancel, `PATCH /v1/conversations/{conversation_id}` (rename), `POST .../archive`, and `POST .../unarchive`. History mutations require If-Match and Idempotency-Key. Source: `apps/litecoworkd/src/conversation_operator.rs`.
 
 ## 2. Proposed routes (not yet in source)
 
@@ -13,7 +13,7 @@
 |---|---|---|---|---|
 | `GET /v1/conversations` | Workspace | adds `status` (`ACTIVE` default, `ARCHIVED`) | page | `INVALID_ARGUMENT` |
 | `GET /v1/conversations/search` | Workspace | `q` (1-256 chars, at most 32 terms), `scope` (`ACTIVE`, `ARCHIVED`, `ALL`), `cursor`, `limit` (1-50) | `items[]` (conversation_id, title, matched TITLE or MESSAGE, message_id, snippet up to 240 chars, status), `next_cursor`, `index_state` (`READY`, `BUILDING`) | `INVALID_ARGUMENT` |
-| `PATCH /v1/conversations/{conversation_id}` | If-Match, Idempotency-Key | `{ "title": string or null }` | 200 Conversation | `STALE_VERSION`, `INVALID_ARGUMENT`, `CONVERSATION_ARCHIVED`, `CONVERSATION_DELETED`, `WORKSPACE_ARCHIVED`, `IDEMPOTENCY_CONFLICT` |
+| `PATCH /v1/conversations/{conversation_id}` | If-Match, Idempotency-Key | `{ "title": string }` (1-160 printable characters after trim; null/empty is invalid) | 200 Conversation | `STALE_VERSION`, `INVALID_ARGUMENT`, `CONVERSATION_ARCHIVED`, `CONVERSATION_DELETED`, `WORKSPACE_ARCHIVED`, `IDEMPOTENCY_CONFLICT` |
 | `POST /v1/conversations/{conversation_id}/archive` | If-Match, Idempotency-Key | none | 200 Conversation | `STALE_VERSION`, `CONVERSATION_TURN_IN_PROGRESS`, `CONVERSATION_DELETED` |
 | `POST /v1/conversations/{conversation_id}/unarchive` | If-Match, Idempotency-Key | none | 200 Conversation | `STALE_VERSION`, `CONVERSATION_DELETED` |
 | `GET /v1/conversations/{conversation_id}/deletion-impact` | Workspace | none | linked task count, artifact count, memory source count, blockers[] | `CONVERSATION_DELETED` |

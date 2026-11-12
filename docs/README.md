@@ -49,7 +49,7 @@ Do not create a second schema authority. Promote machine contracts in schemas/ a
 - SETTINGS-AND-SHELL-SURFACE-AUDIT.md: source-level inventory of mounted Settings controls, unused props, unmounted alternate page and shell-surface boundaries.
 - [UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md](UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md): 2026-11-09 audit of agent-output rendering, Intelligent UI, every screen, every Settings control and architecture, with cowork-style recommendations and proposed tasks.
 - [REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md](REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md): 2026-11-09 synthesis of nine reference repos, the LiteSPM service model, ACP, and alignment of all 17 Final Product Feature List capabilities to the 20 packages. Its proposed tasks P-11..P-19 (with the UI audit's P-00..P-09) were owner-accepted on 2026-11-09 (register A-55) and folded into their packages; the capability verdict is in [V1-PRODUCT-FEATURE-COVERAGE.md](V1-PRODUCT-FEATURE-COVERAGE.md).
-- [LITESPM-INTEGRATION-STUDY-2026-11.md](LITESPM-INTEGRATION-STUDY-2026-11.md): source-cited study of the real LiteSPM repository (HEAD 84d5fab, v0.6.0) - its daemon IPC transport, 19 methods, 12 bridge tools, protocol 2026-07-28, install-plan/approval hash, effect taxonomy and security model - grounding the Feature 013 pin.
+- [LITESPM-INTEGRATION-STUDY-2026-11.md](LITESPM-INTEGRATION-STUDY-2026-11.md): historical, source-cited LiteSPM snapshot (HEAD 84d5fab, v0.6.0). Its daemon IPC and tool counts are upstream research only; the 12-tool MCP snapshot is not the approved LiteCowork pin. Root Architecture requires the published, pinned local MCP stdio bridge. Feature 013 remains owner-deferred; verify exact MCP schemas, approval and recovery behavior before integration.
 - [RIVAL-DEEP-DIVE-PLUGIN-AND-CAPABILITY-PATTERNS-2026-11.md](RIVAL-DEEP-DIVE-PLUGIN-AND-CAPABILITY-PATTERNS-2026-11.md): architecture-level study of eight rival plugin/capability systems (DeepSeek Harness capability seams and plugin manager, open-design plugin registry, ZCode MCP-Apps UI, paradev worktree coding), with proposed tasks P-20..P-26.
 - [DEEPSEEK-HARNESS-DESKTOP-DEEP-DIVE-2026-11.md](DEEPSEEK-HARNESS-DESKTOP-DEEP-DIVE-2026-11.md): line-level read of the DeepSeek Harness desktop shell (register A-63, proposals P-31 to P-46).
 - [HANDOFF-NEXT-AGENT-2026-11.md](HANDOFF-NEXT-AGENT-2026-11.md): full next-agent handoff: environment (env.sh), every command and baseline, git and PR state, commit list, per-package per-task status, next tasks, pitfalls, open decisions, deferrals and study pointers.
@@ -93,3 +93,10 @@ docs/archive/ preserves historical research, old implementation plans and eviden
 
 Use TARGET, CODE, SERVED, INTEGRATED and QUALIFIED. TARGET is normative design; CODE is compiled or unit-exercised; SERVED is an authenticated mounted operation connected to its owning service/storage path; INTEGRATED is a real provider/harness and persisted product path; QUALIFIED is exact OS/build/provider/auth-route evidence with CODE, SYSTEM and owner USER acceptance, including negative and recovery cases. No route count, catalog, UI tile or unit test alone qualifies a product journey.
 
+## Workspace experience design revision (2026-11-12)
+
+- [Cross-screen scope, navigation, dependencies and sequencing](WORKSPACE-EXPERIENCE-REVISION-2026-11.md).
+- [Computer observation, input ownership and takeover](COMPUTER-OBSERVATION-AND-CONTROL-LLD.md) (Feature 008).
+- [ACP structured output and intelligent presentation pipeline](ACP-PRESENTATION-PIPELINE-LLD.md) (Feature 016).
+
+These distinguish user-requested scope from proposed provider/schema details and actual CODE/qualification. They retain the existing domain and canonical machine-contract owners.

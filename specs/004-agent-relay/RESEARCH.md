@@ -1,6 +1,6 @@
 # Research - Agent Relay on One Conversation
 
-**Feature:** 004 | **Checked:** 2026-11-06; re-checked 2026-11-09 for the Claude Code arm and desktop producer path.
+**Feature:** 004 | **Checked:** 2026-11-06; source crosswalk re-checked 2026-11-12. The older pinned rival-source review remains dated 2026-11-06.
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -34,12 +34,12 @@ Inspected the composed Conversation route in `apps/litecoworkd/src/conversation_
 - Feature 002's OpenCode profile probe deliberately records `compatible=false`; the AgentCatalog UI therefore does not allow a new OpenCode binding to be created from that probe. Codex can produce a compatible/startable profile observation and an enabled lead-eligible binding, but the Conversation supervisor has no Codex dispatch arm. Thus the current visible picker cannot provide a complete supported A→B→A sequence.
 - `buildConversationAgentChoices` filters by same Workspace, `enabled`, `leadEligible`, unique binding identity and active Conversation supervisor adapter support. It does not check whether a fresh AgentControlDescriptor/auth observation exists. The descriptor-aware `deriveConversationAgentSurface` helper has tests but no production import/call site; Feature 002's descriptor route is wired but still fails closed with 503 absent a qualified producer.
 - The backend message projection and desktop `ConversationMessageView`/`parseConversationSnapshot` retain nullable `agent_binding_id` and `agent_session_id`; committed messages display their producer from the stored binding. Focused UI tests cover producer parsing and immutable stream identity. This does not establish a second provider or cross-layer relay.
-- The composer `Add context or file` control opens a Resource picker and sends eligible text ResourceRefs for an existing Conversation. Binary files, WorkspaceRoot files and first-message attachment on a new Conversation remain unavailable; the control does not connect workspace retrieval or Context Used receipts.
-- The storage layer builds `ConversationContextPackage` through the exact committed USER-message event revision, orders by aggregate revision, excludes `SYSTEM_NOTICE`, and carries prior AGENT messages' source binding identity. The native prompt encoder rejects any nonempty `resource_refs` and RESOURCE content using `ResourceMaterializationRequired`; no Resource materializer is wired into this relay path.
+- The composer `Add context or file` control opens a Resource picker for an existing Conversation and sends eligible text ResourceRefs. The Feature 001 supervisor reauthorizes and materializes those eligible text references at dispatch before encoding. Binary files, WorkspaceRoot files, first-message attachment on a new Conversation, Workspace retrieval at Send and durable Context Used receipts remain unavailable; the picker does not imply any of those capabilities.
+- The storage layer builds `ConversationContextPackage` through the exact committed USER-message event revision, orders by aggregate revision, excludes `SYSTEM_NOTICE`, and carries prior AGENT messages' source binding identity. The native prompt encoder itself rejects nonempty, unmaterialized references with `ResourceMaterializationRequired`; the Feature 001 supervisor is the only current materialization path before that encoder.
 - Internal bounds are 1,024 source messages / 4 MiB for the context package and 256 KiB for the encoded native text prompt. B-15 was accepted on 2026-11-09 with these as the V1 bounds; they are not yet promoted into SCHEMAS.md/OpenAPI (004-T01).
 - Changing the Conversation binding commits Conversation state only. It does not create a Task, Attempt, DelegationProfile, Environment, lease, grant or Task lead-handoff event. This matches the intended separation between ordinary relay and delegated Task execution.
 
-These are source/route/UI findings. No second-provider native Conversation, Resource materialization, rendered producer-label flow, or A→B→A USER journey was executed. Feature 004 is ACCEPTED/LOCKED (2026-11-09); none of these behaviors is implemented by acceptance.
+These are source/route/UI findings. Producer attribution and eligible text-reference materialization have CODE evidence, but no second-provider native Conversation, full cross-layer A→B→A relay, or A→B→A USER journey was executed. Feature 004 is ACCEPTED/LOCKED (2026-11-09); none of these behaviors is qualified by acceptance.
 
 ## Alternatives
 
@@ -49,7 +49,7 @@ These are source/route/UI findings. No second-provider native Conversation, Reso
 ## Limitations
 
 - Rival web pages were not re-fetched on 2026-11-06 for this package; use [COMPETITIVE-RESEARCH.md](../../docs/COMPETITIVE-RESEARCH.md) before a future market-positioning decision.
-- No second-provider native Conversation, Resource materialization, rendered producer-label flow or A→B→A USER journey was executed.
+- No second-provider native Conversation, full SQLite-to-desktop A→B→A relay, or A→B→A USER journey was executed. Eligible text ResourceRef materialization is present in Feature 001 CODE; root/binary ingestion and Context Used remain unsupported.
 
 ## Unresolved questions
 

@@ -2,9 +2,9 @@
 
 **Status:** LiteSPM upstream local stdio bridge is **WIRED** in its own repository; LiteCowork integration remains **TARGET / not qualified**.
 **Owners:** LiteSPM owns package/catalog/inventory/config-mutation authority; LiteCowork owns Workspace/Coworker/Task authorization, execution and evidence.
-**Upstream pin (superseded 2026-11-09):** this LLD was drafted against `sarv-projects/LiteSPM@111fd9b8e84573f8fce76b6374b4ff9639502539` (main, checked 2026-11-05); the current pin is HEAD `84d5faba75bc621a651e0cec0f831e936bb2082d` (v0.6.0), see the note below.
+**Upstream research snapshots:** this LLD includes observations from `111fd9b8` (checked 2026-11-05), `f77a3a3` (checked 2026-11-06) and `84d5fab` (checked 2026-11-09). None is an owner-approved LiteCowork integration pin.
 
-**Pin resolved (2026-11-09):** the LiteSPM repository was read read-only at HEAD `84d5faba75bc621a651e0cec0f831e936bb2082d` (`git describe` `v0.6.0-143-g84d5fab`, npm `0.6.0`, Apache-2.0) and its published contract transcribed in [LITESPM-INTEGRATION-STUDY-2026-11.md](LITESPM-INTEGRATION-STUDY-2026-11.md). This HEAD supersedes the earlier `9f42b25d` / `111fd9b8` / `f77a3a3` pins; the historical study notes below are kept for provenance. Confirmed: JSON-RPC line-delimited local IPC, `daemon.handshake` plus 19 methods, protocol `2026-07-28`, `planHash` over RFC 8785 canonical JSON, a 17-action effect taxonomy and a central egress/secret model. The pin is re-read at implementation time (013-T02 / 013-T20); wire names come from the published contract, never inferred (AGENTS.md section 6).
+**2026-11-12 boundary correction:** root ARCHITECTURE.md and AGENTS.md make the published local MCP stdio bridge the LiteCowork integration boundary. This LLD's direct daemon IPC/client recommendations and service-descriptor proposal are non-normative research and are not authorized for implementation. The documented MCP tool count conflicts (12 tools in the 84d5fab study, 13 at 111fd9b8); re-read exact server/tool schemas at the owner-approved pin. Runtime/process ownership, process identity, approval and recovery semantics remain unresolved in Feature 013. See [LITESPM-INTEGRATION-STUDY-2026-11.md](LITESPM-INTEGRATION-STUDY-2026-11.md) and [Feature 013](../specs/013-litespm-package-lifecycle-bridge/README.md).
 **Prerequisites:** Pin a LiteSPM release/commit and qualify the exact MCP tool schemas, host-target semantics, peer-auth behavior, plan/approval protocol, operation receipt, idempotency and UNKNOWN recovery before enabling any LiteCowork adapter. The documented launch surface is `litespm bridge stdio --host <host-id>`; host-specific prompt behavior is not uniform. Do not scrape CLI output or guess RPC/tool names.
 **References:** [Product](V1-PRODUCT-RELEASE-CONTRACT.md), [Capability Fabric](CAPABILITY-FABRIC.md), [Capability Invocations](CAPABILITY-INVOCATIONS.md), [Agent Control](AGENT-CONTROL.md), [Trust](TRUST.md), [upstream STATUS.md at pinned commit](https://github.com/sarv-projects/LiteSPM/blob/111fd9b8e84573f8fce76b6374b4ff9639502539/STATUS.md), [upstream AGENTS.md host UX](https://github.com/sarv-projects/LiteSPM/blob/d7dada2b5447a5f4a97f0018b0d901411409e123/AGENTS.md).
 
@@ -31,12 +31,10 @@ the prompt under `/litespm:marketplace`, while Qwen Code 0.14.4 does not map MCP
 to slash commands and instead exposes the MCP tools under `/mcp`. Do not promise a
 universal `/marketplace` interaction across native agents.
 
-The upstream local IPC contract distinguishes transport permissions from independently
-verified peer identity. Its status says Windows uses an owner-only Named Pipe DACL as
-the OS boundary but reports `peerAuth.verified=false` with a reason because no separate
-peer credential query is performed. Linux/macOS credential-query behavior is distinct.
-LiteCowork must inspect and enforce the exact handshake result for each supported OS; it
-must never promote an owner-only DACL into a claim of verified application-level identity.
+The upstream daemon local-IPC contract distinguishes transport permissions from independently
+verified peer identity. These daemon endpoint observations are not LiteCowork's auth
+contract while the product boundary is MCP stdio. Runtime/process ownership must provide
+the process-identity evidence for each OS; stdio and MCP metadata alone do not prove it.
 
 The upstream README lists dynamic catalog and host figures, but counts are time-bound and
 must not become LiteCowork promises. The UI consumes current package-level installability,
@@ -89,7 +87,7 @@ When the host owns a private extension configuration, LiteSPM can offer observat
 
 ## 5. Machine interface to agree and qualify
 
-Define a versioned **authenticated local** LiteSPMServiceDescriptor (protocol version, identity, endpoint, supported operations, maximum input/response sizes, challenge/auth mechanism, health/availability). LiteCowork only uses operations advertised and qualified by that exact version. No stringly typed shell command constructed from arbitrary package input.
+Use only LiteSPM's **published, pinned MCP stdio bridge** as the integration boundary identified by root ARCHITECTURE.md. Do not invent a LiteCowork `LiteSPMServiceDescriptor`, daemon endpoint, direct RPC method or a new authentication challenge. LiteCowork validates the negotiated MCP protocol/server information and exact bounded tool manifest against the published pin. The Runtime/process owner is responsible for the approved launch/session lifecycle and per-OS process-identity evidence; MCP stdio metadata alone does not prove OS identity. If that evidence or a needed operation is unavailable, keep the integration or verb unavailable. No shell command may be built from arbitrary package input.
 
 **Semantic operations (not assumed wire method names):**
 
@@ -107,7 +105,7 @@ Define a versioned **authenticated local** LiteSPMServiceDescriptor (protocol ve
 | subscribe/operation-get | cursor or operation identity | bounded progress, durable result or UNKNOWN with resumption |
 | invoke | separately granted capability ref, scope and effect policy | invocation result + provider/native assurance info; not a package-install authorization |
 
-LiteSPM must own the final published wire method names, schemas, error vocabulary and version negotiation. This document must be reconciled with that upstream publication before a real client is marked integrated. Version-incompatible clients fail closed.
+LiteSPM owns the final published MCP tool names, schemas, error vocabulary and protocol version. This document must be reconciled with that upstream publication before a real client is marked integrated. Version-incompatible clients fail closed; daemon method names recorded in research are not substituted for MCP tool names.
 
 ## 5b. Historical upstream package-taxonomy observation — pinned 2026-10-22
 
@@ -176,11 +174,11 @@ to a Workspace/Coworker.
 
 ## 6. Plan/apply transaction and crash recovery
 
-1. LiteCowork authenticates to local LiteSPM and obtains current service descriptor; user selects the exact package/host/scope.
+1. The approved Runtime/process owner supplies a local stdio MCP session; LiteCowork validates initialization, server info, tool manifest and process-identity evidence against the pinned bridge profile. The user selects the exact package/host/scope only after the profile is ready.
 2. Read observed/native state and host compatibility. Present source, origin and exact changes.
 3. LiteSPM produces **read-only** mutation plan: target locator, pre-image hash, new image (or ownership record only), conflicts, replacement/rollback and requirement for user consent.
 4. User approves a particular plan digest/expiry and host/scope. Approval to **manage package config** is separate from LiteCowork execution grants.
-5. Apply with a stable idempotency key; LiteSPM revalidates freshness and preconditions, records recoverable operation intent, executes each owned mutation, commits durable operation receipt and read-back observation.
+5. Apply only through an exact published MCP tool schema that preserves the stable idempotency key and owner-approved plan identity; LiteSPM revalidates freshness and preconditions, records recoverable operation intent, executes each owned mutation, commits durable operation receipt and read-back observation. If the published tool surface cannot preserve these semantics, the mutation verb remains unavailable.
 6. If a response is lost, query the original operation identity; if external state is UNKNOWN, inspect/journal/reconcile before retry; never launch the same unmanaged mutation blindly.
 7. LiteCowork refreshes package inventory and separately offers approved Workspace/Coworker assignment and runtime use.
 

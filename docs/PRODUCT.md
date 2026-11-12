@@ -53,13 +53,14 @@ cross-device support and teamwork remain V2.
 ## Primary navigation
 
 ```text
-New session / Conversations
-Coworkers (optional)
-Needs You
+New Chat / Recent chats
+Needs You (compact attention inbox)
 Work
-Automations
+Coworkers
 Library
-Discover
+Automations (Routines inside)
+More (Discover, Dashboard, Goals, Notifications, Ideas, explicit New Task)
+Settings (footer)
 ```
 
 Recent Conversations remain visible in the persistent sidebar. Technical surfaces such as
@@ -252,3 +253,9 @@ The product promise and release boundary are translated into screens and journey
 ## External workflow authoring boundary — 2026-11-06
 
 The OpenBot source comparison demonstrates a visual graph editor plus agent tools for graph editing. n8n Assistant/MCP and Activepieces Build by Asking/MCP further demonstrate that provider-native AI authoring can produce a normal provider-owned graph that remains visually inspectable and manually editable. LiteCowork's product boundary remains: manual and provider-native AI authoring happen inside the connected provider; no native graph editor/runtime is added to LiteCowork Core. The target LiteCowork integration is to discover, validate, map, invoke and observe existing workflows through a future qualified WorkflowBackendAdapter as one bounded CapabilityInvocation inside a Task. That adapter is not implemented in the active source tree, so no workflow selection or invocation is currently served. Coworkers may draft LiteCowork Routines and map inputs; direct LiteCowork-agent graph mutation requires a future provider-specific authoring capability and explicit owner/security approval. Provider Code nodes remain provider-side execution and do not inherit LiteCowork Environment/Trust guarantees. See [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md) and [CONNECTORS-WORKFLOWS.md](CONNECTORS-WORKFLOWS.md) §10.
+
+## Workspace experience revision - 2026-11-12
+
+The requested product scope includes a live selected computer screen/window in the right panel, separately consented agent disclosure and input, and explicit manual takeover. A managed-browser viewport is a distinct view and does not fulfill the live-computer requirement. Runtime capture/input remains unavailable until its exact provider, OS permissions, revocation, input fencing and recovery qualify. The prior B-32 milestone deferral is historical; the requested design revision and its unresolved provider gates are recorded in [Workspace experience revision](WORKSPACE-EXPERIENCE-REVISION-2026-11.md) and Feature 008.
+
+The primary UI reveals four workspace destinations and keeps secondary modules reachable without permanent sidebar rows. Conversation, interactive answer and expanded Canvas are presentation states in one application. Native registered components and deterministic calculations are the default; saved interactive state and conversational revisions require the separately governed Feature 016 revision. No global BYOK router, hosted account, hidden presentation model or architecture replacement is authorized by importing the supplied design essay.

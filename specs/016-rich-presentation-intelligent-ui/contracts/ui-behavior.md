@@ -4,7 +4,7 @@
 **Normative UI indexes:** [V1-UI-SCREEN-CONTRACT.md](../../../docs/V1-UI-SCREEN-CONTRACT.md), [V1-UI-ACTION-STATE-LEDGER.md](../../../docs/V1-UI-ACTION-STATE-LEDGER.md), [DESKTOP-SHELL-LLD.md](../../../docs/DESKTOP-SHELL-LLD.md).
 **Wire:** [LOCAL-OPERATOR-IPC.md](../../../docs/LOCAL-OPERATOR-IPC.md) and [operator-api.openapi.yaml](../../../docs/schemas/operator-api.openapi.yaml).
 
-The UI renders validated documents and semantic text. Presentation elements never call host commands.
+The UI renders validated documents and semantic text. Model-authored presentation elements never call host commands. Separately gated revision 0.2 host-owned chrome uses typed navigation, state-only commands and explicit ordinary Conversation Send.
 
 ## 1. User flow and transitions
 
@@ -68,3 +68,17 @@ AC-002, AC-004, AC-005, AC-006, AC-008, AC-009, AC-010, AC-013, AC-018 through `
 | View rich answer | message | `get_rich_presentation` | `GET /v1/rich-presentations/{presentation_id}` | RichPresentationStore | `rich_presentations` | stream resync | to be recorded |
 | Disable rich view | Settings switch | Feature 011 preference | Feature 011 | Feature 011 preference store | local preference | persisted across restart | to be recorded |
 | Calculator | inputs | none (view-local) | none | view | none | none | to be recorded |
+
+## 9. Revision 0.2 TARGET controls and trace
+
+These controls do not exist yet. B-40 baseline calculator inputs remain view-local. [Pipeline LLD](../../../docs/ACP-PRESENTATION-PIPELINE-LLD.md) owns the design decomposition; canonical machine contracts must be promoted before routes ship.
+
+| Exact host control | Screen and state transition | Typed command/route and authorization | Owner/transaction/projection/recovery | Evidence target |
+|---|---|---|---|---|
+| Expand / Collapse | Conversation rich answer <-> Workbench Canvas; same digest/input revision; focus moves to heading and returns to Expand | Local navigation; no IPC or agent dispatch | One shared controller; no domain record/event; clear on Workspace switch/revocation | T21, AC-022; keyboard/high zoom/identity spy |
+| Remember this view on this device | Canvas host toolbar: off -> consent review -> saving -> saved/conflict/unavailable | Proposed typed update interaction state through authenticated Operator; principal/Workspace/exact presentation authorization and expected revision | T22 storage transaction state + receipt + content-free event; same-receipt timeout reconciliation | T22/T24, AC-025; quota/replay/two-window/crash |
+| Forget remembered data | Canvas host toolbar -> forgetting -> forgotten, or unknown until receipt resolves | Proposed typed forget through authenticated DELETE state route; exact namespace/deletion fence | T22 content deletion + fence/receipt; late saves/acks cannot resurrect | T22/T24, AC-026; save/forget/revoke/restart |
+| Ask to change this view > Send | Conversation/Canvas host chrome -> selected snapshot preview -> explicit new turn -> review proposal | Feature 001 normal authenticated new-turn command, optional explicitly selected bounded context; no input-change autosend | New semantic message/presentation with parent/base revision; stale local input conflict preserves draft | T23/T24, AC-027; cancel/retry/no implicit send |
+| Read original / Show data table / Reset | Always accessible in inline and expanded view | Local view actions only | Semantic fallback/formula/table remains readable; reset pinned original input values | Existing ACs plus T21 accessibility |
+
+Empty remembered state means original inputs, never zero guesses. Loading/read failures retain original semantic answer and label remembered data unavailable. Save/forget timeout must not show saved/forgotten until reconciled. Controls remain hidden/unavailable with a plain reason until the exact extension is accepted, implemented and qualified. Rendered rich document cannot mimic host confirmation or attach its own command.

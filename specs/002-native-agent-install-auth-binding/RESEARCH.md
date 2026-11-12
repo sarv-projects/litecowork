@@ -1,6 +1,6 @@
 # Research - Native Agent Install, Auth, Binding and Agent Profile UX
 
-**Feature:** 002 | **Checked:** 2026-11-06 (active source/UI audit and screenshot/competitor comparison; no native install or provider session executed). Re-traced 2026-11-09 for the OpenCode binding break (SPEC §4a).
+**Feature:** 002 | **Checked:** 2026-11-12 (source/UI and contract re-audit; no packaged provider journey or real sign-in executed). Historical comparison material remains pinned to the dates stated below.
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -44,13 +44,16 @@ Reject:
 5. Usage: dashboard quick ranges Today, 7 days, 1 month, 3 months, 1 year and All time, plus YTD/Custom in expanded filters. Grouping and filters are governed by telemetry LLD and existing ledgers.
 6. Work panels: keep separate Conversations and native Terminal panes within a Task/work context only when actual session/process identity exists; do not promote mock terminal output to durable completed work.
 
-## Current LiteCowork source/UI evidence
-- `AgentCatalogSettings` currently lists 15 curated candidates and ACP registry entries; registry results are read-only and map to NO_ADAPTER.
-- Local inventory probes version/path metadata for a bounded candidate set; auth UNKNOWN, readiness NOT_PROBED. No actual AgentModule install/update action exists.
-- Profile probe supports Codex/OpenCode only, Runtime enrollment required. Codex App Server initialize/account/model-list is observed; OpenCode is recorded incompatible. Neither guarantees an end-to-end Conversation session.
-- Descriptor read/refresh and credential submission return 503 DEPENDENCY_UNAVAILABLE; auth-begin and native-config-open are served and wired through authenticated ID-only Tauri commands, but fail closed because no V1 module declares a qualified method or target.
-- Binding list/create/enable/disable/default actions are served; enable currently lacks required fresh AgentControlDescriptor gate.
-- Conversation supervisor dispatches OpenCode only, but current OpenCode profile probe is incompatible; Codex can be bound but is not dispatched by the active supervisor.
+## Current LiteCowork source/UI evidence (checked 2026-11-12)
+- `AgentCatalogSettings` lists 15 curated candidates and ACP registry entries; registry results are read-only and map to `NO_ADAPTER`.
+- Local inventory probes bounded version/path metadata; auth is UNKNOWN and readiness NOT_PROBED. No native AgentModule install/update action exists.
+- Profile probing supports Codex/OpenCode after local Runtime enrollment. Codex App Server initialize/account/model-list is observed. OpenCode offer admission is now computed; only exact 2.0.32 plus a complete probe and observed host stop is bindable in code. Neither profile probe proves an end-to-end Conversation session.
+- Descriptor GET/refresh is served for the trusted OpenCode module, using a validated descriptor and the table already present since migration 16. Module-less profiles still return 503. The per-module three-per-minute budget is in-memory, so restart resets the throttle.
+- Credential submission remains 503 before SecretStore mutation: the production path uses `NoAgentDescriptorSource`, and durable idempotency/reconciliation is not implemented. No current module declares a LiteCowork-owned credential slot.
+- Auth-begin and native-config-open are served through authenticated ID-only Tauri commands, but the production launcher/opener fail closed; OpenCode declares no auth method or native-config target. Auth observations are in-memory and restart to UNKNOWN.
+- Binding list/create/enable/disable/default actions are served. Enable checks a fresh descriptor revision when the profile's module declares one; the legacy module-less path remains outside that gate.
+- The Conversation supervisor dispatches OpenCode, not Codex. The OpenCode profile offer can now be compatible under the exact predicate, but local/integrated/qualified provider execution evidence is still absent from the package's release row.
+- The model picker is only a TypeScript view-model; the popover and session-option route are not wired to admission. No Usage projection is served.
 - UI currently has no Install/Update or native sign-in flow; usage detail/projection is not served.
 
 ## V1 boundary

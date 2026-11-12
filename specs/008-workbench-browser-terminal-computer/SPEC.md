@@ -1,10 +1,12 @@
 # 008 - Workbench Browser Terminal and Computer
 
+> **Revision 1.1 scope revision (2026-11-12): IN_REVIEW / TARGET.** The user explicitly requested whole-laptop Computer observation and immediate manual takeover, rejecting the earlier browser-only substitution. Revision 1.0 owner acceptance (2026-11-09) and B-32 deferral below are historical authority for that revision; they are not acceptance of this extension. Implementation remains unchanged and Computer remains UNAVAILABLE. The revised owner design is [Computer observation and control LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md). No new provider, transport, route or qualification is approved by this documentation pass.
+
 **ID:** 008
-**Status:** ACCEPTED/LOCKED
+**Status:** IN_REVIEW (revision 1.1); revision 1.0 ACCEPTED/LOCKED
 **Owners:** Desktop shell, Environments, Browser provider, Trust, Desktop UI
-**Updated:** 2026-11-11 (source evidence refreshed; accepted target unchanged)
-**Revision:** 1.0 (revision 1.0 adds V1 gap coverage per owner acceptance 2026-11-09: Workbench Activity view, exact-revision/VCS Diffs, Linux-row-first terminal with Windows UNAVAILABLE until Feature 005 B-35, explicit Computer UNAVAILABLE; AC-013 to AC-017)
+**Updated:** 2026-11-12 (explicit user scope revision; provider choices remain recommendations)
+**Revision:** 1.1 IN_REVIEW; historical 1.0 (revision 1.0 adds V1 gap coverage per owner acceptance 2026-11-09: Workbench Activity view, exact-revision/VCS Diffs, Linux-row-first terminal with Windows UNAVAILABLE until Feature 005 B-35, explicit Computer UNAVAILABLE; AC-013 to AC-017)
 **Owner acceptance:** accepted 2026-11-09 by the repository owner (sarv-projects) via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md) (PR #1), including each scoped caveat as a binding condition. Acceptance authorizes implementation; it is not a claim of implementation, SERVED, INTEGRATED or QUALIFIED status.
 **Change control:** this is a locked contract. Any change to a locked decision, interface or acceptance criterion requires a new revision and renewed owner approval (docs/SPECIFICATION-STANDARD.md §7).
 **Target release:** V1 local desktop
@@ -24,7 +26,8 @@ Observable outcome: The owner uses the right Workbench to finish real browser an
 - Revoke stale browser and terminal handles on epoch change or Runtime restart rules.
 - Show a truthful Workbench Activity view sourced only from committed records (revision 1.0 gap coverage).
 - Show Diffs computed only from exact immutable ResourceRevision pairs or exact VCS revisions, with true counts (revision 1.0 gap coverage).
-- Keep Computer use explicitly UNAVAILABLE in V1 (B-32) and the Terminal visibly UNAVAILABLE on any release-matrix row without a qualified Environment provider.
+- Specify a real selected laptop display/window in Computer, separately authorized for local observation, agent disclosure and mediated input; retain truthful UNAVAILABLE until promoted and qualified.
+- Keep Terminal unavailable without its required admitted Environment/provider; specify manual vs agent ownership and defaults without bypassing B-35.
 
 ## 3. Non-goals
 
@@ -51,7 +54,7 @@ The active checkout has a substantial Workbench presentation component and compi
 | Computer use | CODE/UI: `environment_computer_use.rs` contains policy-only consent/scope/sensitive-region checks; Workbench shows a status-only unavailable message | The probe never reports READY; no capture/input backend or route exists, and no action control is rendered (accepted B-32). |
 | Environment control/takeover APIs | OpenAPI types define `takeEnvironmentControl` and `returnEnvironmentControl`; the composed route inventory classifies both as target-only | No server handler or Workbench call site. Browser policy takeover functions are pure helpers and are not connected to an EnvironmentControlLease store, provider or UI. |
 
-Feature 008 design is ACCEPTED/LOCKED (owner acceptance 2026-11-09); its target is unchanged. Current implementation is partially truthful about unavailable capabilities: Activity has an explicit empty state, Terminal and Computer are status-only, Review has no synthetic diff, and Browser remains an embedded preview. No Browser, PTY/ConPTY, Activity data or Computer provider is qualified.
+Feature 008 revision 1.0 was ACCEPTED/LOCKED (owner acceptance 2026-11-09); revision 1.1 is IN_REVIEW with the explicit scope change in section 5a. Current implementation is partially truthful about unavailable capabilities: Activity has an explicit empty state, Terminal and Computer are status-only, Review has no synthetic diff, and Browser remains an embedded preview. No Browser, PTY/ConPTY, Activity data or Computer provider is qualified.
 
 **Source re-check 2026-11-11 (register A-51 remediation and T02 implementation).** The Terminal UI, Diffs/Review and Browser rows above describe the pre-A-51 component. The current `apps/litecowork-ui/src/workbench/WorkbenchPanel.tsx` exports `TerminalPane` ("Terminal execution is unavailable" notice, no input, no output, no ConPTY/Job Object labels) and `ReviewPane` ("Nothing to review yet", no synthetic diff or counts); the Browser `browserUrl` starts empty and the pane is labelled "Embedded page preview" with no containment claim. `apps/litecowork-ui/tests/workbench-truthfulness.test.mjs` asserts the absence of fabricated process, diff and containment strings. The Activity tab now has its own status-only empty state, and Computer use is shown only as unavailable status text. Terminal and Review no longer render sample process output or synthetic diffs. No browser, terminal, activity-data or diff producer route exists. These UI changes improve truthful availability; they do not add provider capability or qualification.
 
@@ -84,7 +87,7 @@ The three questions below were the open decisions; each is now ACCEPTED (2026-11
 - B-23: Desktop shell, Environments and Security must accept one real PTY/ConPTY implementation and shell profile, tied to a qualified Environment. Acceptance requires a real process, exact executable/argv/cwd/allowlisted env, per-session process-tree containment, bounded streaming, resize, explicit stop, detach/reattach and quiescence/lost-session proof on UI close, Runtime restart and crash.
 - B-32: Product and Desktop shell must decide Computer-use scope. If same V1 milestone, Environments/Trust must supply an exact OS provider with explicit capture/input permission, scope, excluded sensitive regions, revocation and per-action authority; current code explicitly has no capture or injection backend. Otherwise defer the surface and state it as unavailable.
 
-### ACCEPTED DECISIONS AND ARCHITECTURAL CONTRACTS (owner-accepted 2026-11-09)
+### Historical revision 1.0 ACCEPTED DECISIONS (owner-accepted 2026-11-09)
 
 The repository owner accepted these resolutions on 2026-11-09 via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md), including the riders recorded in each row. The register [docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md](../../docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md) is updated by the orchestrator. Browser, terminal and computer-use remain three independent qualification axes.
 
@@ -94,11 +97,23 @@ The repository owner accepted these resolutions on 2026-11-09 via [docs/OWNER-AC
 | B-23 | First real terminal provider, shell profile and Environment binding | **ACCEPTED (2026-11-09): One daemon-owned PTY/ConPTY provider bound to an admitted Environment, with a discovered default shell profile and no startup-script execution during discovery.** The provider spawns exactly one process tree per terminal tab under the admitted Environment, with exact shell executable/argv/cwd and an allowlisted environment, a process-tree containment receipt (Job Object on Windows, cgroup on Linux), bounded scrollback/backpressure, resize and stdin bridged to Tauri. Tab switch/detach/reattach never respawns or kills the process; explicit Stop terminates the owned tree; UI close, Runtime stop and crash yield exact QUIESCENT or LOST/UNKNOWN evidence. Discovery performs bounded executable/version probing only and never sources rc files or scrapes secrets. The command-receipt shape and timeout-as-receipt doctrine are informed by OpenHands (RESEARCH.md). **B-17 rider (binding):** Linux bubblewrap is the first Environment provider, so the terminal qualifies on the Linux x64 row first (PTY via `openpty`, cgroup/process-scope lifetime). On the Windows x64 row the Terminal stays visibly UNAVAILABLE, naming the missing Windows Environment provider, until Feature 005 blocker B-35 (AppContainer + restricted token + Job Object + WFP egress, all four dimensions ENFORCED and attested) qualifies; a Job Object alone is process lifetime only and never an isolation claim. | [V1-INTEGRATED-TERMINAL-LLD.md](../../docs/V1-INTEGRATED-TERMINAL-LLD.md), [ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md). The exact OS/shell/PTY implementation is promoted into the owner contract by the first implementation task; the Terminal pane stays unavailable until a real admitted session exists. |
 | B-32 | Computer-use milestone and takeover boundary | **ACCEPTED (2026-11-09): Defer Computer use from the first V1 milestone and keep the surface explicitly UNAVAILABLE.** No disabled-but-ready computer button, synthetic cursor or capture control is rendered; `probe_computer_provider()` continues to report UNSUPPORTED/UNAVAILABLE on the supported targets. If Product later includes it, Environments/Trust must supply an exact OS capture/input provider with explicit permission flow, scope, excluded sensitive regions (password/payment/CAPTCHA/MFA remain human-only), revocation and per-action authority sharing the same consent epoch as the browser. | [ENVIRONMENTS.md](../../docs/ENVIRONMENTS.md), [TRUST.md](../../docs/TRUST.md). Keeping the surface explicitly UNAVAILABLE is the accepted V1 position; any later inclusion requires a new revision, a promoted provider contract and renewed owner approval. |
 
-These decisions are owner-accepted and the package is ACCEPTED/LOCKED. Implementation and qualification status are unchanged and tracked in §4 and docs/IMPLEMENTATION-STATUS.md; no provider, route or OS process exists yet.
+These revision 1.0 decisions are historically owner-accepted; revised scope is IN_REVIEW. Implementation and qualification status are unchanged and tracked in §4 and docs/IMPLEMENTATION-STATUS.md; no provider, route or OS process exists yet.
+
+## 5a. Revision 1.1 scope and decision boundary (2026-11-12)
+
+The user's correction explicitly changes requested design scope: Computer shows the laptop display and native applications, not just the managed browser viewport. B-32's 2026-11-09 deferral and the 2026-11-11 browser-only refinement below remain historical decisions; they no longer describe the requested revision 1.1 target. Renewed owner review and canonical machine promotion remain gates. Revision 1.0 AC-016 and its no-capture-route tests describe the current implementation baseline; revised design acceptance is AC-020 onward. Do not claim both as active release promises for the same revision.
+
+- Explicit system source selection, ephemeral actual laptop preview and persistent immediate manual takeover with separate Return. Ordinary local observation requires no Task.
+- Local view, agent frame disclosure and agent input are independent permits. USER input ownership does not prohibit separately authorized local observation. Existing EnvironmentControlLease owns input arbitration; no parallel computer lease authority.
+- Windows.Graphics.Capture is the recommended first observation spike; compare Desktop Duplication. Native Linux portal/PipeWire and later macOS qualify independently. Binary bounded local transport is recommended; codec, versions, numerical performance parameters and final transport are not accepted/pinned choices.
+- Agent mutation requires live Task/Attempt/Environment and Trust/Effect authority. Desktop capture is not an isolated Task environment and does not clear Windows B-35 or authorize an agent host terminal.
+- One compact Workbench retains object tabs and a **+** menu for Computer, Browser, Terminal, Files, Canvas and other supported views. Tool selection never grants authority or silently starts capture/processes. Canvas uses existing exact-version Artifact/editor authority and never executes model scripts in chat.
+
+The detailed owner refinement is [Computer observation and control LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md). [Integrated Terminal LLD](../../docs/V1-INTEGRATED-TERMINAL-LLD.md) defines defaults, process/input ownership and manual-terminal gates. The package records mappings, not duplicate API/state-machine authority.
 
 ## 6. High-level design
 
-Right Workbench hosts views. Browser control goes through a lease gateway outside SQLite. Terminal opens a PTY only after Environment admission. Computer actions use the same epoch and consent record. UI disablement follows provider availability.
+Right Workbench hosts authorized object views. Browser, Computer observation and PTY are separate provider lanes. Capture/disclosure permits are separate from input leases; the existing Environment control authority serializes mediated OS input for the physical desktop. Browser CDP-only control retains its browser lease; OS input shares desktop arbitration. Terminal opens only in its admitted context. The diagram below records revision 1.0 context; revision 1.1 adds the Computer LLD lane.
 
 ### Feature-specific component diagram
 
@@ -226,7 +241,7 @@ Reload the last committed owner records. Do not infer success from an intent. Re
 
 ## 13. Configuration and compatibility
 
-Modes that are not qualified stay hidden with a repair path. Computer use stays explicitly UNAVAILABLE because accepted B-32 defers it.
+Unqualified operations expose truthful availability and repair. Computer stays UNAVAILABLE in the current build; revision 1.1 requests its actual laptop view subject to review, promotion and qualification.
 
 OS qualification is per native desktop. WSL2 does not qualify Windows or Linux GUI behavior.
 
@@ -236,7 +251,7 @@ Release-matrix rows (accepted 2026-11-09): row 1 is Windows x64 (`x86_64-pc-wind
 
 Log ids, versions, statuses and denial reasons. Do not log secret bytes, native handles, private locators or raw credentials. Audit commits include actor, workspace and receipt id.
 
-## 15. EARS acceptance
+## 15. Historical revision 1.0 EARS acceptance (current implementation baseline)
 
 Positive:
 - **AC-002:** WHEN the owner starts a managed browser epoch, THE SYSTEM SHALL record consent and a session epoch before any agent browser action. Verify: consent/epoch-ordering test.
@@ -293,11 +308,11 @@ Further gates after ACCEPTED/LOCKED are the cargo filters named in TASKS.md. The
 ## 18. Assumptions and open questions
 
 - Browser provider, terminal provider and Computer-use provider are separate qualification decisions. A mode/policy enum or UI control does not prove an OS process/provider exists.
-- Computer use is deferred by accepted B-32; the current helper must remain visibly UNAVAILABLE/UNSUPPORTED rather than appear as a disabled-but-ready computer tool.
+- B-32 deferral belongs to accepted revision 1.0. Revision 1.1 requests Computer inclusion; until its gates pass, current helper and UI remain UNAVAILABLE/UNSUPPORTED.
 - The current Review pane is an honest empty state, not a VCS/evidence diff. Activity is now a rendered status-only Workbench tab (2026-11-11 CODE); its placement follows the accepted V1 screen contract, and no fabricated timeline is shown.
 - Archive UI is not served evidence.
 
-Each blocker has the owners named above. The owner decisions are recorded (ACCEPTED 2026-11-09). Implementation tasks: 008-T01 through 008-T21 in TASKS.md.
+Each blocker has the owners named above. The owner decisions are recorded (ACCEPTED 2026-11-09). Historical implementation tasks: 008-T01 through 008-T21; revision 1.1 extends with T22 through T27 in TASKS.md.
 
 ## 7a. Owner facts and implementation crosswalk checked 2026-11-06
 
@@ -347,3 +362,16 @@ Read from CHROME-BROWSER-LLD, V1-INTEGRATED-TERMINAL-LLD, and STATE-MACHINES.
 | Prior-incarnation handles fenced | RUNTIME-LIFECYCLE, CHROME-BROWSER-LLD | 008-T07, 008-T13 | AC-017 | Incarnation-fencing restart test |
 | Browser iframe sandbox guard (P-06, owner approval 2026-11-09) | CHROME-BROWSER-LLD, register A-51 | 008-T19 | AC-018 | Iframe sandbox guard test |
 | Git worktree, VCS diff and user-invoked GitHub PR ops (P-13, owner approval 2026-11-09) | ENVIRONMENTS, Feature 006 Connection broker | 008-T20 | AC-019 | Worktree/VCS diff and PR-op test |
+
+
+## 20. Revision 1.1 EARS acceptance and traceability (TARGET / IN_REVIEW)
+
+- **AC-020:** WHEN the owner selects a laptop display through the system picker, THE SYSTEM SHALL show that actual display in Computer with source/freshness/privacy state and SHALL NOT substitute a browser-only tab. Cancel or denial SHALL grant nothing. Verify: native display/window/source-denial matrix (008-T23/T24).
+- **AC-021:** WHILE USER owns input, THE SYSTEM SHALL allow independently permitted local observation, SHALL disclose no frames to an agent without its separate permit, and SHALL revoke queued disclosures on Hide from agent. Verify: permit cross-product, expiry and revocation races (008-T23/T24).
+- **AC-022:** WHEN Take over is requested from the in-app strip or a qualified out-of-app trigger, THE SYSTEM SHALL immediately fence new mediated agent input independently of capture/model queues, discard queued old-epoch input and report USER only after provider-confirmed transfer; already dispatched unknown input SHALL remain ambiguous. The out-of-app trigger SHALL work while the target application is foreground and LiteCowork is backgrounded; if no qualified trigger is available or it is lost, THE SYSTEM SHALL refuse mediated Computer input. Verify: last-hop fence, foreground/background takeover, shortcut conflict/registration loss, response-loss, provider stall and two-window races (008-T25).
+- **AC-023:** WHEN Return to agent is confirmed, THE SYSTEM SHALL revalidate grants/session/Attempt/provider and fresh geometry/observation in a new epoch, and SHALL NOT replay stale clicks, shell commands or submit user edits. Verify: stale target/incarnation/geometry and return-denial cases (008-T25).
+- **AC-024:** WHEN capture is slow, hidden, revoked, locked or over-bound, THE SYSTEM SHALL retain bounded queues, label stale/paused status, stop unauthorized disclosure and wipe released buffers; it SHALL NOT persist frames into chat/Activity by default. Verify: slow-consumer, lock, source removal, restart, privacy and sustained-load measurements on exact laptop build (008-T24/T27).
+- **AC-025:** WHEN a terminal is opened, THE SYSTEM SHALL resolve a validated OS/Runtime default profile, show its actual admitted context and input owner, keep agent tabs read-only until confirmed takeover, and SHALL NOT grant an agent the manual user's host shell. Verify: default resolution, two-window stdin, partial-line ownership and B-35 denial tests (008-T26).
+- **AC-026:** WHEN the owner selects **+** or switches Workbench object tabs, THE SYSTEM SHALL preserve live provider identity and unsaved Canvas/editor drafts without auto-starting capture/shell or reviving stale authority. Verify: keyboard/zoom, compact+narrow layout, dirty draft and restart tests (008-T26/T27).
+
+Canonical authority for AC-020..024 is the Computer LLD under ENVIRONMENTS/TRUST; AC-025 uses Integrated Terminal LLD; AC-026 uses Desktop shell and existing Artifact owners. 008-T22 records review, 008-T23 promotes machine contracts, and 008-T27 records exact cross-layer qualification. Release review explicitly reconciles historical AC-016 with newly selected Computer rows. Until recorded decisions and evidence exist, Computer remains UNAVAILABLE; this documentation pass changes no implementation.

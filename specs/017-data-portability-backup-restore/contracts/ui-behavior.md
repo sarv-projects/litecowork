@@ -16,8 +16,8 @@ Settings > Storage & Backup (new category registered in the Feature 011 Settings
 | Mode choice (Installation backup / Portable export) | part of create | Portable shown only when served on this row | n/a | n/a | n/a |
 | Passphrase + confirm | part of create, verify, import | Length at least 12 (daemon enforces) | Field cleared on submit | n/a | `BACKUP_PASSPHRASE_REJECTED` re-prompts |
 | Cancel | `cancel_backup_operation` | Operation QUEUED or RUNNING | "Cancelling" | "Cancelled" or committed result | `STALE_VERSION` refreshes |
-| Verify archive | `verify_backup_archive` | No nonterminal operation | Progress | "Archive is valid" with Workspace name and schema | Typed error |
-| Import Workspace | `import_workspace_backup` | No nonterminal operation | Progress | New Workspace listed; prompt to re-authenticate Connections | `WORKSPACE_IMPORT_CONFLICT` explains no overwrite |
+| Verify archive | `verify_backup_archive` | No nonterminal operation | Progress | "Archive is valid" with authenticated Workspace name and schema; verification does not import data | Typed error |
+| Import Workspace | `import_workspace_backup` | A completed Verify result identifies the exact Workspace; owner confirms its name, selects the archive again and re-enters the passphrase | Progress | New Workspace listed; prompt to re-authenticate Connections | `WORKSPACE_IMPORT_CONFLICT` explains no overwrite; mismatched archive id is rejected |
 | Restore installation (offline) | `restore_installation_offline` | Row has qualified quiescence gate | "Stopping Runtime", "Restoring", "Restarting" | Restore receipt shown | Abort message; original installation restarted |
 | Check data compatibility | `check_data_compatibility` | Always | Spinner | Verdict and reason | Typed error |
 | Deletion status (sub-view) | `list_workspace_deletion_status` | Workspace selected | Loading rows | Rows by state | Typed error |
@@ -44,7 +44,7 @@ Destructive confirmations: Import and Restore require typing the Workspace name 
 | F3 | Cancel | RUNNING -> CANCELLING -> CANCELLED or committed result |
 | F4 | App closed mid-operation | On reopen, operation shown from the daemon; never inferred success |
 | F5 | Daemon crashed mid-operation | INTERRUPTED with "Start again" |
-| F6 | Import | Choose file -> passphrase -> typed confirmation -> RUNNING -> new Workspace or conflict |
+| F6 | Import | Verify selected file and passphrase -> show authenticated Workspace identity -> owner confirms exact name -> re-enter passphrase -> import only if the manifest identity still matches and is absent locally -> new Workspace or conflict |
 | F7 | Offline restore | Choose file -> passphrase -> typed RESTORE -> stop gate -> restore -> restart -> receipt |
 | F8 | Deletion status | Rows -> Retry -> PENDING until ACKNOWLEDGED |
 

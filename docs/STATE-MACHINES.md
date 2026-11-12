@@ -282,14 +282,19 @@ references are released and its lifetime policy allows cleanup.
 
 ## ConversationTurn
 
-**Implementation status (source audit 2026-11-06):** The following is the normative
-state-machine contract, not proof that the active daemon enforces every edge. The current
-Operator has an OpenCode-only detached dispatch path, but the storage admission transaction
-does not enforce single-flight per Conversation; retry sets FAILED to RUNNING before the
-STARTING reservation path (which requires OPEN); and RUNNING cancellation commits
-CANCELLED without observed native interrupt/quiescence. No startup Conversation recovery
-sweep or durable dispatch outbox/claim is wired. See `specs/001-conversation-session-supervisor/`
-for the source-backed discrepancy and remediation gates.
+**Implementation status (source cross-check 2026-11-12 at `64c435149a82ba952c6c3bf3049e26cf2d9344b1`):**
+This state machine remains the normative target; these source facts do not qualify a provider
+journey. The Conversation admission transaction now enforces one nonterminal turn per
+Conversation and atomically commits the USER message, OPEN turn, durable dispatch intent,
+event records and idempotency receipt. Retry atomically reopens FAILED with a new retry
+ordinal and intent. Startup recovery reconciles prior-incarnation intents and turns. Stop
+requests adapter interruption and waits for observed quiescence before terminal settlement.
+The current cancel route accepts RUNNING and OPEN; the desktop now offers Stop only for a
+projected RUNNING turn. The target edges allowing cancellation from WAITING_USER and
+WAITING_DEPENDENCY are not supported by the route or UI and remain unavailable pending a
+provider-aware continuation/cancel contract. The pinned provider event and permission paths,
+and the packaged send/stop/retry/restart/recovery journey, remain unqualified. See
+`specs/001-conversation-session-supervisor/TASKS.md` for task-level evidence.
 
 ```text
 OPEN -> RUNNING -> WAITING_USER -> WAITING_DEPENDENCY -> RUNNING

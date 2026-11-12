@@ -1,5 +1,5 @@
 feature_id: "008"
-status: "ACCEPTED/LOCKED"
+status: "IN_REVIEW"
 nodes:
   - id: "ui"
     owner: Desktop UI
@@ -25,6 +25,18 @@ nodes:
   - id: "diff"
     owner: exact-revision and VCS diff service in litecoworkd (target)
     kind: service
+  - id: "computer-session"
+    owner: ComputerSessionService under Environment and Trust owners (revision 1.1 TARGET)
+    kind: service
+  - id: "capture-broker"
+    owner: private native capture broker (provider recommendation not selected)
+    kind: external
+  - id: "input-arbiter"
+    owner: existing Environment control authority and serialized physical desktop broker
+    kind: service
+  - id: "canvas"
+    owner: existing exact-version Artifact and editor owner (not a new runtime)
+    kind: component
 edges:
   - id: "e-ui-op"
     from: "ui"
@@ -66,6 +78,30 @@ edges:
     from: "diff"
     to: "storage"
     kind: exact-revision-read
+  - id: "e-op-computer"
+    from: "operator"
+    to: "computer-session"
+    kind: authenticated-command-target-only
+  - id: "e-computer-storage"
+    from: "computer-session"
+    to: "storage"
+    kind: session-permit-intent-receipt-transaction
+  - id: "e-computer-capture"
+    from: "computer-session"
+    to: "capture-broker"
+    kind: authorized-outside-transaction-target-only
+  - id: "e-capture-ui"
+    from: "capture-broker"
+    to: "ui"
+    kind: redacted-bounded-ephemeral-frames-target-only
+  - id: "e-computer-input"
+    from: "computer-session"
+    to: "input-arbiter"
+    kind: last-hop-epoch-and-attempt-effect-authorized-input-target-only
+  - id: "e-ui-canvas"
+    from: "ui"
+    to: "canvas"
+    kind: authorized-exact-artifact-version-view-target-only
 transactions:
   - id: "tx-epoch"
     owner: Trust and browser owner
@@ -74,6 +110,14 @@ transactions:
   - id: "tx-term"
     owner: Environment owner
     atomic_records: ["terminal_session", "command_receipt", "quiescence_receipt"]
+    external_calls_inside: false
+  - id: "tx-computer-permit"
+    owner: Trust and Environment session owner (revision 1.1 TARGET)
+    atomic_records: ["computer_session_revision", "audience_observation_permit", "audit", "outbox", "idempotency_receipt"]
+    external_calls_inside: false
+  - id: "tx-computer-fence"
+    owner: existing EnvironmentControlLease authority (no second lease store)
+    atomic_records: ["control_lease_epoch", "transfer_intent", "action_receipt", "audit", "outbox", "idempotency_receipt"]
     external_calls_inside: false
 external_boundaries:
   - id: "outside-sqlite"
@@ -119,3 +163,14 @@ recovery:
 # No browser/terminal/computer owner records, process/provider or user journey are served.
 # Keep every browser/PTY/computer/diff/activity execution edge TARGET until the exact
 # provider, owner API/store, Tauri transport, OS process and recovery evidence are qualified.
+
+# Revision 1.1 (2026-11-12): explicit user design scope revision; IN_REVIEW, not new
+# owner approval/provider qualification. Historical 1.0 acceptance and B-32 remain
+# in SPEC. T22 -> T23 -> T24 capture -> T25 input; T23 -> T26 tabs/Canvas/terminal;
+# T24/T25/T26 -> T27 native packaged evidence. All new edges TARGET only.
+# Local preview, exact AgentSession disclosure and input have independent permits.
+# USER input ownership permits separately authorized local observation. The final
+# broker checks physical desktop-wide input fence; queued stale input is discarded,
+# already-dispatched input reconciles without replay. Frames never enter events.
+# Hidden preview unsubscribes, explicit Stop sharing revokes and purges. Restart
+# loses private targets/streams; no automatic capture/input/command revival.

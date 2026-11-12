@@ -99,14 +99,14 @@ function throwIfInterrupted() {
   if (interruptedSignal) throw new Error(`Rendered UI check interrupted by ${interruptedSignal}.`);
 }
 
-function cdp(method, params = {}) {
+function cdp(method, params = {}, timeoutMs = 8_000) {
   throwIfInterrupted();
   const id = ++nextCommandId;
   const response = new Promise((resolveResponse, rejectResponse) => {
     const timeout = setTimeout(() => {
       pendingCommands.delete(id);
       rejectResponse(new Error(`Chrome DevTools timed out on ${method}`));
-    }, 8_000);
+    }, timeoutMs);
     pendingCommands.set(id, message => {
       clearTimeout(timeout);
       if (message.error) rejectResponse(new Error(`${method}: ${message.error.message}`));

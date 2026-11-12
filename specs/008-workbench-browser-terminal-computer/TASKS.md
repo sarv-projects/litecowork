@@ -1,7 +1,9 @@
 # Tasks - Workbench Browser Terminal and Computer
 
-**Feature:** 008 | **Status:** ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
-**Spec revision:** 1.0 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+> **Revision 1.1 scope revision (2026-11-12): IN_REVIEW / TARGET.** The user explicitly requested whole-laptop Computer observation and immediate manual takeover, rejecting the earlier browser-only substitution. Revision 1.0 owner acceptance (2026-11-09) and B-32 deferral below are historical authority for that revision; they are not acceptance of this extension. Implementation remains unchanged and Computer remains UNAVAILABLE. The revised owner design is [Computer observation and control LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md). No new provider, transport, route or qualification is approved by this documentation pass.
+
+**Feature:** 008 | **Status:** IN_REVIEW (revision 1.1); revision 1.0 ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
+**Spec revision:** 1.1 IN_REVIEW (1.0 historical baseline) | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 
 ## Historical baseline (2026-11-11; superseded)
 
@@ -115,6 +117,8 @@ The preceding baseline predates the 2026-11-11 handoff changes and is retained f
 - **Stop:** stop if any route accepts a client-supplied actor as authority.
 
 ## 008-T06 - Browser Workbench view with consent, take control and return
+
+Historical revision 1.0 browser-only scope below; revision 1.1 adds actual laptop Computer via T22-T27.
 
 - **Status:** NOT STARTED
 - **Reference (DeepSeek Harness, MIT, pinned `fcc0ad46`, no code copied yet):** upstream [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness/tree/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159), reuse map [DEEPSEEK-HARNESS-REUSE-MAP-2026-11.md](../../docs/DEEPSEEK-HARNESS-REUSE-MAP-2026-11.md).
@@ -443,3 +447,99 @@ Status: PROPOSED. None of the items below is an accepted task. They come from th
 ## Completion evidence
 
 For each task record in CURRENT-RUN.md and the matching docs/IMPLEMENTATION-STATUS.md row: task ID, git revision, exact command, pass/fail result with test names, OS and build (Windows x64 or Linux x64; never WSL2), harness and version where relevant (OpenCode v2.0.32), Chromium version and shell profile for provider tasks, evidence level reached (CODE, SYSTEM or USER), and reviewer. A task is DONE only when its acceptance boxes are checked against that record.
+
+
+## Revision 1.1 work graph (TARGET; review gates apply)
+
+These stable IDs extend T01..T21; no historical task is renumbered. Current request authorizes design revision only. T22 review must complete before T23 promotion; T24..T27 are not implementation authorization and do not clear existing BLOCKED tasks. T21 cannot mark revision 1.1 VERIFIED without T27 and recorded owner sign-off.
+
+## 008-T22 - Review revision 1.1 scope, attachment and authority decisions
+
+- **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
+- **Depends on:** NONE
+- **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
+- **Owner:** Desktop shell, Environments, Trust, Product
+- **Allowed paths:** this package; docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md; docs/V1-INTEGRATED-TERMINAL-LLD.md; owning global contracts
+- **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
+- **Change intent:** Record the explicit user scope correction; reconcile B-32/AC-016, observation-only Desktop attachment, physical input-domain arbitration, Conversation vision grant scope, out-of-app emergency takeover reachability while the target app is foreground, and manual-host terminal decision. Pin exact OS/provider candidates only after review.
+- **Acceptance:**
+  - [ ] Recorded owner decisions distinguish local preview, model disclosure and input; no unsupported Task or isolation bypass; no fabricated acceptance.
+- **Command:** `python3 .specify/scripts/validate_feature_package.py specs/008-workbench-browser-terminal-computer` (implementation filters are targets to add, not tests run in this documentation pass).
+- **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
+- **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
+
+## 008-T23 - Promote Computer observation, control and terminal ownership contracts
+
+- **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
+- **Depends on:** T22
+- **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
+- **Owner:** Environments, Trust, Storage, Operator
+- **Allowed paths:** docs/API.md; docs/EVENTS.md; docs/SCHEMAS.md; docs/schemas/; apps/litecowork-ui/src/generated/; owning LLDs; this package
+- **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
+- **Change intent:** Promote exact routes/operationIds, ACLs, permit/receipt/events/errors, input sequencing, revisions and immutable migration after next-free allocation. Reuse existing EnvironmentControlLease, authenticated headers and idempotency. Keep new routes target-only until mounted.
+- **Acceptance:**
+  - [ ] Schema/prose match; no frames/raw key text/native handles in durable projections; denial and migration/recovery contract fixtures; generated types match.
+- **Command:** `python3 scripts/audit_v1_contracts.py --strict` (implementation filters are targets to add, not tests run in this documentation pass).
+- **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
+- **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
+
+## 008-T24 - Build qualified bounded local Computer observation lane
+
+- **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
+- **Depends on:** T23
+- **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
+- **Owner:** Desktop shell, Environments, Security
+- **Allowed paths:** apps/litecoworkd/src/; apps/litecowork-ui/src-tauri/src/; apps/litecowork-ui/src/workbench/; adjacent tests
+- **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
+- **Change intent:** Implement selected OS capture broker, source picker, local-view and independent agent-observation permits, redaction and bounded binary frame subscriptions. Keep input unavailable independently. Benchmark recommended quality limits and preserve status-only UI without a provider.
+- **Acceptance:**
+  - [ ] AC-020/021/024: real laptop display, cancel/denial, privacy, USER-owned observation, expiry/revoke, hidden/slow consumers, lock, unplug and restart; exact CPU/memory/latency/energy measurements.
+- **Command:** `cargo test -p litecoworkd --locked computer_observation` (implementation filters are targets to add, not tests run in this documentation pass).
+- **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
+- **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
+
+## 008-T25 - Build epoch-fenced Computer input and persistent manual takeover
+
+- **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
+- **Depends on:** T23, T24
+- **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
+- **Owner:** Environments, Trust, Desktop shell
+- **Allowed paths:** apps/litecoworkd/src/; crates/domain-environment/; apps/litecowork-ui/src-tauri/src/; apps/litecowork-ui/src/workbench/; adjacent tests
+- **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
+- **Change intent:** Implement last-hop serialized desktop input arbitration, current Attempt/Effect authorization, immediate takeover admission fence reachable from the in-app strip and a qualified out-of-app global shortcut or native tray action, bounded in-flight reconciliation, held-key cleanup and fresh explicit Return. The emergency trigger must close the broker latch without focusing LiteCowork; fail closed if its registration, control channel or Runtime incarnation is lost. The persistent shell strip remains visible across tab/pane changes.
+- **Acceptance:**
+  - [ ] AC-022/023: stale incarnation/geometry, input races, partial injection, provider stall, two Workspaces, response loss, physical human interaction, Return and no duplicate irreversible input; direct-native limits disclosed.
+  - [ ] While the target app is foreground and LiteCowork is behind/minimized, the qualified global shortcut or tray action closes the same broker fence. Shortcut conflict/registration loss fails closed; otherwise mediated Computer input cannot be admitted on that OS/provider row.
+- **Command:** `cargo test -p litecoworkd --locked computer_control` (implementation filters are targets to add, not tests run in this documentation pass).
+- **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
+- **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
+
+## 008-T26 - Integrate compact object tabs, +, Canvas and terminal defaults/input owner
+
+- **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
+- **Depends on:** T23
+- **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
+- **Owner:** Desktop UI, Desktop shell, Environments
+- **Allowed paths:** apps/litecowork-ui/src/workbench/; apps/litecowork-ui/src-tauri/src/; apps/litecoworkd/src/; adjacent tests; UI ledgers
+- **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
+- **Change intent:** Implement object-view tabs and + chooser, exact-version Canvas/editor binding, deterministic validated shell defaults and single stdin arbiter. Respect current terminal provider blockers; manual-host mode stays unavailable unless T22 explicitly resolves and promotes it. Depend on T10/T11 and per-platform admission for terminal execution, existing Artifact contracts for Canvas.
+- **Acceptance:**
+  - [ ] AC-025/026: no automatic spawn/capture on tool selection, retained provider identity, dirty-draft guard, no agent access to manual shell, partial-input takeover/Return, accessible compact/narrow views.
+- **Command:** `pnpm --dir apps/litecowork-ui test` (implementation filters are targets to add, not tests run in this documentation pass).
+- **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
+- **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
+
+## 008-T27 - Qualify revised Computer and Workbench journeys and reconcile release rows
+
+- **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
+- **Depends on:** T24, T25, T26
+- **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
+- **Owner:** QA, Product, Desktop shell, Environments
+- **Allowed paths:** this package; docs/ACCEPTANCE-AND-E2E-PLAN.md; docs/IMPLEMENTATION-STATUS.md; CURRENT-RUN.md; UI ledgers; packaged tests
+- **Contract:** SPEC section 20 AC-020 through AC-026; Computer LLD; Integrated Terminal LLD revision 1.1.
+- **Change intent:** Trace every exact control through authenticated IPC, authorization, owner transaction/fence, provider receipt, projection and recovery. Record build/OS/provider/auth/shell and CODE/SYSTEM/owner USER evidence. Reconcile AC-016 historical baseline with selected revision 1.1 release rows.
+- **Acceptance:**
+  - [ ] All AC-020..026 and denial/replay/timeout/cancel/crash/reconnect/physical takeover cases pass per exact platform; no source-only qualification; terminal B-35 remains explicit.
+- **Command:** `python3 .specify/scripts/validate_feature_package.py specs/008-workbench-browser-terminal-computer` (implementation filters are targets to add, not tests run in this documentation pass).
+- **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
+- **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.

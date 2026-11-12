@@ -2,7 +2,7 @@ feature_id: "015"
 name: "Task Control and Heterogeneous Delegation"
 status: "IN_REVIEW"
 spec_revision: "0.1"
-notes: "All edges are TARGET unless marked existing. Served today: lead-agent change (CAS only) and verification-runs read. Execution edges require Feature 005 and qualify on the Linux row first; Windows stays UNAVAILABLE until Feature 005 B-35."
+notes: "All edges are TARGET unless marked existing. Served today: lead-agent binding change (CAS only) and verification-runs read. Feature 005 currently defines a bounded file-write Attempt slice, not the generic native provider-session admission/control seam assumed for delegation and verification; O-06 blocks those edges pending owner/API decision. O-07 keeps lead-binding change separate from execution replacement. A-37 on_exhaustion remains TARGET-not-yet-wired under its accepted owner contract. O-09 blocks Compare Agents until its Conversation/Agent Runtime surface and request/result/recovery owner contract exists. Linux qualification first; Windows stays UNAVAILABLE until Feature 005 B-35."
 nodes:
   - id: "work-ui"
     owner: "Desktop UI (Work screen)"
@@ -10,6 +10,13 @@ nodes:
     responsibility: "Controls enabled from allowed_commands, Activity timeline, Workers view, all UI states"
     inputs: ["Task projection", "activity page", "workers projection", "task stream frames"]
     outputs: ["typed Tauri commands"]
+  - id: "compare-agents-ui"
+    owner: "Conversation / Agent Runtime / Product decision (O-09)"
+    kind: "unresolved user interface"
+    responsibility: "Explicit read-only multi-agent comparison without Task authority"
+    implementation_status: "BLOCKED: no approved surface, command, result identity, persistence or recovery contract; no control may be exposed"
+    inputs: ["owner-approved prompt and eligible agent selection, once defined"]
+    outputs: ["read-only comparison view, once defined"]
   - id: "task-control-bridge"
     owner: "Tauri bridge"
     kind: "IPC client"
@@ -33,8 +40,8 @@ nodes:
   - id: "lead-handoff-service"
     owner: "TaskLeadHandoffService + lead_handoff_attempt"
     kind: "domain service"
-    responsibility: "Lead change CAS (existing) then replacement lead Attempt after prior lease release (target)"
-    implementation_status: "PARTIAL: CAS route served; no replacement Attempt"
+    responsibility: "Lead binding change CAS (existing); planning replacement uses a fresh TASK_PLANNING session without Attempt; execution replacement is a separate operation gated by O-06/O-07"
+    implementation_status: "PARTIAL: binding CAS route served; replacement execution command/admission not defined"
     inputs: ["owner or policy handoff"]
     outputs: ["committed lead change", "replacement Attempt request"]
   - id: "delegation-admission-service"
@@ -47,7 +54,8 @@ nodes:
   - id: "delegation-result-service"
     owner: "DelegationResultService"
     kind: "domain service"
-    responsibility: "ResultEnvelope validation and Attempt id / lease epoch / revision fence"
+    responsibility: "ResultEnvelope scope validation exists; target adds current Step Attempt, live lease epoch and revision fence"
+    implementation_status: "PARTIAL: current Attempt/session/runtime/incarnation/revision and terminal-state checks exist; live Step/lease epoch fence is missing"
     inputs: ["normalized ResultEnvelope"]
     outputs: ["accepted result", "fenced observation"]
   - id: "verification-service"
@@ -60,9 +68,17 @@ nodes:
   - id: "attempt-service-005"
     owner: "Feature 005 TaskAttemptService"
     kind: "external feature service"
-    responsibility: "Attempt admission with attestation, Environment attach, Effects, single-Attempt cancel and quiescence"
-    inputs: ["admission request"]
-    outputs: ["Attempt lifecycle observations"]
+    responsibility: "Bounded file-write Attempt admission (`admit_file_write`), attested Environment, one file Effect, reconciliation and single-Attempt cancel/quiescence for that slice"
+    implementation_status: "TARGET/PARTIAL per Feature 005; not a generic provider AgentSession admission API"
+    inputs: ["bounded file-write admission request"]
+    outputs: ["file-write Attempt lifecycle and Effect observations"]
+  - id: "attempt-session-seam"
+    owner: "Task Runtime / Agent Runtime / Feature 005 decision"
+    kind: "owner decision / unresolved service interface"
+    responsibility: "Generic native provider Attempt and AgentSession admission, Environment binding, cancellation, quiescence, verifier lifecycle and restart recovery required by 015"
+    implementation_status: "BLOCKED: O-06; do not infer this API from Feature 005 `admit_file_write`"
+    inputs: ["authorized generic Attempt/session request"]
+    outputs: ["durable Attempt and session lifecycle observations"]
   - id: "session-supervisor"
     owner: "AgentSessionSupervisor"
     kind: "runtime supervisor"
@@ -104,12 +120,12 @@ edges:
     kind: "control transactions"
   - id: "e-control-attempts"
     from: "task-control-service"
-    to: "attempt-service-005"
-    kind: "stop at safe boundary / cancel (outside transaction)"
+    to: "attempt-session-seam"
+    kind: "stop at safe boundary / cancel generic provider sessions (O-06)"
   - id: "e-handoff-attempts"
     from: "lead-handoff-service"
-    to: "attempt-service-005"
-    kind: "replacement Attempt after prior lease release"
+    to: "attempt-session-seam"
+    kind: "separate execution replacement only after O-06/O-07; lead-binding CAS does not trigger this"
   - id: "e-supervisor-delegation"
     from: "session-supervisor"
     to: "delegation-admission-service"
@@ -120,8 +136,8 @@ edges:
     kind: "child admission transaction"
   - id: "e-delegation-attempts"
     from: "delegation-admission-service"
-    to: "attempt-service-005"
-    kind: "attach ATTEMPT_PRIVATE Environment and start worker after commit"
+    to: "attempt-session-seam"
+    kind: "attach ATTEMPT_PRIVATE Environment and start native worker after commit (O-06)"
   - id: "e-attempts-supervisor"
     from: "attempt-service-005"
     to: "session-supervisor"
@@ -140,8 +156,8 @@ edges:
     kind: "verify accepted child result"
   - id: "e-verify-attempts"
     from: "verification-service"
-    to: "attempt-service-005"
-    kind: "verifier Attempt with read-only Environment"
+    to: "attempt-session-seam"
+    kind: "verifier Attempt with read-only Environment (O-06)"
   - id: "e-verify-store"
     from: "verification-service"
     to: "sqlite-store"
@@ -165,7 +181,7 @@ transactions:
     external_calls_inside: false
   - id: "tx-resume"
     owner: "TaskControlService via Storage"
-    atomic_records: ["Task prior state", "interrupted Attempts ABANDONED", "control request SETTLED", "task.resumed.v1", "idempotency receipt"]
+    atomic_records: ["Task prior state", "normally interrupted Attempts ABANDONED; eligible INPUT_REQUIRED exception may renew same Attempt with higher lease and fresh session after reconciliation", "control request SETTLED", "task.resumed.v1", "idempotency receipt"]
     external_calls_inside: false
   - id: "tx-steer"
     owner: "TaskControlService via Storage"

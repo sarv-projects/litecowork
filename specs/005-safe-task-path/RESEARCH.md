@@ -1,12 +1,12 @@
 # Research - Safe Task Path
 
-**Feature:** 005 | **Checked:** 2026-11-06, grounding refreshed 2026-11-09
+**Feature:** 005 | **Checked:** 2026-11-06; source crosswalk re-checked 2026-11-12. The older pinned rival-source review remains dated 2026-11-06.
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
 ## Sources
 
-Authorities: docs/TASK-RUNTIME.md, docs/ENVIRONMENTS.md, docs/TRUST.md, docs/DELEGATION.md, docs/V1-PRODUCT-RELEASE-CONTRACT.md §6. Reject worktree-as-sandbox. The current source/route/UI crosswalk was checked 2026-11-06.
+Authorities: docs/TASK-RUNTIME.md, docs/ENVIRONMENTS.md, docs/TRUST.md, docs/DELEGATION.md, docs/V1-PRODUCT-RELEASE-CONTRACT.md §6. Reject worktree-as-sandbox. The original source/route/UI crosswalk below is historical; current provider behavior is refreshed in the 2026-11-12 note below.
 
 ## Findings
 
@@ -44,7 +44,7 @@ Inspected `apps/litecoworkd/src/operator.rs`, `agents/planning.rs`, `task_lead_h
 - `agents/planning.rs` is a read-only preflight builder. It prepares a bounded planning packet and returns dispatch blockers for unavailable isolation, unmediated native capabilities, unqualified protocol/process containment, unavailable planning context and missing session settlement. It sets `dispatch_available=false`. Its `require_dispatch()` method is explicitly unused/dead-code and always returns an error stating native Task planning dispatch is unavailable.
 - `get_task_planning_readiness` is a no-side-effect diagnostic: it validates owner/Workspace and `If-Match`, calls the preflight builder, and hardcodes `dispatch_available`, `planning_started`, `agent_session_started` and `plan_created` to false. The endpoint does not start a provider or create plan/Attempt records.
 
-### Environment, isolation, Trust and Effects
+### Environment, isolation, Trust and Effects (historical source snapshot, 2026-11-06)
 
 - `probe_environment_provider()` reports provider capability observations only. On Windows it reports a LocalWorkspace class and Job Object process-tree lifetime support; on Linux it reports a LocalWorkspace class only if bubblewrap is present and explicitly notes isolation is not qualified. The probe reports `budget_enforcement=Unavailable`, no checkpoint/restore and no workspace-persistent lifetime.
 - `IsolationAttestation` and fail-closed comparison code model filesystem, process-tree, network and resource-limit enforcement, along with exact Workspace/Task/Runtime incarnation and root/input digests. Repository search found no production caller connecting these attestations to Task Attempt admission.
@@ -61,6 +61,10 @@ Inspected `apps/litecoworkd/src/operator.rs`, `agents/planning.rs`, `task_lead_h
 - Task output views are read-only committed Artifact projections. The UI does not show a successful file write merely because a Task record exists. A Task status badge or READY record must not be presented as proof of a running worker.
 
 These findings are source/route/UI inspection, not an end-to-end Task USER test. No Task plan was accepted, no Attempt was admitted, no Environment was provisioned, no file was modified by a Task provider, and no Effect was independently verified.
+
+### Current source correction (2026-11-12)
+
+The original crosswalk above is retained as dated research history and must not be used as current provider status. `apps/litecoworkd/src/environment_provider.rs` now reports no Windows `LocalWorkspace` class or Task lifetime; planning readiness returns `WINDOWS_ENVIRONMENT_PROVIDER_UNAVAILABLE`. The Windows Job Object code manages process-tree lifetime and is not an Environment or filesystem/network boundary. On Linux, the daemon uses `linux-process-scope::probe_local_provider`; a trusted Bubblewrap candidate enables only a capability observation, not provisioning, attestation or Task execution. Current route/UI/source evidence is recorded in `specs/005-safe-task-path/SPEC.md` §4/§7b, `TASKS.md` T02/T14 and `docs/IMPLEMENTATION-STATUS.md`.
 
 ## Alternatives
 

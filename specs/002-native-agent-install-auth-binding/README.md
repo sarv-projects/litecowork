@@ -1,8 +1,8 @@
 # 002 - Native Agent Install, Auth and Binding
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Revision:** 1.0 | **Updated:** 2026-11-11
-**Implementation state (2026-11-11):** CODE and SERVED, fail-closed, no live agent run; the new authenticated ID-only Tauri sign-in/native-config commands and descriptor-driven UI actions have passing focused Windows Rust/TypeScript checks, while production launch/open remain fail-closed. T01 (sync), T03, T04 CODE-COMPLETE; PARTIAL: T02, T05, T06, T07, T09, T10, T11, T12 (Claude Code 2.1.310 help advertises print/stream-json and auth commands; actual stream frames, auth mode and safe cancellation remain unverified), T13, T14, T16, T17 (ACP client), T18 (Matchmaker). BLOCKED: T08 (credential receipt migration and durability). DEFERRED: T15 (release matrix, Windows laptop). NOT STARTED: T19. Allocated migrations v33 (T04 store) and v34 (T07 observations) are not wired yet.
+**Revision:** 1.0 | **Updated:** 2026-11-12
+**Implementation state (2026-11-12):** CODE/SERVED is partial; there is no packaged native-provider journey or real sign-in qualification. T01, T03 and T04 are CODE-COMPLETE; T05 is PARTIAL with served OpenCode descriptor GET/refresh using the pre-existing migration-16 table, while option/capability projections are not served; T06, T07, T09, T10, T11, T12, T13, T14, T16, T17 and T18 are PARTIAL; T08 is BLOCKED (retryable) on resolving the durable receipt migration allocation and crash-reconciliation contract, and remains safely fail-closed; T15 is DEFERRED by owner instruction; T19 is NOT STARTED. The auth launcher/opener are fail-closed; auth observations are in-memory and reset to UNKNOWN. The descriptor refresh budget is in-memory and resets on daemon restart. Do not treat allocated schema numbers as proof of a required or landed migration; see package TASKS and global migration allocation.
 **Owners:** Agent Runtime, Security/Trust, Desktop UI, Product, Conversation Runtime. Accepted by the repository owner via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md).
 
 ## User outcome
@@ -11,7 +11,7 @@ The owner discovers and inspects a native agent, establishes a module-qualified 
 
 ## Current truth
 
-The active checkout has 15 curated candidates plus read-only ACP metadata and bounded version/path observations; authentication remains UNKNOWN and readiness NOT_PROBED. Profile probes are limited to Codex and OpenCode: Codex observations do not imply Conversation dispatch, while OpenCode's current profile offer is incompatible. Auth-begin and native-config-open are served and wired to authenticated ID-only Tauri commands, but fail closed because no V1 module declares a qualified method or target. Descriptor read/refresh and credential submission still return 503; credential submission lacks its durable replay receipt. Binding enable does not yet enforce the fresh AC-004 descriptor gate. Install/update/repair, model/effort qualification, and Usage are incomplete. Feature 001 remains the authority for Conversation execution. Do not infer qualification from a catalogue row, model list, installed binary, profile probe or enabled binding. See the current task-by-task evidence in TASKS.md and docs/IMPLEMENTATION-STATUS.md.
+The active checkout has 15 curated candidates plus read-only ACP metadata and bounded version/path observations; authentication remains UNKNOWN and readiness NOT_PROBED. Profile probes are limited to Codex and OpenCode: Codex observations do not imply Conversation dispatch, while OpenCode now produces a compatible `STARTABLE` offer in code only for exact 2.0.32, a complete probe and observed host stop. Descriptor GET/refresh is served for OpenCode and uses existing migration-16 storage; module-less profiles still fail closed. Auth-begin and native-config-open use authenticated ID-only Tauri commands but the daemon's production launcher/opener fail closed because no V1 module declares a qualified method or target. Credential submission returns 503 before SecretStore mutation; its descriptor source and durable replay receipt are missing. Binding enable enforces descriptor revision CAS only for modules declaring a descriptor; the legacy module-less path remains a gap. Install/update/repair, mounted model/effort selection, and Usage are incomplete. Feature 001 remains the authority for Conversation execution. Do not infer qualification from a catalogue row, model list, installed binary, profile probe or enabled binding. See the task-by-task evidence in TASKS.md and docs/IMPLEMENTATION-STATUS.md.
 
 ## V1 design
 
@@ -19,7 +19,7 @@ The catalogue, Agent profile sections, action preconditions and status projectio
 
 ## Lifecycle, scope and dependencies
 
-- Lifecycle: ACCEPTED/LOCKED (2026-11-09). Next transitions: IMPLEMENTING when 002-T01 starts, VERIFIED only through the final TASKS.md task with owner sign-off.
+- Lifecycle: IMPLEMENTING (target decisions were owner-accepted and locked on 2026-11-09; implementation started with 002-T01). VERIFIED remains unavailable until the final TASKS.md evidence and owner sign-off are recorded.
 - Release target: V1 release matrix row 1 (Windows x64 + OpenCode v2.0.32), row 2 (Linux x64). Claude Code CLI is the second AgentModule (B-11).
 - Screen ownership (A-35): the Settings -> Agents screen is owned by [Feature 011](../011-desktop-shell-ipc-settings-runtime/SPEC.md). Feature 002 owns only the install/auth/descriptor/binding operations that screen invokes.
 - Consumers: [Feature 001](../001-conversation-session-supervisor/SPEC.md) needs a creatable OpenCode binding (P1 prerequisite); [Feature 004](../004-agent-relay/SPEC.md) needs the second module.

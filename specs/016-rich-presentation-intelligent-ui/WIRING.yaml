@@ -1,7 +1,7 @@
 feature_id: "016"
 name: "Rich Presentation, Intelligent UI and Generated Media"
 status: "IN_REVIEW"
-spec_revision: "0.1"
+spec_revision: "0.2-proposed"
 notes: "Edges are TARGET unless marked existing. Served today: rich presentation and Conversation presentation reads, stream. No production publisher, no media ingestion, no Interactive Artifact Runtime."
 nodes:
   - id: "session-supervisor"
@@ -21,7 +21,7 @@ nodes:
     owner: "domain-presentation crate"
     kind: "pure library"
     responsibility: "Bounds, V1 allowlist, canonical bytes, digests, slice bindings, chart bindings, CalcAst"
-    implementation_status: "PARTIAL: checks exist inside storage-sqlite rich_presentations.rs for two kinds"
+    implementation_status: "PARTIAL: checks exist inside storage-sqlite rich_presentations.rs for five baseline kinds"
     inputs: ["document bytes", "semantic context"]
     outputs: ["validated document or typed rejection"]
   - id: "presentation-store"
@@ -147,3 +147,59 @@ external_boundaries:
     input_trust: "validated data only"
     timeout: "render budget 100 ms per main-thread task"
     retry: "fallback to semantic text"
+
+# Revision 0.2 extension graph. Separate proposal scope; not existing edges.
+extension_review:
+  status: "TARGET_PROPOSAL_BLOCKED"
+  authority: "docs/ACP-PRESENTATION-PIPELINE-LLD.md and SPEC section 19; canonical schemas only"
+  baseline: "B-40 view-local state and PREVIEW_ONLY remain unchanged"
+  nodes:
+    - id: "qualified-intent-ingress"
+      owner: "AgentModule and Conversation"
+      inputs: ["exact provider/version/auth descriptor", "correlated native structured output or scoped local MCP proposal", "bounded semantic text fallback"]
+      outputs: ["ephemeral validated intent with host-derived scope"]
+      authority: "proposal only; tool_call observation is not host execution"
+    - id: "surface-controller"
+      owner: "Desktop Presentation Runtime"
+      inputs: ["validated immutable presentation", "declared primitive inputs"]
+      outputs: ["same revision to inline and Workbench Canvas", "deterministic derived outputs", "semantic fallback"]
+    - id: "interaction-state-service"
+      owner: "Presentation Runtime and Storage"
+      inputs: ["authenticated owner consent", "exact document namespace", "expected revision", "RequestId and payload digest"]
+      outputs: ["state-only receipt", "authorized input projection", "content-free event"]
+    - id: "modification-review"
+      owner: "Conversation and host UI"
+      inputs: ["explicitly previewed selected snapshot", "parent presentation and base revision"]
+      outputs: ["ordinary new Conversation turn", "new-message presentation lineage"]
+  edges:
+    - from: "qualified-intent-ingress"
+      to: "presentation-binder"
+      kind: "candidate staging; semantic commit must precede independent publish"
+    - from: "rich-view"
+      to: "surface-controller"
+      kind: "host navigation Expand/Collapse; one controller, no agent dispatch"
+    - from: "surface-controller"
+      to: "interaction-state-service"
+      kind: "host-only Remember/Forget commands after separate consent; unavailable until T22"
+    - from: "surface-controller"
+      to: "modification-review"
+      kind: "Ask to change this view; explicit snapshot review and Send only"
+    - from: "modification-review"
+      to: "session-supervisor"
+      kind: "Feature 001 admitted new turn, never original-message mutation"
+  transactions:
+    - id: "tx-interaction-update-proposed"
+      owner: "Storage"
+      atomic_records: ["compare expected revision and deletion fence", "allowlisted input state", "idempotency receipt", "content-free state-change event"]
+      external_calls_inside: false
+    - id: "tx-interaction-forget-proposed"
+      owner: "Storage and retention owners"
+      atomic_records: ["delete protected input content", "advance deletion fence", "minimal allowed receipt"]
+      external_calls_inside: false
+  recovery:
+    - "Wrong session/retry/incarnation or unsupported ingress: refuse proposal, preserve semantic turn"
+    - "State timeout: reconcile same RequestId; two-window revision conflict preserves local draft"
+    - "Forget/delete/revocation fences late saves and acknowledgements; backup cannot resurrect content"
+    - "Changed document namespace starts fresh; migration needs explicit preview and consent"
+    - "Late agent modification creates no overwrite; compare base revision and require review"
+  gates: ["T01 whole-SPEC acceptance", "T20 native ingress and canonical intent/pins", "T21 Canvas controller", "T22 persistence/privacy/migration review", "T23 modification context/lineage review", "T24 exact packaged SYSTEM and USER evidence"]

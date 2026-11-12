@@ -43,7 +43,7 @@ No cloud, remote or scheduled off-device backup; no automatic backup schedule in
 
 | Capability | Current evidence | Limitation |
 |---|---|---|
-| Encrypted container format | CODE: `storage_core::backup` constants (`BACKUP_CONTAINER_MAGIC` `LCBK1\0`, `BACKUP_CONTAINER_VERSION` 1, XChaCha20-Poly1305, PBKDF2-HMAC-SHA256, `BACKUP_KDF_DEFAULT_ITERATIONS` 600,000, minimum 100,000, 64 MiB chunk cap, 8 MiB manifest cap) | PBKDF2 is hand-written (`pbkdf2_hmac_sha256` in `crates/storage-sqlite/src/backup.rs`), not the audited RustCrypto crate; no test vector against RFC 6070-style published values was found |
+| Encrypted container format | CODE: `storage_core::backup` constants (`BACKUP_CONTAINER_MAGIC` `LCBK1\0`, `BACKUP_CONTAINER_VERSION` 1, XChaCha20-Poly1305, PBKDF2-HMAC-SHA256, `BACKUP_KDF_DEFAULT_ITERATIONS` 600,000, source minimum 100,000, 64 MiB chunk cap, 8 MiB manifest cap) | B-41 target says at least 600,000 iterations, while source currently accepts 100,000 and has no upper KDF-cost bound. PBKDF2 is hand-written (`pbkdf2_hmac_sha256` in `crates/storage-sqlite/src/backup.rs`); no test vector against published values was found. Resolve the minimum and maximum before promoting the route. |
 | Create, verify, restore, upgrade-check | CODE via CLI only: `backup_operator.rs` `create`, `verify`, `restore`, `upgrade_check`; tests in `crates/storage-sqlite/src/backup.rs` (`backup_and_restore_round_trip_preserves_the_workspace_and_its_blobs`, `verification_rejects_a_corrupt_archive`, `verification_rejects_the_wrong_passphrase`, `a_failed_restore_leaves_the_destination_untouched`, `a_restore_refuses_a_non_empty_destination`, `a_restore_refuses_a_live_runtime_lock`, `the_upgrade_check_refuses_an_unknown_schema_version`, `a_restore_refuses_a_manifest_that_declares_a_foreign_schema`, `the_passphrase_never_appears_in_the_archive_or_its_name`, `a_failed_backup_leaves_no_usable_archive_or_staging_area`) | No Operator route, no Tauri command, no UI. `apps/litecoworkd/tests/cli.rs` covers help/version only, not backup |
 | Excluded tables and revoked authority | CODE: `BACKUP_EXCLUDED_TABLES` (26 Runtime-local, registry and live-authority tables), `BACKUP_REVOKED_ON_RESTORE_TABLES` (`capability_grants`), `revoke_live_authority` also marks `runtime_incarnations` STOPPED; test `the_filtered_snapshot_drops_runtime_local_tables_and_keeps_workspace_rows` | Exclusion is a deny list: a new table added by a later migration is carried by default |
 | Workspace scoping of the snapshot | NOT ENFORCED: `build_filtered_snapshot` runs `VACUUM INTO` on the whole database and empties only the excluded tables; blobs and event cursors are filtered by `workspace_id`, rows are not | A backup "of Workspace A" carries the rows of every other Workspace in the installation |
@@ -117,7 +117,7 @@ flowchart TD
 1. WebView to Tauri: the WebView sends typed commands only; it never sees archive bytes, keys or file system paths beyond the owner-chosen destination label.
 2. Tauri to daemon: authenticated local IPC (Windows named pipe with DACL, Linux 0600/0700 socket) per [LOCAL-OPERATOR-IPC.md](../../docs/LOCAL-OPERATOR-IPC.md); the passphrase crosses this boundary once per request.
 3. Daemon to OS keystore: keys are read for decryption only and never serialized.
-4. Archive file: untrusted on read. Magic, version, sizes, chunk count, manifest authentication and every digest are checked before any key is derived or any row is staged.
+4. Archive file: untrusted on read. Validate magic, version, algorithm identifiers, KDF floor, lengths, chunk count and size bounds from the unauthenticated header before key derivation. For an admissible header, derive the passphrase key with the bounded declared KDF cost, authenticate/decrypt the manifest and validate its self-binding before trusting manifest fields; then authenticate every payload chunk and recompute every digest before any row is staged. The encrypted manifest cannot be authenticated before deriving the key needed to decrypt it.
 5. Restore destination: written only offline, after the Runtime lock is released.
 
 ### Actor sequence (create, target)
@@ -186,7 +186,7 @@ pub const BACKUP_INSTALLATION_TABLES: &[&str];             // carried as install
 pub enum BackupOperationKind { Create, Verify, Import }
 pub enum BackupOperationState { Queued, Running, Succeeded, Failed, Cancelled }
 pub struct BackupOperationRecord {
-    pub operation_id: String, pub workspace_id: String, pub kind: BackupOperationKind,
+    pub operation_id: String, pub workspace_id: Option<String>, pub kind: BackupOperationKind, // None only for Workspace-neutral VERIFY
     pub mode: Option<BackupArchiveMode>, pub state: BackupOperationState,
     pub phase: Option<String>, pub progress_bytes: u64, pub total_bytes: Option<u64>,
     pub backup_id: Option<String>, pub error_code: Option<String>,
@@ -217,7 +217,7 @@ Operator routes (PROPOSED, `apps/litecoworkd/src/backup_routes.rs` (new)):
 | `GET /v1/workspaces/{workspace_id}/backup-preview` | `previewWorkspaceBackup` (new) | Size estimate, included/excluded classes |
 | `POST /v1/workspaces/{workspace_id}/backups` | `createWorkspaceBackup` (existing, body added: `mode`, `passphrase`, `destination_ref`) | 202 with operation; Idempotency-Key required |
 | `POST /v1/backup-verifications` | `verifyBackupArchive` (new) | Read-only verification of an archive the owner selected |
-| `POST /v1/workspace-imports` | `importWorkspaceBackup` (new) | Only when the archive's `workspace_id` is absent locally |
+| `POST /v1/workspace-imports` | `importWorkspaceBackup` (new) | `{archive_ref, passphrase, expected_workspace_id, confirm_absent_workspace: true}`; authenticate the manifest, require exact id match, then require that id to be absent locally |
 | `GET /v1/backup-operations/{operation_id}` | `getBackupOperation` (new) | Progress and outcome |
 | `POST /v1/backup-operations/{operation_id}/cancel` | `cancelBackupOperation` (new) | If-Match version; ignored after the commit point |
 | `GET /v1/runtime/data-compatibility` | `checkDataCompatibility` (new) | Wraps `check_upgrade_compatibility`; read by Feature 019 updater pre-flight |
@@ -243,7 +243,7 @@ See [WIRING.yaml](WIRING.yaml). All edges are target; none is served today. The 
 
 ## 10. Security, trust and privacy
 
-- Only the authenticated local Workspace owner may create, list, verify or import; the principal comes from the IPC peer, never the body.
+- The principal comes from authenticated IPC, never the body. Create/list require ownership of the path Workspace. Verify is read-only and Workspace-neutral until the selected archive's manifest authenticates. Import is explicit user-confirmed creation of that authenticated, previously absent Workspace under the local principal; `expected_workspace_id` must match the verified manifest before staging.
 - Secret exclusion is enforced twice: by the table and blob classification (B-41) and by a test-time canary scan of the staged plaintext snapshot and of the decrypted container for seeded secret values (keyring entry, SecretStore bytes, OAuth token, native handle, passphrase).
 - The passphrase is `Zeroizing`, never logged (requests to these routes are excluded from request logging), never in the archive name, never in the operation row, never in a receipt, and never stored in React state after submit.
 - Minimum passphrase policy: at least 12 characters, checked in the daemon (UI hint only); there is no recovery path and the UI says so before create.
@@ -275,7 +275,7 @@ Record operation id, Workspace id, kind, mode, phase, durations, byte counts, bl
 - AC-001 WHEN the authenticated Workspace owner confirms Create backup with a valid passphrase, THE SYSTEM SHALL write an encrypted container, verify it by read-back, and atomically publish one immutable manifest, a SUCCEEDED operation, a `workspace.backup.created.v1` event and a receipt. Verify: daemon route integration test and storage settlement test.
 - AC-002 WHEN any backup or export is created, THE SYSTEM SHALL exclude OS keyring entries, Workspace blob keys, provider credentials, SecretStore bytes, OAuth tokens, native session handles, the Runtime identity HMAC key and the passphrase from the staged snapshot, the container and the manifest. Verify: canary secret scan over staged and decrypted payloads.
 - AC-003 WHEN a backup of Workspace A is created in an installation that also holds Workspace B, THE SYSTEM SHALL carry no row, blob or event of Workspace B, and IF a table is not classified in the backup table map, THEN the storage test suite SHALL fail. Verify: two-Workspace snapshot test and table-map completeness test.
-- AC-004 IF an archive is truncated, corrupted, has foreign magic or version, wrong passphrase, oversized manifest or chunk, or a path that escapes the container, THEN THE SYSTEM SHALL return a typed verification error and SHALL NOT stage rows or derive keys beyond the header check. Verify: fuzzed and fixture-based negative tests.
+- AC-004 IF an archive is truncated, corrupted, has foreign magic or version, invalid algorithm identifiers, KDF cost below the accepted floor or above the accepted maximum (O-07), oversized manifest or chunk, wrong passphrase, or a path that escapes the container, THEN THE SYSTEM SHALL return a typed verification error; it SHALL reject inadmissible header parameters before key derivation and SHALL NOT stage rows unless the manifest and all chunks authenticate and their digests verify. Verify: fuzzed and fixture-based negative tests.
 - AC-005 IF restore or import fails at any stage, THEN THE SYSTEM SHALL leave the live installation and the destination unchanged and remove its staging area. Verify: fault injection after each restore phase.
 - AC-006 IF an import targets a `workspace_id` that already exists, or a whole-installation restore is requested while the Runtime lock is held, THEN THE SYSTEM SHALL refuse with `WORKSPACE_IMPORT_CONFLICT` or `RUNTIME_RUNNING` and SHALL NOT overwrite or merge. Verify: negative route and CLI tests.
 - AC-007 WHEN a restore or import completes, THE SYSTEM SHALL have every restored grant REVOKED, every lease dropped, prior Runtime incarnations STOPPED, a new Runtime identity minted on first start and every Connection marked re-authentication required. Verify: post-restore inspection test.
@@ -321,6 +321,7 @@ Do not run a restore against the owner's real installation, delete archives, or 
 | O-04 | Reference fixture size for the performance baseline. | No profiling baseline exists; the telemetry LLD forbids hard-coded SLOs before a baseline. | Storage, Release | 017-T14 |
 | O-05 | Whether Argon2id should replace PBKDF2 in a container v2 before GA. | F-03; PBKDF2 at 600,000 iterations meets the current minimum in source. | Security | B-41 |
 | O-06 | Whether Feature 019's updater pre-flight consumes `checkDataCompatibility`. | 019 is being authored in parallel. | Release | 017-T07 |
+| O-07 | Exact accepted PBKDF2-HMAC-SHA256 iteration floor and ceiling for untrusted container headers. | B-41 sets a floor of at least 600,000, while source accepts 100,000 and has no maximum; excessive KDF costs can consume unbounded CPU before archive verification. Select and benchmark an owner-approved range before route promotion. | Security, Storage, Release | 017-T01/T13 |
 
 ## 18. Requirement traceability
 

@@ -216,13 +216,14 @@ The wired schema is v32 (v30 adds REPORTED turn activity records, 001-T25 storag
 | v30 (wired) | 001-T25 (done) | REPORTED Conversation turn activity records |
 | v31 (wired) | 014-T03 (partial: storage only) | `conversation_history_state` side table (status, archived_at, deleted_at); search index and purge manifest are NOT in v31 and take a later number |
 | v32 (wired) | 012-T05 (partial: storage only) | `conversation_control_events`, `conversation_owner_side_notes` (replaces the v30 named in 012) |
-| v33, v34 | 002-T04, 002-T07 (W1) | Runtime-local descriptor store; auth observations (renumbered from v30, v31 on 2026-11-10 because those were taken) |
+| v33 | 002-T07 (W1) | Runtime-local durable auth observations. The descriptor store already exists in migration 16; no descriptor DDL is needed. |
+| v34 | 002-T08 (W1) | Runtime-local credential-submission replay receipts only if the reviewed SecretStore crash-reconciliation contract requires durable DDL; otherwise release the reservation before implementation. Never store secret bytes. |
 | v35 | 003-T09 (W1) | `context_attachments`, `retrieval_receipts` (renumbered from v32) |
 | v36 | 005-T01 (W2) | Plan acceptance, Attempt admission and Effect records |
 | v37 | 007-T01 (W2) | `artifact_export_receipts`, source Conversation columns |
 | v38 | 009 (W2) | Conversation Coworker origin and memory fields |
 | v39 | 013 (W2/W3) | Package approvals and operation receipts |
-| v40 | 006-T01 (W3) | `connections` rebuild and Connection records |
+| v40 | 006-T01 (W3) | `connections` rebuild with `REVOKED` and `remote_revocation`, Connection records, and `auth_attempts` (state/expiry/digests only; no verifier or token bytes) |
 | v41 | 008-T01 (W3) | Browser session/lease/receipt and terminal session/receipt |
 | v42 | 015 (W4) | `task_control_requests`, `task_resume_packets` |
 | v43 | 020-T02 (W4) | `learning_candidates`, `coworker_learning_policies`, `memory_records` |

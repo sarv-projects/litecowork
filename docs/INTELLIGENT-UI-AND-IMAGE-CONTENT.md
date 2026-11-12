@@ -1,334 +1,73 @@
-# Intelligent UI, Declarative Presentation, and Image Content Architecture
+# Intelligent UI, declarative presentation and image content
 
-**Owning Stories:** E08-S08 (Semantic-first RichPresentation and Host Guidance), E08-S04, E08-S06  
-**Status:** NORMATIVE V1 PRODUCT ARCHITECTURE  
-**Authority:** Subordinate to [ARCHITECTURE.md](../ARCHITECTURE.md), [DATA-MODEL.md](DATA-MODEL.md), [STATE-MACHINES.md](STATE-MACHINES.md), [PRESENTATION-RUNTIME.md](PRESENTATION-RUNTIME.md), and [RICH-RESPONSE.md](RICH-RESPONSE.md).
+**Authority:** Subordinate to [Architecture](../ARCHITECTURE.md), [Rich Response](RICH-RESPONSE.md), [Presentation Runtime](PRESENTATION-RUNTIME.md), [State Machines](STATE-MACHINES.md) and [Artifacts and Evidence](ARTIFACTS-EVIDENCE.md). Existing invariants remain normative; revision 0.2 extensions below are TARGET proposals in [Feature 016](../specs/016-rich-presentation-intelligent-ui/README.md), IN_REVIEW. The owner requested design integration, not implementation authorization or qualification.
 
----
+## 1. Output boundaries
 
-## 1. Product Meaning and Distinction
-
-Intelligent UI transforms conversational outputs from passive text into interactive, visual decision interfaces directly inside the Conversation pane, without requiring an external browser or heavyweight VM. It is an agent-agnostic rendering layer that bridges the gap between static text and standalone applications.
-
-Outputs in LiteCowork maintain five distinct boundaries:
-
-| Output Class | User Experience | State & Interaction | Security Boundary & Authority |
-|---|---|---|---|
-| **Semantic Response** | Complete, readable answer in conversational transcript | None (static text/Markdown) | Authoritative `ConversationMessage` committed in SQLite |
-| **RichPresentation v1** | Polished layout: cards, callouts, tables, formatted text slices | Read-only presentation; no inputs | Validated immutable RFC 8785 JSON; display-only |
-| **Generated Image** | Inline high-resolution visual with zoom, lightbox, and export | Image inspection, pan/zoom, download | Pinned `ArtifactVersion` or `Resource` in Workspace BlobStore |
-| **Intelligent UI (v1)** | Interactive inline cards, tabbed views, data explorers, forms, calculators | Client-side transient state & bounded local calculations | Versioned Declarative Schema; strictly sandboxed pure reducer |
-| **Interactive Artifact** | Full web application running in dedicated right Workbench panel | Full app state, file imports, storage proposals | Isolated Artifact Runtime (sandboxed OS WebView process) |
-
----
-
-## 2. End-to-End Pipeline Architecture
-
-```mermaid
-flowchart TD
-    subgraph Agent Runtime ["Native Agent Execution"]
-        NA[Native Agent / Adapter] -->|Stream chunks / tool calls| AC[AgentTurnCoordinator]
-    end
-
-    subgraph Daemon Core ["Daemon Core (litecoworkd)"]
-        AC -->|Token chunk| DP[TURN_DELTA Producer]
-        AC -->|Structured UI intent / Tool JSON| RP[RICH_DRAFT Producer]
-        AC -->|Image bytes / tool file| IP[Image Ingestion Pipeline]
-        IP -->|SHA-256 + MIME check| BS[(Workspace BlobStore)]
-        IP -->|ArtifactVersion metadata| DB[(SQLite StateStore)]
-        AC -->|Turn completed| TC[commit_conversation_agent_response]
-        TC -->|Atomic SQLite commit| DB
-        TC -->|Settled notification| SP[TURN_SETTLED Producer]
-    end
-
-    subgraph Operator IPC ["Operator Transport"]
-        DP -->|Stream frame| IPC[Operator Stream Bridge]
-        RP -->|Stream frame| IPC
-        SP -->|Stream frame| IPC
-    end
-
-    subgraph Desktop UI ["Tauri Desktop Frontend"]
-        IPC --> SR[Presentation Stream Reducer]
-        SR -->|Live tokens| CV[Conversation View]
-        SR -->|Draft blocks| RV[Renderer Registry]
-        DB -.->|REST Hydration| CV
-        RV --> D1[Markdown / Code / Diff]
-        RV --> D2[DataTable / Metrics]
-        RV --> D3[Interactive Tabs / Accordion]
-        RV --> D4[SafeCalculator / FormInputs]
-        RV --> D5[Generated Image Viewer]
-        RV --> D6[Workbench Drawer: App / File]
-    end
-```
-
----
-
-## 3. Declarative Intelligent UI Schema (v1)
-
-### 3.1 Design Principles
-1. **Declarative Data Only**: The schema is strictly typed JSON. It contains no executable JavaScript, no `eval()`, no HTML `<script>` tags, no CSS `@import`, and no network URLs.
-2. **Deterministic Sandboxed Execution**: Calculations use a bounded, arithmetic-only Abstract Syntax Tree (AST) evaluated by a deterministic pure reducer.
-3. **Local State Isolation**: Form controls and interactive widgets update view-local React state only. They cannot mutate Workspace state, issue commands, or spawn Tasks without explicit, host-mediated user confirmation.
-4. **Universal Accessibility**: Every interactive node must declare an `id`, an accessible `label`, and a deterministic `fallback_text` representation.
-
-### 3.2 Schema Definition
-
-```typescript
-export type IntelligentUiDocument = {
-  schema_version: "1.0.0";
-  document_id: string;
-  conversation_id: string;
-  turn_id: string;
-  root_node: IntelligentUiNode;
-  fallback_markdown: string;
-};
-
-export type IntelligentUiNode =
-  | LayoutNode
-  | TabsNode
-  | AccordionNode
-  | DataTableNode
-  | MetricCardNode
-  | ChartNode
-  | FormInputNode
-  | SafeCalculatorNode
-  | CalloutNode
-  | ImageNode;
-
-// --- Layout & Containers ---
-export type LayoutNode = {
-  kind: "LAYOUT";
-  layout: "STACK" | "ROW" | "GRID";
-  columns?: number; // 1 to 12 for GRID
-  gap?: "NONE" | "SM" | "MD" | "LG";
-  children: IntelligentUiNode[];
-};
-
-export type TabsNode = {
-  kind: "TABS";
-  id: string;
-  default_tab_id?: string;
-  tabs: Array<{
-    id: string;
-    label: string;
-    icon?: string;
-    badge?: string;
-    content: IntelligentUiNode;
-  }>;
-};
-
-export type AccordionNode = {
-  kind: "ACCORDION";
-  id: string;
-  allow_multiple?: boolean;
-  sections: Array<{
-    id: string;
-    title: string;
-    summary?: string;
-    default_expanded?: boolean;
-    content: IntelligentUiNode;
-  }>;
-};
-
-// --- Data Visualization ---
-export type DataTableNode = {
-  kind: "DATA_TABLE";
-  id: string;
-  caption?: string;
-  columns: Array<{
-    field: string;
-    header: string;
-    type: "STRING" | "NUMBER" | "DATE" | "BADGE";
-    sortable?: boolean;
-    align?: "LEFT" | "CENTER" | "RIGHT";
-    badge_variant_map?: Record<string, "DEFAULT" | "SUCCESS" | "WARNING" | "DANGER">;
-  }>;
-  rows: Array<Record<string, string | number | boolean | null>>;
-  pagination?: {
-    page_size: number; // Max 50
-    allow_page_size_change?: boolean;
-  };
-  export_csv?: boolean;
-};
-
-export type MetricCardNode = {
-  kind: "METRIC_CARD";
-  id: string;
-  label: string;
-  value: string | number;
-  unit?: string;
-  delta?: {
-    value: string | number;
-    trend: "UP" | "DOWN" | "NEUTRAL";
-    is_positive: boolean;
-  };
-  sparkline?: number[];
-  annotation?: string;
-};
-
-export type ChartNode = {
-  kind: "CHART";
-  id: string;
-  chart_type: "BAR" | "LINE" | "AREA" | "PIE" | "SCATTER";
-  title?: string;
-  accessible_summary: string;
-  x_axis: { label: string; field: string; type: "CATEGORY" | "TIME" | "NUMERIC" };
-  y_axis: { label: string; field: string; unit?: string };
-  series: Array<{
-    name: string;
-    field: string;
-    color_token?: string;
-  }>;
-  data: Array<Record<string, string | number>>;
-  height_px?: number; // Bounded 160px - 480px
-};
-
-// --- Interactive Inputs & Sandboxed Calculations ---
-export type FormInputNode = {
-  kind: "FORM_INPUT";
-  id: string;
-  input_type: "TEXT" | "NUMBER" | "SELECT" | "SLIDER" | "TOGGLE";
-  label: string;
-  description?: string;
-  default_value: string | number | boolean;
-  options?: Array<{ label: string; value: string | number }>; // For SELECT
-  numeric_bounds?: { min: number; max: number; step?: number }; // For NUMBER / SLIDER
-  required?: boolean;
-};
-
-export type SafeCalculatorNode = {
-  kind: "SAFE_CALCULATOR";
-  id: string;
-  title?: string;
-  input_refs: string[]; // Binds to FormInputNode ids
-  formula_ast: CalcAstNode;
-  output_format: "CURRENCY_USD" | "PERCENTAGE" | "NUMBER" | "INTEGER";
-  explanation?: string;
-};
-
-export type CalcAstNode =
-  | { type: "LITERAL"; value: number }
-  | { type: "VARIABLE"; field_id: string }
-  | { type: "BINARY_OP"; op: "+" | "-" | "*" | "/" | "%"; left: CalcAstNode; right: CalcAstNode }
-  | { type: "UNARY_OP"; op: "-"; operand: CalcAstNode }
-  | { type: "FUNCTION"; func: "MIN" | "MAX" | "ROUND" | "ABS" | "CLAMP"; args: CalcAstNode[] };
-
-// --- Callout & Media ---
-export type CalloutNode = {
-  kind: "CALLOUT";
-  variant: "INFO" | "SUCCESS" | "WARNING" | "DANGER";
-  title?: string;
-  body_markdown: string;
-};
-
-export type ImageNode = {
-  kind: "IMAGE";
-  id: string;
-  resource_ref: string; // Content-addressed URI: litecowork-resource://<workspace_id>/<sha256>
-  alt_text: string;
-  caption?: string;
-  aspect_ratio?: number;
-  width_px?: number;
-  allow_lightbox?: boolean;
-};
-```
-
----
-
-## 4. Generated Image Pipeline
-
-### 4.1 Ingestion & Verification
-When a native agent produces an image (via model tool calls, MCP image generator, Grok Imagine, or direct base64 image block):
-1. **MIME & Integrity Validation**:
-   - Supported MIME types: `image/png`, `image/jpeg`, `image/webp`, `image/gif`.
-   - SVG is accepted only if run through the strict daemon XML/SVG sanitizer (stripping `<script>`, `onload`, `href="javascript:"`, and foreign namespaces).
-   - Maximum file size: 20 MiB per image.
-2. **Content-Addressed Storage**:
-   - The daemon computes the raw SHA-256 digest of the image bytes.
-   - Bytes are written to the Workspace BlobStore at `blobs/<sha256>`.
-   - An immutable `ArtifactVersion` or Workspace `Resource` row is committed in SQLite, linking the image to the originating `conversation_id`, `turn_id`, and `agent_session_id`.
-3. **URL Resolution**:
-   - The desktop client resolves the image using custom protocol: `litecowork-resource://<workspace_id>/<sha256_digest>`.
-   - The Tauri protocol handler checks Workspace access before streaming the bytes, preventing cross-workspace leakage.
-
-### 4.2 Image Input Pipeline
-When the user attaches an image in the Conversation Composer:
-1. File is selected via native OS file dialog.
-2. Tauri checks file bounds (max 20 MiB) and valid image header magic bytes.
-3. Daemon writes image to Workspace storage and generates a `ResourceRef`.
-4. If the active `AgentBinding` reports `input.images = SUPPORTED`, the adapter projects the image to the native agent using its documented CLI/API flag (e.g., base64 in JSON payload or `--image <path>`).
-5. If the agent does not support image input, the composer shows an explicit warning: `"Selected agent does not support image input. Image will be attached as a workspace reference only."`
-
----
-
-## 5. Operator Stream Producers
-
-In `apps/litecoworkd`, streaming is driven by three dedicated stream producers in the `AgentTurnCoordinator`:
-
-```rust
-pub enum OperatorStreamFrame {
-    StreamReady {
-        stream_id: String,
-        workspace_id: String,
-        conversation_id: String,
-        turn_id: String,
-    },
-    TurnDelta {
-        turn_id: String,
-        sequence: u64,
-        delta: String,
-        observed_at: String,
-    },
-    RichDraft {
-        turn_id: String,
-        sequence: u64,
-        document_draft: IntelligentUiDocument,
-    },
-    TurnSettled {
-        turn_id: String,
-        outcome: TurnOutcome,
-        committed_message_id: String,
-        settled_at: String,
-    },
-    ResyncRequired {
-        conversation_id: String,
-        reason: String,
-    },
-}
-```
-
-### Producer Execution Rules:
-1. **`TurnDelta`**: Dispatched synchronously as token chunks arrive from the native harness adapter stdout/SSE parser. Throttled to maximum 60 fps (16 ms batching) to prevent UI thread saturation.
-2. **`RichDraft`**: Emitted when the adapter streams structured JSON presentation hints. Parsed against the Declarative Schema. If validation passes, client renders progressive skeleton/layout; if validation fails, the frame is silently dropped and semantic streaming continues.
-3. **`TurnSettled`**: Emitted ONLY AFTER `commit_conversation_agent_response` completes successfully in SQLite. Signals the desktop UI to replace transient stream buffers with the authoritative committed `ConversationMessage`.
-4. **`ResyncRequired`**: Emitted if IPC reconnection occurs mid-turn or if a frame sequence gap is detected. Directs the client to fetch `GET /v1/conversations/{id}/messages`.
-
----
-
-## 6. Renderer Registry & Fallback Contract
-
-The desktop frontend implements a unified `RendererRegistry`:
-
-| Node / Block Kind | Target Desktop Component | Graceful Fallback (if unsupported or parsing fails) |
+| Class | User outcome | State and authority |
 |---|---|---|
-| `TEXT_SLICE` | `MarkdownRenderer` | Plain text rendering |
-| `LAYOUT` | `FlexContainer` / `GridLayout` | Vertical stack |
-| `TABS` | `InteractiveTabs` | Sequential labeled sections |
-| `ACCORDION` | `DisclosureAccordion` | Flat vertical sections with headings |
-| `DATA_TABLE` | `VirtualDataTable` (sort/filter/paginate) | Accessible Markdown table with horizontal scroll |
-| `METRIC_CARD` | `StatCard` | Text summary: `"[Label]: [Value] ([Delta])"` |
-| `CHART` | `SandboxedSvgChart` | Raw data table + accessible summary paragraph |
-| `FORM_INPUT` | `ClientInputWidget` | Disabled text box showing default value |
-| `SAFE_CALCULATOR` | `PureAstReducer` | Static formula explanation and fallback result |
-| `IMAGE` | `SafeImageViewer` with lightbox | Alt text + clickable local file download link |
-| `MCP_APP` | `SandboxedIframeView` | Informative card with tool name, status, and params |
-| `CALLOUT` | `CalloutBox` (styled border + icon) | Markdown blockquote (`> [!NOTE]`) |
+| Semantic response | Complete readable conversational answer | Immutable committed ConversationMessage; authoritative |
+| RichPresentation | Optional cards, tables and layout | Immutable bounded projection, one record per message; never host truth |
+| Generated image | Inspect and keep an image | Exact authorized ArtifactVersion/Resource revision and provenance |
+| Declarative Intelligent UI | Explore numbers using registered controls | Accepted B-40 target: bounded SAFE_CALCULATOR with transient view-local state |
+| Interactive Artifact | Operate a generated application | Separate [isolated runtime](INTERACTIVE-ARTIFACT-RUNTIME.md); B-40 keeps V1 PREVIEW_ONLY |
 
----
+Do not execute arbitrary model HTML, JavaScript, CSS or SVG in the chat WebView. Native harnesses retain reasoning, authentication, model catalogs and tools. LiteCowork supplies no hidden rendering LLM or second agent loop. Rich output is optional; facts, formula assumptions, warnings, citations and deliverables remain readable in the semantic answer.
 
-## 7. Acceptance & Verification Gates
+## 2. One schema and one compilation path
 
-1. **Safety**: Zero raw HTML injection; zero `dangerouslySetInnerHTML` on unvalidated agent output; zero `eval()`.
-2. **Determinism**: Identical `IntelligentUiDocument` input produces identical UI state across macOS, Linux, and Windows.
-3. **Resilience**: If any rich component throws an unhandled React error, an `ErrorBoundary` catches the failure, isolates the block, and displays the underlying semantic text answer with a `"Display error: showing text view"` notification.
-4. **Accessibility**: All interactive controls are navigable via keyboard (`Tab`, `Space`, `Enter`, Arrow keys) and declare ARIA attributes matching their state (`aria-expanded`, `aria-selected`, `aria-controls`).
+[presentation-intent.schema.json](schemas/presentation-intent.schema.json) owns agent proposals; [rich-presentation.schema.json](schemas/rich-presentation.schema.json) owns final documents; [operator-stream.schema.json](schemas/operator-stream.schema.json) owns stream frames. There is no separate IntelligentUiDocument, alternate node union or local stream-frame schema. The former illustrative type listing is removed because it duplicated machine authority and implied unadmitted components.
+
+Selected native agent output -> qualified AgentModule correlation/normalization -> bounded turn-scoped intent -> semantic message commit -> deterministic binder outside that transaction -> Rust validator/source authorization -> immutable publication -> authenticated Operator/Tauri read -> defensive desktop validation -> registered React component or full semantic fallback.
+
+Detailed HLD, LLD, ingress, tool contract, metrics, state and recovery: [ACP presentation pipeline](ACP-PRESENTATION-PIPELINE-LLD.md). ACP is an agent session protocol, not a UI protocol. Use documented native structured output when supported; an optional scoped local presentation MCP proposal tool requires verified session injection support; otherwise bounded semantic text works. A native `tool_call` observation is never an arbitrary executable host request. Host guidance remains [zero-authority](HOST-GUIDANCE.md).
+
+Current intent schema does not express a calculator. B-40 calculation intent must be promoted in the existing schema with its validation and semantic bindings before use; never claim a nonexistent CALC variant. CHART_FROM_RESULT requires a real authorized invocation; Markdown table charts are deterministic host derivation, not fictitious tool results.
+
+## 3. Registered deterministic interaction
+
+The implementation baseline accepts TEXT_SLICE, LAYOUT, CARD, CALLOUT and TABLE under 512 KiB/200-block/depth-8 limits. B-40 adds CHART and SAFE_CALCULATOR in renderer contract v2 through owner-reviewed contract promotion. Tabs, generic forms, metric cards, arbitrary operations, maps, remote assets and plugin renderers are not admitted merely because another library offers them.
+
+SAFE_CALCULATOR has at most eight labeled numeric inputs bound to original semantic table cells, a restricted arithmetic AST of at most 64 nodes/depth 12, a formula explanation and original-value fallback. Allowed arithmetic is B-40's LITERAL/VARIABLE, `+ - * / %`, unary minus, MIN/MAX/ROUND/ABS/CLAMP; non-finite or divide-by-zero results show a bounded error and fallback. No eval, function loading or universal string operation dispatcher. Derived outputs recompute locally and never become Evidence or verified financial results.
+
+Metric bindings must declare measure, units/currency/scale, time interval and aggregation. Latest and total are distinct. The proposal's monthly revenue example totals INR 12.08 lakh; INR 3.15 lakh is June revenue; 162.5% is January-to-June change. Missing semantics yields a table or clarification. New SIP numerical kernels and INR locale formatting require reviewed rate conversion, contribution timing, compounding, zero-rate/domain/stability/rounding semantics and fixtures; they are not existing approved arithmetic.
+
+## 4. Inline and Workbench Canvas
+
+Canvas is an expanded presentation in the existing right Workbench. A host-owned Expand/Collapse control keeps the same validated document, controller, inputs and revision; it does not invoke an agent or run an Artifact. Return focus to the originating control; support keyboard, screen reader, high zoom/reflow, reduced motion, labeled inputs, polite result announcements and equivalent data tables. Registry failures preserve the complete original answer.
+
+B-40 inputs remain transient, never persisted or sent to an agent. Revision 0.2 proposes separate explicit **Remember this view on this device** and **Ask to change this view** controls; these are not covered by B-40 acceptance. Remember is off by default and uses a quota-limited owner/device/Workspace/message/document-digest partition through authenticated host commands with expected revision, receipts, deletion fences and consent. No browser storage or background model synchronization. Conversational modification explicitly previews and sends a selected snapshot as a new normal turn; a result creates a new message/presentation and never rewrites original semantic text. Schema, API, events, migration/retention, conflict/deletion and owner review gates are specified in the pipeline LLD and Feature 016 T20-T24.
+
+## 5. Generated media
+
+The native harness may deliver an admitted Workspace file. Daemon ingestion sniffs PNG/JPEG/WebP/GIF magic bytes, checks declared type, limits bytes to 20 MiB and dimensions to 16,384 per side, computes SHA-256, and creates a provenance-bearing ArtifactVersion through Feature 007. Provenance pins Conversation, turn, public AgentSession identity and bytes digest. SVG is rejected in V1; no sanitizer is qualified. Model URLs are not fetched, and URL-only output is not an ingested Artifact.
+
+Artifact bytes load only through an exact authorized read. A new `litecowork-resource:` scheme is not implemented or promised; Feature 011 owns any CSP/scheme decision and Feature 019 audits it. Image display never autoplays and includes alt text or an explicit missing-description label. Composer image input is a separate descriptor-qualified input path; generated-image support does not prove image-input support.
+
+## 6. Evidence and gates
+
+Partial CODE/SERVED validator/read/fallback foundations exist. No production proposal publisher, calculation/chart renderer, expanded state controller, persistent state or image ingestion is claimed. Existing stream ready/projection/resync producers are distinct from absent turn-delta/settled/rich-draft producers. [Implementation status](IMPLEMENTATION-STATUS.md) and Feature 016 TASKS record exact evidence.
+
+Required checks include shared Rust/TypeScript hostile and boundary corpus, no executable content/CSP, wrong-scope/retry/proposal rejection, truthful units/aggregation, pure numerical fixtures, controller expansion identity, persistence consent/quota/revocation, duplicate/changed-body receipts, timeout-after-commit reconciliation, conflicting windows, forget/save race, new-message modification lineage, restart/reconnect and accessible semantic fallback. Packaged SYSTEM and owner USER evidence are required per exact OS/WebView/provider/version/auth route; schema or renderer success alone is not QUALIFIED.
+
+## 7. Detailed fallback, transport and image-input preservation
+
+These details retain the useful behavior of the earlier architecture while removing its duplicate TypeScript/stream definitions. Component vocabulary describes targets; only the explicitly admitted V1 profile is renderable.
+
+| Proposed family | Accessible deterministic fallback | Admission boundary |
+|---|---|---|
+| Layout | Vertical ordered stack | Existing LAYOUT; bounded columns/gap tokens only |
+| Tabs/accordion | Labeled sequential sections/headings | Future registry/schema review, no current component promise |
+| Data explorer | Accessible table with bounded scroll region | Existing TABLE is read-only; sorting/filter/pagination/export need registered host behavior |
+| Metrics | Label, value, unit, interval and aggregation text | Future kind; cannot infer success or verification from color/badge |
+| Chart | Equivalent data table and textual accessible summary | B-40 BAR/LINE/AREA target; original numbers retained |
+| Inputs/calculator | Original values, formula and original result; error reason for invalid inputs | B-40 labeled numeric inputs only; required deterministic fallback |
+| Image | Alt text or explicit missing-description label, exact authorized Artifact open/save controls | Feature 007; no model-generated direct download URL |
+| MCP App | Ordinary bounded tool/resource result with unavailable reason | Separate sandbox/origin/capability contract, never native chat execution |
+| Callout | Labeled text/blockquote | Existing CALLOUT with semantics bound to message |
+
+A component exception is caught by a host ErrorBoundary, leaves the complete semantic answer visible and may announce a concise display fallback once. It never changes turn state. ARIA state matches the actual control (`aria-expanded`, `aria-selected`, `aria-controls` where applicable); keyboard operation includes Tab/Space/Enter/Arrow keys according to the admitted control pattern. Charts use labels/patterns rather than color alone, visible text contrast is at least 4.5:1, and reduced motion disables optional animation. Determinism concerns document validation, numerical state transitions and equivalent readable results on supported Windows/Linux profiles, not identical browser pixel geometry or an unsupported macOS qualification claim.
+
+Canonical stream behavior remains in PRESENTATION-RUNTIME and operator-stream.schema.json: native text is coalesced/throttled (target at most 60 frames/second), draft frames are ephemeral, and turn-settled follows semantic commit only. Draft fences bind Workspace/Conversation/turn/retry/AgentSession/draft; stale or duplicate sequence does not apply. Existing client bounds include 32 open blocks, depth 8, 512 KiB draft bytes, 1,000 frames, 200 total blocks and 1 MiB frame cap. Queue overflow/gap drops optional draft and requests canonical resync; committed message replaces transient text. No producer/display implementation is claimed, and no custom `OperatorStreamFrame` union is introduced here.
+
+Image input remains a separate TARGET journey: native picker -> Tauri bounds/header validation -> admitted Resource storage -> exact revision reference -> adapter projection only when fresh AgentControlDescriptor reports `input.images=SUPPORTED` for that route. The actual provider must document how bytes or file references are supplied; do not invent a universal CLI flag or assume base64 support. Unsupported input shows an explicit capability limitation and asks the owner whether to send only a Workspace reference; it does not imply the agent saw image pixels. Retrying an image read retries only the authorized read, never generation. Inline zoom/lightbox/inspection and export are host controls over exact authorized revisions; they do not confer file-write/export authority outside Feature 007. No media scheme, sanitizer, image-input route or renderer is qualified by this prose.

@@ -1,8 +1,8 @@
 # 016 - Rich Presentation, Intelligent UI and Generated Media
 
 - **Status:** IN_REVIEW - authored complete for owner review; does not authorize implementation until the owner accepts the SPEC and blocker B-40.
-- **Revision:** 0.1 | **Updated:** 2026-11-11 | **Decision:** B-40 (first Intelligent UI component and Interactive Artifact Runtime V1 posture) ACCEPTED as proposed 2026-11-10 (A-62); whole-SPEC acceptance pending, package stays IN_REVIEW.
-- **Implementation state (2026-11-11):** Partial CODE/SERVED foundations. Desktop and storage validators now agree on five block kinds and a 512 KiB cap; semantic fallback and a read path exist. No production publisher, preference/fallback control, chart/calculation renderer, generated-media provenance flow, or Interactive Artifact Runtime is wired. Package remains IN_REVIEW; implementation beyond previously authorized owner-approved work remains gated on whole-SPEC acceptance. See TASKS.md and docs/IMPLEMENTATION-STATUS.md.
+- **Revision:** 0.2 (proposed) | **Updated:** 2026-11-12 | **Decision:** B-40 (first Intelligent UI component and Interactive Artifact Runtime V1 posture) ACCEPTED as proposed 2026-11-10 (A-62); whole-SPEC acceptance pending, package stays IN_REVIEW.
+- **Implementation state (2026-11-12):** Partial CODE/SERVED foundations. Desktop and storage validators agree on five block kinds and a 512 KiB cap; semantic fallback and a read path exist. No production publisher, global preference/fallback control, chart/calculation renderer, generated-media provenance flow, or Interactive Artifact Runtime is wired. Package remains IN_REVIEW; implementation beyond previously authorized owner-approved work remains gated on whole-SPEC acceptance. See TASKS.md and docs/IMPLEMENTATION-STATUS.md.
 - **Owners:** Presentation Runtime, Conversation, Artifacts, Storage, Operator/API, Desktop UI, Security, Accessibility and Product.
 - **Release rows:** Windows x64 with OpenCode v2.0.32 first, Linux x64 second. No Environment provider is needed.
 
@@ -33,3 +33,7 @@ Feature 001 (committed semantic message), Feature 007 (Artifact create and Conve
 ## Canonical owners
 
 [Architecture](../../ARCHITECTURE.md), [V1 release](../../docs/V1-PRODUCT-RELEASE-CONTRACT.md), [Rich Response](../../docs/RICH-RESPONSE.md), [Presentation Runtime](../../docs/PRESENTATION-RUNTIME.md), [Intelligent UI and image content](../../docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md), [Interactive Artifact Runtime](../../docs/INTERACTIVE-ARTIFACT-RUNTIME.md), [Rendering conformance](../../docs/RENDERING-CONFORMANCE-LLD.md), [Artifacts and evidence](../../docs/ARTIFACTS-EVIDENCE.md), [Schemas](../../docs/SCHEMAS.md).
+
+## Revision 0.2 design review
+
+The requested declarative interaction integration is documented in [ACP presentation pipeline LLD](../../docs/ACP-PRESENTATION-PIPELINE-LLD.md) and SPEC section 19. Proposals: qualified native intent ingress (ACP is not the UI protocol), registered deterministic components, one state controller across inline/expanded Workbench Canvas, separately opt-in device-local input retention and explicitly previewed new-turn conversational modification. No second rendering LLM, arbitrary model code, provider/config rewrite or replacement stack. Existing B-40 state remains view-local; persistence requires a new owner decision and canonical contracts/migration gates. T20-T24 are BLOCKED design targets, not implementation authorization. Original T01-T19 IDs are retained.

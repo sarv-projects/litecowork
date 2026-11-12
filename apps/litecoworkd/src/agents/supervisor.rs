@@ -37,6 +37,25 @@ use super::opencode_server::{
     OpenCodeEnvironment, OpenCodeServer, OpenCodeServerConfig, OpenCodeServerProtocol,
 };
 
+/// Host-normalized final-response identity. A native session handle must never
+/// enter the durable commit key or its request payload. The existing internal
+/// turn/retry scope disambiguates provider message identifiers across sessions.
+fn provider_response_commit_identity(
+    turn_id: &str,
+    retry_ordinal: u32,
+    message_id: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(b"litecowork.response-commit.v1");
+    digest.update((turn_id.len() as u64).to_be_bytes());
+    digest.update(turn_id.as_bytes());
+    digest.update(retry_ordinal.to_be_bytes());
+    digest.update((message_id.len() as u64).to_be_bytes());
+    digest.update(message_id.as_bytes());
+    format!("response-sha256:{}", hex::encode(digest.finalize()))
+}
+
 fn now_utc_rfc3339() -> String {
     let now = time::OffsetDateTime::now_utc();
     now.format(&time::format_description::well_known::Rfc3339)
@@ -1046,7 +1065,8 @@ fn execute_agent_turn(
             // message) so a repeated commit attempt replays the stored receipt instead
             // of writing a second answer (B-04).
             let final_message_id = format!("msg-agent-{turn_id}-{retry_ordinal}");
-            let provider_response_id = format!("{native_session}/{native_msg_id}");
+            let provider_response_id =
+                provider_response_commit_identity(turn_id, retry_ordinal, &native_msg_id);
             let now = now_utc_rfc3339();
             let commit_resp = CommitConversationAgentResponse {
                 request: WorkspaceCreateRequest {
@@ -1164,6 +1184,34 @@ fn execute_agent_turn(
 mod tests {
     use super::*;
     use storage_core::StoreError;
+
+    #[test]
+    fn response_commit_identity_is_stable_scoped_and_contains_no_native_identifier() {
+        let private_message = "native-message-canary-do-not-persist";
+        let identity = provider_response_commit_identity("turn-a", 0, private_message);
+        assert_eq!(
+            identity,
+            provider_response_commit_identity("turn-a", 0, private_message)
+        );
+        assert!(!identity.contains(private_message));
+        assert_eq!(identity.len(), "response-sha256:".len() + 64);
+        assert_ne!(
+            identity,
+            provider_response_commit_identity("turn-b", 0, private_message)
+        );
+        assert_ne!(
+            identity,
+            provider_response_commit_identity("turn-a", 1, private_message)
+        );
+        assert_ne!(
+            identity,
+            provider_response_commit_identity("turn-a", 0, "other-message")
+        );
+        assert_ne!(
+            provider_response_commit_identity("a", 0, "bc"),
+            provider_response_commit_identity("ab", 0, "c")
+        );
+    }
 
     #[test]
     fn conversation_usage_attribution_prefers_reported_then_estimate_then_unknown() {

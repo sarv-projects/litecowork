@@ -4,6 +4,6 @@
 
 IPC is a transport for docs/API.md operations. Readiness and drain follow RUNTIME-LIFECYCLE. Settings classes follow the ledger.
 
-Event names must already exist in [docs/EVENTS.md](../../../docs/EVENTS.md) or be added there with the schema in the same reviewed change. Revision 1.0 accepted target interfaces (not yet in source): `renameWorkspace`, the stop preview payload for `previewLocalRuntimeStop`, the update quiescence gate and the power-assertion observation. Any new event (for example a Workspace renamed event) is added to EVENTS.md and `docs/schemas/domain-event.schema.json` by 011-T01 in the same change; none exists yet.
+Event names must already exist in [docs/EVENTS.md](../../../docs/EVENTS.md) or be added there with the schema in the same reviewed change. Current source serves Workspace rename through its versioned owning route and read-only previewLocalRuntimeStop. The stop request remains unmounted, and update/power observation integration remains incomplete. Existing Workspace rename event/schema ownership must be reused; any new event requires same-change owner/schema promotion. A stop preview is not proof of quiescence.
 
 Error codes must already exist in [docs/SCHEMAS.md](../../../docs/SCHEMAS.md) or be added with `docs/schemas/error-codes.schema.json`.

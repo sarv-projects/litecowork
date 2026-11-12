@@ -1,7 +1,9 @@
 # Plan - Workbench Browser Terminal and Computer
 
-**Feature:** 008 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Spec revision:** 1.0
+> **Revision 1.1 scope revision (2026-11-12): IN_REVIEW / TARGET.** The user explicitly requested whole-laptop Computer observation and immediate manual takeover, rejecting the earlier browser-only substitution. Revision 1.0 owner acceptance (2026-11-09) and B-32 deferral below are historical authority for that revision; they are not acceptance of this extension. Implementation remains unchanged and Computer remains UNAVAILABLE. The revised owner design is [Computer observation and control LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md). No new provider, transport, route or qualification is approved by this documentation pass.
+
+**Feature:** 008 | **Status:** IN_REVIEW (revision 1.1); revision 1.0 ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Spec revision:** 1.1 IN_REVIEW (1.0 historical baseline)
 
 ## Phases
 
@@ -50,3 +52,11 @@ PROPOSED only; see the matching section in [TASKS.md](TASKS.md). Nothing here ch
 
 - **P-45 Default-deny webview and session permissions, including the main one, plus a guest network filter** (touches this package; row owned by package 019). Class **ADAPT**. Design impact if accepted: T06 of package 019; T04 and T06 of package 008. Deferral: Needs a packaged webview run on the Windows laptop and native Linux; DEFERRED with B-43. Upstream: [src/browser-guests.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/src/browser-guests.ts), [src/microphone-permissions.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/src/microphone-permissions.ts), [src/policy-test-auth.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/src/policy-test-auth.ts). Study: [desktop study](../../docs/DEEPSEEK-HARNESS-DESKTOP-DEEP-DIVE-2026-11.md) Sections 9 and 14 (row P-45).
 
+
+## Revision 1.1 phases and gates (IN_REVIEW)
+
+T22 (review attachment, permits, B-32 revision and terminal scope) -> T23 (same-change owner prose + API/event/error/migration promotion) -> T24 (observation-only real laptop capture) -> T25 (separately qualified mediated input). T23 -> T26 (compact object tabs, +, Canvas and terminal defaults/input); terminal execution still depends on T10/T11 and existing T09/T12 platform blockers. T24/T25/T26 -> T27 (full trace and packaged native qualification). No new migration allocation is assumed; check next free number at promotion. Capture/input provider and transport choices in the Computer LLD are recommendations requiring measured spikes, not owner-approved dependencies.
+
+Roll out observation-only before agent input; feature gates distinguish local-view READY, agent-disclosure readiness and input readiness. Rollback revokes permits/fences input and stops capture, preserving durable ambiguous Effect/receipt records; never replay commands or revive old streams. Desktop observation is independent of B-35, but does not remove any Task/agent terminal isolation gate. Exact Windows laptop qualification comes first for Computer investigation, while existing Linux-first terminal qualification is unchanged. Do not count WSL as either native desktop row.
+
+Required evidence includes picker cancel/denial, source removal, privacy pause, USER-owner local view, expired disclosure permit, slow consumer/over-bound memory, physical mouse/key interference, immediate takeover under load, takeover while the target app is foreground and LiteCowork is backgrounded, shortcut conflict/registration loss, stale geometry, partial injection, two-window/Workspace input conflict, timeout-after-dispatch, restart/reconnect and explicit Return. If no out-of-app takeover trigger is qualified on an OS/provider row, that row remains observation-only. Reconcile the old Computer-unavailable release row only with recorded owner review.

@@ -1317,3 +1317,18 @@ html { font-size: calc(100% * var(--lc-text-scale, 1)); }
 .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .dashboard-widget-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dashboard-note { color: #4b5563; font-size: 13px; margin: 4px 0 0; }
+
+/* Secondary routes stay reachable without filling the persistent workspace rail. */
+.sidebar-more { min-width: 0; }
+.sidebar-more-summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-secondary, inherit);
+  overflow-wrap: anywhere;
+}
+.sidebar-more-summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+  border-radius: 6px;
+}

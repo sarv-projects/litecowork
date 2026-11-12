@@ -450,7 +450,7 @@ export const navigation: { label: Page; displayLabel?: string; group?: string }[
 ];
 
 /** Pages that have no dedicated primary button; the sidebar renders them from `navigation`. */
-const SIDEBAR_MORE_PAGES: Page[] = ["Home", "Dashboard", "Goals", "Notifications", "Ideas"];
+const SIDEBAR_MORE_PAGES: Page[] = ["Home", "Discover", "Dashboard", "Goals", "Notifications", "Ideas"];
 
 const UPLOAD_RESUME_KEY = "litecowork.resourceUploadResume.v1";
 const TASK_STATUSES: TaskStatus[] = [
@@ -2519,7 +2519,7 @@ function App() {
             }}
           >
             <span className="sidebar-nav-icon">🕒</span>
-            <span className="sidebar-nav-text">Automations &amp; Routines</span>
+            <span className="sidebar-nav-text">Automations</span>
           </button>
 
           {/* Library: Workspace files and knowledge artifacts */}
@@ -2535,27 +2535,20 @@ function App() {
             <span className="sidebar-nav-text">Library</span>
           </button>
 
-          {/* Discover: LiteSPM skills and MCP servers catalog */}
-          <button
-            className={`sidebar-nav-btn ${page === "Discover" ? "selected" : ""}`}
-            type="button"
-            onClick={() => {
-              requestPageNavigation("Discover");
-              if (navigationOpen) closeNavigation(true);
-            }}
+          <details
+            className="sidebar-more"
+            key={SIDEBAR_MORE_PAGES.includes(page) ? page : "primary"}
+            open={SIDEBAR_MORE_PAGES.includes(page) || undefined}
           >
-            <span className="sidebar-nav-icon">✧</span>
-            <span className="sidebar-nav-text">Discover</span>
-          </button>
-
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-label">More</span>
-          </div>
+            <summary className="sidebar-more-summary">
+              More{SIDEBAR_MORE_PAGES.includes(page) ? ` · ${navigation.find(item => item.label === page)?.displayLabel ?? page}` : ""}
+            </summary>
           {navigation.filter((item) => SIDEBAR_MORE_PAGES.includes(item.label)).map((item) => (
             <button
               key={item.label}
               className={`sidebar-nav-btn ${page === item.label ? "selected" : ""}`}
               type="button"
+              aria-current={page === item.label ? "page" : undefined}
               onClick={() => {
                 requestPageNavigation(item.label);
                 if (navigationOpen) closeNavigation(true);
@@ -2565,6 +2558,7 @@ function App() {
               <span className="sidebar-nav-text">{item.displayLabel ?? item.label}</span>
             </button>
           ))}
+          </details>
         </nav>
 
         {/* 5. Settings: Local runtime, agent harnesses, diagnostics */}
