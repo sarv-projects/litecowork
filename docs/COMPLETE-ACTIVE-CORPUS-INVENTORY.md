@@ -11,7 +11,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 
 - Included files: 372
 - Included lines: 77264
-- Included bytes: 7626013
+- Included bytes: 7626230
 - Per-file SHA-256: docs/audit/active-corpus-manifest.csv
 - This manifest excludes itself to avoid a self-referential hash/count.
 - reading/ contains derived audit snapshots and is intentionally excluded.
@@ -44,7 +44,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | AGENTS.md | 133 | 11515 | e534272a21474a59 |
 | ARCHITECTURE.md | 824 | 58190 | 45248d5f5a1a6ca7 |
 | CONTRIBUTING.md | 81 | 6032 | 2fc07511243a861e |
-| CURRENT-RUN.md | 648 | 127745 | a6e5e576d4eaf9a2 |
+| CURRENT-RUN.md | 648 | 127962 | 8eddaefc3d7fce71 |
 | GLOSSARY.md | 292 | 12637 | bd9ffa34cb5ee0a0 |
 | README.md | 93 | 8289 | 3727827fd285fbe4 |
 | apps/litecowork-ui/README.md | 77 | 4351 | c47d822925a4b15b |
@@ -86,7 +86,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/DESIGN-SYSTEM.md | 532 | 36016 | 7627e7f97848794a |
 | docs/DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md | 196 | 26038 | 7f263349a5b4d436 |
 | docs/DESKTOP-SHELL-LLD.md | 280 | 30037 | 3c14a60b20dcafd0 |
-| docs/DOCS-REAUDIT-2026.md | 123 | 15241 | 8cb2c15e792f1887 |
+| docs/DOCS-REAUDIT-2026.md | 123 | 15241 | 44b2551d4b8f5433 |
 | docs/ENVIRONMENTS.md | 439 | 25588 | 58e9f7aab6cea011 |
 | docs/EVENTS.md | 929 | 69386 | 2b28f32d9255594c |
 | docs/EXPERIENCE.md | 1096 | 77409 | acdb24b092c2e914 |
@@ -96,7 +96,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/HANDOFF-NEXT-AGENT-2026-11.md | 841 | 191950 | 4d18924863b3c0b5 |
 | docs/HOST-GUIDANCE.md | 138 | 5902 | c2a6b68146651635 |
 | docs/IMPLEMENTATION-MASTER-PLAN.md | 168 | 12860 | e901a943fa3b9ad6 |
-| docs/IMPLEMENTATION-STATUS.md | 361 | 86425 | c8e86bb373e0cfa6 |
+| docs/IMPLEMENTATION-STATUS.md | 361 | 86425 | 63cd5657c1c57218 |
 | docs/IMPLEMENTATION.md | 232 | 9336 | c9dbf532b8948bbc |
 | docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md | 73 | 12251 | 2f50c42dfe67bada |
 | docs/INTERACTIVE-ARTIFACT-RUNTIME.md | 135 | 20237 | 6d5d6bd44fb9dd82 |
