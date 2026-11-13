@@ -19,7 +19,8 @@ AppWindow
     LeftRail(expanded or compact, resizable)
       NewSession, Search, RecentConversationList
       CoworkerRoster(expandable, per-item menu, add)
-      Work, NeedsYou(count real), Automations, Library, Discover
+      Work, NeedsYou(count real), Automations, Library
+      More(disclosure: Home/New Task, Discover, Dashboard, Goals, Notifications, Ideas)
       Settings, diagnostics/profile
     MainPane
       RouteOutlet(Home/Conversation/Coworker/Work/NeedsYou/Library/Automations/Discover/Settings)

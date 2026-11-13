@@ -14,10 +14,11 @@ This is a bounded module review. It does not complete the repository-wide all-do
 4. **Response commit status mismatch (A-93):** storage accepts `COMPLETED`, `FAILED`, `CANCELLED`, `WAITING_USER`, and `WAITING_DEPENDENCY`; the transaction writes `settled_at` and closes the active AgentSession for all accepted statuses. The production supervisor caller passes only `COMPLETED`. Locked B-04 lists terminal outcomes, while AC-017/018 own the separate UserRequest continuation lifecycle. T02 is PARTIAL pending Conversation/Storage owner resolution; the unused waiting status support is not continuation evidence.
 5. **TURN_DELTA correlation mismatch (A-94):** Feature 001 T13 and `contracts/api-events.md` require AgentSession identity in each transient delta, but `SPEC.md` §7.6, `docs/API.md`, `operator-stream.schema.json`, and `TurnFramePublisher` omit it. The UI currently fences by turn/retry/sequence. T13 is PARTIAL pending owner resolution; schema, producer, bridge, UI, and tests must move together if the session field remains required.
 6. **Locked SPEC internal contradiction (A-92):** Feature 001 SPEC records B-02/B-03 as accepted, then §7.4 says no first harness contract is locked until those decisions. Its revision 1.1 note lists AC-020..026 while AC-027..031 and their folded P-task scope are also present. The locked SPEC was not silently rewritten; a reviewed owner revision is required.
+7. **Supervisor response identity (A-100):** the supervisor creates a local `native_msg_id`, then hashes turn ID, retry ordinal and that message correlation ID as `provider_response_id`; the identity helper does not use a provider-issued final-response identity or native session handle. Storage documents the field as provider-side identity, and T06 was marked DONE despite unchecked acceptance boxes. T06 is now PARTIAL pending Conversation/Storage owner resolution on whether this host-generated identity satisfies locked B-04. The host-generated ID avoids persisting native session handles, but its semantic equivalence to provider identity is not established by the helper test.
 
 ## Cross-package corrections
 
-The current status correction was propagated to Feature 001 TASKS/RESEARCH/WIRING, the Feature 001 current-evidence row, Feature 004's current provider-dispatch crosswalk and UI/API/error/research notes, `docs/IMPLEMENTATION-STATUS.md`, `docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md`, and the contradiction register. Historical snapshots and archives were left unchanged. Feature 004's full current package/source cross-check is recorded separately in `FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md`.
+The current status correction was propagated to Feature 001 TASKS/RESEARCH/WIRING, the Feature 001 current-evidence row, Feature 004's current provider-dispatch crosswalk and UI/API/error/research notes, `docs/IMPLEMENTATION-STATUS.md`, `docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md`, and the contradiction register. The follow-up A-100 identity conflict is recorded in this report, Feature 001 TASKS and the contradiction register; no owner semantic decision is inferred. Historical snapshots and archives were left unchanged. Feature 004's full current package/source cross-check is recorded separately in `FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md`.
 
 The OpenCode-compatible-offer fix does not make Conversation qualified. Authentication, packaged bind/send, stop/retry, restart/recovery, denial behavior, and owner USER evidence remain open. A second qualified dispatch path is still absent, so A→B→A relay remains unavailable.
 
@@ -30,7 +31,7 @@ All 11 current Feature 001 package files, 1,814 physical lines total. SHA-256 is
 | `specs/001-conversation-session-supervisor/README.md` | 31 | `18ba16d73cd8eb7a717bff5c663d337eddfaba5e16f2efc1b771fd5e9f25ef0b` |
 | `specs/001-conversation-session-supervisor/SPEC.md` | 378 | `4bd86dd44f8547dd8dcd2e765741b56945b81157b18b3310b5055f837f10dfac` |
 | `specs/001-conversation-session-supervisor/PLAN.md` | 117 | `e3a4d0fb3027cacce75286207a03e149f34532a694b7b50699eeae524f9c01b5` |
-| `specs/001-conversation-session-supervisor/TASKS.md` | 561 | `b40b755e0d4a119e18c5e88b6f660aabb03bcfd21d1f4bb690d721813c0ea849` |
+| `specs/001-conversation-session-supervisor/TASKS.md` | 561 | `f58c6854f4ddd76dca141b84878e79cad646f37e2f0b3f8750ab14975a731c8a` |
 | `specs/001-conversation-session-supervisor/DATA-MODEL.md` | 79 | `1745cf92da06d41b30a3829a43bd5e5f7abd43c4a2e927983c56254fa392e88e` |
 | `specs/001-conversation-session-supervisor/RESEARCH.md` | 134 | `895298426d7825a8a09068f3d3b8e752622b43a803678f49cdbaedfd2725b5b6` |
 | `specs/001-conversation-session-supervisor/WIRING.yaml` | 254 | `015d799308106e42e9a166408a1628694838067a1547850f170bfd89d37b0ae8` |
@@ -49,7 +50,7 @@ The listed ranges were inspected for the findings above. Hashes pin the exact cu
 | `apps/litecoworkd/src/operator.rs` | 7475–7489 | `37402613e8dfd81fbcb0b9b045a44e6a100fadfc466736b07a17caa730d6e46d` |
 | `apps/litecoworkd/src/agents/opencode_profile_probe.rs` | 72–95 | `234551dbcbba1311439c45428aa33b934646c5701e7335b9dd3c16f26a7991fe` |
 | `apps/litecoworkd/src/conversation_operator.rs` | 1133, 1201 | `f97b7ff3f8e61b53b09d30dad61e7a64cd35e1106d88a668eecef35f17e614de` |
-| `apps/litecoworkd/src/agents/supervisor.rs` | 163, 1085–1095, 1171 | `fcde4daf3be04a5904e3975450ad42c2b073e88a6b26dcbbd4a80fcc0a68bca0` |
+| `apps/litecoworkd/src/agents/supervisor.rs` | 40–57, 1001–1006, 1064–1069, 1085–1095, 1171 | `fcde4daf3be04a5904e3975450ad42c2b073e88a6b26dcbbd4a80fcc0a68bca0` |
 | `apps/litecoworkd/src/agents/adapter.rs` | 601–638, 728–739 | `a725fe6874dc406840e51f909fb625cbb9743a80839bb9328803e9490df4db50` |
 | `apps/litecoworkd/src/transient_frames.rs` | 76–80, 91–109, 139–159 | `4c53ed8c83dbc4632c6c510d57667a361c177fc4040c8a9b33c1ae725f1d6e3a` |
 | `crates/storage-sqlite/src/conversations.rs` | 1026–1037, 1255–1274, 1314–1320 | `871fc0283cbaedc5b86e672d52edee419159b33d752c60e158d6bfd3c4df25c4` |
@@ -64,5 +65,6 @@ The listed ranges were inspected for the findings above. Hashes pin the exact cu
 - Resolve A-92 through a reviewed Feature 001 SPEC revision; do not edit the accepted contract by inference.
 - Resolve A-93 with Conversation/Storage owners, then complete the authorized T02 storage path and its negative/recovery evidence.
 - Resolve A-94 with Conversation/Presentation/API owners; if AgentSession remains in the delta contract, update schema, producer, stream path, UI and tests in one reviewed change.
+- Resolve A-100 with Conversation/Storage owners before marking T06 complete; keep host-generated correlation identity distinct from provider-issued identity and keep native session handles out of durable commit keys.
 - Continue the global semantic audit across the remaining feature packages, global owner docs, and active Rust/Tauri/React source. The global audit remains OPEN.
 - Complete T09 packaged Windows and Linux provider journeys and T28 owner verification; documentation changes do not count as qualification.
