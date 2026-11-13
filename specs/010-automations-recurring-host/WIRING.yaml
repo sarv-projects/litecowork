@@ -15,6 +15,21 @@ nodes:
   - id: "storage"
     owner: Storage
     kind: store
+  - id: "trigger-host"
+    owner: local AutomationTriggerHostWorker
+    kind: service
+  - id: "task-service"
+    owner: Feature 005 TaskService (materialization only in this feature)
+    kind: service
+  - id: "notification-policy"
+    owner: NotificationService and Workspace preferences
+    kind: service
+  - id: "local-presenter"
+    owner: Desktop notification presenter (TARGET; no claim/settle worker served)
+    kind: component
+  - id: "connection-broker"
+    owner: Feature 006 Connection broker (TARGET for CONNECTOR_EVENT)
+    kind: service
   - id: "clock"
     owner: local clock and Runtime wake
     kind: external
@@ -43,12 +58,44 @@ edges:
     kind: projection
   - id: "e-clock-owner"
     from: "clock"
-    to: "owner"
-    kind: fire
-  - id: "e-owner-clock"
+    to: "trigger-host"
+    kind: observe
+  - id: "e-trigger-cursor"
+    from: "trigger-host"
+    to: "storage"
+    kind: schedule-cursor-read-and-advance
+  - id: "e-trigger-materialize"
+    from: "trigger-host"
+    to: "task-service"
+    kind: materialize-one-ready-task-per-occurrence
+  - id: "e-trigger-occurrence"
+    from: "trigger-host"
+    to: "storage"
+    kind: occurrence-identity-commit
+  - id: "e-outcome-notification"
     from: "owner"
-    to: "clock"
-    kind: cursor
+    to: "notification-policy"
+    kind: decide-from-settled-outcome-and-preference
+  - id: "e-notification-row"
+    from: "notification-policy"
+    to: "storage"
+    kind: pending-or-suppressed-delivery-write
+  - id: "e-notification-claim"
+    from: "local-presenter"
+    to: "operator"
+    kind: claim-and-settle-command-TARGET
+  - id: "e-notification-projection"
+    from: "storage"
+    to: "ui"
+    kind: delivery-status-projection
+  - id: "e-connector-observe"
+    from: "trigger-host"
+    to: "connection-broker"
+    kind: poll-provider-events-TARGET
+  - id: "e-connector-receipt"
+    from: "connection-broker"
+    to: "trigger-host"
+    kind: untrusted-event-observation-TARGET
   - id: "e-owner-invocation"
     from: "owner"
     to: "capability-invocation"
@@ -70,12 +117,42 @@ transactions:
     owner: TaskService
     atomic_records: ["task","occurrence_link"]
     external_calls_inside: false
+  - id: "tx-outcome-settlement"
+    owner: TriggerHost + Storage / NotificationService decision
+    atomic_records: ["automation_occurrences", "domain_events", "notification_deliveries"]
+    external_calls_inside: false
+  - id: "tx-notification-claim"
+    owner: NotificationService (TARGET)
+    atomic_records: ["notification_deliveries"]
+    external_calls_inside: false
+  - id: "tx-notification-settle"
+    owner: NotificationService (TARGET)
+    atomic_records: ["notification_deliveries", "domain_events"]
+    external_calls_inside: false
+  - id: "tx-connector-event"
+    owner: TriggerHost + Storage (TARGET)
+    atomic_records: ["automation_occurrences", "automation_trigger_bindings", "domain_events"]
+    external_calls_inside: false
+# A-97: quiet-hours atomic record mapping is intentionally unresolved until the
+# Workspace-level target is reconciled with the per-event-class preference owner.
+# Connector event payload digest is a field on automation_occurrences, not a record.
 external_boundaries:
   - id: "outside-sqlite"
     owner: domain owner
     input_trust: untrusted
     timeout: bounded
     retry: reconcile-before-retry
+  - id: "connector-event-poll"
+    owner: Feature 006 Connection broker (TARGET; not enabled by this checkout)
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
+    cursor_storage: existing encrypted Runtime-local automation_trigger_bindings; exact event receipt mapping remains T09 work
+  - id: "notification-presentation"
+    owner: local desktop presenter (TARGET)
+    input_trust: owner-projected notification class/status only; no Task body text
+    timeout: bounded
+    retry: settle FAILED or AMBIGUOUS; never infer SENT
   - id: "workflow-backend"
     owner: target-only WorkflowBackendAdapter; no production implementation exists
     input_trust: untrusted

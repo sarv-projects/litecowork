@@ -1,8 +1,10 @@
 //! Authenticated local Operator routes for stored Automation definitions.
 //!
-//! This router exposes the finite definition API and safe-stop commands over persisted
-//! aggregates. Local owner ManualTrigger runs atomically admit a claimed occurrence and
-//! an ordinary READY Task; recurring trigger hosting and `/resume` remain unavailable.
+//! This router exposes the Automation API over persisted aggregates. The local
+//! AutomationTriggerHostWorker observes supported schedule triggers, and `/resume`
+//! enables only Manual or locally parseable Schedule triggers when this Runtime holds
+//! the trigger-host binding. Trigger hosting materializes ordinary READY Tasks; it
+//! does not execute Task bodies.
 // Route handlers intentionally return full Axum Responses to preserve status, body, and headers.
 #![allow(clippy::result_large_err)]
 

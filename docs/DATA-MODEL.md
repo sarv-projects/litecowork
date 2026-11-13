@@ -661,9 +661,16 @@ For `OPENCODE_SERVER`, the expiring offer constraints may contain only the bound
 and display names. `reported_provider_status=OBSERVED` means the catalog route returned a
 valid response; it does not report provider connection or authentication. The transitional
 `reported_connected_provider_ids` fields are always empty/false in the current adapter.
-These are display-only observations. The offer remains `compatible=false` and cannot admit
-an AgentBinding while session-model selection and execution lifecycle remain unqualified.
+These remain bounded display observations and do not prove provider authentication or an
+active/qualified session. The current OpenCode probe can publish a `compatible=true`,
+`STARTABLE` offer only for exact CLI 2.0.32 when the probe is complete and the owned host
+process stop is observed; 2.0.26, 2.0.28, partial probes and unobserved stops remain
+incompatible. This exact offer permits creation of a disabled AgentBinding under the
+accepted Feature 002 AC-013 path. It does not make the binding enabled, authenticate the
+native account, qualify Conversation Send, or imply session-model selection is ready.
 Native provider/model objects and credentials are never persisted in offer constraints.
+See [Feature 002 implementation evidence](../specs/002-native-agent-install-auth-binding/TASKS.md)
+for the task status and exact qualification limits.
 
 ```text
 RuntimeOffer {

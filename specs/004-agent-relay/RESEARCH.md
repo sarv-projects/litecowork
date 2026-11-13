@@ -1,6 +1,6 @@
 # Research - Agent Relay on One Conversation
 
-**Feature:** 004 | **Checked:** 2026-11-06; source crosswalk re-checked 2026-11-12. The older pinned rival-source review remains dated 2026-11-06.
+**Feature:** 004 | **Checked:** 2026-11-06; source crosswalk re-checked 2026-11-13. The older pinned rival-source review remains dated 2026-11-06.
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -23,7 +23,7 @@ Authorities: docs/DELEGATION.md (to avoid collapsing relay into HOST_DELEGATED),
 
 These confirm that a second agent's input can be a pure function of durable committed state, which is exactly the portable-context contract B-15 proposes. No OpenWork code is imported; the patterns are prototype/reference inputs only.
 
-## Source and route audit (2026-11-06)
+## Historical source and route audit (2026-11-06; updated by the current cross-check below)
 
 Inspected the composed Conversation route in `apps/litecoworkd/src/conversation_operator.rs`, `apps/litecoworkd/src/agents/supervisor.rs`, `agents/codex_app_server.rs`, `agents/codex_profile_probe.rs`, `agents/conversation_prompt.rs`, the context package builder and reader in `crates/storage-core/src/conversation.rs` and `crates/storage-sqlite/src/conversations.rs`, `apps/litecowork-ui/src/conversations/ConversationsPage.tsx`, `conversation-agent-selection.ts`, `conversation-agent-surface.ts`, and the generated `operator-api.ts` contract.
 
@@ -31,7 +31,7 @@ Inspected the composed Conversation route in `apps/litecoworkd/src/conversation_
 - A submitted turn pins `agent_binding_id` in `conversation.turn.created.v2`. The Conversation message projection includes `agent_binding_id` and `agent_session_id`; these are available as source data for producer attribution. This is not the same as the UI displaying that attribution.
 - `AgentSessionSupervisor::execute_agent_turn` has one provider arm: `provider_key == "opencode"`. It spawns a bounded OpenCode v2.0.32 server, creates a fresh native session, activates the durable Conversation AgentSession and sends the portable prompt. Other provider keys reach the unsupported/unconfigured path. The current implementation therefore has one adapter branch, not two.
 - `CodexAppServer` includes a context-aware `turn_start_with_conversation_context` method and protocol tests, but the type is used by Codex profile probing and is not integrated into `AgentSessionSupervisor::execute_agent_turn`. Its existence is not a Codex Conversation execution path.
-- Feature 002's OpenCode profile probe deliberately records `compatible=false`; the AgentCatalog UI therefore does not allow a new OpenCode binding to be created from that probe. Codex can produce a compatible/startable profile observation and an enabled lead-eligible binding, but the Conversation supervisor has no Codex dispatch arm. Thus the current visible picker cannot provide a complete supported A→B→A sequence.
+- Feature 002 T01's source now computes `compatible=true`/`STARTABLE` only for exact OpenCode CLI 2.0.32, a complete probe and an observed host stop. That CODE-level offer is not evidence of valid authentication or a packaged binding/send journey. Codex can produce a compatible/startable profile observation and an enabled lead-eligible binding, but the Conversation supervisor has no Codex dispatch arm. Thus the current visible picker still cannot provide a complete supported A→B→A sequence; the blocker is the missing second qualified dispatch path, not an always-incompatible OpenCode offer.
 - `buildConversationAgentChoices` filters by same Workspace, `enabled`, `leadEligible`, unique binding identity and active Conversation supervisor adapter support. It does not check whether a fresh AgentControlDescriptor/auth observation exists. The descriptor-aware `deriveConversationAgentSurface` helper has tests but no production import/call site; Feature 002's descriptor route is wired but still fails closed with 503 absent a qualified producer.
 - The backend message projection and desktop `ConversationMessageView`/`parseConversationSnapshot` retain nullable `agent_binding_id` and `agent_session_id`; committed messages display their producer from the stored binding. Focused UI tests cover producer parsing and immutable stream identity. This does not establish a second provider or cross-layer relay.
 - The composer `Add context or file` control opens a Resource picker for an existing Conversation and sends eligible text ResourceRefs. The Feature 001 supervisor reauthorizes and materializes those eligible text references at dispatch before encoding. Binary files, WorkspaceRoot files, first-message attachment on a new Conversation, Workspace retrieval at Send and durable Context Used receipts remain unavailable; the picker does not imply any of those capabilities.
@@ -40,6 +40,19 @@ Inspected the composed Conversation route in `apps/litecoworkd/src/conversation_
 - Changing the Conversation binding commits Conversation state only. It does not create a Task, Attempt, DelegationProfile, Environment, lease, grant or Task lead-handoff event. This matches the intended separation between ordinary relay and delegated Task execution.
 
 These are source/route/UI findings. Producer attribution and eligible text-reference materialization have CODE evidence, but no second-provider native Conversation, full cross-layer A→B→A relay, or A→B→A USER journey was executed. Feature 004 is ACCEPTED/LOCKED (2026-11-09); none of these behaviors is qualified by acceptance.
+
+## Current source, route and UI cross-check (2026-11-13)
+
+The 2026-11-06 findings above are retained as a dated snapshot; the following corrections reflect the current checkout:
+
+- The desktop parser and transcript now retain and render committed producer identity from the stored message binding. This is partial CODE evidence; it does not qualify A→B→A or establish that the storage projection, packaged UI and a real second provider work together.
+- Feature 001 T14 now reauthorizes and materializes eligible text ResourceRefs before prompt encoding. The materializer is not a WorkspaceRoot index/retrieval path, does not support binary content, and does not create a relay Context Used receipt.
+- The storage loader limits returned message rows to 1,024 but first scans the full conversation for orphan rows and computes COUNT/SUM over the committed prefix before fetching those rows. Do not describe its total query work as bounded or AC-011 as complete until all full-prefix scans are bounded or removed and a large-history test proves the whole path.
+- The accepted B-15 Workspace instruction preamble is absent from the current package/prompt path. Durable ArtifactRef handling also lacks a typed exact-version read/authorization/materialization path; the required cross-package trace to Feature 007 must be added before 004-T03 can be complete.
+- The prompt window helper's `ContextReduction` is returned in memory and ignored by the supervisor. It is not the B-15 relay refusal/truncation receipt and is not persisted or shown. A-66 leaves receipt placement open; A-96 records the mismatch between WIRING's `atomic_records` label and DATA-MODEL's derived-package rule.
+- The OpenCode branch remains the only Conversation supervisor adapter. A compatible OpenCode offer is possible only for the accepted exact probe tuple and is not authentication or route qualification. The qualified Claude Code second path, descriptor freshness gate and packaged A→B→A recovery journey remain unproven.
+
+Exact source ranges, hashes, package line/hash manifest and task states are recorded in the [Feature 004 current cross-check](../../docs/audit/FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md). No new rival implementation or provider capability is inferred from this source audit.
 
 ## Alternatives
 

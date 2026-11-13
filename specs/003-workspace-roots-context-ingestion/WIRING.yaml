@@ -7,7 +7,10 @@ status: "ACCEPTED/LOCKED"
 # store exists. See SPEC.md section 4 and TASKS.md.
 # A-65 blocks T09/T10: the accepted standalone tx-attach requires a turn_id before the
 # existing 001 transaction atomically inserts that turn and its dispatch intent. Do not
-# implement the separate-before-outbox sequence until the cross-owner contract is revised.
+# implement tx-attach as a separate-before-outbox transaction until the cross-owner
+# contract is revised; the future owner-approved admission transaction must include these
+# records if it retains the turn foreign key. A-69 also leaves required-vs-optional
+# root_id/retrieval_receipt_id provenance unresolved. No target edge below is served.
 nodes:
   - id: "ui"
     owner: Desktop UI

@@ -95,7 +95,7 @@ Copy the reference's compact popover rather than a large modal: provider rail/se
 
 ### Current implementation boundary
 
-Current Feature 002 has Codex/OpenCode profile probe observations, but the ControlDescriptor read/refresh endpoints return 503. Therefore model/effort picker and descriptor-bound options are still target-only. Current Codex binding can exist without the current supervisor dispatching Codex; OpenCode is marked incompatible by its profile probe. Do not render model/effort controls as active until a compatible exact adapter, fresh descriptor and Conversation/Task send path are qualified.
+Current Feature 002 has Codex/OpenCode profile probe observations. OpenCode ControlDescriptor GET/refresh are served for profiles selecting the trusted module; module-less profiles still return 503. Model/effort picker and descriptor-bound options remain target-only because the model picker is not mounted and session-options/capability projection routes are not served. OpenCode can produce a compatible `STARTABLE` offer only for exact CLI 2.0.32 with a complete probe and observed host stop; this does not prove authentication or a qualified Conversation route. Codex binding can exist without the current supervisor dispatching Codex. Do not render model/effort controls as active until the exact descriptor, adapter, and Conversation/Task route is qualified.
 
 ## Logo, icon and name policy
 

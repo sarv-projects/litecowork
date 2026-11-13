@@ -220,7 +220,7 @@ transactions:
     external_calls_inside: false
   - id: "tx-final-response"
     owner: "Storage implementation called by AgentSessionSupervisor"
-    status: "CODE - OpenCode path uses the SQLite transaction; ConversationService ownership and qualification remain open"
+    status: "CODE - active OpenCode caller commits COMPLETED through SQLite; ConversationService ownership and qualification remain open. Storage validation also accepts WAITING_USER and WAITING_DEPENDENCY, writes settled_at for them and closes the active AgentSession in the same transaction, although locked B-04 defines terminal outcomes only; that unused status mismatch is open under register A-93 and must not be treated as continuation support."
     atomic_records: ["AGENT ConversationMessage", "conversation.message.added.v1", "COMPLETED ConversationTurn", "conversation.turn.settled.v1", "snapshots", "response receipt"]
     external_calls_inside: false
 external_boundaries:

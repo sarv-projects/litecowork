@@ -1,6 +1,6 @@
 # Research - Native Agent Install, Auth, Binding and Agent Profile UX
 
-**Feature:** 002 | **Checked:** 2026-11-12 (source/UI and contract re-audit; no packaged provider journey or real sign-in executed). Historical comparison material remains pinned to the dates stated below.
+**Feature:** 002 | **Checked:** 2026-11-13 (full package and bounded source/UI/contract cross-check; no packaged provider journey or real sign-in executed). Historical comparison material remains pinned to the dates stated below.
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -40,11 +40,11 @@ Reject:
 1. Settings Agents: default agent selection is native-harness-owned and applies only to new work; installed versions are listed with exact executable/version and external official link; available candidates show install action only when a trusted install plan exists.
 2. Notifications: explicit choices combine sound and OS notification delivery (both, sound only, notification only, neither), with quiet/in-focus behavior; a 'Try it' control is a real local preview that does not send a notification to another device.
 3. Advanced: keep-awake choices are OS power assertions with distinct battery/power semantics; resume-after-restart is a scheduler/recovery policy for admitted agent jobs, not a promise that arbitrary external native sessions can be restored.
-4. Agents overview: 3 status summary tiles are filters, not left-sidebar routes. LiteCowork's primary sidebar remains Conversations, Coworker roster, Work, Needs You, Automations, Library, Discover and Settings; Agents work should be accessible as a Work filter/overview, not a duplicate global task engine.
+4. Agents overview: 3 status summary tiles are filters, not left-sidebar routes. The older screenshot map that lists Conversations, Coworker roster, Work, Needs You, Automations, Library, Discover and Settings as separate primary entries is superseded by the canonical [V1 UI Screen Contract §1](../../docs/V1-UI-SCREEN-CONTRACT.md#1-product-shell-and-navigation): Work, Coworkers, Library and Automations are the persistent workspace destinations, Needs You is a compact attention entry, Settings is in the footer, and Discover is under More. Agents work belongs in the Work overview/filter or the existing Settings > Agents surface; do not add another permanent navigation route.
 5. Usage: dashboard quick ranges Today, 7 days, 1 month, 3 months, 1 year and All time, plus YTD/Custom in expanded filters. Grouping and filters are governed by telemetry LLD and existing ledgers.
 6. Work panels: keep separate Conversations and native Terminal panes within a Task/work context only when actual session/process identity exists; do not promote mock terminal output to durable completed work.
 
-## Current LiteCowork source/UI evidence (checked 2026-11-12)
+## Current LiteCowork source/UI evidence (checked 2026-11-13)
 - `AgentCatalogSettings` lists 15 curated candidates and ACP registry entries; registry results are read-only and map to `NO_ADAPTER`.
 - Local inventory probes bounded version/path metadata; auth is UNKNOWN and readiness NOT_PROBED. No native AgentModule install/update action exists.
 - Profile probing supports Codex/OpenCode after local Runtime enrollment. Codex App Server initialize/account/model-list is observed. OpenCode offer admission is now computed; only exact 2.0.32 plus a complete probe and observed host stop is bindable in code. Neither profile probe proves an end-to-end Conversation session.

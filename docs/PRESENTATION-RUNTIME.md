@@ -161,11 +161,12 @@ Conversation presentation subscription or one Task presentation subscription per
 (a client-side limit; the wire schema allows up to 20 conversation IDs and 20 task IDs per
 `Subscribe`). It emits a
 fresh authorized snapshot after committed Workspace events, and per-item upserts are
-emitted and merged by the client. What does **not** exist is the transient frame
-*producer*: `turn.delta`, the `turn.settled` frame and `rich.draft` are reduced by the
-client and subscribed by the desktop bridge, but no local Operator code emits them (a
-grep over `apps/**/*.rs` finds no producer), so no transient frame reaches a running app
-in this build. Unsupported filters are rejected explicitly.
+emitted and merged by the client. Transient frame production is partial: the OpenCode
+`TurnFramePublisher` produces bounded `TURN_DELTA` frames and the supervisor emits
+`TURN_SETTLED` at CODE level, but these do not prove a live provider journey. `TURN_DELTA`
+still lacks the `agent_session_id` required by the current Feature 001 task/API contract
+(A-94), so full correlation is unresolved. `RICH_DRAFT` remains a target frame with no
+producer in this build. Unsupported filters are rejected explicitly.
 
 A Task stream snapshot uses the existing `TaskPresentationSnapshot` fields and adds the
 decimal `origin_sequence` captured in the same SQLite read transaction as the Task,
@@ -351,8 +352,12 @@ OperatorStreamFrame =
   | RESYNC_REQUIRED
 ```
 
-`STREAM_READY`, `PROJECTION` and `RESYNC_REQUIRED` are produced by the local Operator
-today. `TURN_DELTA`, `TURN_SETTLED` and `RICH_DRAFT` have no producer in this build.
+`STREAM_READY`, `PROJECTION` and `RESYNC_REQUIRED` are produced by the local Operator.
+The OpenCode `TurnFramePublisher` also produces bounded transient `TURN_DELTA` frames and
+the supervisor emits `TURN_SETTLED`. These frames are CODE-level and do not prove a live
+provider journey. `TURN_DELTA` still lacks the `agent_session_id` required by the current
+Feature 001 task/API contract (A-94); resolve that owner mismatch before claiming full
+correlation. `RICH_DRAFT` remains a target frame with no producer in this build.
 
 `rich.draft` events are `DRAFT_STARTED`, `BLOCK_OPENED`, `TEXT_APPENDED`,
 `BLOCK_REPLACED`, `BLOCK_CLOSED`, `DRAFT_FINALIZING`, `DRAFT_PUBLISHED`, or

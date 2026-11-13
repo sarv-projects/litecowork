@@ -64,6 +64,9 @@ recovery:
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
 
-# Implementation evidence boundary (2026-11-06)
+# OPEN A-96: SPEC's export transaction says to commit a durable receipt, while DATA-MODEL says
+# PortableContextPackage is derived/not persisted. Keep this target node unimplemented until T09
+# names the receipt and its owner; `portable_context_package` here is not evidence of a source table.
+# Implementation evidence boundary (2026-11-13)
 
-This YAML is the ACCEPTED/LOCKED (2026-11-09) target dependency graph, not a description of currently working provider wiring. Acceptance does not mark any edge served. In the active daemon, the `harness_a`/OpenCode dispatch edge is the only Conversation execution path. `harness_b` is target-only: the accepted agent B is Claude Code CLI, which has no supervisor arm yet (004-T05); Codex App Server profile-probe code is also not connected to `AgentSessionSupervisor`. Do not mark the `harness_b` edge served or integrated until the second adapter is wired, qualified and covered by the A→B→A USER path.
+# This YAML is the ACCEPTED/LOCKED (2026-11-09) target dependency graph, not a description of currently working provider wiring. Acceptance does not mark any edge served. In the active daemon, the `harness_a`/OpenCode dispatch edge is the only Conversation execution path. `harness_b` is target-only: the accepted agent B is Claude Code CLI, which has no supervisor arm yet (004-T05); Codex App Server profile-probe code is also not connected to `AgentSessionSupervisor`. The message-row fetch is capped, but orphan validation and COUNT/SUM scans still traverse the full Conversation/prefix. Do not mark the `harness_b` edge served or integrated until the second adapter is wired, qualified and covered by the A→B→A USER path.

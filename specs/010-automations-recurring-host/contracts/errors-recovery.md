@@ -6,6 +6,10 @@ Restart replays the cursor and does not double-create. Overlap policy is explici
 
 Denial, duplicate replay, timeout-after-dispatch, cancel, crash and restart are all required before QUALIFIED. Unknown external results reconcile before retry.
 
+Current CODE recovery is narrower: the local TriggerHost polls persisted Schedule cursors while its Runtime is alive, and repeated schedule-slot settlement looks up the existing occurrence/Task. The worker does not wake a sleeping machine. Notification outcomes remain PENDING because no production claim/settle worker exists; restart recovery for an in-flight notification is not implemented. A paused pinned Coworker currently causes admission to defer the same slot rather than record and advance a `COWORKER_PAUSED` skip. Invalid persisted quiet-hours timezone data can evaluate as outside the window; save-time IANA validation remains required.
+
+The source schema already contains notification status/attempt fields and encrypted Runtime-local trigger cursor bindings. A-98 holds the exact delivery lease/version migration decision; A-97 holds quiet-hours atomic multi-class persistence. These are contract gaps, not recovery guarantees supplied by the existing schema.
+
 
 ## External workflow invocation
 

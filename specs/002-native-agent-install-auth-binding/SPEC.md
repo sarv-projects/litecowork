@@ -5,7 +5,7 @@
 **ID:** 002
 **Status:** ACCEPTED/LOCKED
 **Owners:** Agent Runtime, Security/Trust, Desktop UI, Product
-**Updated:** 2026-11-12 (source-evidence refresh; no locked target decision changed)
+**Updated:** 2026-11-13 (source-evidence refresh; no locked target decision changed)
 **Revision:** 1.0 (owner acceptance 2026-11-09 adds OpenCode binding admission, descriptor production, native sign-in observation, descriptor-declared composer options/commands, Claude Code as second module, ACP client and advisory matchmaker; AC-013 to AC-019)
 **Owner acceptance:** accepted 2026-11-09 by the repository owner (sarv-projects) via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md) (PR #1), including each "ACCEPT (scoped)" caveat as a binding condition.
 **Change control:** this contract is locked. Any change to a locked decision, interface or acceptance criterion requires a new revision and renewed owner approval (docs/SPECIFICATION-STANDARD.md §7).
@@ -52,7 +52,7 @@ The active checkout has source-backed discovery, inventory, profile-probe, OpenC
 
 Code or a route alone does not qualify the feature. The §5 decisions are owner-accepted and this package is ACCEPTED/LOCKED; implementation and qualification status are unchanged by acceptance and are tracked in this §4 and in [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md).
 
-### 4a. Resolved OpenCode offer defects and remaining qualification (checked 2026-11-12)
+### 4a. Resolved OpenCode offer defects and remaining qualification (checked 2026-11-13)
 
 The 2026-11-09 audit below was historical and its five source defects were addressed by 002-T01. Current source evidence is:
 
@@ -333,7 +333,7 @@ Read from AGENT-CONTROL, AGENT-FABRIC, AGENT-ACCOUNT-ROUTE-MATRIX, V1-AGENT-DISC
 - Operator routes to cite: GET /agent-registry, POST /agent-registry/refresh, GET /agent-installations, install and update, profile refresh, control-descriptor, begin auth, credential submit, native-config open, binding list, create, configuration, enable, disable. Several remain target-only until served.
 
 
-## 7b. Current source and visible UI boundary — checked 2026-11-12
+## 7b. Current source and visible UI boundary — checked 2026-11-13
 
 - The mounted Settings Agents surface is `AgentCatalogSettings`, not the target Catalog/Installed/Profiles/Workspace bindings/Usage information architecture. It shows 15 curated candidates and ACP Registry distributions; registry entries are read-only metadata and map to `NO_ADAPTER`. Local inventory is bounded version/path observation, with authentication `UNKNOWN` and readiness `NOT_PROBED`.
 - Profile probe is limited to Codex and OpenCode and requires an enrolled local Runtime. Codex App Server initialize/account/model-list observations exist. OpenCode v2.0.32 now yields a compatible `STARTABLE` offer only for an exact-version, complete probe with observed host stop; this remains an observation and does not prove an end-to-end Conversation session.

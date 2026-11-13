@@ -29,7 +29,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-No migration is planned: the portable package is derived, and producer fields already exist on Conversation messages. If 004-T01 makes the truncation receipt durable, it takes the next free `docs/schemas/sqlite-vNN.sql` (v47 or later, because v33 to v46 are allocated in docs/LITECOWORK-BUILD-TASKS.md) with owner doc and tests in one change. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
+No migration is authorized by the current design crosswalk: the portable package is derived, and producer fields already exist on Conversation messages. A-66/A-96 leave the durable refusal/truncation receipt's record and storage placement for owner resolution in T01/T09. Only if that decision requires new persistence should a migration be allocated after the then-current highest wired schema (v32 today; v33-v46 are allocated in `docs/LITECOWORK-BUILD-TASKS.md`). Rollback is revert to the previous committed revision and refuse new admission that needs any newly promoted field.
 
 ## Risks
 

@@ -6,7 +6,7 @@
 
 - `PATCH /v1/conversations/{conversation_id}/agent-binding` (`setConversationAgentBinding`) is served by `apps/litecoworkd/src/conversation_operator.rs`. It requires the selected Workspace, `If-Match` with the current Conversation aggregate version, and `Idempotency-Key`; it commits `conversation.agent_binding.changed.v1` and returns the updated Conversation. The binding change applies to future turns; it does not migrate or interrupt an already admitted native session.
 - `POST /v1/conversations/{conversation_id}/turns` (`submitConversationTurn`) and the failed-turn retry operation remain owned by Feature 001. Each created turn pins its selected `agent_binding_id` in `conversation.turn.created.v2`. Feature 004 does not introduce a separate relay-send API.
-- Conversation message projections already contain `agent_binding_id` and `agent_session_id`. The current UI does not render the producer binding, so AC-005 is not satisfied by the existence of these fields alone.
+- Conversation message projections already contain `agent_binding_id` and `agent_session_id`. The current parser retains these nullable identities and the transcript renders the producer label from the stored binding id (CODE-level UI evidence). That label does not by itself complete AC-005's end-to-end history/reload journey or prove storage pass-through and A→B→A behavior.
 
 ## Events
 
@@ -14,7 +14,7 @@ Reuse the canonical event contracts only: `conversation.agent_binding.changed.v1
 
 ## Runtime boundary
 
-The current `AgentSessionSupervisor` dispatches only `provider_key=opencode` (and stored profiles use `OPENCODE`, see Feature 002 SPEC §4a). The accepted target adds a Claude Code arm (004-T05). `CodexAppServer` profile/protocol code is not a Conversation dispatch route. Do not represent the Codex provider as relay-capable until a supervisor adapter is wired and qualified. Feature 002's current OpenCode profile offer is incompatible for new binding creation, so the current UI has no supported second binding to select.
+The current `AgentSessionSupervisor` dispatches only `provider_key=opencode` (and stored profiles use `OPENCODE`, see Feature 002 SPEC §4a). The accepted target adds a Claude Code arm (004-T05). `CodexAppServer` profile/protocol code is not a Conversation dispatch route. Do not represent the Codex provider as relay-capable until a supervisor adapter is wired and qualified. Feature 002 T01 can publish a compatible OpenCode offer for the exact accepted probe tuple, but compatibility is not authentication or route qualification; a second qualified binding/dispatch path is still absent.
 
 ## Target-only work
 

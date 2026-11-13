@@ -248,9 +248,9 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
       setSelected(updated);
       setItems(current => current.map(item => item.automation_id === updated.automation_id ? updated : item));
       setMessage(action === "pause"
-        ? "Automation paused. This only changes its stored status; trigger execution is not available in this build."
+        ? "Automation paused. Scheduled Task admissions are stopped after this change; existing Tasks are unchanged."
         : action === "resume"
-          ? "Automation resumed. It runs only while this Runtime holds the trigger-host binding."
+          ? "Automation resumed. Any overdue schedule slots follow the configured misfire policy at the next host poll; this may create READY Tasks. The resume action itself creates no Task."
           : "Automation disabled. Existing history is retained.");
     } catch (error) {
       setActionError(errorText(error));
@@ -455,7 +455,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
           if (editorStarter) { setEditorStarter(null); setInitialRoutineRef(null); onCompleteTemplateFlow?.(); }
           setItems(current => action === "created" ? [updated, ...current.filter(item => item.automation_id !== updated.automation_id)] : current.map(item => item.automation_id === updated.automation_id ? updated : item));
           setDetailReload(value => value + 1);
-          setMessage(action === "created" ? "Automation saved paused. Recurring triggers are off; Manual trigger definitions can create one Task when you choose Run once." : "New Automation revision saved; the definition remains paused.");
+          setMessage(action === "created" ? "Automation saved paused. Recurring schedule hosting is off." : "New Automation revision saved; the definition remains paused.");
         }} />}
 
       {!workspaceId ? <section className="automation-empty"><h2>Select a Workspace</h2><p>Choose a Workspace to view its saved Automation definitions.</p></section> : loading ? (
@@ -490,7 +490,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
               {selectedRevision && <p className="automation-state-note">Triggers in this revision: {triggerLabels(selectedRevision).join(" · ") || "None"}.</p>}
               {selectedRevision && unsupportedTriggerKinds(selectedRevision).length > 0 && <p className="automation-state-warning" role="note">This revision contains unsupported trigger types ({unsupportedTriggerKinds(selectedRevision).map(kind => kind.replaceAll("_", " ")).join(", ")}). Keep it unchanged, or revise it to a Manual or recurring schedule trigger before enabling.</p>}
               {selected.status === "ENABLED" && <p className="automation-state-warning">Stored status is Enabled. The local host polls its schedule while this Runtime holds the binding. Due occurrences create READY Tasks; planning and agent execution are separate. A Manual Run remains an explicit one-shot action.</p>}
-              {selected.status === "PAUSED" && <p className="automation-state-note">Paused definition. Recurring triggers remain off. A Manual trigger can still create one Task when you choose Run now.</p>}
+              {selected.status === "PAUSED" && <p className="automation-state-note">Paused definition. Recurring schedule hosting is off.</p>}
               {selected.status === "DISABLED" && <p className="automation-state-note">Disabled permanently. The definition remains available for history.</p>}
               {selectedRevision && <section className="automation-setup" aria-labelledby="automation-setup-heading">
                 <h3 id="automation-setup-heading">Setup progress</h3>

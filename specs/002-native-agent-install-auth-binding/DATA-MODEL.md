@@ -1,6 +1,6 @@
 # Data model - Native Agent Install, Auth and Binding
 
-**Feature:** 002 | **Updated:** 2026-11-12 (source-backed persistence refresh)
+**Feature:** 002 | **Updated:** 2026-11-13 (source-backed persistence refresh)
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 

@@ -16,7 +16,7 @@ No new global model-catalog or provider route is introduced. The UI reads model/
 
 ## Operations used by revision 1.0 tasks
 
-| Operation (OpenAPI operationId) | Current source state (rechecked 2026-11-12) | Task |
+| Operation (OpenAPI operationId) | Current source state (rechecked 2026-11-13) | Task |
 |---|---|---|
 | `probeLocalAgentProfile` | SERVED; exact OpenCode 2.0.32 + complete probe + observed host stop yields a CODE-compatible `STARTABLE` offer; no native provider journey is qualified | 002-T01 |
 | `createAgentBinding`, `enableAgentBinding`, `disableAgentBinding` | SERVED; enable applies descriptor-revision CAS when its module declares a descriptor; no live auth/bind/send qualification | 002-T06 |

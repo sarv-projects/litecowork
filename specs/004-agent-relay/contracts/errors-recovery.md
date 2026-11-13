@@ -12,10 +12,12 @@ Stale Conversation versions, idempotency-key reuse with a different payload, dis
 
 - The active supervisor has no second-provider dispatch branch. Unsupported provider keys fail closed; no B turn can currently be executed by Codex through the Conversation supervisor.
 - Feature 002's descriptor GET/refresh commands are wired through Tauri but still fail closed with 503 when no qualified producer exists; the desktop descriptor-aware composer helper is not integrated into the production picker/send path.
-- The current OpenCode offer is incompatible for new binding creation in the Agent Catalog; the only supervisor dispatch branch is therefore not a complete selectable end-to-end path.
-- Resource/artifact refs are not materialized into the native text prompt; the encoder returns `ResourceMaterializationRequired` for nonempty refs/RESOURCE blocks.
+- Feature 002 can create a compatible OpenCode offer only for its exact accepted probe tuple; offer compatibility does not prove authentication or a qualified send route. The only supervisor dispatch branch is still insufficient for A→B→A relay because there is no qualified second provider path.
+- Feature 001 T14 reauthorizes and materializes eligible text ResourceRefs before the native text prompt encoder. Binary/root resources remain unsupported. A typed exact-version ArtifactRef read/authorization/materialization path is absent. The direct encoder still returns `ResourceMaterializationRequired` for nonempty refs/RESOURCE blocks that have not been materialized; do not flatten this into a claim that no ResourceRef materializer exists anywhere.
 - Feature 001 has unresolved dispatch durability, retry ordering and native cancellation/quiescence gaps. These must be closed before relay recovery can be called reliable.
 - The UI renders stored producer identity and supports text ResourceRef attachment, but no successful A→B→A provider relay, general resource materialization or Context Used receipt is connected.
+- The SQLite loader caps returned message rows at 1,024 but first scans for orphan rows and performs COUNT/SUM over the full committed prefix. A large-history/restart test must cover the entire load/export path before recovery or bounded work is claimed.
+- The accepted B-15 pinned Workspace instruction preamble is not included in the current Conversation package. The prompt window's in-memory reduction value is discarded and is not a durable refusal/truncation receipt.
 
 ## Qualification gate
 

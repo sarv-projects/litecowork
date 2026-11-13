@@ -5,8 +5,8 @@ hashes their bytes and checks literal relative Markdown links. It does not estab
 semantic correctness, implementation, integration or release qualification.
 
 - Files read: 369
-- Lines read: 77085
-- Bytes read: 7556176
+- Lines read: 77211
+- Bytes read: 7599463
 - Broken relative targets: 0
 - Excluded: archives, reference clones, generated audit outputs, dependency/build/cache directories and local run worktrees.
 - Per-file SHA-256 values: V1-MARKDOWN-INVENTORY.csv
@@ -25,7 +25,7 @@ semantic correctness, implementation, integration or release qualification.
 | AGENTS.md | 133 | e534272a2147 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | ARCHITECTURE.md | 824 | 45248d5f5a1a | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | CONTRIBUTING.md | 81 | 2fc07511243a | agent/composer;browser/computer;rendering;workflow/recovery;trust/security |
-| CURRENT-RUN.md | 549 | c3fb51fda724 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| CURRENT-RUN.md | 602 | 1f1489f85787 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | GLOSSARY.md | 292 | bd9ffa34cb5e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | README.md | 93 | 3727827fd285 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | apps/litecowork-ui/README.md | 77 | c47d822925a4 | browser/computer;shell/settings/motion;workflow/recovery |
@@ -56,11 +56,11 @@ semantic correctness, implementation, integration or release qualification.
 | docs/CONNECTOR-FACTORY-DESIGN.md | 139 | 6212797fb13b | shell/settings/motion;workflow/recovery;trust/security |
 | docs/CONNECTORS-WORKFLOWS.md | 1020 | 61c945321250 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/CONTEXT.md | 274 | deae26513335 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md | 201 | 616611bde734 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md | 206 | 4f4a35680d64 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/COVERAGE-MATRIX.md | 174 | c9ecf3f3a1ee | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/COWORKER-FLOWS.md | 166 | 309015aa4fe4 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/COWORKERS-TARGET.md | 458 | 21a5bfa6d791 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| docs/DATA-MODEL.md | 2717 | 5352e4670108 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/DATA-MODEL.md | 2724 | 92d6d3665427 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/DEEPSEEK-HARNESS-DESKTOP-DEEP-DIVE-2026-11.md | 603 | a6516f1870d6 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/DEEPSEEK-HARNESS-PLUGIN-ARCHITECTURE-DEEP-DIVE-2026-11.md | 82 | e3b3fa1b9b4e | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/DEEPSEEK-HARNESS-REUSE-MAP-2026-11.md | 252 | 5ebaa5cf1206 | browser/computer;rendering;workflow/recovery;trust/security |
@@ -78,12 +78,12 @@ semantic correctness, implementation, integration or release qualification.
 | docs/HANDOFF-NEXT-AGENT-2026-11.md | 841 | 4d18924863b3 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/HOST-GUIDANCE.md | 138 | c2a6b6814665 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/IMPLEMENTATION-MASTER-PLAN.md | 168 | e901a943fa3b | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| docs/IMPLEMENTATION-STATUS.md | 357 | dc6fb4fc64a6 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/IMPLEMENTATION-STATUS.md | 361 | 722f0dc5474b | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/IMPLEMENTATION.md | 232 | c9dbf532b894 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md | 73 | 2f50c42dfe67 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery |
 | docs/INTERACTIVE-ARTIFACT-RUNTIME.md | 135 | 6d5d6bd44fb9 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/LEARNING.md | 818 | 6119feedd994 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| docs/LITECOWORK-BUILD-TASKS.md | 269 | 208ee91292ab | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/LITECOWORK-BUILD-TASKS.md | 271 | 41dede20002e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/LITESPM-INTEGRATION-PLAN.md | 195 | 4b83a93a718e | agent/composer;workflow/recovery;trust/security |
 | docs/LITESPM-INTEGRATION-STUDY-2026-11.md | 84 | 885903bc3410 | agent/composer;workflow/recovery;trust/security |
 | docs/LITESPM-LITECOWORK-INTEROP-LLD.md | 287 | 89db30f1a9eb | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
@@ -115,7 +115,7 @@ semantic correctness, implementation, integration or release qualification.
 | docs/RUNTIME-MESH.md | 744 | 5df0580b7369 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/SCHEMAS.md | 1635 | d7c2f5545cf6 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/SECURITY.md | 299 | 77bdfeb2b19e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| docs/SEMANTIC-SERVED-UI-MAP.md | 185 | 805d6e1cce7f | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/SEMANTIC-SERVED-UI-MAP.md | 186 | f76aa069cc76 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/SERVICES.md | 1582 | 522321b42347 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/SETTINGS-AND-SHELL-SURFACE-AUDIT.md | 113 | e2c76efcd7a6 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/SOURCE-RECONCILIATION.md | 179 | 5567fad3a3b6 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
@@ -130,7 +130,7 @@ semantic correctness, implementation, integration or release qualification.
 | docs/UI-CORE-TYPED-CONTRACTS.md | 80 | 6c5d71eca308 | shell/settings/motion;workflow/recovery;trust/security |
 | docs/UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md | 196 | 5448059886a7 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/USER-EXPERIENCE-RESEARCH-AND-MAGNETIC-USE-CASES.md | 243 | a52bb38efaee | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md | 150 | a0a8dc909d4e | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
+| docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md | 150 | 2042de8234e6 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md | 104 | f4303bac846c | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/V1-DESIGN-INDEX.md | 83 | d1e75d8c9040 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md | 72 | 84dc86b1be98 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
@@ -186,43 +186,43 @@ semantic correctness, implementation, integration or release qualification.
 | specs/001-conversation-session-supervisor/DATA-MODEL.md | 79 | 1745cf92da06 | agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/PLAN.md | 117 | e3a4d0fb3027 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/README.md | 31 | 2ce39bc25d9a | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/001-conversation-session-supervisor/RESEARCH.md | 132 | 01d439b0f761 | agent/composer;browser/computer;workflow/recovery;trust/security |
-| specs/001-conversation-session-supervisor/SPEC.md | 378 | 46da2a861fe6 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| specs/001-conversation-session-supervisor/TASKS.md | 561 | 32d92820085c | agent/composer;workflow/recovery;trust/security |
+| specs/001-conversation-session-supervisor/RESEARCH.md | 134 | 895298426d78 | agent/composer;browser/computer;workflow/recovery;trust/security |
+| specs/001-conversation-session-supervisor/SPEC.md | 378 | 4bd86dd44f85 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| specs/001-conversation-session-supervisor/TASKS.md | 561 | b40b755e0d4a | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/contracts/README.md | 12 | db996aef02f9 | agent/composer;workflow/recovery |
 | specs/001-conversation-session-supervisor/contracts/api-events.md | 63 | 303d60c19697 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/contracts/errors-recovery.md | 78 | 47de1c535b26 | workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/contracts/ui-behavior.md | 107 | 8f503bf4c54b | agent/composer;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/DATA-MODEL.md | 44 | 43ec06cb9453 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/PLAN.md | 53 | ebdc28515e82 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/README.md | 40 | c68bd0419d88 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/RESEARCH.md | 110 | 1f66e18d8af8 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/SPEC.md | 468 | 5fd48bf270f8 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/TASKS.md | 401 | 64a5744c43ff | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/DATA-MODEL.md | 44 | 6abe39c9aac9 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/PLAN.md | 54 | 5ed090245ca7 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/README.md | 40 | 855e41bcfd9f | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/RESEARCH.md | 110 | a3364d3d9bfc | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/SPEC.md | 468 | 1c624639dd9f | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/TASKS.md | 401 | 8d9ece19816f | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/002-native-agent-install-auth-binding/contracts/README.md | 9 | 650e7a2f3b6e | workflow/recovery |
-| specs/002-native-agent-install-auth-binding/contracts/api-events.md | 28 | cdb8379c1ae2 | agent/composer;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/contracts/errors-recovery.md | 9 | e9070f4f1177 | agent/composer;workflow/recovery;trust/security |
-| specs/002-native-agent-install-auth-binding/contracts/ui-behavior.md | 107 | 9ca7a0706afd | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/003-workspace-roots-context-ingestion/DATA-MODEL.md | 34 | aac743cd60e0 | workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/contracts/api-events.md | 28 | aebadc0e358e | agent/composer;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/contracts/errors-recovery.md | 9 | 58b054462532 | agent/composer;workflow/recovery;trust/security |
+| specs/002-native-agent-install-auth-binding/contracts/ui-behavior.md | 109 | f2832195b20f | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/003-workspace-roots-context-ingestion/DATA-MODEL.md | 36 | d17eda11c45c | workflow/recovery;trust/security |
 | specs/003-workspace-roots-context-ingestion/PLAN.md | 43 | 0a66d755d261 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/003-workspace-roots-context-ingestion/README.md | 36 | 6828640d7b1e | agent/composer;workflow/recovery;trust/security |
-| specs/003-workspace-roots-context-ingestion/RESEARCH.md | 60 | 00c5d08d5126 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| specs/003-workspace-roots-context-ingestion/SPEC.md | 339 | 0791579e8e75 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| specs/003-workspace-roots-context-ingestion/TASKS.md | 378 | 0fa51b34b34a | agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| specs/003-workspace-roots-context-ingestion/README.md | 36 | 521d0b1ac3b4 | agent/composer;workflow/recovery;trust/security |
+| specs/003-workspace-roots-context-ingestion/RESEARCH.md | 66 | 0536afa48b99 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| specs/003-workspace-roots-context-ingestion/SPEC.md | 341 | 3b8c44c504f2 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| specs/003-workspace-roots-context-ingestion/TASKS.md | 378 | 4c29cc769ae2 | agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | specs/003-workspace-roots-context-ingestion/contracts/README.md | 9 | 5eec3c904cd0 | workflow/recovery |
 | specs/003-workspace-roots-context-ingestion/contracts/api-events.md | 11 | 815c53e7fbeb | workflow/recovery |
 | specs/003-workspace-roots-context-ingestion/contracts/errors-recovery.md | 9 | 23b50b52397b | workflow/recovery |
-| specs/003-workspace-roots-context-ingestion/contracts/ui-behavior.md | 30 | a9f9801466a1 | agent/composer;shell/settings/motion;workflow/recovery |
-| specs/004-agent-relay/DATA-MODEL.md | 41 | 6e60781f5d23 | agent/composer;workflow/recovery;trust/security |
-| specs/004-agent-relay/PLAN.md | 44 | bb51ae4751af | shell/settings/motion;workflow/recovery |
-| specs/004-agent-relay/README.md | 34 | de07eb5407dd | agent/composer;workflow/recovery;trust/security |
-| specs/004-agent-relay/RESEARCH.md | 67 | 1cd3af9da165 | agent/composer;workflow/recovery;trust/security |
-| specs/004-agent-relay/SPEC.md | 317 | 2d3e74af7e12 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| specs/004-agent-relay/TASKS.md | 239 | 8f33177da6b1 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/003-workspace-roots-context-ingestion/contracts/ui-behavior.md | 31 | 56f9ca5bf5f4 | agent/composer;shell/settings/motion;workflow/recovery |
+| specs/004-agent-relay/DATA-MODEL.md | 50 | c9f509ba8296 | agent/composer;workflow/recovery;trust/security |
+| specs/004-agent-relay/PLAN.md | 44 | 188a98e46525 | shell/settings/motion;workflow/recovery |
+| specs/004-agent-relay/README.md | 34 | 878de269b4d9 | agent/composer;workflow/recovery;trust/security |
+| specs/004-agent-relay/RESEARCH.md | 80 | 955f4fdeccea | agent/composer;workflow/recovery;trust/security |
+| specs/004-agent-relay/SPEC.md | 329 | 6bd00b11bd19 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
+| specs/004-agent-relay/TASKS.md | 239 | 259cf87b5e77 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/004-agent-relay/contracts/README.md | 9 | dcd3f2509e55 | workflow/recovery |
-| specs/004-agent-relay/contracts/api-events.md | 27 | 5ce6b4c6b36a | agent/composer |
-| specs/004-agent-relay/contracts/errors-recovery.md | 22 | 85b0437b167f | agent/composer;workflow/recovery |
-| specs/004-agent-relay/contracts/ui-behavior.md | 35 | 4e5fc70e4d24 | agent/composer;shell/settings/motion;workflow/recovery |
+| specs/004-agent-relay/contracts/api-events.md | 27 | ec01acbfe47c | agent/composer |
+| specs/004-agent-relay/contracts/errors-recovery.md | 24 | b3f6ceffed29 | agent/composer;workflow/recovery |
+| specs/004-agent-relay/contracts/ui-behavior.md | 37 | e1db762b22f8 | agent/composer;shell/settings/motion;workflow/recovery |
 | specs/005-safe-task-path/DATA-MODEL.md | 47 | c328765ae929 | workflow/recovery;trust/security |
 | specs/005-safe-task-path/PLAN.md | 49 | 0e3d977b33cc | shell/settings/motion;workflow/recovery;trust/security |
 | specs/005-safe-task-path/README.md | 28 | f699572f659a | workflow/recovery;trust/security |

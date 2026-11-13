@@ -887,7 +887,8 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                     <div><strong>Provider connection</strong><span>Unknown · not reported by this probe</span></div>
                     <div><strong>Authentication</strong><span>{observationLabel(openCodeProbe.authentication)}</span></div>
                     <div><strong>Session model selection</strong><span>{openCodeProbe.sessionModelSelection === "NOT_QUALIFIED" ? "Not qualified" : "Unknown"}</span></div>
-                    <div><strong>Task lead eligibility</strong><span>{openCodeProbe.profileAdmissionSupported ? "Supported by qualified profile admission" : "Not eligible for Task admission"}</span></div>
+                    <div><strong>Conversation profile admission</strong><span>{openCodeProbe.profileAdmissionSupported ? "Supported for profile binding only" : "Not supported for Conversation admission"}</span></div>
+                    <div><strong>Task lead eligibility</strong><span>Not eligible for Task admission</span></div>
                   </div>
                   <div className="agent-catalog__opencode-catalog">
                     <strong>{openCodeProbe.catalogObserved ? "Configured provider/model catalog" : "Provider/model catalog not observed"}</strong>

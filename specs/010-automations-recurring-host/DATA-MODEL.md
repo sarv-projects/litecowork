@@ -27,9 +27,15 @@ Use existing event names in [docs/EVENTS.md](../../docs/EVENTS.md). A new event 
 
 Follow the owner retention rules. Purge removes future visibility of payload bytes. Receipts of the deletion may remain.
 
-## Migration
+## Migration and existing schema
 
-No migration has shipped for this package yet. B-26 and B-27 are accepted (2026-11-09); the delivery lease/status transition columns, SUPPRESSED delivery rows and the event-trigger cursor land as the next immutable `docs/schemas/sqlite-vNN.sql` through TASKS.md T01, T06, T07 and T09.
+No migration has shipped for this package; the current migration chain ends at v32. The canonical SQLite v1 schema already defines `notification_deliveries` with every listed status (`PENDING`, `SENDING`, `SENT`, `FAILED`, `AMBIGUOUS`, `SUPPRESSED`), attempt Runtime/host epoch/count, `next_attempt_at`, `last_error_code` and `settled_at`. It also defines the Runtime-local encrypted `automation_trigger_bindings` table for opaque provider cursors. Current source does not yet serve notification claim/settle or CONNECTOR_EVENT hosting, so these existing fields do not count as implemented behavior.
+
+The v44 reservation is provisional. A delivery version/CAS token is absent from the current row shape, while the proposed settle route requires a version fence. T01 must identify the exact owner-approved additive DDL, or release v44 if existing attempt/epoch fields can satisfy the approved contract. Do not re-add existing status or cursor fields. This unresolved contract is tracked as A-98 in the global alignment register.
+
+The accepted quiet-hours target also needs one canonical persistence contract before a class-selection UI is implemented: current `QuietHours` is a timezone/weekdays/start/end value on one versioned `NotificationPreference` per event class, while SPEC describes a Workspace-level enabled flag and suppressed-class set. A-97 tracks the required owner resolution; do not infer a new table or parallel preference schema here.
+
+Suppressed delivery persistence is also unresolved: this accepted package's AC-007 requires a visible `SUPPRESSED` delivery row, while the higher-authority global `docs/DATA-MODEL.md` says suppressed decisions write no delivery row, matching current producer behavior. A-99 tracks owner resolution; do not implement either interpretation against the other contract without updating both owners together.
 
 
 ## External workflow references (provider-owned)

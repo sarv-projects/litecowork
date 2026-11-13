@@ -13,7 +13,8 @@ SPEC section 5 blockers B-11 and B-12 and the A-35 screen split were owner-accep
 4. Native sign-in observation and credential slots (002-T07, 002-T08).
 5. Composer options/commands and Settings operations wired into the Feature 011 screen (002-T09, 002-T10), honest install/update unavailability (002-T11).
 6. Claude Code CLI as the second module (002-T12), failure/recovery (002-T13), cross-layer trace (002-T14).
-7. Qualification on the release matrix, documentation sync and VERIFIED (002-T15 to 002-T17).
+7. ACP client and advisory Matchmaker slices run on their own dependencies: 002-T17 follows T03; 002-T18 follows T05 and T17. Neither makes an agent dispatchable or replaces provider qualification.
+8. Qualify the exact release-matrix journeys (002-T15), synchronize evidence and ledgers (002-T16), then record package VERIFIED only after 002-T19 owner sign-off. T15 is deferred by owner instruction; the package remains unverified until those gates are completed.
 
 Run the commands named per task and the desktop USER path in [ACCEPTANCE-AND-E2E-PLAN.md](../../docs/ACCEPTANCE-AND-E2E-PLAN.md) (E2E-01 binding portion; E2E-02 with Feature 004).
 

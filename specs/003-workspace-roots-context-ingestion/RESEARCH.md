@@ -1,6 +1,6 @@
 # Research - Workspace Roots and Context Ingestion
 
-**Feature:** 003 | **Checked:** 2026-11-06 (source, route and UI audit; no native root scan/provider Conversation executed); grounding re-checked 2026-11-09 for the V1 task plan
+**Feature:** 003 | **Research/source audit:** 2026-11-06; grounding re-checked 2026-11-09; current source cross-check: 2026-11-13 (see the linked audit report; no native root scan/provider Conversation executed)
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
 ## Sources
@@ -58,3 +58,9 @@ These are source/route/UI findings. No native root selection, live scan, content
 ## Unresolved questions
 
 See SPEC section 5 blockers. Owners are named on the package README.
+
+## Current source cross-check — 2026-11-13
+
+At source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`, the source review reconfirmed that Linux/macOS root add commits through the private authenticated local route while Windows returns 503; scanning is Linux-only and metadata-only; indexed Resource upload and read-only lexical retrieval remain separate from WorkspaceRoot ingestion; and retrieval is not called by Send. The existing Conversation attachment button loads one page of admitted text Resources and submits pinned refs, but does not implement the accepted `@` listbox interaction or first-message attachment. No persisted ContextAttachment/retrieval receipt or Context Used view exists.
+
+The review also verified two open cross-owner design blockers rather than choosing between conflicting documents: A-65 (separate receipt/attachment transaction versus Feature 001's atomic turn/outbox admission) and A-69 (required `root_id`/`retrieval_receipt_id` in SPEC LLD versus optional fields in DATA-MODEL). Feature 003 T01, T09 and T10 must remain blocked as recorded in TASKS.md. Exact package lines/hashes and bounded source ranges are in [FEATURE-003-CURRENT-CROSSCHECK-2026-11-13.md](../../docs/audit/FEATURE-003-CURRENT-CROSSCHECK-2026-11-13.md).

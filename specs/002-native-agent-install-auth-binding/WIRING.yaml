@@ -117,7 +117,7 @@ recovery:
   source_of_truth: last-committed-runtime-observation-and-workspace-binding-receipt
   restart_action: re-probe-runtime-incarnation-and-install-auth-descriptor-independently; preserve-binding; reconcile-in-flight-lifecycle-before-new-side-effect
 
-# Status note (checked 2026-11-12): this graph remains the accepted TARGET wiring; it is not evidence that
+# Status note (checked 2026-11-13): this graph remains the accepted TARGET wiring; it is not evidence that
 # every edge is fully implemented or qualified. CODE/SERVED cross-check:
 # - The profile probe -> computed OpenCode offer -> disabled AgentBinding path is implemented for the exact
 #   2.0.32/complete-probe/observed-host-stop tuple (002-T01); no packaged native bind/send journey is qualified.

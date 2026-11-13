@@ -4,7 +4,9 @@
 
 Automation and Routine routes in docs/API.md and AUTOMATION.md. No new public webhook ingress in this package (V1 non-goal).
 
-Event names must already exist in [docs/EVENTS.md](../../../docs/EVENTS.md) or be added there with the schema in the same reviewed change. No new event type is served by this package yet; accepted target additions (delivery status transitions on `notification.delivery.changed.v1`, event-trigger observation fields) are promoted by TASKS.md T01.
+Event names must already exist in [docs/EVENTS.md](../../../docs/EVENTS.md) or be added there with the schema in the same reviewed change. `notification.delivery.changed.v1` and its current payload shape already exist; its JSON Schema currently permits arbitrary nonempty `from`/`to` strings instead of constraining them to delivery-state tokens. No production delivery presenter or status-transition writer is served. T01 must add or trace the missing transition-token validation and event-trigger observation fields without redefining the existing event or status vocabulary.
+
+SQLite v1 already contains the notification status/attempt columns and Runtime-local encrypted Automation trigger cursor table. The proposed settle route still needs a precise `If-Match`/lease fencing value; a delivery-row version column is absent. Do not claim an additive migration until A-98 resolves the exact delta.
 
 Error codes must already exist in [docs/SCHEMAS.md](../../../docs/SCHEMAS.md) or be added with `docs/schemas/error-codes.schema.json`.
 

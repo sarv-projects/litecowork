@@ -73,11 +73,11 @@ Evidence vocabulary (TARGET / CODE / SERVED / INTEGRATED / QUALIFIED) is defined
 
 | Doc + section | Claim | Code reality | Verdict | Register |
 |---|---|---|---|---|
-| [AUTOMATION.md](AUTOMATION.md) trigger host | Local TriggerHost polls cursors and settles recurring schedules; recurring hosting/`/resume` served. | `OperatorServer::start` runs `AutomationTriggerHostWorker` (30s poll). The `automation_operator.rs` header saying hosting/`/resume` are unavailable is stale. | stale (source comment) / true (behavior) | A-29 |
+| [AUTOMATION.md](AUTOMATION.md) trigger host | Local TriggerHost polls cursors and settles recurring schedules; recurring hosting/`/resume` served. | `OperatorServer::start` runs `AutomationTriggerHostWorker` (30s poll). The module-header observation below was true at this audit's earlier source snapshot and was resolved by Feature 010 T02 on 2026-11-13; current save/pause/resume copy is checked against host, cursor and misfire behavior in the Feature 010 cross-check. | historical stale (source comment; resolved by T02) / true (behavior) | A-29 |
 | [AUTOMATION.md](AUTOMATION.md) execution | A due/manual occurrence materializes a READY Task; it does not execute. | Manual Run / Create test Task create READY Tasks only; no planning/agent start. | true | A-12 |
 | [NOTIFICATIONS / RESPONSIBILITIES] delivery | Notifications are delivered. | Settlement inserts PENDING `notification_deliveries` rows; no production sender/state-transition writer. | aspirational-unlabeled | A-27, A-28 |
 | [RUNTIME-LIFECYCLE.md](RUNTIME-LIFECYCLE.md) / [LOCAL-OPERATOR-IPC.md](LOCAL-OPERATOR-IPC.md) readiness | Runtime READY / operatorReady describe startup/API health, not Task execution readiness. | Matches IMPLEMENTATION-STATUS.md "Runtime and Operator readiness". | true | A-02 |
-| [AGENT-FABRIC.md](AGENT-FABRIC.md) relay | Heterogeneous A→B→A relay. | One OpenCode dispatch branch; `CodexAppServer` not wired to the Conversation supervisor; desktop message types drop producer identity. | aspirational-unlabeled | A-04 (relay subset) |
+| [AGENT-FABRIC.md](AGENT-FABRIC.md) relay | Heterogeneous A→B→A relay. | This earlier audit observation about dropped producer identity was corrected by the Feature 004 desktop projection/rendering change and source cross-check on 2026-11-13. At the current cross-check there is still only one qualified dispatch branch: OpenCode; `CodexAppServer` is not wired to the Conversation supervisor and A→B→A remains unqualified. | historical stale (producer identity; resolved in current CODE, relay still incomplete) | A-04 (relay subset) |
 
 ## SDD completeness gaps (specs/001-011)
 

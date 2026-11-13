@@ -21,9 +21,9 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
 
 ## 003-T01 - Promote accepted 003 contracts into owner docs and machine schemas
 
-- **Status:** NOT STARTED
+- **Status:** BLOCKED (A-69, owner decision required before T01 implementation): SPEC §7.2 requires `CommitContextAttachment.retrieval_receipt_id` and `ContextUsedEntry.root_id`, while DATA-MODEL allows both to be absent for explicit ResourceRefs or uploaded Resources. Do not promote a DDL/API shape until the owner resolves the provenance contract. A-65 separately blocks T09/T10's standalone receipt ordering.
 - **Depends on:** NONE
-- **Cross-package prerequisites:** Feature 001 contract-promotion task (turn admission and `resource_refs` materialization contract must be promoted in the same change set or before); orchestrator assigns the next free migration number.
+- **Cross-package prerequisites:** Owner decision resolving A-69; Feature 001 contract-promotion task (turn admission and `resource_refs` materialization contract must be promoted in the same change set or before); orchestrator assigns the next free migration number.
 - **Owner:** Resource, Conversation, Storage (contract owners)
 - **Allowed paths:** `docs/WORLD-RESOURCES.md`, `docs/CONTEXT.md`, `docs/STORAGE.md`, `docs/API.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/domain-event.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/sqlite-v35.sql` (new, allocated in docs/LITECOWORK-BUILD-TASKS.md; v32 is the highest present), `crates/storage-sqlite/src/lib.rs` (migration registration only), this package
 - **Contract:** SPEC §5 (B-13, B-14 with B-28 rider), §7.2, §15 AC-013 to AC-019; WORLD-RESOURCES roots; CONTEXT attachments
@@ -34,7 +34,7 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
   - [ ] `scripts/audit_v1_contracts.py` and the package validator pass.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py` and `python3 scripts/audit_v1_contracts.py` and `cargo test -p storage-sqlite --locked migration` (filter to be added by this task)
 - **Evidence:** promoted doc diffs; migration test name in CURRENT-RUN.md
-- **Stop:** stop if a field conflicts with a Feature 001 turn contract; resolve with the 001 owner before migration.
+- **Stop:** stop if an attachment provenance field is still disputed under A-69 or conflicts with a Feature 001 turn contract; obtain the owner decision and resolve with the 001 owner before migration.
 
 ## 003-T02 - Qualify root lifecycle storage on both rows
 
@@ -154,11 +154,11 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
 
 ## 003-T08 - Platform-honest Persistent folders UI
 
-- **Status:** PARTIAL (Persistent folders section in `apps/litecowork-ui/src/App.tsx`, status labels in `apps/litecowork-ui/src/workspaces/workspace-root-status.ts`, scan unsupported handling in `workspace-root-scan.ts`; Add is not disabled before selection on Windows; no post-picker confirm)
+- **Status:** PARTIAL (source cross-check 2026-11-13: Persistent folders controls are in `apps/litecowork-ui/src/library/LibraryPage.tsx`; status labels and scan retry behavior are in `src/workspaces/workspace-root-status.ts` and `workspace-root-scan.ts`. Add remains enabled on Windows until after the native picker fails; no post-picker confirmation.)
 - **Depends on:** T01, T03, T05
 - **Cross-package prerequisites:** Feature 011 app-wide keyboard and focus baseline.
 - **Owner:** Desktop UI
-- **Allowed paths:** `apps/litecowork-ui/src/workspaces/WorkspaceRootsPanel.tsx` (new, extracted from `App.tsx`), `apps/litecowork-ui/src/App.tsx`, `apps/litecowork-ui/src/workspaces/workspace-root-status.ts`, `apps/litecowork-ui/src/workspaces/workspace-root-scan.ts`, `apps/litecowork-ui/src/workspaces/workspace-root-mutations.ts`, `apps/litecowork-ui/tests/workspace-root-status.test.ts`, `apps/litecowork-ui/tests/workspace-root-platform-availability.test.ts` (new)
+- **Allowed paths:** `apps/litecowork-ui/src/library/WorkspaceRootsPanel.tsx` (new, extracted from `library/LibraryPage.tsx`), `apps/litecowork-ui/src/library/LibraryPage.tsx`, `apps/litecowork-ui/src/workspaces/workspace-root-status.ts`, `apps/litecowork-ui/src/workspaces/workspace-root-scan.ts`, `apps/litecowork-ui/src/workspaces/workspace-root-mutations.ts`, `apps/litecowork-ui/tests/workspace-root-status.test.ts`, `apps/litecowork-ui/tests/workspace-root-platform-availability.test.ts` (new)
 - **Contract:** contracts/ui-behavior.md; V1-UI-ACTION-STATE-LEDGER; AC-010, AC-015
 - **Change intent:** Read the T01 platform-availability field; disable Add and Scan with a visible reason before the picker when unavailable; add an explicit confirm step after the picker showing display name, watch policy METADATA and replication NONE; add an "Index folder" action wired to T07; render ACTIVE, PAUSED, UNAVAILABLE and REVOKED with distinct text and repair hints; loading, empty, denied, offline and stale-version states visible.
 - **Acceptance:**
@@ -172,7 +172,7 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
 
 ## 003-T09 - ContextAttachment and retrieval-receipt stores
 
-- **Status:** BLOCKED (2026-11-12, A-65) - the accepted ContextAttachment requires a `turn_id`, but the proposed standalone `tx-attach` API does not provide that identity. Feature 001 inserts USER message, OPEN Turn and UNCLAIMED dispatch intent atomically; a separate attachment transaction cannot bind to the not-yet-committed turn while preserving the accepted admission boundary. No schema or store implementation is authorized until the owners approve a revised transaction-scoped admission contract.
+- **Status:** BLOCKED (2026-11-13, A-65/A-69) - the accepted ContextAttachment requires a `turn_id`, but the proposed standalone `tx-attach` API does not provide that identity. Feature 001 inserts USER message, OPEN Turn and UNCLAIMED dispatch intent atomically; a separate attachment transaction cannot bind to the not-yet-committed turn while preserving the accepted admission boundary. Separately, the SPEC LLD requires `root_id` and `retrieval_receipt_id`, while DATA-MODEL permits both to be absent. No schema or store implementation is authorized until the owners approve both the provenance shape and a revised transaction-scoped admission contract.
 - **Depends on:** T01, T02
 - **Cross-package prerequisites:** NONE
 - **Owner:** Storage, Conversation context owner
@@ -191,7 +191,7 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
 
 ## 003-T10 - Call retrieval from Send and commit the receipt before dispatch
 
-- **Status:** BLOCKED (2026-11-12, A-65) - retrieval is not called from Send, and the current target sequence asks for a turn-bound receipt before the dispatch outbox row even though Feature 001 atomically creates both the turn and outbox. Requires a new owner-reviewed admission contract before implementation.
+- **Status:** BLOCKED (2026-11-13, A-65/A-69) - retrieval is not called from Send, and the current target sequence asks for a turn-bound receipt before the dispatch outbox row even though Feature 001 atomically creates both the turn and outbox. The attachment provenance fields also conflict between SPEC and DATA-MODEL. The acceptance that an identical Send does not run retrieval twice is not yet reconciled with the proposed side-effect-free retrieval-before-admission sequence, which may repeat after a pre-commit crash. Requires owner-approved provenance, shared-admission, and retry semantics before implementation.
 - **Depends on:** T09
 - **Cross-package prerequisites:** Feature 001 composer attachments handler and B-08 ResourceRef materialization (the prompt encoder must stop refusing refs); Feature 001 durable dispatch outbox.
 - **Owner:** Conversation, Resource
@@ -209,7 +209,7 @@ The preceding audit is preserved for provenance only. At the 2026-11-12 checkout
 
 ## 003-T11 - @-reference ResourceRef picker in the Feature 001 composer
 
-- **Status:** PARTIAL - the Conversation composer has a Resource picker and submits selected revision-pinned `resourceRefs` (Feature 001 text materialization); this task's WorkspaceRoot ingestion-backed selection behavior remains incomplete.
+- **Status:** PARTIAL (source cross-check 2026-11-13) - an existing Conversation can use the **Add context or file** button to select admitted, attachable text Resources from one `list_resources` page; selected revision-pinned `resourceRefs` are sent and Feature 001 materializes eligible text. Remaining AC-017 work includes `@` trigger behavior, bounded search/pagination, listbox semantics, arrow-key/result-count announcements, first-message attachment, and WorkspaceRoot-ingested Resource admission; no root contents are available from metadata scan.
 - **Depends on:** T09
 - **Cross-package prerequisites:** Feature 001 composer attachments handler (owns submit and `resourceRefs` wiring).
 - **Owner:** Desktop UI, Resource
@@ -370,7 +370,7 @@ Other packages renumber their tasks in the same authoring wave, so prerequisites
 - `apps/litecoworkd/src/operator.rs` is over 9,500 lines. T03 moves both root-selection handlers into `workspace_root_selection_operator.rs` instead of adding a third cfg branch there.
 - T05 shares one platform-neutral census module across Linux and Windows. Today every bound helper is `#[cfg(target_os = "linux")]`, so a Windows port without extraction would duplicate the bounds and risk drift.
 - T10 extracts retrieval into a service function so Send calls it in-process; going through the HTTP route from inside the daemon would add a second auth hop and serialization for no benefit.
-- `apps/litecowork-ui/src/App.tsx` is over 4,500 lines; T08 extracts the Persistent folders section into `WorkspaceRootsPanel.tsx` so its states are unit-testable.
+- `apps/litecowork-ui/src/library/LibraryPage.tsx` (790 lines at the 2026-11-13 source checkpoint) owns Persistent folders; T08 extracts its section into `library/WorkspaceRootsPanel.tsx` so platform and lifecycle states are unit-testable. `App.tsx` mounts the Library route and is not the current root-control owner.
 - T11 debounces the picker query and reuses `resource-search-request.ts` paging rather than adding a new search client.
 
 ## Completion evidence

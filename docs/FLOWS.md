@@ -892,7 +892,7 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F118 | Preview an exact pinned Task Resource input | Lazy read-only escaped-text preview of the exact pinned revision; no head fallback, Grant, or RAG |
 | F119 | Run an active Routine into a saved READY Task | READY Task + TaskSpec revision 1 pinned to exact Routine/Resource revisions; no plan/agent; idempotent save |
 | F120 | Compare two exact Resource text revisions | Two read-only labeled panes of exact historical revisions; no generated diff, merge, restore, or mutation |
-| F121 | Owner runs a paused Automation through its local ManualTrigger | One logical occurrence/READY Task pinned to the paused definition; paused schedule stays paused |
+| F121 | Owner runs a paused Automation through its local ManualTrigger when eligible | One logical occurrence/READY Task pinned to the paused definition when exactly one Manual trigger, an active pinned Routine and valid inputs are present; paused schedule stays paused |
 | F122 | Open a Goal-linked Task in Work | Navigate to the exact linked Task read; no Goal/Task state mutation from navigation |
 | F123 | Resolve an ambiguous Artifact text publish with the original request | Reuse exact request/version after ambiguous response; confirm one committed ArtifactVersion; no duplicate append |
 | F124 | Retry an unavailable Task detail read | Retry the exact Task/Workspace read; stale-safe; no source mutation on transient failure |
@@ -3040,8 +3040,9 @@ create an occurrence, or admit a Task.
 5. The UI validates the committed Automation receipt and reports the paused state. Coworker
    selection supplies only the revision-pinned lead/worker/context/interaction defaults for
    a future occurrence; it does not create a Grant, approve an Effect, start a Runtime, or
-   make an Automation executable. Recurring resume/schedule hosting remain unavailable
-   until their separate cursor, TriggerHost, and reconciliation services are implemented.
+   make an Automation executable. The local TriggerHost polls supported schedule cursors;
+   Resume re-enables schedule hosting, and overdue slots follow their configured misfire
+   policy on the next poll. Manual Run remains a separate owner-triggered one-shot action.
    A later owner ManualTrigger command is a one-shot PAUSED-safe path and does not activate
    recurring triggers (see F121).
 

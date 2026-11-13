@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   createAutomationApi,
@@ -27,6 +28,17 @@ const revision: AutomationRevision = {
   authored_by: { principal_id: "owner-local", kind: "USER" },
   created_at: "2026-10-09T10:00:00Z",
 };
+
+test("Automation pause and resume copy describes the local trigger host", async () => {
+  const source = await readFile(new URL("../src/automations/AutomationsPage.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /Automation saved paused\. Recurring schedule hosting is off\./);
+  assert.doesNotMatch(source, /Automation saved paused\. Recurring triggers are off; Manual trigger definitions can create one Task when you choose Run once\./);
+  assert.match(source, /Automation paused\. Scheduled Task admissions are stopped after this change; existing Tasks are unchanged\./);
+  assert.doesNotMatch(source, /Paused definition\. Recurring triggers remain off\. A Manual trigger can still create one Task when you choose Run now\./);
+  assert.match(source, /Automation resumed\. Any overdue schedule slots follow the configured misfire policy at the next host poll; this may create READY Tasks\. The resume action itself creates no Task\./);
+  assert.doesNotMatch(source, /trigger execution is not available in this build/);
+});
 
 function readyReceipt(status = "READY") {
   return {

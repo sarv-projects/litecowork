@@ -1,6 +1,6 @@
 # Research - Automations and Recurring Host
 
-**Feature:** 010 | **Checked:** 2026-11-06
+**Feature:** 010 | **Research sources checked:** 2026-11-06 | **Current source cross-check:** 2026-11-13
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
 ## Canonical authorities
@@ -58,22 +58,23 @@ OpenBot's inspected graph schema has no dedicated code node. n8n's official docu
 
 This was a source/document inspection at the pinned revision. OpenBot was not cloned, built or run, and no live provider/account, quota, mobile, remote or computer-use flow was exercised. The current adapter contract and LiteCowork owner docs were inspected; no workflow provider authoring API was qualified. No runtime qualification is claimed.
 
-## Current source and UI audit — 2026-11-06
+## Current source and UI audit — refreshed 2026-11-13
 
-- `AutomationTriggerHostWorker` is real: `OperatorServer::start` starts it before the IPC listener reports ready, owns it for the server lifetime and joins it on shutdown. It polls persisted local trigger cursors every 30 seconds. This contradicts the `automation_operator.rs` module header, which still says recurring hosting and `/resume` are unavailable; both are stale source comments, not current behavior.
-- The Automations page has a stale success message after Pause: “trigger execution is not available in this build.” The local schedule host is in fact running. The message misrepresents the operation; pause changes persisted status and future due-schedule admission is filtered by the host's current schedule query. The separate Coworker-pause fence defect is documented in Feature 009.
+- `AutomationTriggerHostWorker` is real: `OperatorServer::start` starts it before the IPC listener reports ready, owns it for the server lifetime and joins it on shutdown. It polls persisted local trigger cursors every 30 seconds. Feature 010 T02 corrected the stale `automation_operator.rs` module header and Automation save/Pause/Resume result copy on 2026-11-13; focused CODE evidence is recorded in the current cross-check report.
+- Pause changes persisted status and schedule Task admission checks the current Automation status/version. PAUSED status alone does not block Manual Run, but Run once is offered only when the revision has exactly one Manual trigger, the Automation is not disabled, the pinned Routine is active, inputs pass validation at submission, and no request is busy or unresolved for the selected Automation. Resume creates or reconciles a cursor; a newly created schedule cursor starts at the next future slot, while an existing overdue cursor is preserved and processed under its configured misfire policy at the next host poll. The resume command itself creates no Task. The separate Coworker-pause fence defect remains.
 - Automation occurrence history is only loaded once with `listOccurrences(selectedId)`; the API returns `next_cursor`, but the page stores only `page.items` and renders no Load more action. History beyond the first API page is not reachable from this surface. Automation definitions themselves do have cursor pagination and Load more.
 - The editor persists retry policy and wake policy, but a source scan of the daemon shows no production consumer of either field. The trigger host uses concurrency/overlap and schedule/misfire rules; it does not execute Task retries or wake the Runtime. Placement/budget are carried into the READY Task contract, not proof of an executor or cloud placement.
 - Workspace notification preferences are persisted, but `preferred_channels` is not read by the outcome producer. The producer reads only policy and quiet-hours, then chooses the first active ChannelBinding or treats any active Runtime Workspace binding as a local channel. The free-text channel list shown in Notifications is therefore descriptive stored data, not routing.
-- `ON_CONDITION` is not a named-condition evaluator: the domain maps it specifically to `NotificationOutcome::Blocked` / `DEPENDENCY_BLOCKED`. Notifications UI copy says “When a named condition holds”, but no condition editor or expression is stored. Quiet hours are displayed but not editable in the current UI; `savePreference` resubmits the stored quiet-hours object unchanged or `null`.
-- The notification outcome producer inserts `PENDING` delivery rows transactionally with occurrence/Task outcome settlement. The source tree has no production delivery worker/consumer or status-transition writer for `SENDING`, `SENT`, `FAILED`, `AMBIGUOUS` or `SUPPRESSED`; `notification_operator.rs` only reads delivery history and writes preferences. The Notifications page is read-only for delivery and correctly says it never sends one. A `PENDING` row is not a delivered notification.
+- `ON_CONDITION` is not a named-condition evaluator: the domain maps it specifically to `NotificationOutcome::Blocked` / `DEPENDENCY_BLOCKED`. Notifications UI copy says “When a named condition holds”, but no condition editor or expression is stored. Quiet hours are displayed but not editable in the current UI; `savePreference` resubmits the stored quiet-hours object unchanged or `null`. Storage checks timezone text shape, not IANA membership; an invalid persisted zone fails open during evaluation.
+- The notification outcome producer inserts `PENDING` delivery rows in the same transaction as occurrence settlement. There is no production delivery worker/consumer or status-transition writer. Canonical status names, event envelope/payload shape and SQLite v1 attempt/status columns already exist, but the event JSON Schema does not constrain `from`/`to` to delivery-state enums and is not a sender. The current SQLite delivery row has no version field for the proposed settle CAS. The encrypted Runtime-local trigger cursor table also already exists; CONNECTOR_EVENT hosting is still unsupported. See A-97/A-98.
 - The current Automation page exposes templates, definition/revision, Manual Run, Create test Task, pause/resume/disable, health and first-page Runs. Manual Run creates an occurrence plus READY Task; Test Task creates a READY Task without an occurrence/cursor. Neither starts planning/agent execution. Routines separately expose immutable definition/revision, JSON advanced fields, archive, exact pinned inputs, Run now, and process-local ambiguous-request retry/discard. Pending Routine/Automation request envelopes are lost when the app process closes.
 - External WorkflowBackendAdapter remains target-only; no provider workflow selector, mapping, invocation, graph canvas or graph mutation UI is mounted.
 
-## Unresolved questions
+## Decisions and remaining questions
 
-- B-26: first trigger type and misfire policy for GA.
-- B-27: local notification channel and delivery guarantee.
+- B-26 and B-27 were owner-accepted on 2026-11-09; they are not open decisions. Their implementation and qualification gaps remain in TASKS.md.
+- A-97: resolve the Workspace-level quiet-hours/class-set target against per-event-class preferences and define one version-fenced atomic save contract.
+- A-98: reconcile planned v44 DDL against existing v1 status/attempt/cursor schema and define the missing delivery CAS/lease token before adding migration or API fields.
 - Future, not V1 blocker: whether a particular external backend should receive a qualified WorkflowAuthoringAdapter pilot. Any such decision requires a separate ADR and provider/security review.
 
 ## External provider hybrid authoring research — checked 2026-11-06

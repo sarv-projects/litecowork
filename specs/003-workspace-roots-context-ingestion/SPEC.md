@@ -3,7 +3,7 @@
 **ID:** 003
 **Status:** ACCEPTED/LOCKED
 **Owners:** Resource, Conversation, Storage, Security/Trust, Desktop UI
-**Updated:** 2026-11-09
+**Updated:** 2026-11-13 (current-evidence crosswalk only; target revision remains 1.0)
 **Revision:** 1.0 (revision 1.0 adds V1 gap coverage per owner acceptance 2026-11-09: Windows WorkspaceRoot add and scan, Windows path-identity tests, persisted ContextAttachment, retrieval receipt called from Send, @-reference ResourceRef picker; AC-013 to AC-019)
 **Owner acceptance:** accepted 2026-11-09 by the repository owner (sarv-projects) via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md) (PR #1), including each scoped caveat as a binding condition. Acceptance authorizes implementation; it is not a claim of implementation, SERVED, INTEGRATED or QUALIFIED status.
 **Change control:** a change to a locked contract in this package from now on requires a new revision and renewed owner approval (SPECIFICATION-STANDARD §7).
@@ -33,7 +33,7 @@ Observable outcome: The owner attaches a folder as a persistent WorkspaceRoot, a
 
 ## 4. Current evidence
 
-The active checkout has partial WorkspaceRoot, Resource upload/index and local grounded-retrieval surfaces. It does not yet implement the complete Windows folder-ingestion and Context Used journey in this target. The matrix below is a source/route/UI crosswalk, not owner acceptance or release qualification.
+The active checkout has partial WorkspaceRoot, Resource upload/index and local grounded-retrieval surfaces. This source/route/UI crosswalk was rechecked on 2026-11-13 at source checkpoint `6adadab539a62ca1c8b70621c7f88e1785cfe8c2`; it is not owner acceptance or release qualification. The complete Windows folder-ingestion and Context Used journey is not implemented. A-65 blocks the proposed separate receipt transaction, and A-69 records conflicting required/optional provenance fields; T01, T09 and T10 must not promote schema or transaction behavior until those owner decisions are resolved.
 
 | Capability | Current source evidence | Limitation / release meaning |
 |---|---|---|
@@ -47,9 +47,11 @@ The active checkout has partial WorkspaceRoot, Resource upload/index and local g
 | Local text index | CODE/SERVED: rebuild and index-state routes; allowlisted UTF-8 text formats include TXT/Markdown/CSV/JSON/JSONL/NDJSON/Rust/Python/TOML/YAML/JavaScript/TypeScript/CSS; max 1 MiB plus control-character and term-count bounds | PDF, Office, archive, image, audio and video are not indexable by this provider. This is a local lexical index, not embeddings/vector retrieval. |
 | Grounded retrieval | CODE/SERVED: POST `/resources/retrieval` returns exact revision/digest-bound citations or explicit insufficient evidence from the local lexical provider | Read-only operation: no ContextAttachment, event, durable retrieval receipt, Effect or Artifact is committed. It is not wired into Conversation send. |
 | Context Used | No persisted ContextAttachment domain record/table/event or production UI call site was found; `CONTEXT_ATTACHMENT` appears only as an AgentControl capability enum | AC-006 is not implemented. The UI helper `resources/retrieval-grounding.ts` has no production call site; there is no Context Used surface. |
-| Desktop UI | `App.tsx` has Persistent folders list, Add, pause/resume/revoke, manual scan and `WorkspaceRootObservations`; Resource/Library/Workbench views show resource projections and read-only revision preview | Root observation UI explicitly says metadata only and no content read/watch/index. On Windows, Add remains clickable but fails with 503; Scan is attempted once, then `SCAN_UNSUPPORTED_PLATFORM` feedback disables further scans. No Context Used UI exists. |
+| Desktop UI | `LibraryPage.tsx` owns the Persistent folders list, Add, pause/resume/revoke, manual scan and `WorkspaceRootObservations`; Resource/Library/Workbench views show Resource projections and read-only revision preview. The existing-Conversation **Add context or file** button loads one Resource page, filters attachable text and sends exact revision-pinned `resourceRefs`. | Root observation UI explicitly says metadata only and no content read/watch/index. On Windows, Add remains clickable but fails with 503; Scan is attempted once, then `SCAN_UNSUPPORTED_PLATFORM` feedback disables further scans. The composer does not open on `@`, cannot attach to a first message, and does not yet meet AC-017's labelled listbox/search/arrow-key/result-count contract. No Context Used UI exists. |
 
 Code or a route alone does not qualify the feature. The design decisions are owner-accepted and the package is ACCEPTED/LOCKED (2026-11-09). Implementation and qualification status are unchanged by acceptance and are tracked in this section and in [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md).
+
+**Cross-owner implementation blocker (A-65/A-69; no target decision is changed here):** The diagram and §7.2 signatures remain accepted target material, not executable sequencing. Do not commit the retrieval receipt/ContextAttachment using the standalone `tx-attach` before Feature 001 creates its turn and dispatch intent. The required `retrieval_receipt_id` and `root_id` fields in §7.2 also conflict with DATA-MODEL's nullable fields for explicit references and uploaded Resources. T01/T09/T10 remain blocked until owner-reviewed provenance and atomic-admission contracts replace these conflicting shapes.
 
 ## 5. LOCKED and FLEXIBLE decisions
 

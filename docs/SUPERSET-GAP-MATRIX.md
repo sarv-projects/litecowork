@@ -111,7 +111,7 @@ Grounded in [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) and [DOCS-REAUD
 **✗ Not done (TARGET only or fails closed; not a usable journey):**
 
 - Safe Task execution pipeline: planning dispatch, accepted plan, Attempt admission, Environment assignment, Trust-mediated Effect, reconciliation, independent verification. `require_dispatch()` is dead code; no production `admit_step_attempt` caller.
-- Heterogeneous A→B→A agent relay (only OpenCode dispatches; Codex not wired to the supervisor; producer identity dropped by desktop message types) — B-15/B-16.
+- Heterogeneous A→B→A agent relay (only OpenCode dispatches; Codex is not wired to the supervisor; producer identity is now preserved and rendered, but no qualified second dispatch path/cross-layer relay exists) — B-15/B-16.
 - Coworker-owned Conversation, Coworker-scoped retrieval, private memory browser / Learning Inbox; presence returns 503 — B-24.
 - Learning/memory service: no store, schema/migration, service, route, event producer, or UI (typed pure-function gates only). A-20/A-34 vocabulary is owner-accepted; implementation remains open. A-91 gates manual Coworker-memory metadata.
 - Real browser/computer use (iframe preview only) — RV-04, B-22; real integrated terminal (display-only stub) — B-23; Computer-use decision — B-32.
@@ -143,7 +143,7 @@ Each row cross-references the [DOCS-REAUDIT-2026.md](DOCS-REAUDIT-2026.md) verdi
 
 - IMPLEMENTATION-STATUS "Terminal / Diff / Browser current truth" described the old fabricating Workbench after the UI was remediated — Cluster C, **A-51** (new; corrected, and rows A-08/A-09/A-10/A-30 updated).
 - EVENTS.md / DELEGATION.md v28 references read as applied — Cluster B, **A-40** (stale consequence of the v28 contradiction).
-- `automation_operator.rs` header saying recurring hosting/`/resume` are unavailable while the worker actually runs — Cluster E, **A-29** (stale source comment; behavior true).
+- `automation_operator.rs` header saying recurring hosting/`/resume` are unavailable while the worker actually runs — Cluster E, **A-29** (resolved by T02 at CODE level on 2026-11-13; UI copy and test are aligned, with broader AC-019 pagination still open under T11).
 - IMPLEMENTATION-STATUS "Active documentation corpus" line counts (258/54,473; 255/54,385) vs generators — Cluster A (corrected in place); the matching CURRENT-RUN.md drift reconciled.
 
 **Over-claiming (aspirational-unlabeled — TARGET reading as shipped):**

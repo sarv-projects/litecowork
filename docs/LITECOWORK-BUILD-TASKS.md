@@ -10,8 +10,8 @@ The tables below are the plan and carry no per-row status. Per-task status lives
 |---|---|---|
 | BT-00 | Partly done | Route inventory matches (178 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 53 target-only); CURRENT-RUN.md and IMPLEMENTATION-STATUS.md refreshed 2026-11-13 |
 | BT-01 | CODE and SERVED for BT-01.1, 01.2, 01.4; BT-01.3 CODE (ACP client, OpenCode HTTP adapter kept); BT-01.5 and 01.6 partial | 001 DONE/PARTIAL list in CURRENT-RUN.md; live OpenCode run (001-T09) NOT STARTED |
-| BT-02 | Linux storage tests only; Windows tasks DEFERRED to the owner's Windows laptop | 003-T02 PARTIAL |
-| BT-03 | Registry, descriptors, auth observation, Matchmaker CODE/SERVED; Claude Code module BLOCKED; relay (004) not started | 002 statuses |
+| BT-02 | 003-T01 BLOCKED on A-69 provenance owner decision; T02 Linux storage tests PARTIAL; T03-T06 Windows work DEFERRED to owner's Windows laptop; T09/T10 BLOCKED on A-65/A-69 | See Feature 003 TASKS and current cross-check |
+| BT-03 | Registry/descriptors and limited discovery CODE/SERVED; Claude Code module BLOCKED; relay (004) PARTIAL CODE (producer attribution/context builder only), no qualified second dispatch path | 002 and 004 TASKS; see `docs/audit/FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md` |
 | BT-04 | Not started | 005; T02 has partial CODE ahead of its T01 dependency; A-70 planner/Attempt Environment lifecycle and A-87/A-88/A-90 require owner resolution before execution/write-path implementation; B-35 remains PROPOSED |
 | BT-05 | 013 part: whole package DEFERRED by the owner (A-62). 006 part: BLOCKED on B-19/A-82 owner decisions; E2E-05 Task-write row order remains OPEN under A-80 | See the DEFERRED note in specs/013-litespm-package-lifecycle-bridge/TASKS.md and A-80/A-82 in the contradiction register |
 | BT-06 to BT-09 | Existing foundations only; 010-T19 deferred out of V1. Feature 016 baseline acceptance is pending; A-84 separates its revision 0.2 extension decision and A-85 blocks MCP proposal exposure pending a canonical tool-input/sequence contract. | 007, 016, 008, 009, 010 |
@@ -22,6 +22,8 @@ The tables below are the plan and carry no per-row status. Per-task status lives
 | Co-edit (012) | Storage layer only (012-T05 partial, migration v32) | Routes, service, UI NOT STARTED |
 
 ## BT-00 — Current baseline and documentation integrity
+
+Feature 004's full 11-file package read and bounded source cross-check are recorded in `docs/audit/FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md`. The context builder test and Conversation snapshot suite pass at CODE level; no second-provider, SQLite-to-desktop, packaged or OS qualification was performed. A-95/A-96 are open cross-owner contract questions.
 
 | ID | Task | Exit evidence |
 |---|---|---|
@@ -231,11 +233,13 @@ The wired schema is v32 (v30 adds REPORTED turn activity records, 001-T25 storag
 | v41 | 008-T01 (W3) | Browser session/lease/receipt and terminal session/receipt |
 | v42 | 015 (W4) | `task_control_requests`, `task_resume_packets` |
 | v43 | 020-T02 (W4) | `learning_candidates`, `coworker_learning_policies`, `memory_records` |
-| v44 | 010-T01 (W5) | Delivery lease and status transitions, SUPPRESSED rows |
+| v44 | 010-T01 (provisional) | Exact owner-approved delivery CAS/schema delta only, if needed; release if no DDL is required |
 | v45 | 017 (W6) | `backup_operations` |
 | v46 (if needed) | 018 (W6) | Optional diagnostics table; the usage table comes from 001 |
 
 Packages 004, 011, 016 and 019 plan no migration.
+
+**010 allocation recheck (2026-11-13):** SQLite v1 already contains the `notification_deliveries` status set, attempt Runtime/host epoch/count, retry deadline and settlement timestamp, plus encrypted Runtime-local `automation_trigger_bindings`. The status event/schema also exists. v44 is therefore provisional, not an instruction to duplicate those fields. A-98 requires the owner to define the missing delivery CAS/version delta (if any) and release v44 if no migration is needed.
 
 ## Cross-package dependency graph
 

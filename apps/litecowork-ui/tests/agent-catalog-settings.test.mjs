@@ -306,6 +306,8 @@ test("a fresh compatible OpenCode 2.0.32 offer enables Create binding and shows 
 
   assert.match(html, /Runtime offer compatibility[\s\S]*?Compatible for Workspace binding/);
   assert.match(html, /Add disabled Workspace binding/, "Create binding is offered for a fresh compatible offer");
+  assert.match(html, /Conversation profile admission[\s\S]*?Supported for profile binding only/);
+  assert.match(html, /Task lead eligibility[\s\S]*?Not eligible for Task admission/, "Conversation profile admission does not imply Task lead eligibility");
   assert.doesNotMatch(html, /Binding unavailable/);
   assert.doesNotMatch(html, /cannot be bound for use/);
   assert.match(html, /a disabled Workspace binding can be created below/);
