@@ -11,7 +11,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 
 - Included files: 372
 - Included lines: 77250
-- Included bytes: 7627210
+- Included bytes: 7627300
 - Per-file SHA-256: docs/audit/active-corpus-manifest.csv
 - This manifest excludes itself to avoid a self-referential hash/count.
 - reading/ contains derived audit snapshots and is intentionally excluded.
@@ -44,7 +44,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | AGENTS.md | 133 | 11515 | e534272a21474a59 |
 | ARCHITECTURE.md | 824 | 58190 | 45248d5f5a1a6ca7 |
 | CONTRIBUTING.md | 81 | 6032 | 2fc07511243a861e |
-| CURRENT-RUN.md | 661 | 130254 | 0c042b499c8c4a87 |
+| CURRENT-RUN.md | 661 | 130344 | 6e6d325b5cd5ffe8 |
 | GLOSSARY.md | 292 | 12637 | bd9ffa34cb5ee0a0 |
 | README.md | 93 | 8289 | 3727827fd285fbe4 |
 | apps/litecowork-ui/README.md | 77 | 4351 | c47d822925a4b15b |

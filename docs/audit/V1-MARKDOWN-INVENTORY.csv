@@ -9,7 +9,7 @@ file,lines,bytes,sha256,categories,has_heading
 AGENTS.md,133,11515,e534272a21474a59850069a4de4e6da27fe0203ce287733a1a64985fa741d0a6,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 ARCHITECTURE.md,824,58190,45248d5f5a1a6ca74014ddfc370548a1d1ab067b0c9013169f1d004b5f225026,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 CONTRIBUTING.md,81,6032,2fc07511243a861e2b0bd7e5de07e4f66b09aebe7ddbbb5b563774ba4d8814c5,agent/composer;browser/computer;rendering;workflow/recovery;trust/security,True
-CURRENT-RUN.md,661,130254,0c042b499c8c4a876c7d594527aafe2b057854e946cfc01f01df6ed1c5b1db67,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+CURRENT-RUN.md,661,130344,6e6d325b5cd5ffe8440dfe3d1ba079e83e65483db54d8143a00169d7509af95b,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 GLOSSARY.md,292,12637,bd9ffa34cb5ee0a0877784f2e047fe8380fd29cfc37961c83d0a57e81a106713,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 README.md,93,8289,3727827fd285fbe4a46c47c59e9f562b6d21a6617a070e43b75b83b5f28b3296,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 apps/litecowork-ui/README.md,77,4351,c47d822925a4b15bcd033695b22b3a59ce293efacbf211418a9b7b5a0b2c5b57,browser/computer;shell/settings/motion;workflow/recovery,True
@@ -35,7 +35,7 @@ docs/CHROME-BROWSER-LLD.md,193,22079,1386b82b3546f5393eb2c3100f1345a7eeb5782f853
 docs/CODING-COCKPIT-UI-SPEC.md,113,8662,51e4f0bbc4a51dc24855fa1087e57b6d1e5a2aa084340de16ae5415ef7ebbd64,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/COMPETITIVE-RESEARCH.md,991,114678,229caf87e54be05cf9e84a155aafea61af422972528a839a502d881020c82b8f,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/COMPETITOR-PROMOTED-USE-CASES.md,149,13015,9a641a7bb366904f64b460b0c60bdf7bad2b5d2b6125ca32590c4135d42b925d,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
-docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md,416,32383,4271478f5ef3cdcb618c18c5b5a62a3f1e075523f8cfaa61abfaf77bbcfb9005,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md,416,32383,8feaeae1c6002a04176b93ae45d90a605bc130e3c4b79db8f53c4e6116c6004f,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md,139,28419,bd5d583d49a3bd6e63e30aad6ee817ab56409a5cbbb61574c3375ce690c0d330,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/CONNECTOR-FACTORY-DESIGN.md,139,10873,6212797fb13b160f0903abc4de79e18ea31f1ac2b2288db909191fcbe9459de5,shell/settings/motion;workflow/recovery;trust/security,True
 docs/CONNECTORS-WORKFLOWS.md,1020,50069,61c9453212502f757169fc1b9c7d9da0984ce9449cdd58c3260f5007eec1d026,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
