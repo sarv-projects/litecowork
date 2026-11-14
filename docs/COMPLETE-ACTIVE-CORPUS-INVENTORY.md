@@ -10,8 +10,8 @@ integrated or qualified. The authority chain is in docs/README.md. Current sourc
 evidence is in docs/IMPLEMENTATION-STATUS.md.
 
 - Included files: 372
-- Included lines: 77264
-- Included bytes: 7626230
+- Included lines: 77250
+- Included bytes: 7626821
 - Per-file SHA-256: docs/audit/active-corpus-manifest.csv
 - This manifest excludes itself to avoid a self-referential hash/count.
 - reading/ contains derived audit snapshots and is intentionally excluded.
@@ -25,8 +25,8 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | apps/ | 3 | 273 |
 | capabilities/ | 1 | 133 |
 | crates/ | 1 | 137 |
-| docs/ | 150 | 50694 |
-| repository root | 8 | 2610 |
+| docs/ | 150 | 50667 |
+| repository root | 8 | 2623 |
 | scripts/ | 1 | 14 |
 | specs/ | 201 | 23166 |
 
@@ -44,7 +44,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | AGENTS.md | 133 | 11515 | e534272a21474a59 |
 | ARCHITECTURE.md | 824 | 58190 | 45248d5f5a1a6ca7 |
 | CONTRIBUTING.md | 81 | 6032 | 2fc07511243a861e |
-| CURRENT-RUN.md | 648 | 127962 | 8eddaefc3d7fce71 |
+| CURRENT-RUN.md | 661 | 129865 | dde581382de8bae9 |
 | GLOSSARY.md | 292 | 12637 | bd9ffa34cb5ee0a0 |
 | README.md | 93 | 8289 | 3727827fd285fbe4 |
 | apps/litecowork-ui/README.md | 77 | 4351 | c47d822925a4b15b |
@@ -74,7 +74,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/CONNECTOR-FACTORY-DESIGN.md | 139 | 10873 | 6212797fb13b160f |
 | docs/CONNECTORS-WORKFLOWS.md | 1020 | 50069 | 61c9453212502f75 |
 | docs/CONTEXT.md | 274 | 20112 | deae265133353676 |
-| docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md | 210 | 119672 | 23f009282d316e67 |
+| docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md | 210 | 119659 | 9af4e06cddc525c5 |
 | docs/COVERAGE-MATRIX.md | 174 | 25536 | c9ecf3f3a1eeaf23 |
 | docs/COWORKER-FLOWS.md | 166 | 20076 | 309015aa4fe4a14a |
 | docs/COWORKERS-TARGET.md | 458 | 58359 | 21a5bfa6d79156e6 |
@@ -83,13 +83,13 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/DEEPSEEK-HARNESS-PLUGIN-ARCHITECTURE-DEEP-DIVE-2026-11.md | 82 | 14250 | e3b3fa1b9b4e1c43 |
 | docs/DEEPSEEK-HARNESS-REUSE-MAP-2026-11.md | 252 | 39690 | 5ebaa5cf1206453d |
 | docs/DELEGATION.md | 904 | 52316 | 39e9d1e7faf4688f |
-| docs/DESIGN-SYSTEM.md | 532 | 36016 | 7627e7f97848794a |
+| docs/DESIGN-SYSTEM.md | 506 | 34043 | 9d55748dd93320db |
 | docs/DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md | 196 | 26038 | 7f263349a5b4d436 |
 | docs/DESKTOP-SHELL-LLD.md | 280 | 30037 | 3c14a60b20dcafd0 |
 | docs/DOCS-REAUDIT-2026.md | 123 | 15241 | 44b2551d4b8f5433 |
 | docs/ENVIRONMENTS.md | 439 | 25588 | 58e9f7aab6cea011 |
 | docs/EVENTS.md | 929 | 69386 | 2b28f32d9255594c |
-| docs/EXPERIENCE.md | 1096 | 77409 | acdb24b092c2e914 |
+| docs/EXPERIENCE.md | 1095 | 77484 | ba319774ca2b7995 |
 | docs/FAILURE-RECOVERY.md | 213 | 17867 | 71418bc2b863c859 |
 | docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md | 137 | 21422 | c7e758f26880afd1 |
 | docs/FLOWS.md | 4514 | 319578 | 152ec91b456dd96d |
@@ -112,7 +112,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/OBSERVABILITY.md | 262 | 12291 | 3192bfcda6340d0a |
 | docs/OPEN-DESIGN-CAPABILITY-DEEP-DIVE-2026-11.md | 66 | 12012 | d734504079895f10 |
 | docs/OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md | 279 | 29919 | 2bf520dce2718a2e |
-| docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md | 137 | 23857 | 4bb371e948d920c8 |
+| docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md | 137 | 23962 | 04f6b15e099a53a0 |
 | docs/PRESENTATION-RUNTIME.md | 576 | 33186 | ca02fe1014fcf87b |
 | docs/PRODUCT-CONTRACT-INDEX.md | 46 | 7423 | 89c315f38f707f1d |
 | docs/PRODUCT-STRATEGY.md | 113 | 10724 | 8e39b7022710cfef |
@@ -123,7 +123,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md | 264 | 24873 | f1d7303606da51da |
 | docs/REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md | 132 | 23651 | a8500c11f9e38f32 |
 | docs/RENDERING-CONFORMANCE-LLD.md | 271 | 16026 | c99abd47adbeda47 |
-| docs/REPOSITORY-DOCUMENTATION-AUDIT.md | 65 | 5253 | 2ce16d7805706cf8 |
+| docs/REPOSITORY-DOCUMENTATION-AUDIT.md | 65 | 5268 | 189e2e532cfa0150 |
 | docs/RESET-AND-ARCHIVE-RECORD.md | 65 | 4154 | 4f247a4168955440 |
 | docs/RESPONSIBILITIES.md | 492 | 27800 | 38dc127ef1170e7f |
 | docs/RICH-RESPONSE.md | 334 | 18088 | 503c1e66bc7ed2f2 |
@@ -157,12 +157,12 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/V1-FUNCTION-FILE-CATALOG.md | 505 | 41402 | b3ed7a3eeb974279 |
 | docs/V1-INTEGRATED-TERMINAL-LLD.md | 181 | 24777 | 2dcbf82fbc54d4d3 |
 | docs/V1-PRODUCT-FEATURE-COVERAGE.md | 86 | 16655 | f42879ea19d268ac |
-| docs/V1-PRODUCT-RELEASE-CONTRACT.md | 90 | 13378 | 9471d6c8d7a0b777 |
+| docs/V1-PRODUCT-RELEASE-CONTRACT.md | 90 | 13408 | 28bc8ce7e836f1f5 |
 | docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md | 63 | 8162 | 21ee35867ca419f1 |
 | docs/V1-SETTINGS-CONTRACT-LEDGER.md | 235 | 59062 | ca708a1e14166a4f |
 | docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md | 351 | 37853 | 375da7f1482fe2da |
 | docs/V1-UI-ACTION-STATE-LEDGER.md | 78 | 16542 | 8e5f954c75fea74d |
-| docs/V1-UI-SCREEN-CONTRACT.md | 378 | 54853 | ea56d71564117571 |
+| docs/V1-UI-SCREEN-CONTRACT.md | 378 | 55302 | 1d80c9747e2d0189 |
 | docs/V1-WORKFLOW-EVENT-LLD.md | 139 | 14813 | aa20f0e960080e6e |
 | docs/VIABILITY-VS-COMPETITORS.md | 239 | 24161 | cac988e17f7a3ca5 |
 | docs/WORKSPACE-EXPERIENCE-REVISION-2026-11.md | 170 | 27735 | ebdb62ad0c1136e0 |

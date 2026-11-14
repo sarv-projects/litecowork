@@ -101,40 +101,14 @@ assigned in semantic tokens; components consume only semantic/component tokens.
 }
 ```
 
-**Implementation status (2026-10-22).** Only the eleven base tokens exist in the app
-today: `--color-background/-surface/-text/-text-muted/-text-subtle/-border/-border-strong/
--primary/-primary-hover/-primary-soft/-focus` (`apps/litecowork-ui/src/styles.css:15-25`).
-`--color-surface-raised`, `--color-info(+soft)`, `--color-success(+soft)`,
-`--color-warning(+soft)` and `--color-danger(+soft)` are **target tokens with no
-definition**; no CSS file defines `.theme-dark` and no file reads
-`prefers-color-scheme` (grep over all stylesheets: 0 hits), so the app is light-only with
-`color-scheme: light` hard-set (`styles.css:3`). Until the tokens land, components use
-divergent hard-coded substitutes that must all be migrated: success `#eaf5ee`/`#21613d`
-(`styles.css:363`), `#f2faf5`/`#226b49` (`notifications-page.css:6`), `#25633d`/`#e8f4ec`
-(`agents/agent-catalog-settings.css:90,99`); warning `#fff7e8`/`#67440c`
-(`styles.css:202,216`), `#fbf4e8`/`#704715` (`styles.css:395`), `#fff4dd`/`#805817`
-(`notifications-page.css:30`), `#fff9eb`/`#dfb76f` (`routines-page.css:8`), `#a66a00`
-(`presentation/rich-response.css:19`), `#c28a27`/`#76510e`
-(`presentation/presentation-runtime.css:3,25`), `#a87512`
-(`needs-you/task-attention-page.css:14`), `#a16b15`/`#fff9e8`
-(`text-version-diff.css:16`, `structured-text-preview.css:46`,
-`artifacts/artifact-workbench.css:59`); danger `#a43232` (`styles.css:208`),
-`#7b3029`/`#fff6f4`/`#edc9c2` (`notifications-page.css:7,19,32`), `#923c35`/`#d9a5a0`
-(`automations-page.css:40`, `routines-page.css:43`), `#a22d28`
-(`presentation/task-presentation.css:45`, `needs-you/approval-detail.css:9`,
-`needs-you/task-attention-page.css:15`), `#a3342a`
-(`resources/task-resource-text-preview.css:33`), `#b42318`
-(`skills/skill-proposals-page.css:42`). Undefined variables are also consumed today and
-render their fallback (or nothing at all where no fallback is written):
-`--color-surface-subtle`, `--color-surface-muted`, `--color-border-subtle`,
-`--color-accent`, `--color-warning(+border/subtle/text)`, `--color-success(+subtle)`,
-`--color-danger(+border/subtle/soft)` across `task-presentation.css`,
-`needs-you/*.css`, `agents/agent-catalog-settings.css`, `resources/resource-revision-editor.css`,
-`artifacts/text-version-diff.css` and `styles.css:182`; alien namespaces
-(`--text-primary/-secondary/-tertiary`, `--surface-muted`, `--border-subtle`,
-`--lc-text-muted/--lc-border/--lc-danger/--lc-warning`, `--font-mono`) are used in
-`routines/routines-page.css`, `agents/*.css`, `skills/skill-proposals-page.css`,
-`notifications/notifications-page.css` and `workspaces/workspace-root-observations.css`.
+**Implementation status (rechecked 2026-11-14).** The global stylesheet now defines the
+light, dark and system token sets; Settings persists and applies the selected theme. The
+older 2026-10-22 claim that no dark theme exists and the entire app is light-only is stale.
+Visual completion is still partial: Settings and Workbench component styles retain fixed
+light surfaces and need token migration plus rendered contrast review. Treat this document's
+palette/tokens as the target contract, not evidence that every component consumes them.
+Current implementation evidence is in `docs/IMPLEMENTATION-STATUS.md` and the full
+re-audit is in `docs/audit/FULL-REPOSITORY-REAUDIT-2026-11-14.md`.
 
 Text contrast for the selected foreground/background pairs is at least 6.1:1 in the
 light palette and 7.3:1 in the dark status palette; body text must meet WCAG 2.2 AA

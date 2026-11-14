@@ -11,7 +11,7 @@ The active repository has these first-party working areas:
 - apps/litecowork-ui: Tauri v2 desktop shell, React UI and Rust Tauri bridge.
 - crates/: domain, persistence, IPC, environment and shared Rust libraries.
 - docs/: product, architecture, owner contracts, ADRs, schemas, UI contracts, coverage, plans and evidence.
-- specs/: feature SDD packages 001–011.
+- specs/: 20 feature SDD packages (001–020). Package lifecycle and owner acceptance are separate; see `specs/README.md` and `docs/V1-FEATURE-SDD-REGISTER.md`.
 - .specify/: package templates and structural validators.
 - scripts/: source/route/documentation audits and validators.
 - repo_take/: pinned reference repositories used only for research.
@@ -51,14 +51,14 @@ The detailed current facts are in IMPLEMENTATION-STATUS.md, the screen contract 
 ## Validation paths and limitations
 
 - scripts/audit_served_routes.py compares the composed Operator route registrations with the OpenAPI contract and writes docs/schemas/served-route-inventory.json.
-- .specify/scripts/validate_feature_package.py checks package structure for specs/001–011.
+- .specify/scripts/validate_feature_package.py checks the current 20 feature packages for required structure. A passing structural check is not owner acceptance or implementation evidence.
 - scripts/validate_design_owner_consistency.py checks adjudicated cross-owner rules. Its output must remain under docs/audit/ rather than a removed implementation/ directory.
 - scripts/audit_v1_markdown.py inventories first-party active Markdown and relative links; it must exclude caches, generated run artifacts, archives, the ignored staging_tar checkout and repo_take clones.
 - scripts/validate_architecture.py validates machine contracts and requires the declared Python dependencies.
 - cargo test --workspace --locked exercises Rust unit/integration test targets but is not a substitute for packaged UI/provider E2E.
 - Frontend type/build/test commands are defined by apps/litecowork-ui/package.json.
 
-The Windows workspace test run recorded in IMPLEMENTATION-STATUS.md exited 0: litecoworkd 359 passed / 0 failed / 1 ignored; the full workspace targets passed, including Windows local security (36) and Operator IPC (18). The architecture/schema validator passed its active checks with one warning because optional `openapi-spec-validator` was not installed. The frontend production build and focused Conversation/responsive tests passed; the full serial frontend suite remains incomplete with no final TAP summary, the Settings browser accessibility check timed out before the production UI assertion, and packaged Tauri/provider USER E2E remains unqualified. This audit is a documentation/source-structure review, not a replacement for those qualification gates. See IMPLEMENTATION-STATUS.md for the exact evidence and release blockers.
+The latest recorded full serial frontend run (2026-11-13) reports 626 passed, 5 failed and 5 skipped of 636 tests; three failures followed CDP startup timeouts and two Needs You tests failed because browser state was unavailable. Focused Conversation/responsive and production-build results are recorded separately in IMPLEMENTATION-STATUS.md. Packaged Tauri/provider USER E2E remains unqualified. Rust workspace and validator results are historical dated evidence and must be checked against the exact current revision before reuse. This audit is a documentation/source-structure review, not a replacement for those qualification gates.
 
 ## Corpus inventory
 

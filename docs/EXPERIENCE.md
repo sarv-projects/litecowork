@@ -2,29 +2,27 @@
 
 ## Information architecture
 
-Primary navigation:
+Target primary navigation (cross-screen proposal, see `WORKSPACE-EXPERIENCE-REVISION-2026-11.md` and `V1-UI-SCREEN-CONTRACT.md`):
 
 ```text
-New session / Conversations
-Coworkers (optional, chat-first)
-Needs You
-Work
-Automations
+Work (New Chat, search and recent conversations; Tasks are explicit)
+Coworkers
 Library
-Discover
+Automations (Routines inside)
+Needs You (compact attention entry)
+More (Discover and secondary surfaces)
+Settings (footer)
 ```
 
-The desktop sidebar also contains search and a persistent Recent Conversations list. The center remains the conversation/composer surface; the right Workbench is visible by default in a compact Start state on desktop, with reflow at narrow widths.
-(Implementation status 2026-10-22: the current sidebar contains only the Workspace
-selector, the nav list, a Runtime note and the user row; search and the Recent
-Conversations list live inside the Conversations page, not the sidebar.) Work
-is the user-facing label for durable Tasks and contains Active, Waiting, Scheduled, Done,
-and All filters. Coworkers is an identity/context surface, not an execution container.
-Needs You is a first-class destination with a pending count for approvals, expired logins,
-required local Runtimes, ambiguous Effects, TaskSpec conflicts, user choices, and
-verification requests. Advanced technical detail lives in Inspector/Settings/Discover
-details. A Workspace selector is available in the app shell when more than one Workspace
-exists.
+Work is the user-facing home for chat and durable Task work; creating a Task is always an
+explicit action. Coworkers are identity/context surfaces, not execution containers. Needs
+You is a compact actionable inbox, not a delivery queue or a count inferred from UI state.
+The right Workbench is a contextual object panel for open Files, Browser, Terminal, Changes,
+Canvas or Computer surfaces; those objects do not become permanent left-navigation tabs.
+A blank Work surface starts without launching a provider. A LIVE Computer session may be
+shown only after local preview permission is already active. The current mounted navigation
+and exact source behavior are tracked in `docs/IMPLEMENTATION-STATUS.md`; this information
+architecture remains target/proposed where the owning package is IN_REVIEW.
 
 **Current desktop/local implementation boundary:** The mounted page reads the authenticated,
 Workspace-scoped `GET /v1/needs-you` projection through the native Tauri bridge. It lists
@@ -436,9 +434,10 @@ loading, success and failure states are rendered inline.)
 
 ## Automations
 
-Routines and Automations are separate top-level destinations. (Implementation status
-2026-10-22: there is no `Runs` view — run/occurrence history is listed inside one
-Automation's detail.)
+Routines are managed inside Automations in the current target navigation. Occurrence/run
+history is scoped to an Automation detail; the mounted page currently requests only its
+first occurrence page, so the target pagination journey is not yet complete (Feature 010
+T11).
 
 Routine cards show immutable current revision, typed inputs, outputs/acceptance criteria,
 capability requirements, placement eligibility, and actions to run, revise, duplicate,

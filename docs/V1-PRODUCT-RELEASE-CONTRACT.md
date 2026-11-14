@@ -3,7 +3,7 @@
 **Status:** accepted V1 TARGET; **not a claim of implementation or release qualification**.  
 **Authority:** subordinate to [Architecture](../ARCHITECTURE.md) for Core safety/ownership, and the companion to [Product Contract](PRODUCT.md) for complete desktop scope.  
 **Supersedes:** ambiguous Task-first product framing and transitional Home as the *default* UX; no Task identity, safety, evidence, or accepted ADR is revoked.  
-**Implementation truth:** [Release scope](archive/legacy-implementation-c7e9c05/SCOPE.md), [qualification matrix](archive/legacy-implementation-c7e9c05/QUALIFICATION-MATRIX.md), [served-route inventory](archive/legacy-implementation-c7e9c05/V1-SERVED-CAPABILITY-INVENTORY.md), actual source, and CODE/SYSTEM/USER evidence.
+**Implementation truth:** [Implementation status](IMPLEMENTATION-STATUS.md), [current engineering handoff](../CURRENT-RUN.md), active owner TASKS, exact source, and CODE/SYSTEM/USER evidence for the identified build and provider tuple. `docs/archive/` materials are dated historical records and do not establish current implementation or qualification.
 
 ## 1. Single product promise
 

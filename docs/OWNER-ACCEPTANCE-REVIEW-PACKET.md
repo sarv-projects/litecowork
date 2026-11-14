@@ -10,7 +10,7 @@ Legend for my recommendation: **ACCEPT** = adopt as written; **ACCEPT (scoped)**
 
 ## Part 1 — Package 001 (Conversation Session Supervisor) — the implementable one
 
-Package 001 is `IN_REVIEW` and is the only package deep enough to implement immediately. Accepting B-01..B-10 moves it to ACCEPTED/LOCKED and unblocks tasks 001-T01..T09. Full text: [specs/001-.../SPEC.md](../specs/001-conversation-session-supervisor/SPEC.md) §5.
+Feature 001's baseline was accepted and locked on 2026-11-09. This section preserves the original decision packet and the owner's B-01..B-10 resolutions; read the current package status and active task evidence in [Feature 001 TASKS](../specs/001-conversation-session-supervisor/TASKS.md). The accepted baseline does not imply task completion or provider qualification.
 
 | ID | Decision needed | Proposed resolution (summary) | My rec | Trade-off / why | Decision |
 |---|---|---|---|---|---|
