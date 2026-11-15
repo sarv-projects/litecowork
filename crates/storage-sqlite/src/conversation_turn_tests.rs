@@ -7,7 +7,7 @@ use storage_core::{
     CreateConversationCommit, CreateConversationTurnCommit, WorkspaceCreateRequest,
 };
 
-use storage_core::conversation::CONVERSATION_TURN_IN_PROGRESS;
+use storage_core::conversation::{CONVERSATION_TURN_IN_PROGRESS, CommitConversationAgentResponse};
 
 const AT: &str = "2026-10-09T12:00:00Z";
 
@@ -1035,4 +1035,164 @@ fn switched_agent_context_is_a_turn_pinned_prefix_of_the_same_conversation() {
     let serialized = serde_json::to_string(&context).expect("serialize context package");
     assert!(!serialized.contains("private-session-a"));
     assert!(!serialized.contains("private-session-b"));
+}
+
+#[test]
+fn completion_commit_after_stop_uses_the_cancel_request_version_and_event_edge() {
+    let (directory, store, turn_create) = fixture();
+    let adapter = SqliteConversationStore::new(store.clone());
+    adapter
+        .create_conversation_turn(turn_create)
+        .expect("admit the Conversation turn");
+
+    // Build the exact durable shape produced by session activation, keeping this test
+    // focused on the storage race between an already active response and Stop.
+    let connection = Connection::open(state_database(&directory)).expect("open turn database");
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys=ON;
+             BEGIN;
+             INSERT INTO runtimes(runtime_id,device_identity_json,runtime_version,platform,architecture,roles_json,trust_zone,availability,startup_policy,current_incarnation_id,resource_capacity_json,last_seen,version)
+             VALUES('runtime-turn','{}','0.1.0','windows','x86_64','[]','LOCAL','ONLINE','MANUAL','incarnation-turn','{}','2026-10-09T12:00:00Z',1);
+             INSERT INTO runtime_incarnations(runtime_incarnation_id,runtime_id,process_started_at,litecowork_version,recovered_from_unclean_shutdown,recovery_state,ready_at,version)
+             VALUES('incarnation-turn','runtime-turn','2026-10-09T12:00:00Z','0.1.0',0,'READY','2026-10-09T12:00:00Z',1);
+             INSERT INTO agent_host_instances(host_instance_id,runtime_id,runtime_incarnation_id,agent_profile_id,endpoint_id,hosting_mode,state,process_identity_ref,ownership,started_at,last_used_at,idle_since)
+             VALUES('host-turn','runtime-turn','incarnation-turn','profile-turn','endpoint-turn','LOCAL_PER_SESSION','BUSY',NULL,'LITECOWORK','2026-10-09T12:00:00Z','2026-10-09T12:00:00Z',NULL);
+             INSERT INTO agent_sessions(agent_session_id,workspace_id,scope_kind,conversation_id,conversation_turn_id,task_id,task_spec_revision,attempt_id,agent_binding_id,endpoint_id,runtime_id,runtime_incarnation_id,configuration_digest,harness_descriptor_digest,status,started_at,last_event_at,closed_at,version)
+             VALUES('session-turn','workspace-turn','CONVERSATION','conversation-turn','turn-one',NULL,NULL,NULL,'binding-turn','endpoint-turn','runtime-turn','incarnation-turn',NULL,NULL,'ACTIVE','2026-10-09T12:00:00Z','2026-10-09T12:00:00Z',NULL,2);
+             INSERT INTO agent_session_host_bindings(agent_session_id,host_instance_id,native_session_ref,bound_at)
+             VALUES('session-turn','host-turn','private-native-handle','2026-10-09T12:00:00Z');
+             UPDATE conversation_turns SET agent_session_id='session-turn',status='RUNNING',version=2 WHERE turn_id='turn-one';
+             COMMIT;",
+        )
+        .expect("seed a valid active turn/session/host tuple");
+    drop(connection);
+
+    let cancellation = context("event-turn-stop-race", 10);
+    adapter
+        .transition_conversation_turn(
+            "owner-local",
+            "workspace-turn",
+            "conversation-turn",
+            "turn-one",
+            2,
+            TurnCommand::RequestCancel,
+            EventDraft {
+                event_id: cancellation.event_id,
+                workspace_id: "workspace-turn".into(),
+                entity_type: "ConversationTurn".into(),
+                entity_id: "turn-one".into(),
+                origin_runtime_id: cancellation.origin_runtime_id,
+                entity_revision: 3,
+                hlc_timestamp: cancellation.hlc_timestamp,
+                correlation_id: cancellation.correlation_id,
+                causation_id: Some("stop-request".into()),
+                schema_version: 1,
+                event_type: "conversation.turn.status.changed.v1".into(),
+                payload: serde_json::json!({
+                    "turn_id":"turn-one","from":"RUNNING","to":"CANCEL_REQUESTED",
+                    "reason_code":"USER_REQUESTED","agent_session_id":"session-turn","aggregate_version":3
+                }),
+                recorded_at: cancellation.recorded_at,
+            },
+        )
+        .expect("Stop commits its request before the provider's final answer arrives");
+
+    let message = ConversationMessageRecord {
+        message_id: "message-agent-race".into(),
+        conversation_id: "conversation-turn".into(),
+        author: serde_json::json!({"kind":"AGENT","agent_binding_id":"binding-turn"}),
+        role: "AGENT".into(),
+        agent_session_id: Some("session-turn".into()),
+        agent_binding_id: Some("binding-turn".into()),
+        turn_id: Some("turn-one".into()),
+        content: serde_json::json!([{"kind":"TEXT","text":"The answer completed during Stop."}]),
+        resource_refs: serde_json::json!([]),
+        source_channel_ref: None,
+        created_at: "2026-10-09T12:00:01Z".into(),
+    };
+    let message_context = context("event-agent-message-race", 11);
+    let turn_context = context("event-turn-completed-race", 12);
+    let session_context = context("event-session-closed-race", 13);
+    let committed = adapter
+        .commit_conversation_agent_response(CommitConversationAgentResponse {
+            request: WorkspaceCreateRequest {
+                principal_id: "owner-local".into(),
+                request_id: "request-agent-race".into(),
+                request_payload: serde_json::json!({"turn_id":"turn-one","retry_ordinal":0,"provider_response_id":"response-race"}),
+            },
+            principal_id: "owner-local".into(),
+            workspace_id: "workspace-turn".into(),
+            conversation_id: "conversation-turn".into(),
+            turn_id: "turn-one".into(),
+            agent_session_id: "session-turn".into(),
+            // The supervisor pins the turn version at activation (2); Stop is the
+            // single legal transition that may advance it before the final commit.
+            expected_turn_version: 2,
+            expected_session_version: 2,
+            retry_ordinal: 0,
+            provider_response_id: "response-race".into(),
+            usage: None,
+            turn_status: ConversationTurnStatus::Completed,
+            message,
+            message_event: EventDraft {
+                event_id: message_context.event_id,
+                workspace_id: "workspace-turn".into(),
+                entity_type: "Conversation".into(),
+                entity_id: "conversation-turn".into(),
+                origin_runtime_id: message_context.origin_runtime_id,
+                entity_revision: 3,
+                hlc_timestamp: message_context.hlc_timestamp,
+                correlation_id: message_context.correlation_id,
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.message.added.v1".into(),
+                payload: serde_json::json!({
+                    "conversation_id":"conversation-turn","message_id":"message-agent-race","role":"AGENT"
+                }),
+                recorded_at: "2026-10-09T12:00:01Z".into(),
+            },
+            turn_event: EventDraft {
+                event_id: turn_context.event_id,
+                workspace_id: "workspace-turn".into(),
+                entity_type: "ConversationTurn".into(),
+                entity_id: "turn-one".into(),
+                origin_runtime_id: turn_context.origin_runtime_id,
+                entity_revision: 3,
+                hlc_timestamp: turn_context.hlc_timestamp,
+                correlation_id: turn_context.correlation_id,
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.turn.settled.v1".into(),
+                payload: serde_json::json!({
+                    "turn_id":"turn-one","from":"RUNNING","to":"COMPLETED","aggregate_version":3
+                }),
+                recorded_at: "2026-10-09T12:00:01Z".into(),
+            },
+            session_event: EventDraft {
+                event_id: session_context.event_id,
+                workspace_id: "workspace-turn".into(),
+                entity_type: "AgentSession".into(),
+                entity_id: "session-turn".into(),
+                origin_runtime_id: session_context.origin_runtime_id,
+                entity_revision: 3,
+                hlc_timestamp: session_context.hlc_timestamp,
+                correlation_id: session_context.correlation_id,
+                causation_id: None,
+                schema_version: 1,
+                event_type: "agent.session.closed.v1".into(),
+                payload: serde_json::json!({
+                    "agent_session_id":"session-turn","from":"ACTIVE","to":"CLOSED","aggregate_version":3
+                }),
+                recorded_at: "2026-10-09T12:00:01Z".into(),
+            },
+        })
+        .expect("observed completion wins over a Stop request committed first");
+
+    assert_eq!(committed.message.message_id, "message-agent-race");
+    assert_eq!(committed.turn.status, ConversationTurnStatus::Completed);
+    assert_eq!(committed.turn.version, 4);
+    assert_eq!(committed.turn_event.payload["from"], "CANCEL_REQUESTED");
+    assert_eq!(committed.turn_event.payload["to"], "COMPLETED");
+    assert_eq!(committed.turn_event.payload["aggregate_version"], 4);
 }

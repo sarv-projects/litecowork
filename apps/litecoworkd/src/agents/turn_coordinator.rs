@@ -7,11 +7,11 @@
 //! supervisor claims the durable dispatch intent before reserving a session, and the
 //! startup recovery sweep owns any intent a crash left behind (AC-022).
 
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
 use storage_core::conversation::ConversationTurn;
 
-use super::supervisor::AgentSessionSupervisor;
+use super::supervisor::{AgentSessionSupervisor, DispatchFailureClass};
 
 #[derive(Clone)]
 pub(crate) struct AgentTurnCoordinator {
@@ -24,8 +24,8 @@ impl AgentTurnCoordinator {
     }
 
     /// Starts dispatch for an admitted (or retried) turn without blocking the caller.
-    /// A dispatch error has already settled the turn FAILED inside the supervisor; it is
-    /// reported here only as a redacted diagnostic.
+    /// A dispatch error is a closed class. The supervisor settles the turn or leaves its
+    /// durable intent for startup recovery; this layer reports no error detail.
     pub(crate) fn dispatch_admitted_turn(
         &self,
         principal_id: &str,
@@ -51,48 +51,90 @@ impl AgentTurnCoordinator {
                 )
                 .await
             {
-                eprintln!("{}", dispatch_diagnostic(&turn_id, &correlation_id, &error));
+                let mut stderr = std::io::stderr().lock();
+                let _ = write_dispatch_diagnostic(&mut stderr, &turn_id, &correlation_id, error);
             }
         });
     }
 }
 
-/// A diagnostic line carrying only correlation identifiers and a coarse error class.
-/// The error text may embed provider detail, so none of it is copied: only the leading
-/// label (letters, digits, spaces, `_` and `-`, at most 48 characters, cut at the first
-/// `:` or `{`) is kept.
-pub(crate) fn dispatch_diagnostic(turn_id: &str, correlation_id: &str, error: &str) -> String {
-    let class: String = error
-        .split([':', '{', '('])
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-'))
-        .take(48)
-        .collect();
-    let class = class.trim();
-    format!(
-        "conversation dispatch failed turn_id={turn_id} correlation_id={correlation_id} class={}",
-        if class.is_empty() { "UNKNOWN" } else { class }
+/// A structured diagnostic with only correlation identifiers and a closed error class.
+pub(crate) fn dispatch_diagnostic(
+    turn_id: &str,
+    correlation_id: &str,
+    class: DispatchFailureClass,
+) -> String {
+    serde_json::json!({
+        "event": "conversation.dispatch.failed",
+        "turn_id": turn_id,
+        "correlation_id": correlation_id,
+        "class": class.as_str(),
+    })
+    .to_string()
+}
+
+fn write_dispatch_diagnostic(
+    output: &mut impl Write,
+    turn_id: &str,
+    correlation_id: &str,
+    class: DispatchFailureClass,
+) -> std::io::Result<()> {
+    writeln!(
+        output,
+        "{}",
+        dispatch_diagnostic(turn_id, correlation_id, class)
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch_diagnostic;
+    use super::{DispatchFailureClass, dispatch_diagnostic, write_dispatch_diagnostic};
 
     #[test]
     fn conversation_turn_dispatch_diagnostic_carries_ids_and_class_but_no_detail() {
-        let line = dispatch_diagnostic(
-            "turn-1",
-            "corr-1",
-            "Start session error: Database(\"prompt: tell me the secret ses_native_handle\")",
-        );
+        let line =
+            dispatch_diagnostic("turn-1", "corr-1", DispatchFailureClass::SessionReservation);
         assert_eq!(
             line,
-            "conversation dispatch failed turn_id=turn-1 correlation_id=corr-1 class=Start session error"
+            r#"{"class":"SESSION_RESERVATION","correlation_id":"corr-1","event":"conversation.dispatch.failed","turn_id":"turn-1"}"#
         );
         assert!(!line.contains("secret") && !line.contains("ses_native_handle"));
-        assert!(dispatch_diagnostic("t", "c", "").ends_with("class=UNKNOWN"));
+
+        let provider_detail = "super-secret-value provider rejected request with credential detail";
+        let provider_failure: Result<(), &str> = Err(provider_detail);
+        let failure_class = provider_failure
+            .map_err(|_| DispatchFailureClass::ProviderExecution)
+            .expect_err("provider detail is discarded into a closed class");
+        let unstructured = dispatch_diagnostic("turn-2", "corr-2", failure_class);
+        assert!(
+            !unstructured.contains(provider_detail),
+            "diagnostics must never include arbitrary provider/error text"
+        );
+        assert!(unstructured.contains("PROVIDER_EXECUTION"));
+    }
+
+    #[test]
+    fn conversation_turn_captured_dispatch_log_omits_provider_and_secret_details() {
+        let provider_detail = "provider rejected secret-token=never-log-this";
+        let failure_class = Result::<(), &str>::Err(provider_detail)
+            .map_err(|_| DispatchFailureClass::ProviderExecution)
+            .expect_err("provider details collapse into a closed class");
+        let mut captured = Vec::new();
+
+        write_dispatch_diagnostic(
+            &mut captured,
+            "turn-captured",
+            "corr-captured",
+            failure_class,
+        )
+        .expect("write structured dispatch diagnostic");
+
+        let captured = String::from_utf8(captured).expect("diagnostic is UTF-8");
+        assert_eq!(
+            captured,
+            "{\"class\":\"PROVIDER_EXECUTION\",\"correlation_id\":\"corr-captured\",\"event\":\"conversation.dispatch.failed\",\"turn_id\":\"turn-captured\"}\n"
+        );
+        assert!(!captured.contains(provider_detail));
+        assert!(!captured.contains("never-log-this"));
     }
 }

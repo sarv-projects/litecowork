@@ -10,9 +10,17 @@ use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 use std::{path::Path, sync::Arc, time::Duration};
-use storage_core::{BlobPurpose, DeviceIdentityRecord, RuntimeIncarnationRecord, StoreError};
+use storage_core::{
+    BlobPurpose, ConversationMessageRecord, ConversationRecord, ConversationStore,
+    ConversationTurnStore, CreateConversationCommit, CreateConversationTurnCommit,
+    DeviceIdentityRecord, EventDraft, RuntimeIncarnationRecord, StoreError, WorkspaceCreateRequest,
+    conversation::{
+        ConversationTurn, ConversationTurnStatus, PresentationPreference, request_payload_value,
+    },
+};
 use storage_sqlite::{
-    FileBlobStore, SqliteConfig, SqliteWorkspaceStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider,
+    FileBlobStore, SqliteConfig, SqliteConversationStore, SqliteWorkspaceStore, WorkspaceBlobKey,
+    WorkspaceBlobKeyProvider,
 };
 use zeroize::Zeroizing;
 
@@ -562,4 +570,655 @@ fn startup_recovery_failure_persists_blocker_without_partial_settlement_then_ret
         recovered_events + 2,
         "retry adds no recovery events"
     );
+}
+
+#[test]
+fn conversation_session_recovery_releases_orphan_starting_session_idempotently() {
+    const OWNER: &str = "conversation-orphan-recovery-owner";
+    const WORKSPACE: &str = "conversation-orphan-recovery-workspace";
+    const CONVERSATION: &str = "conversation-orphan-recovery-conversation";
+    const TURN: &str = "conversation-orphan-recovery-turn";
+    const SESSION: &str = "conversation-orphan-recovery-session";
+    const HOST: &str = "conversation-orphan-recovery-host";
+    const BINDING: &str = "conversation-orphan-recovery-binding";
+    const PROFILE: &str = "conversation-orphan-recovery-profile";
+
+    let directory = tempfile::tempdir().expect("temporary Runtime data directory");
+    #[cfg(unix)]
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict temporary Runtime data directory");
+    ensure_private_state_directory(directory.path()).expect("restrict Runtime data directory");
+    let store = store(directory.path());
+    let old = local_state(OLD_INCARNATION_ID, true);
+    persist_state(directory.path(), &old).expect("persist the previous Runtime incarnation");
+    register_from_bootstrap(&store, &old);
+
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: WORKSPACE.to_owned(),
+            name: "Orphan Conversation recovery fixture".to_owned(),
+            owner_principal_id: OWNER.to_owned(),
+            event: EventContext {
+                event_id: "conversation-orphan-recovery-workspace-created".to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "conversation-orphan-recovery-workspace-created".to_owned(),
+                causation_id: None,
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("Workspace commits through WorkspaceService");
+
+    let database = directory.path().join("litecowork.sqlite3");
+    let connection = Connection::open(&database).expect("open Conversation recovery fixture");
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .expect("enforce production foreign keys in the fixture");
+    connection
+        .execute(
+            "INSERT INTO agent_profiles(agent_profile_id,provider_key,display_name,discovered_at)
+             VALUES (?1,'test','Recovery fixture agent',?2)",
+            params![PROFILE, NOW],
+        )
+        .expect("AgentProfile persists");
+    connection
+        .execute(
+            "INSERT INTO agent_endpoints(endpoint_id,agent_profile_id,protocol,topology,protocol_version,capabilities_json)
+             VALUES ('conversation-orphan-recovery-endpoint',?1,'CLI','PROCESS_ADAPTER','test','{}')",
+            [PROFILE],
+        )
+        .expect("AgentEndpoint persists");
+    connection
+        .execute(
+            "INSERT INTO agent_bindings(agent_binding_id,workspace_id,agent_profile_id,endpoint_selection_policy_json,configuration_json,enabled,lead_eligible,created_at,version)
+             VALUES (?1,?2,?3,'{}','{}',1,1,?4,1)",
+            params![BINDING, WORKSPACE, PROFILE, NOW],
+        )
+        .expect("lead-eligible Workspace binding persists");
+    connection
+        .execute(
+            "UPDATE workspaces SET default_agent_binding_id=?1 WHERE workspace_id=?2",
+            params![BINDING, WORKSPACE],
+        )
+        .expect("configure the binding selected by the turn");
+    connection
+        .execute(
+            "INSERT INTO agent_host_instances(host_instance_id,runtime_id,runtime_incarnation_id,agent_profile_id,endpoint_id,hosting_mode,state,process_identity_ref,ownership,started_at,last_used_at,idle_since)
+             VALUES (?1,?2,?3,?4,'conversation-orphan-recovery-endpoint','LOCAL_PER_SESSION','BUSY',NULL,'LITECOWORK',?5,?5,NULL)",
+            params![HOST, RUNTIME_ID, OLD_INCARNATION_ID, PROFILE, NOW],
+        )
+        .expect("prior-incarnation AgentHost persists");
+    drop(connection);
+
+    let conversation_event_id = "conversation-orphan-recovery-conversation-created";
+    SqliteConversationStore::new(store.clone())
+        .create_conversation(CreateConversationCommit {
+            request: WorkspaceCreateRequest {
+                principal_id: OWNER.to_owned(),
+                request_id: "conversation-orphan-recovery-conversation-request".to_owned(),
+                request_payload: request_payload_value(WORKSPACE, Some("Recovery fixture")),
+            },
+            conversation: ConversationRecord {
+                conversation_id: CONVERSATION.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                title: Some("Recovery fixture".to_owned()),
+                active_agent_binding_id: None,
+                version: 1,
+                created_at: NOW.to_owned(),
+            },
+            event: EventDraft {
+                event_id: conversation_event_id.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                entity_type: "Conversation".to_owned(),
+                entity_id: CONVERSATION.to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                entity_revision: 1,
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: conversation_event_id.to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.created.v1".to_owned(),
+                payload: serde_json::json!({
+                    "conversation_id": CONVERSATION,
+                    "created_by": {"kind":"USER","principal_id":OWNER}
+                }),
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("Conversation and creation event commit");
+
+    let message_id = format!("{TURN}-user-message");
+    let content = serde_json::json!([{"kind":"TEXT","text":"Keep this request after recovery."}]);
+    let resource_refs = serde_json::json!([]);
+    let author = serde_json::json!({"kind":"USER","principal_id":OWNER});
+    let turn_request = serde_json::json!({
+        "operation":"conversation.turn.create.v1",
+        "workspace_id":WORKSPACE,
+        "conversation_id":CONVERSATION,
+        "turn_id":TURN,
+        "message_id":message_id,
+        "author":author,
+        "content":content,
+        "resource_refs":resource_refs,
+        "presentation_preference":"AUTO"
+    });
+    let content_digest = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&content).expect("serialize USER content")
+        ))
+    );
+    SqliteConversationStore::new(store.clone())
+        .create_conversation_turn(CreateConversationTurnCommit {
+            request: WorkspaceCreateRequest {
+                principal_id: OWNER.to_owned(),
+                request_id: "conversation-orphan-recovery-turn-request".to_owned(),
+                request_payload: turn_request,
+            },
+            principal_id: OWNER.to_owned(),
+            workspace_id: WORKSPACE.to_owned(),
+            message: ConversationMessageRecord {
+                message_id: message_id.clone(),
+                conversation_id: CONVERSATION.to_owned(),
+                author: author.clone(),
+                role: "USER".to_owned(),
+                agent_session_id: None,
+                agent_binding_id: None,
+                turn_id: Some(TURN.to_owned()),
+                content: content.clone(),
+                resource_refs: resource_refs.clone(),
+                source_channel_ref: None,
+                created_at: NOW.to_owned(),
+            },
+            turn: ConversationTurn {
+                turn_id: TURN.to_owned(),
+                conversation_id: CONVERSATION.to_owned(),
+                user_message_id: message_id.clone(),
+                agent_session_id: None,
+                status: ConversationTurnStatus::Open,
+                retry_ordinal: 0,
+                presentation_preference: PresentationPreference::Auto,
+                created_at: NOW.to_owned(),
+                settled_at: None,
+                version: 1,
+            },
+            message_event: EventDraft {
+                event_id: "conversation-orphan-recovery-user-message".to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                entity_type: "Conversation".to_owned(),
+                entity_id: CONVERSATION.to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                entity_revision: 2,
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "conversation-orphan-recovery-turn".to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.message.added.v1".to_owned(),
+                payload: serde_json::json!({
+                    "message_id":message_id,
+                    "conversation_id":CONVERSATION,
+                    "author":author,
+                    "content_digest":content_digest,
+                    "resource_refs":resource_refs
+                }),
+                recorded_at: NOW.to_owned(),
+            },
+            turn_event: EventDraft {
+                event_id: "conversation-orphan-recovery-turn-created".to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                entity_type: "ConversationTurn".to_owned(),
+                entity_id: TURN.to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                entity_revision: 1,
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "conversation-orphan-recovery-turn".to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.turn.created.v2".to_owned(),
+                payload: serde_json::json!({
+                    "turn_id":TURN,
+                    "conversation_id":CONVERSATION,
+                    "user_message_id":message_id,
+                    "agent_binding_id":BINDING,
+                    "aggregate_version":1,
+                    "presentation_preference":"AUTO"
+                }),
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("USER message, OPEN turn and dispatch intent commit together");
+
+    // Simulate a durable STARTING reservation that survived the process, before the
+    // turn acquired its session pointer. Recovery must settle the intent, then release
+    // this orphan session through the STARTING -> LOST storage transition.
+    let connection = Connection::open(&database).expect("open orphan session fixture");
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .expect("enforce production foreign keys for the orphan session");
+    connection
+        .execute(
+            "INSERT INTO agent_sessions(agent_session_id,workspace_id,scope_kind,conversation_id,conversation_turn_id,task_id,task_spec_revision,attempt_id,agent_binding_id,endpoint_id,runtime_id,runtime_incarnation_id,configuration_digest,harness_descriptor_digest,status,started_at,last_event_at,closed_at,version)
+             VALUES (?1,?2,'CONVERSATION',?3,?4,NULL,NULL,NULL,?5,'conversation-orphan-recovery-endpoint',?6,?7,NULL,NULL,'STARTING',?8,?8,NULL,1)",
+            params![SESSION, WORKSPACE, CONVERSATION, TURN, BINDING, RUNTIME_ID, OLD_INCARNATION_ID, NOW],
+        )
+        .expect("persist the orphan STARTING reservation with valid scope references");
+    connection
+        .execute(
+            "INSERT INTO agent_session_host_bindings(agent_session_id,host_instance_id,native_session_ref,bound_at)
+             VALUES (?1,?2,NULL,?3)",
+            params![SESSION, HOST, NOW],
+        )
+        .expect("attach the orphan session to its prior-incarnation host");
+    assert!(
+        connection
+            .execute(
+                "DELETE FROM agent_session_host_bindings WHERE agent_session_id=?1",
+                [SESSION],
+            )
+            .is_err(),
+        "SQLite must reject releasing a host binding while its AgentSession is STARTING"
+    );
+    let binding_count_before_recovery: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM agent_session_host_bindings WHERE agent_session_id=?1",
+            [SESSION],
+            |row| row.get(0),
+        )
+        .expect("read the binding after the rejected early release");
+    assert_eq!(binding_count_before_recovery, 1);
+    drop(connection);
+
+    let next = RuntimeLocalState::begin(directory.path()).expect("begin a new Runtime incarnation");
+    assert_ne!(next.local_incarnation_id, OLD_INCARNATION_ID);
+    persist_state(directory.path(), &next).expect("persist the restarted Runtime incarnation");
+    register_from_bootstrap(&store, &next);
+
+    let report = crate::agents::conversation_recovery::recover_conversation_sessions(
+        &store, RUNTIME_ID, OWNER,
+    );
+    assert_eq!(
+        (
+            report.failures,
+            report.intents_settled,
+            report.starting_sessions_released
+        ),
+        (0, 1, 1),
+        "the unsettled intent and the now-orphaned STARTING session are both reconciled"
+    );
+    let connection = Connection::open(&database).expect("read recovered Conversation state");
+    let turn_state: (String, Option<String>) = connection
+        .query_row(
+            "SELECT status, settled_at FROM conversation_turns WHERE turn_id=?1",
+            [TURN],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read recovered turn");
+    assert_eq!(turn_state.0, "FAILED");
+    assert!(turn_state.1.is_some());
+    let intent_state: String = connection
+        .query_row(
+            "SELECT state FROM conversation_dispatch_intents WHERE turn_id=?1",
+            [TURN],
+            |row| row.get(0),
+        )
+        .expect("read recovered dispatch intent");
+    assert_eq!(intent_state, "SETTLED");
+    let (session_state, session_closed_at): (String, Option<String>) = connection
+        .query_row(
+            "SELECT status, closed_at FROM agent_sessions WHERE agent_session_id=?1",
+            [SESSION],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read recovered AgentSession");
+    assert_eq!(session_state, "LOST");
+    assert!(session_closed_at.is_some());
+    let binding_count_after_recovery: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM agent_session_host_bindings WHERE agent_session_id=?1",
+            [SESSION],
+            |row| row.get(0),
+        )
+        .expect("read the host binding after recovery");
+    assert_eq!(
+        binding_count_after_recovery, 0,
+        "the settled LOST session releases its local host binding"
+    );
+    let message_counts: (i64, i64) = connection
+        .query_row(
+            "SELECT SUM(role='USER'), SUM(role='AGENT') FROM conversation_messages WHERE turn_id=?1",
+            [TURN],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("count messages for the recovered turn");
+    assert_eq!(
+        message_counts,
+        (1, 0),
+        "recovery keeps USER input and invents no answer"
+    );
+    let reason: String = connection
+        .query_row(
+            "SELECT json_extract(payload_json,'$.reason_code') FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1 AND type='conversation.turn.settled.v1'",
+            [TURN],
+            |row| row.get(0),
+        )
+        .expect("read the typed recovery reason");
+    assert_eq!(reason, "RUNTIME_RESTARTED");
+    drop(connection);
+
+    let repeated = crate::agents::conversation_recovery::recover_conversation_sessions(
+        &store, RUNTIME_ID, OWNER,
+    );
+    assert_eq!(repeated, Default::default(), "a second sweep is idempotent");
+}
+
+#[test]
+fn conversation_session_recovery_fails_active_session_after_prior_incarnation() {
+    const OWNER: &str = "conversation-active-recovery-owner";
+    const WORKSPACE: &str = "conversation-active-recovery-workspace";
+    const CONVERSATION: &str = "conversation-active-recovery-conversation";
+    const TURN: &str = "conversation-active-recovery-turn";
+    const MESSAGE: &str = "conversation-active-recovery-user-message";
+    const SESSION: &str = "conversation-active-recovery-session";
+    const HOST: &str = "conversation-active-recovery-host";
+    const BINDING: &str = "conversation-active-recovery-binding";
+    const PROFILE: &str = "conversation-active-recovery-profile";
+    const ENDPOINT: &str = "conversation-active-recovery-endpoint";
+
+    let directory = tempfile::tempdir().expect("temporary Runtime data directory");
+    #[cfg(unix)]
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict temporary Runtime data directory");
+    ensure_private_state_directory(directory.path()).expect("restrict Runtime data directory");
+    let store = store(directory.path());
+    let old = local_state(OLD_INCARNATION_ID, true);
+    persist_state(directory.path(), &old).expect("persist the previous Runtime incarnation");
+    register_from_bootstrap(&store, &old);
+
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: WORKSPACE.to_owned(),
+            name: "Active Conversation recovery fixture".to_owned(),
+            owner_principal_id: OWNER.to_owned(),
+            event: EventContext {
+                event_id: "conversation-active-recovery-workspace-created".to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "conversation-active-recovery-workspace-created".to_owned(),
+                causation_id: None,
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("Workspace commits through WorkspaceService");
+
+    let database = directory.path().join("litecowork.sqlite3");
+    let connection = Connection::open(&database).expect("open active recovery fixture");
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .expect("enforce production foreign keys in the fixture");
+    connection
+        .execute(
+            "INSERT INTO agent_profiles(agent_profile_id,provider_key,display_name,discovered_at)
+             VALUES (?1,'test','Active recovery fixture agent',?2)",
+            params![PROFILE, NOW],
+        )
+        .expect("AgentProfile persists");
+    connection
+        .execute(
+            "INSERT INTO agent_endpoints(endpoint_id,agent_profile_id,protocol,topology,protocol_version,capabilities_json)
+             VALUES (?1,?2,'CLI','PROCESS_ADAPTER','test','{}')",
+            params![ENDPOINT, PROFILE],
+        )
+        .expect("AgentEndpoint persists");
+    connection
+        .execute(
+            "INSERT INTO agent_bindings(agent_binding_id,workspace_id,agent_profile_id,endpoint_selection_policy_json,configuration_json,enabled,lead_eligible,created_at,version)
+             VALUES (?1,?2,?3,'{}','{}',1,1,?4,1)",
+            params![BINDING, WORKSPACE, PROFILE, NOW],
+        )
+        .expect("lead-eligible Workspace binding persists");
+    connection
+        .execute(
+            "UPDATE workspaces SET default_agent_binding_id=?1 WHERE workspace_id=?2",
+            params![BINDING, WORKSPACE],
+        )
+        .expect("configure the binding selected by the turn");
+    connection
+        .execute(
+            "INSERT INTO agent_host_instances(host_instance_id,runtime_id,runtime_incarnation_id,agent_profile_id,endpoint_id,hosting_mode,state,process_identity_ref,ownership,started_at,last_used_at,idle_since)
+             VALUES (?1,?2,?3,?4,?5,'LOCAL_PER_SESSION','BUSY',NULL,'LITECOWORK',?6,?6,NULL)",
+            params![HOST, RUNTIME_ID, OLD_INCARNATION_ID, PROFILE, ENDPOINT, NOW],
+        )
+        .expect("prior-incarnation AgentHost persists");
+    drop(connection);
+
+    let conversation_event_id = "conversation-active-recovery-conversation-created";
+    SqliteConversationStore::new(store.clone())
+        .create_conversation(CreateConversationCommit {
+            request: WorkspaceCreateRequest {
+                principal_id: OWNER.to_owned(),
+                request_id: "conversation-active-recovery-conversation-request".to_owned(),
+                request_payload: request_payload_value(WORKSPACE, Some("Active recovery")),
+            },
+            conversation: ConversationRecord {
+                conversation_id: CONVERSATION.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                title: Some("Active recovery".to_owned()),
+                active_agent_binding_id: Some(BINDING.to_owned()),
+                version: 1,
+                created_at: NOW.to_owned(),
+            },
+            event: EventDraft {
+                event_id: conversation_event_id.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                entity_type: "Conversation".to_owned(),
+                entity_id: CONVERSATION.to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                entity_revision: 1,
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: conversation_event_id.to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.created.v1".to_owned(),
+                payload: serde_json::json!({
+                    "conversation_id": CONVERSATION,
+                    "created_by": {"kind":"USER","principal_id":OWNER}
+                }),
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("Conversation and creation event commit");
+
+    let content = serde_json::json!([{"kind":"TEXT","text":"Recover this active request."}]);
+    let resource_refs = serde_json::json!([]);
+    let author = serde_json::json!({"kind":"USER","principal_id":OWNER});
+    let turn_request = serde_json::json!({
+        "operation":"conversation.turn.create.v1",
+        "workspace_id":WORKSPACE,
+        "conversation_id":CONVERSATION,
+        "turn_id":TURN,
+        "message_id":MESSAGE,
+        "author":author,
+        "content":content,
+        "resource_refs":resource_refs,
+        "presentation_preference":"AUTO"
+    });
+    let content_digest = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&content).expect("serialize USER content")
+        ))
+    );
+    SqliteConversationStore::new(store.clone())
+        .create_conversation_turn(CreateConversationTurnCommit {
+            request: WorkspaceCreateRequest {
+                principal_id: OWNER.to_owned(),
+                request_id: "conversation-active-recovery-turn-request".to_owned(),
+                request_payload: turn_request,
+            },
+            principal_id: OWNER.to_owned(),
+            workspace_id: WORKSPACE.to_owned(),
+            message: ConversationMessageRecord {
+                message_id: MESSAGE.to_owned(),
+                conversation_id: CONVERSATION.to_owned(),
+                author: author.clone(),
+                role: "USER".to_owned(),
+                agent_session_id: None,
+                agent_binding_id: None,
+                turn_id: Some(TURN.to_owned()),
+                content: content.clone(),
+                resource_refs: resource_refs.clone(),
+                source_channel_ref: None,
+                created_at: NOW.to_owned(),
+            },
+            turn: ConversationTurn {
+                turn_id: TURN.to_owned(),
+                conversation_id: CONVERSATION.to_owned(),
+                user_message_id: MESSAGE.to_owned(),
+                agent_session_id: None,
+                status: ConversationTurnStatus::Open,
+                retry_ordinal: 0,
+                presentation_preference: PresentationPreference::Auto,
+                created_at: NOW.to_owned(),
+                settled_at: None,
+                version: 1,
+            },
+            message_event: EventDraft {
+                event_id: "conversation-active-recovery-user-message".to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                entity_type: "Conversation".to_owned(),
+                entity_id: CONVERSATION.to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                entity_revision: 2,
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: TURN.to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.message.added.v1".to_owned(),
+                payload: serde_json::json!({
+                    "message_id": MESSAGE,
+                    "conversation_id": CONVERSATION,
+                    "author": author,
+                    "content_digest": content_digest,
+                    "resource_refs": resource_refs
+                }),
+                recorded_at: NOW.to_owned(),
+            },
+            turn_event: EventDraft {
+                event_id: "conversation-active-recovery-turn-created".to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                entity_type: "ConversationTurn".to_owned(),
+                entity_id: TURN.to_owned(),
+                origin_runtime_id: RUNTIME_ID.to_owned(),
+                entity_revision: 1,
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: TURN.to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.turn.created.v2".to_owned(),
+                payload: serde_json::json!({
+                    "turn_id": TURN,
+                    "conversation_id": CONVERSATION,
+                    "user_message_id": MESSAGE,
+                    "agent_binding_id": BINDING,
+                    "aggregate_version": 1,
+                    "presentation_preference": "AUTO"
+                }),
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("USER message, OPEN turn and dispatch intent commit together");
+
+    let connection = Connection::open(&database).expect("open activated Conversation state");
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .expect("enforce production foreign keys for the activated session");
+    connection
+        .execute(
+            "INSERT INTO agent_sessions(agent_session_id,workspace_id,scope_kind,conversation_id,conversation_turn_id,task_id,task_spec_revision,attempt_id,agent_binding_id,endpoint_id,runtime_id,runtime_incarnation_id,configuration_digest,harness_descriptor_digest,status,started_at,last_event_at,closed_at,version)
+             VALUES (?1,?2,'CONVERSATION',?3,?4,NULL,NULL,NULL,?5,?6,?7,?8,NULL,NULL,'ACTIVE',?9,?9,NULL,2)",
+            params![SESSION, WORKSPACE, CONVERSATION, TURN, BINDING, ENDPOINT, RUNTIME_ID, OLD_INCARNATION_ID, NOW],
+        )
+        .expect("persist the active AgentSession from the previous incarnation");
+    connection
+        .execute(
+            "UPDATE conversation_turns SET agent_session_id=?1,status='RUNNING',version=2 WHERE turn_id=?2 AND status='OPEN'",
+            params![SESSION, TURN],
+        )
+        .expect("persist the activated RUNNING turn/session pointer");
+    connection
+        .execute(
+            "UPDATE conversation_dispatch_intents SET state='CLAIMED',claimed_by_runtime_incarnation=?1,claimed_at=?2,version=version+1 WHERE turn_id=?3 AND retry_ordinal=0 AND state='UNCLAIMED'",
+            params![OLD_INCARNATION_ID, NOW, TURN],
+        )
+        .expect("claim the dispatch intent under the previous incarnation");
+    connection
+        .execute(
+            "INSERT INTO agent_session_host_bindings(agent_session_id,host_instance_id,native_session_ref,bound_at)
+             VALUES (?1,?2,NULL,?3)",
+            params![SESSION, HOST, NOW],
+        )
+        .expect("attach the active session to its prior-incarnation host");
+    drop(connection);
+
+    let next = RuntimeLocalState::begin(directory.path()).expect("begin a new Runtime incarnation");
+    assert_ne!(next.local_incarnation_id, OLD_INCARNATION_ID);
+    persist_state(directory.path(), &next).expect("persist the restarted Runtime incarnation");
+    register_from_bootstrap(&store, &next);
+
+    let report = crate::agents::conversation_recovery::recover_conversation_sessions(
+        &store, RUNTIME_ID, OWNER,
+    );
+    assert_eq!((report.failures, report.intents_settled), (0, 1));
+    assert_eq!(report.starting_sessions_released, 0);
+
+    let connection = Connection::open(&database).expect("read recovered active state");
+    let (turn_status, turn_session): (String, Option<String>) = connection
+        .query_row(
+            "SELECT status,agent_session_id FROM conversation_turns WHERE turn_id=?1",
+            [TURN],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read the recovered active turn");
+    assert_eq!(turn_status, "FAILED");
+    assert_eq!(turn_session.as_deref(), Some(SESSION));
+    let session_status: String = connection
+        .query_row(
+            "SELECT status FROM agent_sessions WHERE agent_session_id=?1",
+            [SESSION],
+            |row| row.get(0),
+        )
+        .expect("read the recovered AgentSession");
+    assert_eq!(session_status, "LOST");
+    let intent_state: String = connection
+        .query_row(
+            "SELECT state FROM conversation_dispatch_intents WHERE turn_id=?1 AND retry_ordinal=0",
+            [TURN],
+            |row| row.get(0),
+        )
+        .expect("read the recovered dispatch intent");
+    assert_eq!(intent_state, "SETTLED");
+    let binding_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM agent_session_host_bindings WHERE agent_session_id=?1",
+            [SESSION],
+            |row| row.get(0),
+        )
+        .expect("read the recovered host binding");
+    assert_eq!(binding_count, 0);
+    let message_counts: (i64, i64) = connection
+        .query_row(
+            "SELECT SUM(role='USER'),SUM(role='AGENT') FROM conversation_messages WHERE turn_id=?1",
+            [TURN],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("count messages for the recovered turn");
+    assert_eq!(message_counts, (1, 0));
+    let reason: String = connection
+        .query_row(
+            "SELECT json_extract(payload_json,'$.reason_code') FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1 AND type='conversation.turn.settled.v1'",
+            [TURN],
+            |row| row.get(0),
+        )
+        .expect("read the typed recovery reason");
+    assert_eq!(reason, "RUNTIME_RESTARTED");
 }

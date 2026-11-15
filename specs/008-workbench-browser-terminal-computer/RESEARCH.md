@@ -99,6 +99,12 @@ Plugin-architecture lessons (see [plugin study](../../docs/DEEPSEEK-HARNESS-PLUG
 
 No new external code imported; these are live documentation observations, not pinned versions/SHAs or integration evidence. [Computer LLD](../../docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md) records the detailed selection tradeoffs and limits.
 
+## Universal object workspace reference (user-provided, 2026-11-14)
+
+The owner supplied screenshots of ChatGPT Work's desktop shell showing conversation beside a right-side tab strip with Subagents and an opened file, a new-tab action, and a file-open surface with an external-app menu. These are visual evidence of a product pattern, not evidence about private internals or LiteCowork implementation. The useful pattern is contextual object tabs and discoverable open actions: current work can present a file/diff/status/result in the same adaptable pane without adding every tool to persistent navigation.
+
+Alternatives considered for this refinement: (1) a fixed strip of every tool, rejected because it recreates the crowded tool inventory the user wants to avoid; (2) a separate full-screen page per object, retained only where a surface needs full-screen focus, but rejected as the default because it breaks conversation continuity; (3) contextual tabs over exact owner-backed object references with a searchable **+ / New tab** chooser, recommended TARGET because it combines continuity with progressive disclosure. This choice changes the shell design only. It does not choose a UI framework/schema, make ACP a subagent feed, authorize external-app writeback, or imply provider availability. File handoff to an external application is deferred pending an owner contract for exact revision, user confirmation, out-of-band edits and reconciliation limits.
+
 | Primary source | Observed implication / decision status |
 |---|---|
 | [Microsoft Windows capture](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture) | User-selected display/window and D3D frame pool support the recommended laptop capture spike; no dependency pin or proof of Tauri delivery. |

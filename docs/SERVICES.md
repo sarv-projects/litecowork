@@ -607,6 +607,12 @@ Remote API/A2A endpoints need no local process; external/shared processes are ne
 by idle cleanup. `AgentSessionSupervisor` delegates host readiness and use-reference
 management here before creating an ACTIVE session.
 
+The Conversation-specific T03/T04 process-lease, readiness, StopUnconfirmed and idle
+cleanup lifecycle is defined once in the owning [Feature 001 SPEC §7.2](../specs/001-conversation-session-supervisor/SPEC.md).
+In this service map, the invariant is that AgentHostSupervisor alone owns provider-process
+shutdown; AgentSessionSupervisor and per-turn AgentAdapter only hold or borrow scoped use
+references. This is an internal owner boundary, not a public provider protocol.
+
 ### ExecutionDependencyPlanner
 
 ```text
@@ -1020,15 +1026,29 @@ Runtime's opaque handle. The supervisor closes sessions when their owning turn/a
 settles or durably yields; it releases the local binding only after adapter quiescence is
 observed.
 
-**Active source status (audit 2026-11-06):** `apps/litecoworkd/src/agents/supervisor.rs`
+**Active source status (rechecked 2026-11-15):** `apps/litecoworkd/src/agents/supervisor.rs`
 contains a per-turn implementation with a single `opencode` provider branch (OpenCode
-Server protocol v2.0.32). It reserves/activates the Conversation session, loads/sends the
-bounded context and invokes the SQLite final-response writer. However, the active Operator
-calls this supervisor directly from a detached Tokio task; no separately wired
-AgentTurnCoordinator or AgentHostSupervisor was found. Retry reservation is inconsistent
-with the current turn state, RUNNING cancel does not observe provider quiescence, early
-supervisor errors can leave OPEN turns unsettled, and startup recovery is absent. Do not
-claim the target lifecycle or qualification is complete from this partial path.
+Server protocol v2.0.32). The authenticated Operator commits the turn and dispatch intent,
+then the thin `AgentTurnCoordinator` starts the supervisor asynchronously. The supervisor
+reserves/activates the Conversation session, loads/sends bounded context and invokes the
+SQLite final-response writer. A missing host row is now created as STARTING before native
+spawn and becomes READY only after observed OpenCode startup/health. For terminal
+COMPLETED/CANCELLED/FAILED outcomes, durable Conversation/session settlement happens
+before per-turn shutdown; process exit then moves the host row to STOPPED or DEGRADED.
+This removes the former false-READY insertion and premature STOPPED-before-settlement
+paths. It still starts/stops OpenCode inside each turn; no separately wired reusable
+AgentHostSupervisor or retained host-use lease exists. StopUnconfirmed still reaches
+adapter shutdown/drop while the turn remains CANCEL_REQUESTED, so its process/session
+reference is not retained for later reconciliation. Unix child cleanup uses a process
+group, not the accepted cgroup contract. The T03/T04 ownership clarification above is
+TARGET; the new per-session sequencing is CODE only, not integration or qualification. A-101 records a source gap: the active guard stops the process before persisting STOPPING and storage allows extra direct-to-STOPPED transitions.
+
+On the startup cleanup error path, if persisting READY fails and the LiteCowork-owned
+child cannot be confirmed stopped, the helper re-reads the durable host row and
+best-effort transitions any extant STARTING/READY/BUSY state to DEGRADED. This also
+handles a READY transaction that committed but returned an ambiguous error. The mapping
+is covered by recording-store unit tests only; SQLite failure injection, process
+reconciliation after daemon restart and provider qualification remain open.
 
 A pending CapabilityInvocation does not hold an AgentSession open: its Invocation runner
 owns the provider lifecycle, and the Attempt can receive its result through a replacement

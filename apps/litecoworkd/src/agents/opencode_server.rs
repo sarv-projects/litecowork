@@ -470,6 +470,12 @@ impl OpenCodeServer {
         }
     }
 
+    /// Runtime-local process identity for the private AgentHostInstance row.
+    /// This is not a native handle and is never projected or logged.
+    pub(crate) fn process_identity_ref(&self) -> String {
+        format!("pid:{}", self.child.id())
+    }
+
     /// Reads the native provider connection summary. This is deliberately
     /// restricted to the documented read-only route; callers must whitelist
     /// fields before exposing any observation outside this module.
@@ -507,14 +513,29 @@ impl OpenCodeServer {
         response_json(response)
     }
 
-    /// Creates one native OpenCode session. Session IDs are treated as opaque
-    /// values but are validated before they can become URL path segments.
-    pub(crate) fn create_session(&mut self, title: Option<&str>) -> Result<String, OpenCodeError> {
+    /// Creates one native OpenCode session at the exact Workspace location
+    /// selected for this turn. The provider session location is explicit and
+    /// does not inherit from the server process working directory. Session IDs
+    /// are treated as opaque values but validated before URL path use.
+    pub(crate) fn create_session(
+        &mut self,
+        title: Option<&str>,
+        workspace_directory: &std::path::Path,
+    ) -> Result<String, OpenCodeError> {
         if title.is_some() {
             // V2 session creation has no title field; silently dropping the
             // caller's label would make session identity ambiguous.
             return Err(OpenCodeError::InvalidConfiguration);
         }
+        if !workspace_directory.is_absolute()
+            || !workspace_directory.is_dir()
+            || workspace_directory.to_str().is_none()
+        {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        let workspace_directory = workspace_directory
+            .to_str()
+            .ok_or(OpenCodeError::InvalidConfiguration)?;
         let body = serde_json::Map::new();
         let response = self.request(
             "POST",
@@ -523,7 +544,7 @@ impl OpenCodeServer {
                 let mut body = body;
                 body.insert(
                     "location".to_owned(),
-                    json!({"directory": self.working_directory.to_string_lossy()}),
+                    json!({"directory": workspace_directory}),
                 );
                 Value::Object(body)
             }),
@@ -1511,6 +1532,149 @@ mod tests {
             (MAX_RESPONSE_BYTES + 1) as u64,
             MAX_RESPONSE_BYTES
         ));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn opencode_session_creation_sends_each_explicit_workspace_location() {
+        use serde_json::Value;
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+
+        let first_workspace = tempfile::tempdir().expect("first Workspace directory");
+        let second_workspace = tempfile::tempdir().expect("second Workspace directory");
+        let first_path = first_workspace
+            .path()
+            .canonicalize()
+            .expect("canonical path");
+        let second_path = second_workspace
+            .path()
+            .canonicalize()
+            .expect("canonical path");
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        listener
+            .set_nonblocking(true)
+            .expect("make fake server accept bounded");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            let mut locations = Vec::new();
+            for session_id in ["session-first", "session-second"] {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(accepted) => break accepted,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept session request before deadline: {error}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .expect("set request timeout");
+                let mut request = Vec::new();
+                let (header_end, content_length) = loop {
+                    if let Some(header_end) = request
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|index| index + 4)
+                    {
+                        let headers = String::from_utf8(request[..header_end].to_vec())
+                            .expect("HTTP headers are UTF-8");
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .expect("request content length");
+                        if request.len() >= header_end + content_length {
+                            break (header_end, content_length);
+                        }
+                    }
+                    let mut buffer = [0_u8; 4096];
+                    let count = stream.read(&mut buffer).expect("read request");
+                    assert_ne!(count, 0, "client closed before completing request");
+                    request.extend_from_slice(&buffer[..count]);
+                };
+                let headers = String::from_utf8(request[..header_end].to_vec())
+                    .expect("HTTP headers are UTF-8");
+                assert!(headers.starts_with("POST /api/session HTTP/1.1"));
+                let body = serde_json::from_slice::<Value>(
+                    &request[header_end..header_end + content_length],
+                )
+                .expect("session creation body");
+                locations.push(body["location"]["directory"].as_str().unwrap().to_owned());
+                let response_body = format!(r#"{{"data":{{"id":"{session_id}"}}}}"#);
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                )
+                .expect("write fake session response");
+            }
+            locations
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(2),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+
+        assert_eq!(
+            server.create_session(None, &first_path),
+            Ok("session-first".to_owned())
+        );
+        assert_eq!(
+            server.create_session(None, &second_path),
+            Ok("session-second".to_owned())
+        );
+        assert_eq!(
+            captured.join().expect("captured session requests"),
+            vec![
+                first_path.to_str().unwrap().to_owned(),
+                second_path.to_str().unwrap().to_owned()
+            ]
+        );
+        assert_eq!(
+            server.process_identity_ref(),
+            format!("pid:{}", server.child.id()),
+            "the host store receives only the Runtime-local PID identity, never a handle"
+        );
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
     }
 
     #[test]

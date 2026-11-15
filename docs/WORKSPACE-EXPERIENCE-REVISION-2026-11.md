@@ -1,6 +1,6 @@
 # Workspace experience revision - 2026-11-12
 
-Status: user-requested proposals IN_REVIEW under [A-64](CONTRADICTION-AND-ALIGNMENT-REGISTER.md). Compact navigation and native Computer observation/input are separate decisions. Evidence: TARGET, except the explicitly recorded source observations. This integration map does not create a new API, event, schema or state-machine authority.
+Status: user-requested proposals IN_REVIEW under [A-64](CONTRADICTION-AND-ALIGNMENT-REGISTER.md). Compact navigation, universal object workspace and native Computer observation/input are separate decisions. Evidence: TARGET, except the explicitly recorded source observations. This integration map does not create a new API, event, schema or state-machine authority. The 2026-11-14 user screenshots of ChatGPT Work are an additional reference for contextual object tabs and open-file flows; they are not authority for ChatGPT internals or LiteCowork provider support.
 
 ## 1. Intent and decisions
 
@@ -12,7 +12,23 @@ These user requests authorize design work, not a silent rewrite of accepted scop
 
 ## 2. Information architecture and screen relationships
 
-**IN_REVIEW proposal:** make New Chat or the last eligible Conversation the default main surface. Keep Workspace selection, New Chat, recent chats and search above four persistent destinations: Work, Coworkers, Library, Automations. Make Needs You a compact attention inbox and Settings a footer entry. Reach Discover, explicit New Task, Dashboard, Goals, Notifications and Ideas through collapsed More, contextual links or command palette. Keep Routines inside Automations. Search without a served search operation is not rendered as an active search control. The currently accepted navigation baseline stays in force until owner review of More reachability, keyboard/focus behavior, and the exact persistent destinations.
+**TARGET direction, product decision:** one workspace home with conversation and project context is the primary application surface. Do not make users choose a Chat, Code, Browser, Documents, Coworkers or Automation product before they can begin. The left side should prioritize **New Chat**, **Projects**, and **Recents** (where Conversation and work history remain together), with **Needs You** shown as a small actionable count and **Settings** at the bottom. A single **More** entry exposes less frequent areas such as Work views, Coworkers, Library, Automations, Discover, Goals, Notifications and Ideas. Feature-specific detail pages may still exist where their domain needs it, but they are contextual destinations within this workspace, not competing app modes or permanent top-level tabs. Routines stay with Automations. Search is active only when its owner-backed query path is served; otherwise show a truthful unavailable state. This replaces the prior four-permanent-destination proposal in this revision; it does not silently change the currently accepted navigation baseline.
+
+The workspace opens with the current Conversation and its project context. The composer is the common entry point for questions and requests; explicit actions promote work to a Task, save a Routine, open a Resource, or enter another owner-backed flow. Unified Recents can filter Conversations, active Tasks and saved outputs without splitting their histories. Projects group related conversations, files and work references without becoming a second authorization boundary. The right object workspace shows the current job's live objects and deliverables; it is not a specialist-tool launcher. A user can start with chat, then open a file, diff, Browser, Computer, Terminal, Canvas or supported agent-status view in the same workspace.
+
+“Supersede all” is the long-term product north star: remove app switching for supported everyday work by completing the workflow inside LiteCowork's conversation-led workspace. The product is not a specialist chat, code, browser or file client, nor a collection of launchers for those products. It should grow native, coherent capabilities across work types, keep one shared project and conversation context, and make the right panel a live workspace for the current job's files, data, computer view, activity, interactive answer and deliverable. Provider connections are an extension point and a user choice, not the product's identity or a substitute for an integrated experience.
+
+This is a direction for the whole product, not a claim that V1 replaces every desktop application or has qualified every capability. Native agent harnesses continue to own their reasoning, sign-in, private transcripts and native tools under the accepted architecture. If an external application is still needed for a particular workflow, LiteCowork must label the handoff and its assurance boundary honestly; it must not present that external work as completed or tracked inside LiteCowork. No unqualified provider or external-app action is shown as available. V1 scope and release evidence remain governed by the Product, V1 release and domain contracts.
+
+### Navigation alternatives and design decision
+
+| Approach | Benefit | Cost / risk | Decision |
+|---|---|---|---|
+| Keep Work, Coworkers, Library and Automations as permanent destinations | Every domain has a visible entry point; smallest change to current navigation | Preserves the specialist-section feeling and keeps several parallel areas visible before the user knows they need them | Retain only as the currently accepted baseline until review |
+| Add a Chat / Work / Code / Browser mode switch | Makes high-level intent obvious and resembles several desktop agent products | Splits navigation and may split recents/context; adds product modes LiteCowork's local/runtime architecture does not require | Do not select |
+| Use one workspace with New Chat, Projects, unified Recents and contextual object tabs | Keeps the conversation as the common starting point, groups related work, and reveals specialized surfaces when needed | Less-frequent domains need a clear More/context entry and unified search/filters must work well | **Selected target:** best fit for the owner's “supersede all” direction and the existing single Conversation/Workspace ownership model |
+
+This is the navigation design call for the in-review revision. Unified Recents must preserve object type, Workspace, Project, owner and status metadata so it does not flatten distinct Task/Conversation/Artifact lifecycles. More must remain keyboard accessible and searchable; if a domain cannot be found from context or More, the design is incomplete. The user-facing shell unifies access and presentation while domain owners retain their separate records, permissions and recovery.
 
 The conversation experience has three presentation states over the same history: ordinary prose; an inline registered interactive answer; and its expanded Workbench Canvas view. Expansion keeps the same presentation identity and local reducer state. Diagnostics and raw agent activity are disclosed on demand. These are navigation and rendering modes, not separate chats or runtimes.
 
@@ -22,7 +38,7 @@ Work contains Task detail and Mission Control projections. Library contains Reso
 
 ## 3. Right panel, Canvas and defaults
 
-One contextual right panel hosts object tabs and a + menu: Computer, Browser, Terminal, Files, Changes and Canvas. Only open objects occupy tabs. Inspector and Activity are disclosures of their object or Work detail, not a second competing side panel. The panel can expand, resize, collapse and reopen without changing process ownership.
+One contextual right panel hosts open object tabs and a searchable **+ / New tab** chooser. The tabs are not a fixed tool list: a tab may name an exact file/revision, diff, public agent activity projection, Browser/Computer/Terminal session, Artifact/Canvas or rendered answer when its owner path supports it. Opening an object reference reads and reauthorizes that object; it does not start its process/provider, grant access, start capture or dispatch work. Inspector and Activity are object/detail disclosures or authorized activity projections, not a second competing side panel. The panel can expand, resize, collapse and reopen without changing process ownership. The current accepted left-navigation baseline still has four primary destinations. The 2026-11-14 proposal above replaces that with New Chat, Projects and unified Recents as the frequent entry points, one compact Needs You count, and less-frequent domain views under More; see the following mockup. Both the navigation change and the contextual-tab lifecycle remain TARGET until recorded review.
 
 Conceptual target layout (not the current UI):
 
@@ -31,21 +47,21 @@ Conceptual target layout (not the current UI):
 │ Workspace: …          Conversation: …                    agent-control strip when applicable│
 │                                                          [Take over] [Stop run]              │
 ├─────────────────────┬───────────────────────────────────────┬───────────────────────────────┤
-│ LITE COWORK         │ CONVERSATION                          │ WORKBENCH                     │
-│                     │                                       │ [Computer] [Files] [+] [Expand]│
+│ LITE COWORK         │ CONVERSATION                          │ CURRENT OBJECT                │
+│                     │                                       │ [DATA-MODEL.md] [Subagents*] [+] [Expand]│
 │ + New Chat          │ User and agent messages               │                               │
-│ Recent chats        │                                       │ selected display/window       │
-│ Needs You           │ semantic answer, citations,            │ live local preview            │
-│                     │ registered inline answer or Canvas    │ source and frame freshness    │
-│ Work                │                                       │ local preview: on             │
-│ Coworkers           │                                       │ shared with agent: off        │
-│ Library             │                                       │ input: unavailable/owned by…  │
-│ Automations         │                                       │                               │
-│ More                │ [composer and attachment controls]     │                               │
+│ Recent chats        │                                       │ current work object           │
+│ Projects            │ semantic answer, citations,            │ file / diff / answer /         │
+│ Recents             │ registered inline answer or Canvas    │ live Computer preview*         │
+│ Needs You (count)   │                                       │ source, freshness and consent │
+│ More                │                                       │                               │
+│                     │ [composer and attachment controls]     │                               │
 │                     │                                       │                               │
 │ Settings            │                                       │                               │
 └─────────────────────┴───────────────────────────────────────┴───────────────────────────────┘
 ```
+
+`*` marks a target example, not a currently served view. “Subagents” may display only supported, correlated public status from the native harness; it must not expose private transcripts or assume ACP supplies a universal subagent feed. The screenshots and current ChatGPT desktop documentation are references for contextual object tabs, open-file discovery and unified Recents; LiteCowork should avoid reproducing a separate Chat/Work/Codex product switch. A file may be opened inside LiteCowork only for supported formats and exact revisions. An external **Open with** option is a future proposal requiring an explicit, owner-reviewed handoff contract and must clearly distinguish subsequent external edits from LiteCowork-mediated actions.
 
 When agent input is active, the strip is app chrome and remains visible while the user is in LiteCowork; it is never drawn into the captured screen. Since a foreground target app covers LiteCowork, manual takeover also needs the separately qualified out-of-app shortcut or tray path below. The displayed frame rate/quality is real measured provider output, not the 8 fps prototype ceiling from the Computer LLD.
 
@@ -71,7 +87,7 @@ The initial terminal tab is **You** with one owner input writer. An agent termin
 
 ### Patterns verified in product documentation
 
-Checked 2026-11-12: the [ChatGPT desktop navigation update](https://help.openai.com/en/articles/20001276-moving-to-the-new-chatgpt-desktop-app) groups Chat and Work within one ChatGPT surface and brings their chats together in Recents; [Claude Artifacts](https://support.claude.com/en/articles/17153992-what-are-artifacts-and-how-do-i-use-them) opens substantial output beside conversation and supports editing, iteration, versioning and a saved artifact space. LiteCowork adopts the compact intent-based navigation and contextual Canvas pattern. [MCP Apps](https://apps.extensions.modelcontextprotocol.io/api/documents/Overview.html) provides an optional host-rendered interactive tool surface with sandboxed iframe communication and graceful plain-result fallback; that remains separate from the default registered native presentation renderer. [Anthropic's computer-use privacy description](https://privacy.claude.com/en/articles/10030352-what-personal-data-will-be-processed-by-computer-use) confirms screenshots are a computer-use data flow; it does not establish low-overhead live video or a takeover guarantee. See Feature 016 RESEARCH for protocol comparisons and version/pin limits.
+Checked 2026-11-14 against current primary documentation: the [ChatGPT desktop update](https://help.openai.com/en/articles/20001276-moving-to-the-new-chatgpt-desktop-app) places Chat and Work conversations together in Recents and exposes Projects, while Codex remains a separate view with separate workflow/history; [Claude Artifacts](https://support.anthropic.com/en/articles/17153992-what-are-artifacts-and-how-do-i-use-them) opens substantial output beside conversation, supports editing/iteration/versioning, and permits several artifacts in one conversation. LiteCowork adopts unified history/project context and contextual side-by-side work objects, while its product direction is to avoid a separate specialist-mode switch. [MCP Apps](https://apps.extensions.modelcontextprotocol.io/api/documents/Overview.html) provides an optional host-rendered interactive tool surface with sandboxed iframe communication and graceful plain-result fallback; that remains separate from the default registered native presentation renderer. [Anthropic's computer-use privacy description](https://privacy.claude.com/en/articles/10030352-what-personal-data-will-be-processed-by-computer-use) confirms screenshots are a computer-use data flow; it does not establish low-overhead live video or a takeover guarantee. These rival patterns support presentation choices only; they do not establish LiteCowork provider capability or justify importing another product's trust, cloud or runtime model. See Feature 016 RESEARCH for protocol comparisons and version/pin limits.
 
 The current Claude help page also lists Docs, Slides, Design and Data templates, Sheets and Whiteboards in beta, and Artifacts that can use connected apps after showing the requested tools and getting approval. Those show that saved interactive outputs can become a broader product surface. LiteCowork should assess each extension under its own local Workspace, connector authorization, provenance and retention contracts; matching a rival's feature list does not justify copying its cloud storage or app permissions.
 

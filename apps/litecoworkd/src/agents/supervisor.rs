@@ -32,10 +32,54 @@ use super::adapter::{
     AgentAdapter, CancelSignal, ObserverSet, OpenCodeAdapter, StreamBudget, TurnObservation,
     UsageCollector,
 };
+use super::host_supervisor::{HostStartError, start_host_process};
 use super::native_provider::NativeProviderKey;
 use super::opencode_server::{
     OpenCodeEnvironment, OpenCodeServer, OpenCodeServerConfig, OpenCodeServerProtocol,
 };
+
+/// Closed diagnostic classes for failures after durable turn admission. Never add provider
+/// or storage error text here: diagnostics are an operational index, not a detail channel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DispatchFailureClass {
+    HostResolution,
+    BindingLookup,
+    ProfileLookup,
+    DispatchIntentClaim,
+    SessionReservation,
+    ProviderExecution,
+    Settlement,
+    BlockingTask,
+}
+
+impl DispatchFailureClass {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::HostResolution => "HOST_RESOLUTION",
+            Self::BindingLookup => "BINDING_LOOKUP",
+            Self::ProfileLookup => "PROFILE_LOOKUP",
+            Self::DispatchIntentClaim => "DISPATCH_INTENT_CLAIM",
+            Self::SessionReservation => "SESSION_RESERVATION",
+            Self::ProviderExecution => "PROVIDER_EXECUTION",
+            Self::Settlement => "SETTLEMENT",
+            Self::BlockingTask => "BLOCKING_TASK",
+        }
+    }
+}
+
+/// Retry only transient local-store failures. `settle_attempt_failed` re-reads durable
+/// state on each attempt, so an acknowledgement lost after commit is recognized as an
+/// already-settled terminal turn. A non-transient or exhausted failure stays typed for
+/// startup recovery; error details never become diagnostics.
+fn settle_dispatch_failure(
+    failure: DispatchFailureClass,
+    settle: impl FnMut() -> Result<(), storage_core::StoreError>,
+) -> DispatchFailureClass {
+    match retry_transient_store_commit(3, Duration::from_millis(100), settle) {
+        Ok(()) => failure,
+        Err(_) => DispatchFailureClass::Settlement,
+    }
+}
 
 /// Host-normalized final-response identity. A native session handle must never
 /// enter the durable commit key or its request payload. The existing internal
@@ -123,6 +167,19 @@ fn resolve_workspace_working_dir(
     None
 }
 
+/// Returns the exact CAS version committed by STARTING reservation and the next
+/// AgentSession event revision for activation. SQLite stores versions as signed i64.
+fn session_activation_versions(starting_version: u64) -> Option<(u64, u64)> {
+    if starting_version == 0 {
+        return None;
+    }
+    let active_version = starting_version.checked_add(1)?;
+    if active_version > i64::MAX as u64 {
+        return None;
+    }
+    Some((starting_version, active_version))
+}
+
 /// Live per-turn Stop signals keyed by `(turn_id, retry_ordinal)`.
 type CancelRegistry = Arc<Mutex<HashMap<(String, u32), CancelSignal>>>;
 
@@ -200,7 +257,7 @@ impl AgentSessionSupervisor {
         conversation_id: &str,
         turn: ConversationTurn,
         correlation_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), DispatchFailureClass> {
         let store = self.store.clone();
         let runtime_id = self.runtime_id.clone();
         let supervisor = self.clone();
@@ -209,227 +266,302 @@ impl AgentSessionSupervisor {
         let conversation = conversation_id.to_owned();
         let turn_id = turn.turn_id.clone();
         let correlation = correlation_id.to_owned();
+        let join_recovery_session_id = Arc::new(std::sync::OnceLock::<String>::new());
+        let worker_recovery_session_id = Arc::clone(&join_recovery_session_id);
+        let recovery_store = store.clone();
+        let recovery_runtime_id = runtime_id.clone();
+        let recovery_principal = principal.clone();
+        let recovery_workspace = workspace.clone();
+        let recovery_conversation = conversation.clone();
+        let recovery_turn_id = turn_id.clone();
+        let recovery_correlation = correlation.clone();
 
-        tokio::task::spawn_blocking(move || {
-            let conv_store = SqliteConversationStore::new(store.clone());
+        let dispatch_task = tokio::task::spawn_blocking(move || {
+            let mut session_id_for_failure: Option<String> = None;
+            let dispatch_result = (|| -> Result<(), DispatchFailureClass> {
+                let conv_store = SqliteConversationStore::new(store.clone());
 
-            // 1. Resolve host for turn
-            let host_opt = conv_store
-                .resolve_conversation_session_host_for_turn(
-                    &principal,
-                    &workspace,
-                    &conversation,
-                    &turn_id,
-                )
-                .map_err(|e| format!("Host resolution error: {e:?}"))?;
-
-            let Some(host) = host_opt else {
-                // No eligible host: settle the attempt FAILED (AGENT_UNAVAILABLE).
-                let _ = settle_attempt_failed(
-                    &store,
-                    &runtime_id,
-                    &principal,
-                    &workspace,
-                    &conversation,
-                    &turn_id,
-                    None,
-                    "AGENT_UNAVAILABLE",
-                    &correlation,
-                    None,
-                );
-                return Ok(());
-            };
-
-            // 2. Query provider key and profile via published AgentCatalogStore trait
-            let now = now_utc_rfc3339();
-            let binding = store
-                .get_agent_binding(&principal, &workspace, &host.agent_binding_id)
-                .map_err(|e| format!("Query agent binding error: {e:?}"))?
-                .ok_or_else(|| "AgentBinding not found".to_owned())?;
-
-            let profiles = store
-                .list_agent_profiles(&principal, &workspace, &now)
-                .map_err(|e| format!("List agent profiles error: {e:?}"))?;
-
-            let provider_key = profiles
-                .iter()
-                .find(|p| p.profile.agent_profile_id == binding.agent_profile_id)
-                .map(|p| p.profile.provider_key.clone())
-                .ok_or_else(|| {
-                    format!(
-                        "No agent profile found for binding {} with profile ID {}",
-                        binding.agent_binding_id, binding.agent_profile_id
+                // 1. Resolve host for turn
+                let host_opt = conv_store
+                    .resolve_conversation_session_host_for_turn(
+                        &principal,
+                        &workspace,
+                        &conversation,
+                        &turn_id,
                     )
-                })?;
+                    .map_err(|_| DispatchFailureClass::HostResolution)?;
 
-            // 3. Ensure host instance exists in SQLite via published AgentHostStore trait
-            let host_instance_id = format!("host-{}", host.endpoint_id);
-            let existing_host = store
-                .get_agent_host_instance(
-                    &host.runtime_id,
-                    &host.runtime_incarnation_id,
-                    &host_instance_id,
-                )
-                .map_err(|e| format!("Get host instance error: {e:?}"))?;
-
-            if existing_host.is_none() {
-                let _ = store.create_agent_host_instance(AgentHostInstanceRecord {
-                    host_instance_id: host_instance_id.clone(),
-                    runtime_id: host.runtime_id.clone(),
-                    runtime_incarnation_id: host.runtime_incarnation_id.clone(),
-                    agent_profile_id: binding.agent_profile_id.clone(),
-                    endpoint_id: host.endpoint_id.clone(),
-                    hosting_mode: "LOCAL_PER_SESSION".to_owned(),
-                    state: "READY".to_owned(),
-                    process_identity_ref: None,
-                    ownership: "LITECOWORK".to_owned(),
-                    started_at: now.clone(),
-                    last_used_at: now.clone(),
-                    idle_since: Some(now.clone()),
-                });
-            }
-
-            // 3b. Claim the durable dispatch intent (compare-and-swap) before the STARTING
-            // reservation. A losing dispatcher owns nothing and must not reserve a session.
-            let claimed = conv_store
-                .claim_conversation_dispatch_intent(
-                    &turn_id,
-                    turn.retry_ordinal,
-                    &host.runtime_incarnation_id,
-                    &now,
-                )
-                .map_err(|e| format!("Claim dispatch intent error: {e:?}"))?;
-            if !claimed {
-                return Ok(());
-            }
-            let (cancel, _cancel_registration) =
-                supervisor.register_cancel(&turn_id, turn.retry_ordinal);
-
-            // 4. Reserve STARTING session
-            let session_id = generate_id("ses");
-            let start = ConversationAgentSessionStart {
-                request: WorkspaceCreateRequest {
-                    principal_id: principal.clone(),
-                    request_id: format!("req-start-{}", session_id),
-                    request_payload: json!({ "agent_session_id": session_id }),
-                },
-                session: AgentSessionRecord {
-                    agent_session_id: session_id.clone(),
-                    workspace_id: workspace.clone(),
-                    scope_kind: "CONVERSATION".to_owned(),
-                    conversation_id: Some(conversation.clone()),
-                    conversation_turn_id: Some(turn_id.clone()),
-                    task_id: None,
-                    task_spec_revision: None,
-                    attempt_id: None,
-                    agent_binding_id: host.agent_binding_id.clone(),
-                    endpoint_id: host.endpoint_id.clone(),
-                    runtime_id: host.runtime_id.clone(),
-                    runtime_incarnation_id: host.runtime_incarnation_id.clone(),
-                    configuration_digest: None,
-                    harness_descriptor_digest: None,
-                    status: "STARTING".to_owned(),
-                    started_at: now.clone(),
-                    last_event_at: Some(now.clone()),
-                    closed_at: None,
-                    version: 1,
-                },
-                event: EventDraft {
-                    event_id: generate_id("ev"),
-                    workspace_id: workspace.clone(),
-                    entity_type: "AgentSession".to_owned(),
-                    entity_id: session_id.clone(),
-                    origin_runtime_id: runtime_id.clone(),
-                    entity_revision: 1,
-                    hlc_timestamp: now.clone(),
-                    correlation_id: correlation.clone(),
-                    causation_id: None,
-                    schema_version: 1,
-                    event_type: "agent.session.starting.v1".to_owned(),
-                    payload: json!({
-                        "agent_session_id": session_id,
-                        "task_spec_revision": null,
-                        "scope": {
-                            "kind": "CONVERSATION",
-                            "conversation_id": conversation,
-                            "conversation_turn_id": turn_id,
-                        },
-                        "agent_binding_id": host.agent_binding_id,
-                        "endpoint_id": host.endpoint_id,
-                        "runtime_id": host.runtime_id,
-                        "runtime_incarnation_id": host.runtime_incarnation_id,
-                        "session_state": "STARTING",
-                        "reported_at": now,
-                    }),
-                    recorded_at: now.clone(),
-                },
-            };
-
-            let _committed_session = store
-                .start_conversation_agent_session(start)
-                .map_err(|e| format!("Start session error: {e:?}"))?;
-
-            // 5. Execute native interaction based on provider_key
-            let run_res = execute_agent_turn(
-                &store,
-                &runtime_id,
-                &principal,
-                &workspace,
-                &conversation,
-                &turn_id,
-                turn.version,
-                turn.retry_ordinal,
-                &session_id,
-                &host_instance_id,
-                &host.agent_binding_id,
-                &provider_key,
-                &host.endpoint_id,
-                &host.runtime_id,
-                &host.runtime_incarnation_id,
-                &correlation,
-                &cancel,
-            );
-
-            // Transient presentation control frame: a committed message supersedes the
-            // transient text; any other end leaves it marked incomplete in the UI.
-            {
-                let committed = matches!(run_res, Ok(TurnOutcome::Committed))
-                    .then(|| format!("msg-agent-{turn_id}-{}", turn.retry_ordinal));
-                crate::transient_frames::TurnFramePublisher::new(
-                    crate::transient_frames::transient_bus().clone(),
-                    &workspace,
-                    &conversation,
-                    &turn_id,
-                    turn.retry_ordinal,
-                )
-                .settle(committed.as_deref());
-            }
-            match run_res {
-                Ok(_outcome) => {}
-                Err(err) => {
-                    // Settle whatever the store currently holds: the attempt FAILED and
-                    // its session LOST, so Retry can reserve a fresh session. A turn the
-                    // user already cancelled or a settled one is left untouched.
-                    let _ = settle_attempt_failed(
+                let Some(host) = host_opt else {
+                    // No eligible host: settle the attempt FAILED (AGENT_UNAVAILABLE).
+                    settle_attempt_failed(
                         &store,
                         &runtime_id,
                         &principal,
                         &workspace,
                         &conversation,
                         &turn_id,
-                        Some(&session_id),
+                        None,
+                        "AGENT_UNAVAILABLE",
+                        &correlation,
+                        None,
+                    )
+                    .map_err(|_| DispatchFailureClass::Settlement)?;
+                    return Ok(());
+                };
+
+                // 2. Query provider key and profile via published AgentCatalogStore trait
+                let now = now_utc_rfc3339();
+                let binding = store
+                    .get_agent_binding(&principal, &workspace, &host.agent_binding_id)
+                    .map_err(|_| DispatchFailureClass::BindingLookup)?
+                    .ok_or(DispatchFailureClass::BindingLookup)?;
+
+                let profiles = store
+                    .list_agent_profiles(&principal, &workspace, &now)
+                    .map_err(|_| DispatchFailureClass::ProfileLookup)?;
+
+                let provider_key = profiles
+                    .iter()
+                    .find(|p| p.profile.agent_profile_id == binding.agent_profile_id)
+                    .map(|p| p.profile.provider_key.clone())
+                    .ok_or(DispatchFailureClass::ProfileLookup)?;
+
+                // 3. Claim the durable dispatch intent (compare-and-swap) before the STARTING
+                // reservation. A losing dispatcher owns nothing and must not reserve a session.
+                let claimed = conv_store
+                    .claim_conversation_dispatch_intent(
+                        &turn_id,
+                        turn.retry_ordinal,
+                        &host.runtime_incarnation_id,
+                        &now,
+                    )
+                    .map_err(|_| DispatchFailureClass::DispatchIntentClaim)?;
+                if !claimed {
+                    return Ok(());
+                }
+                let (cancel, _cancel_registration) =
+                    supervisor.register_cancel(&turn_id, turn.retry_ordinal);
+
+                // 4. Reserve STARTING session
+                let session_id = generate_id("ses");
+                // This path currently launches one locally owned process per session.
+                // Give each process a distinct durable host identity; a terminal host
+                // record is never recycled as a live process on a later turn.
+                let host_instance_id = format!("host-{session_id}");
+                session_id_for_failure = Some(session_id.clone());
+                let _ = worker_recovery_session_id.set(session_id.clone());
+                let start = ConversationAgentSessionStart {
+                    request: WorkspaceCreateRequest {
+                        principal_id: principal.clone(),
+                        request_id: format!("req-start-{}", session_id),
+                        request_payload: json!({ "agent_session_id": session_id }),
+                    },
+                    session: AgentSessionRecord {
+                        agent_session_id: session_id.clone(),
+                        workspace_id: workspace.clone(),
+                        scope_kind: "CONVERSATION".to_owned(),
+                        conversation_id: Some(conversation.clone()),
+                        conversation_turn_id: Some(turn_id.clone()),
+                        task_id: None,
+                        task_spec_revision: None,
+                        attempt_id: None,
+                        agent_binding_id: host.agent_binding_id.clone(),
+                        endpoint_id: host.endpoint_id.clone(),
+                        runtime_id: host.runtime_id.clone(),
+                        runtime_incarnation_id: host.runtime_incarnation_id.clone(),
+                        configuration_digest: None,
+                        harness_descriptor_digest: None,
+                        status: "STARTING".to_owned(),
+                        started_at: now.clone(),
+                        last_event_at: Some(now.clone()),
+                        closed_at: None,
+                        version: 1,
+                    },
+                    event: EventDraft {
+                        event_id: generate_id("ev"),
+                        workspace_id: workspace.clone(),
+                        entity_type: "AgentSession".to_owned(),
+                        entity_id: session_id.clone(),
+                        origin_runtime_id: runtime_id.clone(),
+                        entity_revision: 1,
+                        hlc_timestamp: now.clone(),
+                        correlation_id: correlation.clone(),
+                        causation_id: None,
+                        schema_version: 1,
+                        event_type: "agent.session.starting.v1".to_owned(),
+                        payload: json!({
+                            "agent_session_id": session_id,
+                            "task_spec_revision": null,
+                            "scope": {
+                                "kind": "CONVERSATION",
+                                "conversation_id": conversation,
+                                "conversation_turn_id": turn_id,
+                            },
+                            "agent_binding_id": host.agent_binding_id,
+                            "endpoint_id": host.endpoint_id,
+                            "runtime_id": host.runtime_id,
+                            "runtime_incarnation_id": host.runtime_incarnation_id,
+                            "session_state": "STARTING",
+                            "reported_at": now,
+                        }),
+                        recorded_at: now.clone(),
+                    },
+                };
+
+                let committed_session = store
+                    .start_conversation_agent_session(start)
+                    .map_err(|_| DispatchFailureClass::SessionReservation)?;
+
+                // 5. Execute native interaction based on provider_key
+                let run_res = execute_agent_turn(
+                    &store,
+                    &runtime_id,
+                    &principal,
+                    &workspace,
+                    &conversation,
+                    &turn_id,
+                    turn.version,
+                    turn.retry_ordinal,
+                    &session_id,
+                    committed_session.session.version,
+                    &host_instance_id,
+                    &host.agent_binding_id,
+                    &provider_key,
+                    &binding.agent_profile_id,
+                    &host.endpoint_id,
+                    &host.runtime_id,
+                    &host.runtime_incarnation_id,
+                    &correlation,
+                    &cancel,
+                );
+
+                // Transient presentation control frame: a committed message supersedes the
+                // transient text; any other end leaves it marked incomplete in the UI.
+                {
+                    let committed = matches!(run_res, Ok(TurnOutcome::Committed))
+                        .then(|| format!("msg-agent-{turn_id}-{}", turn.retry_ordinal));
+                    crate::transient_frames::TurnFramePublisher::new(
+                        crate::transient_frames::transient_bus().clone(),
+                        &workspace,
+                        &conversation,
+                        &turn_id,
+                        turn.retry_ordinal,
+                    )
+                    .settle(committed.as_deref());
+                }
+                match run_res {
+                    Ok(_outcome) => {}
+                    Err(_err) => {
+                        // Settle whatever the store currently holds: the attempt FAILED and
+                        // its session LOST, so Retry can reserve a fresh session. A turn the
+                        // user already cancelled or a settled one is left untouched.
+                        settle_attempt_failed(
+                            &store,
+                            &runtime_id,
+                            &principal,
+                            &workspace,
+                            &conversation,
+                            &turn_id,
+                            Some(&session_id),
+                            "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE",
+                            &correlation,
+                            None,
+                        )
+                        .map_err(|_| DispatchFailureClass::Settlement)?;
+                        // Preserve only a closed classification; the error can contain native
+                        // provider text, prompt fragments, or implementation details.
+                        return Err(DispatchFailureClass::ProviderExecution);
+                    }
+                }
+
+                Ok(())
+            })();
+
+            if let Err(failure) = dispatch_result {
+                // Every post-admission setup/dispatch error attempts to settle the exact
+                // attempt. If storage is unavailable, the durable intent remains fenced
+                // for the existing startup recovery sweep; report only a typed class.
+                return Err(settle_dispatch_failure(failure, || {
+                    settle_attempt_failed(
+                        &store,
+                        &runtime_id,
+                        &principal,
+                        &workspace,
+                        &conversation,
+                        &turn_id,
+                        session_id_for_failure.as_deref(),
                         "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE",
                         &correlation,
                         None,
-                    );
-                    return Err(err);
-                }
+                    )
+                }));
             }
-
             Ok(())
+        });
+
+        join_dispatch_or_recover(dispatch_task.await, move || {
+            let session_id = join_recovery_session_id.get().cloned();
+            recover_blocking_dispatch_failure(
+                &recovery_store,
+                &recovery_runtime_id,
+                &recovery_principal,
+                &recovery_workspace,
+                &recovery_conversation,
+                &recovery_turn_id,
+                session_id.as_deref(),
+                &recovery_correlation,
+            )
         })
         .await
-        .map_err(|e| format!("Task execution error: {e:?}"))?
+    }
+}
+
+/// A failed blocking task has ended, so its exact admitted turn can be settled without
+/// guessing whether the native session is still active. The session identity is held
+/// Runtime-locally and is used only to close a reservation that may have committed just
+/// before the worker failed. If settlement storage is unavailable, its durable intent
+/// remains for startup recovery.
+pub(crate) fn recover_blocking_dispatch_failure(
+    store: &SqliteWorkspaceStore,
+    runtime_id: &str,
+    principal_id: &str,
+    workspace_id: &str,
+    conversation_id: &str,
+    turn_id: &str,
+    session_id: Option<&str>,
+    correlation_id: &str,
+) -> DispatchFailureClass {
+    settle_dispatch_failure(DispatchFailureClass::BlockingTask, || {
+        settle_attempt_failed(
+            store,
+            runtime_id,
+            principal_id,
+            workspace_id,
+            conversation_id,
+            turn_id,
+            session_id,
+            "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE",
+            correlation_id,
+            None,
+        )
+    })
+}
+
+/// Converts a blocking-worker panic/cancellation into an exact-attempt reconciliation.
+/// The JoinError itself is never formatted because its payload is outside the diagnostic
+/// contract and may contain implementation or provider details.
+pub(crate) async fn join_dispatch_or_recover(
+    joined: Result<Result<(), DispatchFailureClass>, tokio::task::JoinError>,
+    recover: impl FnOnce() -> DispatchFailureClass + Send + 'static,
+) -> Result<(), DispatchFailureClass> {
+    match joined {
+        Ok(result) => result,
+        Err(_) => {
+            let recovered = tokio::task::spawn_blocking(recover)
+                .await
+                .unwrap_or(DispatchFailureClass::Settlement);
+            Err(recovered)
+        }
     }
 }
 
@@ -443,6 +575,78 @@ enum TurnOutcome {
     /// A Stop was requested but quiescence was not observed in time. The turn stays
     /// CANCEL_REQUESTED and the startup recovery sweep owns the rest; nothing is faked.
     StopUnconfirmed,
+}
+
+/// Keeps the Runtime-local host row from claiming READY after the per-turn
+/// process has been dropped on an early return. The guard is declared before
+/// the adapter so the adapter's process owner drops first.
+struct ReadyHostStateGuard {
+    store: SqliteWorkspaceStore,
+    runtime_id: String,
+    runtime_incarnation_id: String,
+    host_instance_id: String,
+    state: &'static str,
+    active: bool,
+}
+
+impl ReadyHostStateGuard {
+    fn new(
+        store: SqliteWorkspaceStore,
+        runtime_id: &str,
+        runtime_incarnation_id: &str,
+        host_instance_id: &str,
+    ) -> Self {
+        Self {
+            store,
+            runtime_id: runtime_id.to_owned(),
+            runtime_incarnation_id: runtime_incarnation_id.to_owned(),
+            host_instance_id: host_instance_id.to_owned(),
+            state: "READY",
+            active: true,
+        }
+    }
+
+    fn mark_busy(&mut self) {
+        self.state = "BUSY";
+    }
+
+    /// A durable CLOSED-session transaction returns the host row to READY.
+    /// The per-session process is still owned here until observed shutdown.
+    fn mark_ready_after_session_close(&mut self) {
+        self.state = "READY";
+    }
+
+    fn finish(&mut self, next_state: &'static str) -> Result<(), String> {
+        self.store
+            .transition_agent_host_instance(
+                &self.runtime_id,
+                &self.runtime_incarnation_id,
+                &self.host_instance_id,
+                self.state,
+                next_state,
+                &now_utc_rfc3339(),
+                None,
+            )
+            .map_err(|_| "Could not reconcile the native host process state".to_owned())?;
+        self.active = false;
+        Ok(())
+    }
+}
+
+impl Drop for ReadyHostStateGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = self.store.transition_agent_host_instance(
+                &self.runtime_id,
+                &self.runtime_incarnation_id,
+                &self.host_instance_id,
+                self.state,
+                "DEGRADED",
+                &now_utc_rfc3339(),
+                None,
+            );
+        }
+    }
 }
 
 fn status_wire(status: ConversationTurnStatus) -> &'static str {
@@ -533,16 +737,13 @@ pub(crate) fn settle_attempt_failed(
     reason_code: &str,
     correlation_id: &str,
     usage: Option<ConversationTurnUsage>,
-) -> Result<(), String> {
+) -> Result<(), storage_core::StoreError> {
     let conv_store = SqliteConversationStore::new(store.clone());
     let turn = conv_store
-        .get_conversation_turn(workspace_id, conversation_id, turn_id)
-        .map_err(|e| format!("Read turn error: {e:?}"))?
-        .ok_or_else(|| "ConversationTurn not found".to_owned())?;
+        .get_conversation_turn(workspace_id, conversation_id, turn_id)?
+        .ok_or(storage_core::StoreError::NotFound)?;
     let session = match session_id.or(turn.agent_session_id.as_deref()) {
-        Some(id) => store
-            .get_agent_session(workspace_id, id)
-            .map_err(|e| format!("Read session error: {e:?}"))?,
+        Some(id) => store.get_agent_session(workspace_id, id)?,
         None => None,
     }
     .filter(|record| !matches!(record.status.as_str(), "CLOSED" | "LOST"));
@@ -557,17 +758,15 @@ pub(crate) fn settle_attempt_failed(
                 correlation_id,
                 &now,
             );
-            store
-                .mark_starting_conversation_agent_session_lost(
-                    MarkStartingConversationAgentSessionLost {
-                        workspace_id: workspace_id.to_owned(),
-                        agent_session_id: record.agent_session_id.clone(),
-                        expected_version: record.version,
-                        occurred_at: now.clone(),
-                        event,
-                    },
-                )
-                .map_err(|e| format!("Release starting session error: {e:?}"))?;
+            store.mark_starting_conversation_agent_session_lost(
+                MarkStartingConversationAgentSessionLost {
+                    workspace_id: workspace_id.to_owned(),
+                    agent_session_id: record.agent_session_id.clone(),
+                    expected_version: record.version,
+                    occurred_at: now.clone(),
+                    event,
+                },
+            )?;
         }
         return Ok(());
     }
@@ -626,7 +825,6 @@ pub(crate) fn settle_attempt_failed(
             usage,
         })
         .map(|_| ())
-        .map_err(|e| format!("Settle failed turn error: {e:?}"))
 }
 
 /// Commits CANCELLED for a CANCEL_REQUESTED turn after the native session was observed
@@ -795,9 +993,11 @@ fn execute_agent_turn(
     turn_version: u64,
     retry_ordinal: u32,
     session_id: &str,
+    starting_session_version: u64,
     host_instance_id: &str,
     agent_binding_id: &str,
     provider_key: &str,
+    agent_profile_id: &str,
     endpoint_id: &str,
     host_runtime_id: &str,
     host_runtime_incarnation_id: &str,
@@ -853,16 +1053,73 @@ fn execute_agent_turn(
             // The child is given the same bounded variable allow list that the adapter
             // clears the environment to, sourced from this process. Without it the agent
             // child starts with no HOME and no PATH and cannot run at all.
-            let config = OpenCodeServerConfig::bounded(exe, working_dir)
+            let config = OpenCodeServerConfig::bounded(exe, working_dir.clone())
                 .with_protocol(OpenCodeServerProtocol::V2_0_32)
                 .with_environment(OpenCodeEnvironment::from_current_process());
 
-            let server = OpenCodeServer::spawn(config)
-                .map_err(|e| format!("OpenCodeServer spawn failed: {e:?}"))?;
+            let host_started_at = now_utc_rfc3339();
+            let mut native_start_error = None;
+            let server = start_host_process(
+                store,
+                AgentHostInstanceRecord {
+                    host_instance_id: host_instance_id.to_owned(),
+                    runtime_id: host_runtime_id.to_owned(),
+                    runtime_incarnation_id: host_runtime_incarnation_id.to_owned(),
+                    agent_profile_id: agent_profile_id.to_owned(),
+                    endpoint_id: endpoint_id.to_owned(),
+                    hosting_mode: "LOCAL_PER_SESSION".to_owned(),
+                    state: "STARTING".to_owned(),
+                    process_identity_ref: None,
+                    ownership: "LITECOWORK".to_owned(),
+                    started_at: host_started_at.clone(),
+                    last_used_at: host_started_at.clone(),
+                    idle_since: None,
+                },
+                || now_utc_rfc3339(),
+                || {
+                    OpenCodeServer::spawn(config).map_err(|error| {
+                        native_start_error = Some(error);
+                    })
+                },
+                OpenCodeServer::process_identity_ref,
+                |mut process| match process.stop() {
+                    super::opencode_server::OpenCodeProcessState::Exited => Ok(()),
+                    super::opencode_server::OpenCodeProcessState::Running
+                    | super::opencode_server::OpenCodeProcessState::ObservationFailed => {
+                        Err(process)
+                    }
+                },
+            )
+            .map_err(|error| match error {
+                HostStartError::InvalidStartingRecord => {
+                    "OpenCode host lifecycle rejected its STARTING record".to_owned()
+                }
+                HostStartError::StoreUnavailable => {
+                    "OpenCode host lifecycle state could not be committed".to_owned()
+                }
+                HostStartError::ProcessStartFailed => format!(
+                    "OpenCode host process failed readiness: {:?}",
+                    native_start_error
+                        .unwrap_or(super::opencode_server::OpenCodeError::SpawnFailed)
+                ),
+                HostStartError::StateUnconfirmed => {
+                    "OpenCode host readiness state is unconfirmed".to_owned()
+                }
+                HostStartError::CleanupPending(mut process) => {
+                    let _ = process.stop();
+                    "OpenCode host cleanup remains unconfirmed".to_owned()
+                }
+            })?;
+            let mut host_state_guard = ReadyHostStateGuard::new(
+                store.clone(),
+                host_runtime_id,
+                host_runtime_incarnation_id,
+                host_instance_id,
+            );
 
             // Drive the native boundary through the provider-neutral AgentAdapter
-            // (001-T04) rather than hand-parsing SSE. The OpenCode v2 HTTP path is
-            // the one non-ACP adapter; it owns the server for the life of the turn.
+            // (001-T04) rather than hand-parsing SSE. The host process is durable
+            // STARTING before spawn and READY only after native health is observed.
             let usage_collector = UsageCollector::default();
             let mut adapter = OpenCodeAdapter::new(server)
                 .with_cancel(cancel.clone())
@@ -900,16 +1157,20 @@ fn execute_agent_turn(
 
             // Phase 2: create the native session; the handle binds to SQLite only.
             let native_session = adapter
-                .create_session()
+                .create_session(&working_dir)
                 .map_err(|f| format!("OpenCode create_session failed: {}", f.reason_code()))?;
 
             // Activate session in SQLite
             let now = now_utc_rfc3339();
+            let (expected_session_version, active_session_version) =
+                session_activation_versions(starting_session_version).ok_or_else(|| {
+                    "AgentSession version cannot advance for activation".to_owned()
+                })?;
             let activation = ActivateConversationAgentSession {
                 principal_id: principal_id.to_owned(),
                 workspace_id: workspace_id.to_owned(),
                 agent_session_id: session_id.to_owned(),
-                expected_session_version: 1,
+                expected_session_version,
                 expected_turn_version: turn_version,
                 occurred_at: now.clone(),
                 host_instance_id: host_instance_id.to_owned(),
@@ -920,7 +1181,7 @@ fn execute_agent_turn(
                     entity_type: "AgentSession".to_owned(),
                     entity_id: session_id.to_owned(),
                     origin_runtime_id: runtime_id.to_owned(),
-                    entity_revision: 2,
+                    entity_revision: active_session_version,
                     hlc_timestamp: now.clone(),
                     correlation_id: correlation_id.to_owned(),
                     causation_id: None,
@@ -967,6 +1228,7 @@ fn execute_agent_turn(
             let activated = store
                 .activate_conversation_agent_session(activation)
                 .map_err(|e| format!("Activate session error: {e:?}"))?;
+            host_state_guard.mark_busy();
 
             // Load context package
             let context = conv_store
@@ -1013,9 +1275,6 @@ fn execute_agent_turn(
             // are dropped and counted, never projected (AC-008).
             let observation = adapter.drive_turn(&native_session, StreamBudget::default());
 
-            // The server is reaped regardless of outcome.
-            adapter.shutdown();
-
             let accumulated_text = match observation {
                 Ok(TurnObservation::Completed { answer_text }) => answer_text,
                 Ok(TurnObservation::Stopped) => {
@@ -1032,17 +1291,25 @@ fn execute_agent_turn(
                         correlation_id,
                         turn_usage(usage_collector.snapshot(), prompt_bytes, 0),
                     )?;
+                    // The close transaction atomically returns the host row to
+                    // READY. Stop the per-session process only after that durable
+                    // settlement, then publish STOPPED only after exit is observed.
+                    host_state_guard.mark_ready_after_session_close();
+                    finish_per_session_host(&mut adapter, &mut host_state_guard)?;
                     return Ok(TurnOutcome::Cancelled);
                 }
                 Ok(TurnObservation::StopUnconfirmed) => {
                     // The interrupt was sent but quiescence was not observed in time.
                     // The turn stays CANCEL_REQUESTED; CANCELLED is never fabricated.
+                    // This interim adapter still kills on shutdown/drop; retained
+                    // process/session reconciliation requires the shared host owner.
+                    finish_per_session_host(&mut adapter, &mut host_state_guard)?;
                     return Ok(TurnOutcome::StopUnconfirmed);
                 }
                 Ok(TurnObservation::Failed { reason_code }) | Err(reason_code) => {
                     // Settle FAILED here so whatever usage was observed is recorded;
                     // the dispatcher's later settle of an already-settled turn is a no-op.
-                    let _ = settle_attempt_failed(
+                    let failure_settlement = settle_attempt_failed(
                         store,
                         runtime_id,
                         principal_id,
@@ -1054,6 +1321,13 @@ fn execute_agent_turn(
                         correlation_id,
                         turn_usage(usage_collector.snapshot(), prompt_bytes, 0),
                     );
+                    if failure_settlement.is_ok() {
+                        // LOST settlement does not return the BUSY host row to READY.
+                        // Reconcile this per-turn process from BUSY after the attempt
+                        // settlement has completed. If settlement failed, leave the
+                        // guard active so Drop degrades the uncertain host row.
+                        finish_per_session_host(&mut adapter, &mut host_state_guard)?;
+                    }
                     return Err(format!(
                         "OpenCode turn failed closed: {}",
                         reason_code.reason_code()
@@ -1172,6 +1446,12 @@ fn execute_agent_turn(
             })
             .map_err(|e| format!("Commit response error: {e:?}"))?;
 
+            // The response transaction closes the AgentSession and returns its
+            // host row to READY. The process remains owned until after this commit;
+            // only observed process exit can move the per-session row to STOPPED.
+            host_state_guard.mark_ready_after_session_close();
+            finish_per_session_host(&mut adapter, &mut host_state_guard)?;
+
             Ok(TurnOutcome::Committed)
         }
         _ => Err(format!(
@@ -1180,10 +1460,70 @@ fn execute_agent_turn(
     }
 }
 
+fn finish_per_session_host(
+    adapter: &mut OpenCodeAdapter,
+    host_state_guard: &mut ReadyHostStateGuard,
+) -> Result<(), String> {
+    reconcile_per_session_host_shutdown(
+        || adapter.shutdown(),
+        |next_state| host_state_guard.finish(next_state),
+    )
+}
+
+fn reconcile_per_session_host_shutdown(
+    stop: impl FnOnce() -> bool,
+    persist_state: impl FnOnce(&'static str) -> Result<(), String>,
+) -> Result<(), String> {
+    let process_stopped = stop();
+    persist_state(if process_stopped {
+        "STOPPED"
+    } else {
+        "DEGRADED"
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activation_versions_derive_from_committed_starting_version() {
+        assert_eq!(session_activation_versions(17), Some((17, 18)));
+        assert_eq!(session_activation_versions(0), None);
+        assert_eq!(session_activation_versions(u64::MAX), None);
+    }
     use storage_core::StoreError;
+
+    #[test]
+    fn per_session_host_state_follows_observed_process_shutdown() {
+        let order = std::cell::RefCell::new(Vec::new());
+        reconcile_per_session_host_shutdown(
+            || {
+                order.borrow_mut().push("stop");
+                true
+            },
+            |state| {
+                order.borrow_mut().push(state);
+                Ok(())
+            },
+        )
+        .expect("observed process exit should persist STOPPED");
+        assert_eq!(*order.borrow(), ["stop", "STOPPED"]);
+
+        let order = std::cell::RefCell::new(Vec::new());
+        reconcile_per_session_host_shutdown(
+            || {
+                order.borrow_mut().push("stop");
+                false
+            },
+            |state| {
+                order.borrow_mut().push(state);
+                Ok(())
+            },
+        )
+        .expect("unconfirmed exit should persist DEGRADED");
+        assert_eq!(*order.borrow(), ["stop", "DEGRADED"]);
+    }
 
     #[test]
     fn response_commit_identity_is_stable_scoped_and_contains_no_native_identifier() {
@@ -1309,6 +1649,33 @@ mod tests {
             });
         assert!(matches!(exhausted, Err(StoreError::Database(_))));
         assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn conversation_early_dispatch_failure_retries_settlement_and_keeps_closed_class() {
+        let mut calls = 0;
+        let class = settle_dispatch_failure(DispatchFailureClass::ProfileLookup, || {
+            calls += 1;
+            if calls == 1 {
+                Err(StoreError::Busy)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(class, DispatchFailureClass::ProfileLookup);
+        assert_eq!(calls, 2, "transient settlement errors are retried");
+
+        let class = settle_dispatch_failure(DispatchFailureClass::HostResolution, || {
+            Err(StoreError::Invalid(
+                "provider secret must not leak".to_owned(),
+            ))
+        });
+        assert_eq!(class, DispatchFailureClass::Settlement);
+        assert_eq!(
+            class.as_str(),
+            "SETTLEMENT",
+            "permanent settlement details collapse to a closed class for recovery"
+        );
     }
 
     #[test]

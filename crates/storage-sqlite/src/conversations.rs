@@ -1129,26 +1129,26 @@ impl ConversationTurnStore for SqliteConversationStore {
                 return Ok(replay);
             }
 
-            // 3. Verify turn exists and is RUNNING with expected_turn_version
+            // 3. Verify the turn version. A single Stop transition may advance the
+            // activation version before the provider's already-produced final answer
+            // is committed; no other intervening turn mutation is accepted here.
             let current_turn = load_turn(&tx, &commit.workspace_id, &commit.conversation_id, &commit.turn_id)?
                 .ok_or(StoreError::NotFound)?;
-            if current_turn.version != commit.expected_turn_version {
+            let stop_advanced_version = commit.expected_turn_version.checked_add(1);
+            let completion_after_stop = current_turn.status == ConversationTurnStatus::CancelRequested
+                && commit.turn_status == ConversationTurnStatus::Completed
+                && (commit.expected_turn_version == current_turn.version
+                    || stop_advanced_version == Some(current_turn.version));
+            let running_at_activation_version = current_turn.status == ConversationTurnStatus::Running
+                && current_turn.version == commit.expected_turn_version;
+            if !running_at_activation_version && !completion_after_stop {
                 return Err(StoreError::Conflict {
                     expected: Some(commit.expected_turn_version),
                     actual: Some(current_turn.version),
                 });
             }
-            // A completion that raced a Stop request stays COMPLETED with its message
-            // (AC-010); every other status, and any non-Completed settlement of a
-            // CANCEL_REQUESTED turn, is rejected.
-            let status_allows_commit = current_turn.status == ConversationTurnStatus::Running
-                || (current_turn.status == ConversationTurnStatus::CancelRequested
-                    && commit.turn_status == ConversationTurnStatus::Completed);
-            if !status_allows_commit {
-                return Err(StoreError::Invalid(
-                    format!("ConversationTurn is not RUNNING (status: {:?})", current_turn.status),
-                ));
-            }
+            let turn_event_from = status_string(current_turn.status)?;
+            let turn_event_to = status_string(commit.turn_status)?;
             if current_turn.retry_ordinal != commit.retry_ordinal {
                 return Err(StoreError::Invalid(
                     "ConversationTurn retry ordinal does not match commit".to_owned(),
@@ -1201,7 +1201,7 @@ impl ConversationTurnStore for SqliteConversationStore {
             let next_conversation_version = conv_version
                 .checked_add(1)
                 .ok_or_else(|| StoreError::Invalid("Conversation version exhausted".to_owned()))?;
-            let next_turn_version = commit.expected_turn_version
+            let next_turn_version = current_turn.version
                 .checked_add(1)
                 .ok_or_else(|| StoreError::Invalid("ConversationTurn version exhausted".to_owned()))?;
             let next_session_version = commit.expected_session_version
@@ -1261,20 +1261,21 @@ impl ConversationTurnStore for SqliteConversationStore {
                 _ => return Err(StoreError::Invalid("Unsupported terminal turn status".to_owned())),
             };
             let turn_settled = tx.execute(
-                "UPDATE conversation_turns SET status=?1, settled_at=?2, version=?3 WHERE turn_id=?4 AND conversation_id=?5 AND status IN ('RUNNING','CANCEL_REQUESTED') AND version=?6",
+                "UPDATE conversation_turns SET status=?1, settled_at=?2, version=?3 WHERE turn_id=?4 AND conversation_id=?5 AND status=?6 AND version=?7",
                 params![
                     turn_status_db_str,
                     commit.message.created_at,
                     to_sql_i64(next_turn_version, "ConversationTurn version")?,
                     commit.turn_id,
                     commit.conversation_id,
-                    to_sql_i64(commit.expected_turn_version, "ConversationTurn version")?,
+                    status_string(current_turn.status)?,
+                    to_sql_i64(current_turn.version, "ConversationTurn version")?,
                 ],
             )
             .map_err(map_database_error)?;
             if turn_settled != 1 {
                 return Err(StoreError::Conflict {
-                    expected: Some(commit.expected_turn_version),
+                    expected: Some(current_turn.version),
                     actual: None,
                 });
             }
@@ -1384,7 +1385,6 @@ impl ConversationTurnStore for SqliteConversationStore {
                 entity_revision: next_turn_version,
                 record_schema_version: 1,
             };
-
             // AgentSession
             current_session.status = "CLOSED".to_owned();
             current_session.closed_at = Some(commit.message.created_at.clone());
@@ -1407,6 +1407,11 @@ impl ConversationTurnStore for SqliteConversationStore {
             commit.message_event.entity_revision = next_conversation_version as u64;
             let message_event = insert_domain_event(&tx, &commit.message_event, &conv_state_ref)?;
 
+            // The event edge and aggregate version must reflect the durable state
+            // that actually won the race, including the committed Stop request.
+            commit.turn_event.payload["from"] = serde_json::json!(turn_event_from);
+            commit.turn_event.payload["to"] = serde_json::json!(turn_event_to);
+            commit.turn_event.payload["aggregate_version"] = serde_json::json!(next_turn_version);
             commit.turn_event.entity_revision = next_turn_version;
             let turn_event = insert_domain_event(&tx, &commit.turn_event, &turn_state_ref)?;
 

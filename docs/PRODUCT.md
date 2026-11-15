@@ -13,6 +13,23 @@ Coworker. The ten-part V1 scope and free-core constraint are frozen in
 Provider-owned costs remain separate; LiteCowork Runtime cloud continuation,
 cross-device support and teamwork remain V2.
 
+## Long-term product direction
+
+LiteCowork's north star is to supersede app switching for supported everyday work:
+people should be able to ask, inspect, decide, create and complete work in one
+coherent workspace instead of moving between separate chat, code, browser, file,
+analysis and automation products. The conversation is the common entry point;
+Projects, Recents and the current job's contextual work surface keep related
+messages, source material, live sessions, results and deliverables together.
+Specialized capabilities remain available as contextual objects and workflows,
+not as separate product modes that make users choose a tool before explaining
+their goal. This is a product direction, not a claim that V1 replaces every
+desktop application or that every provider is already integrated. The detailed
+navigation and right-panel proposal remains under review in the
+[Workspace Experience Revision](WORKSPACE-EXPERIENCE-REVISION-2026-11.md), and
+V1 availability continues to be limited by this contract and each owner's
+qualification evidence.
+
 ## Core user expectations
 
 1. Simple questions remain conversation; outcome-oriented work becomes durable Task state.
@@ -258,4 +275,16 @@ The OpenBot source comparison demonstrates a visual graph editor plus agent tool
 
 The requested product scope includes a live selected computer screen/window in the right panel, separately consented agent disclosure and input, and explicit manual takeover. A managed-browser viewport is a distinct view and does not fulfill the live-computer requirement. Runtime capture/input remains unavailable until its exact provider, OS permissions, revocation, input fencing and recovery qualify. The prior B-32 milestone deferral is historical; the requested design revision and its unresolved provider gates are recorded in [Workspace experience revision](WORKSPACE-EXPERIENCE-REVISION-2026-11.md) and Feature 008.
 
-The primary UI reveals four workspace destinations and keeps secondary modules reachable without permanent sidebar rows. Conversation, interactive answer and expanded Canvas are presentation states in one application. Native registered components and deterministic calculations are the default; saved interactive state and conversational revisions require the separately governed Feature 016 revision. No global BYOK router, hosted account, hidden presentation model or architecture replacement is authorized by importing the supplied design essay.
+The current accepted navigation baseline exposes four workspace destinations and keeps secondary modules reachable without permanent sidebar rows. The 2026-11-14 universal-workspace revision proposes a smaller top level; see below. Conversation, interactive answer and expanded Canvas are presentation states in one application. Native registered components and deterministic calculations are the default; saved interactive state and conversational revisions require the separately governed Feature 016 revision. No global BYOK router, hosted account, hidden presentation model or architecture replacement is authorized by importing the supplied design essay.
+
+### Universal workspace direction - 2026-11-14 (user-confirmed product north star; TARGET)
+
+The product ambition is one adaptable, AI-centered workspace for varied work, not a collection of separate chat, coding, browser or document products. The proposed compact navigation has one workspace home, **New Chat**, **Projects**, and **Recents** as the frequent left-side actions; **Needs You** is a compact attention count and **Settings** sits at the bottom. A single **More** entry provides access to less frequent domain views such as Work, Coworkers, Library, Automations and Discover. These views remain available without occupying permanent top-level tabs. This is a user-directed product-level TARGET; the exact navigation is a UI proposal, and the accepted four-destination navigation remains the release contract until its review is recorded.
+
+The conversation is the place to ask and direct work; a contextual right-side object workspace holds the files, diffs, agent status, browser/computer views, terminal sessions, and rendered or authored outputs relevant to that work. Users can switch among open objects or add one through a searchable **+ / New tab** chooser. The open objects, not a permanent list of every tool, shape the tab strip. Conversation and work history appear together in Recents and can be filtered by type without being split into separate Chat/Work/Code products. Projects group related material but do not create a new security boundary. The exact entry point for each secondary domain is contextual when possible and available through More otherwise.
+
+“Supersede all” is the user-confirmed product north star: make LiteCowork the user's primary AI work environment and remove the need to bounce among separate AI chat, coding, browser, file and task products for supported everyday work. The supplied ChatGPT Work screenshots clarify the right side: it is a contextual object workspace, with open work objects in tabs and a searchable add/open action, alongside the conversation. The product should own the coherent workflow and user experience: one conversation-led starting point, shared project context, contextual live work objects, and finished outputs that can be reopened and continued. Native capabilities should grow to complete useful work in that environment; integrations extend user choice and reach rather than defining LiteCowork as a directory of specialist tools or a thin launcher. This is broader than a specialist chat or coding client. The north star is confirmed; the specific V1 navigation revision remains subject to the release contract and feature review gates below.
+
+This ambition does not make every specialist capability a V1 promise. V1 does not claim to replace every desktop application, own native agents, or safely control every provider. Where a complete workflow depends on an external application or native harness, LiteCowork must say what remains outside its control and treat any handoff as an explicit boundary, not as completion inside LiteCowork. A view appears as available only when its owning domain, authorization, provider and recovery path exist. A tab is a view reference; selecting, restoring, or opening it never starts a process, grants access, begins capture, or dispatches agent work. Native-agent reasoning, sign-in, private transcripts and native tools remain with their harness. Actions outside LiteCowork mediation remain outside LiteCowork Trust and Effect guarantees.
+
+The reference pattern is ChatGPT Work's contextual right-side tabs and object opening, as shown in the user's 2026-11-14 screenshots. Adopt the general workspace pattern, not its private implementation or exact controls. “Open with” a desktop application may be considered as an explicit, owner-reviewed handoff for an exact file/version; it must disclose that the edit occurs outside LiteCowork's mediation and must not imply that changes or permissions are tracked. This is not a V1 capability promise.

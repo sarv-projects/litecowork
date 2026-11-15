@@ -13579,6 +13579,15 @@ fn mark_starting_agent_session_lost_transaction(
             actual: Some(version),
         });
     }
+    // Conversation recovery may settle the turn before it discovers its orphan
+    // STARTING session. Release that local binding after LOST, in this same tx.
+    if expected_scope_kind == "CONVERSATION" {
+        tx.execute(
+            "DELETE FROM agent_session_host_bindings WHERE agent_session_id=?1",
+            [&transition.agent_session_id],
+        )
+        .map_err(map_database_error)?;
+    }
     let event = insert_domain_event(&tx, transition.event, state_ref)?;
     tx.commit().map_err(map_database_error)?;
     Ok(CommittedAgentSession {

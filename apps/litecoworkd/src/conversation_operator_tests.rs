@@ -11,7 +11,7 @@ use serde::Deserialize;
 use std::os::unix::fs::PermissionsExt;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use storage_core::{
-    BlobPurpose, ConversationRecord, ConversationStore, ConversationTurnStore,
+    AgentSessionStore, BlobPurpose, ConversationRecord, ConversationStore, ConversationTurnStore,
     CreateConversationCommit, EventDraft, StoreError, WorkspaceCreateRequest,
     conversation::request_payload_value,
 };
@@ -1668,6 +1668,7 @@ async fn conversation_turn_submit_returns_409_while_another_turn_is_in_flight_an
 struct TurnCommandFixture {
     _directory: tempfile::TempDir,
     database: std::path::PathBuf,
+    store: SqliteWorkspaceStore,
     router: Router,
     supervisor: Arc<crate::agents::AgentSessionSupervisor>,
     conversation_id: &'static str,
@@ -1710,7 +1711,7 @@ fn turn_command_fixture(suffix: &str) -> TurnCommandFixture {
     // No dispatch is spawned by the seeded turns; the router only needs the supervisor
     // handle to signal Stop. Retry spawns a dispatch that fails closed without a host.
     let router = test_router_with_supervisor(
-        store,
+        store.clone(),
         OWNER.to_owned(),
         RUNTIME.to_owned(),
         Arc::clone(&supervisor),
@@ -1718,10 +1719,792 @@ fn turn_command_fixture(suffix: &str) -> TurnCommandFixture {
     TurnCommandFixture {
         _directory: directory,
         database,
+        store,
         router,
         supervisor,
         conversation_id,
     }
+}
+
+async fn admitted_turn_for_dispatch_fixture(
+    fixture: &TurnCommandFixture,
+    request_id: &str,
+) -> (storage_core::conversation::ConversationTurn, String) {
+    use storage_core::{
+        AgentHostInstanceRecord, AgentHostStore, ConversationMessageRecord,
+        CreateConversationTurnCommit,
+    };
+
+    // The fixture intentionally bypasses the HTTP route because `test_router` has no
+    // supervisor and correctly returns a settled 503 after admission. Commit the same
+    // canonical admission records here so the test can invoke the supervisor directly.
+    let turn_id = format!("turn-command-admitted-{request_id}");
+    let message_id = format!("{turn_id}-user-message");
+    let correlation_id = format!("{turn_id}-correlation");
+    let content = serde_json::json!([{
+        "kind": "TEXT",
+        "text": "Dispatch fixture input."
+    }]);
+    let resource_refs = serde_json::json!([]);
+    let author = serde_json::json!({"kind": "USER", "principal_id": OWNER});
+    let payload = serde_json::json!({
+        "operation": "conversation.turn.create.v1",
+        "workspace_id": WORKSPACE_A,
+        "conversation_id": fixture.conversation_id,
+        "turn_id": turn_id,
+        "message_id": message_id,
+        "author": author,
+        "content": content,
+        "resource_refs": resource_refs,
+        "presentation_preference": "AUTO",
+    });
+    let message_context = event_context(RUNTIME, &correlation_id).expect("message event context");
+    let turn_context = event_context(RUNTIME, &correlation_id).expect("turn event context");
+    let message = ConversationMessageRecord {
+        message_id: message_id.clone(),
+        conversation_id: fixture.conversation_id.to_owned(),
+        author: author.clone(),
+        role: "USER".to_owned(),
+        agent_session_id: None,
+        agent_binding_id: None,
+        turn_id: Some(turn_id.clone()),
+        content: content.clone(),
+        resource_refs: resource_refs.clone(),
+        source_channel_ref: None,
+        created_at: message_context.recorded_at.clone(),
+    };
+    let turn = storage_core::conversation::ConversationTurn {
+        turn_id: turn_id.clone(),
+        conversation_id: fixture.conversation_id.to_owned(),
+        user_message_id: message_id.clone(),
+        agent_session_id: None,
+        status: storage_core::conversation::ConversationTurnStatus::Open,
+        retry_ordinal: 0,
+        presentation_preference: storage_core::conversation::PresentationPreference::Auto,
+        created_at: message_context.recorded_at.clone(),
+        settled_at: None,
+        version: 1,
+    };
+    SqliteConversationStore::new(fixture.store.clone())
+        .create_conversation_turn(CreateConversationTurnCommit {
+            request: WorkspaceCreateRequest {
+                principal_id: OWNER.to_owned(),
+                request_id: request_id.to_owned(),
+                request_payload: payload,
+            },
+            principal_id: OWNER.to_owned(),
+            workspace_id: WORKSPACE_A.to_owned(),
+            message,
+            turn,
+            message_event: EventDraft {
+                event_id: message_context.event_id,
+                workspace_id: WORKSPACE_A.to_owned(),
+                entity_type: "Conversation".to_owned(),
+                entity_id: fixture.conversation_id.to_owned(),
+                origin_runtime_id: message_context.origin_runtime_id,
+                entity_revision: 2,
+                hlc_timestamp: message_context.hlc_timestamp,
+                correlation_id: message_context.correlation_id,
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.message.added.v1".to_owned(),
+                payload: serde_json::json!({
+                    "message_id": message_id,
+                    "conversation_id": fixture.conversation_id,
+                    "author": author,
+                    "content_digest": canonical_digest(&content).expect("content digest"),
+                    "resource_refs": resource_refs,
+                }),
+                recorded_at: message_context.recorded_at,
+            },
+            turn_event: EventDraft {
+                event_id: turn_context.event_id,
+                workspace_id: WORKSPACE_A.to_owned(),
+                entity_type: "ConversationTurn".to_owned(),
+                entity_id: turn_id.clone(),
+                origin_runtime_id: turn_context.origin_runtime_id,
+                entity_revision: 1,
+                hlc_timestamp: turn_context.hlc_timestamp,
+                correlation_id: turn_context.correlation_id,
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.turn.created.v2".to_owned(),
+                payload: serde_json::json!({
+                    "turn_id": turn_id,
+                    "conversation_id": fixture.conversation_id,
+                    "user_message_id": message_id,
+                    "agent_binding_id": "turn-command-binding",
+                    "aggregate_version": 1,
+                    "presentation_preference": "AUTO",
+                }),
+                recorded_at: turn_context.recorded_at,
+            },
+        })
+        .expect("durable USER message, OPEN turn and dispatch intent commit together");
+    // Model a host that has already completed its own startup/readiness transition.
+    // The supervisor's lazy host-create branch is a distinct earlier stage and is not
+    // the session-reservation failure this fixture is intended to exercise.
+    let host_instance_id = "host-turn-command-binding-endpoint";
+    fixture
+        .store
+        .create_agent_host_instance(AgentHostInstanceRecord {
+            host_instance_id: host_instance_id.to_owned(),
+            runtime_id: "turn-command-binding-runtime".to_owned(),
+            runtime_incarnation_id: "turn-command-binding-incarnation".to_owned(),
+            agent_profile_id: "turn-command-binding-profile".to_owned(),
+            endpoint_id: "turn-command-binding-endpoint".to_owned(),
+            hosting_mode: "LOCAL_PER_SESSION".to_owned(),
+            state: "STARTING".to_owned(),
+            process_identity_ref: None,
+            ownership: "LITECOWORK".to_owned(),
+            started_at: "2026-10-15T12:00:00.000000000Z".to_owned(),
+            last_used_at: "2026-10-15T12:00:00.000000000Z".to_owned(),
+            idle_since: None,
+        })
+        .expect("seed the AgentHost lifecycle at STARTING");
+    fixture
+        .store
+        .transition_agent_host_instance(
+            "turn-command-binding-runtime",
+            "turn-command-binding-incarnation",
+            host_instance_id,
+            "STARTING",
+            "READY",
+            "2026-10-15T12:00:01.000000000Z",
+            Some("fixture-host-process"),
+        )
+        .expect("host readiness is observed before Conversation dispatch");
+    let turn = SqliteConversationStore::new(fixture.store.clone())
+        .get_conversation_turn(WORKSPACE_A, fixture.conversation_id, &turn_id)
+        .expect("load admitted turn")
+        .expect("admitted turn exists");
+    (turn, turn_id)
+}
+
+#[tokio::test]
+async fn conversation_dispatch_host_resolution_error_settles_the_admitted_attempt() {
+    use storage_core::{
+        ConversationMessageRecord, CreateConversationTurnCommit, WorkspaceCreateRequest,
+    };
+
+    let fixture = turn_command_fixture("turn-early-host-resolution-error");
+    let turn_id = "turn-early-host-resolution-error";
+    let message_id = "turn-early-host-resolution-user";
+    let correlation_id = "turn-early-host-resolution-correlation";
+    let content = serde_json::json!([{"kind":"TEXT","text":"Fault-injected setup failure."}]);
+    let resource_refs = serde_json::json!([]);
+    let author = serde_json::json!({"kind":"USER","principal_id":OWNER});
+    let request_payload = serde_json::json!({
+        "operation": "conversation.turn.create.v1",
+        "workspace_id": WORKSPACE_A,
+        "conversation_id": fixture.conversation_id,
+        "turn_id": turn_id,
+        "message_id": message_id,
+        "author": author,
+        "content": content,
+        "resource_refs": resource_refs,
+        "presentation_preference": "AUTO",
+    });
+    let message_context = event_context(RUNTIME, correlation_id).expect("message event context");
+    let turn_context = event_context(RUNTIME, correlation_id).expect("turn event context");
+    let message = ConversationMessageRecord {
+        message_id: message_id.to_owned(),
+        conversation_id: fixture.conversation_id.to_owned(),
+        author: author.clone(),
+        role: "USER".to_owned(),
+        agent_session_id: None,
+        agent_binding_id: None,
+        turn_id: Some(turn_id.to_owned()),
+        content: content.clone(),
+        resource_refs: resource_refs.clone(),
+        source_channel_ref: None,
+        created_at: message_context.recorded_at.clone(),
+    };
+    let turn = ConversationTurn {
+        turn_id: turn_id.to_owned(),
+        conversation_id: fixture.conversation_id.to_owned(),
+        user_message_id: message_id.to_owned(),
+        agent_session_id: None,
+        status: ConversationTurnStatus::Open,
+        retry_ordinal: 0,
+        presentation_preference: PresentationPreference::Auto,
+        created_at: message_context.recorded_at.clone(),
+        settled_at: None,
+        version: 1,
+    };
+    let commit = CreateConversationTurnCommit {
+        request: WorkspaceCreateRequest {
+            principal_id: OWNER.to_owned(),
+            request_id: "turn-early-host-resolution-request".to_owned(),
+            request_payload,
+        },
+        principal_id: OWNER.to_owned(),
+        workspace_id: WORKSPACE_A.to_owned(),
+        message,
+        turn,
+        message_event: EventDraft {
+            event_id: message_context.event_id,
+            workspace_id: WORKSPACE_A.to_owned(),
+            entity_type: "Conversation".to_owned(),
+            entity_id: fixture.conversation_id.to_owned(),
+            origin_runtime_id: message_context.origin_runtime_id,
+            entity_revision: 2,
+            hlc_timestamp: message_context.hlc_timestamp,
+            correlation_id: message_context.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.message.added.v1".to_owned(),
+            payload: serde_json::json!({
+                "message_id": message_id,
+                "conversation_id": fixture.conversation_id,
+                "author": author,
+                "content_digest": canonical_digest(&content).expect("content digest"),
+                "resource_refs": resource_refs,
+            }),
+            recorded_at: message_context.recorded_at,
+        },
+        turn_event: EventDraft {
+            event_id: turn_context.event_id,
+            workspace_id: WORKSPACE_A.to_owned(),
+            entity_type: "ConversationTurn".to_owned(),
+            entity_id: turn_id.to_owned(),
+            origin_runtime_id: turn_context.origin_runtime_id,
+            entity_revision: 1,
+            hlc_timestamp: turn_context.hlc_timestamp,
+            correlation_id: turn_context.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.turn.created.v2".to_owned(),
+            payload: serde_json::json!({
+                "turn_id": turn_id,
+                "conversation_id": fixture.conversation_id,
+                "user_message_id": message_id,
+                "agent_binding_id": "turn-command-binding",
+                "aggregate_version": 1,
+                "presentation_preference": "AUTO",
+            }),
+            recorded_at: turn_context.recorded_at,
+        },
+    };
+    let admitted = SqliteConversationStore::new(fixture.store.clone())
+        .create_conversation_turn(commit)
+        .expect("USER, OPEN turn and dispatch intent commit together");
+
+    // Force the first supervisor setup lookup to fail while leaving the durable turn and
+    // all records required for settlement intact.
+    fixture
+        .connection()
+        .execute_batch("DROP TABLE runtime_offers")
+        .expect("remove the probed offer table to inject host-resolution failure");
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            admitted.turn,
+            correlation_id,
+        )
+        .await;
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::HostResolution)
+    );
+    assert_eq!(
+        fixture.turn_row(turn_id).0,
+        "FAILED",
+        "post-admission host lookup errors cannot strand an OPEN turn"
+    );
+    assert_eq!(fixture.intents(turn_id), vec![(0, "SETTLED".to_owned())]);
+    let reason: String = fixture
+        .connection()
+        .query_row(
+            "SELECT json_extract(payload_json,'$.reason_code') FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1 AND type='conversation.turn.settled.v1'",
+            [turn_id],
+            |row| row.get(0),
+        )
+        .expect("read the typed settlement reason");
+    assert_eq!(reason, "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE");
+}
+
+#[tokio::test]
+async fn conversation_dispatch_profile_lookup_error_settles_claimed_attempt() {
+    let fixture = turn_command_fixture("turn-profile-lookup-error");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-profile-lookup-error").await;
+
+    // Host resolution and binding lookup both succeed without consulting the
+    // profile catalog. Remove that catalog to fault the later profile lookup.
+    fixture
+        .connection()
+        .execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE agent_profiles")
+        .expect("remove the profile catalog to inject a profile lookup error");
+
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-profile-lookup-correlation",
+        )
+        .await;
+
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::ProfileLookup)
+    );
+    assert_eq!(
+        fixture.turn_row(&turn_id).0,
+        "FAILED",
+        "profile lookup failure after admission cannot strand the OPEN turn"
+    );
+    assert_eq!(
+        fixture.intents(&turn_id),
+        vec![(0, "SETTLED".to_owned())],
+        "the claimed intent settles with the failed attempt"
+    );
+    let session_count: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("count sessions before reservation");
+    assert_eq!(
+        session_count, 0,
+        "profile lookup fails before session reservation"
+    );
+}
+
+#[tokio::test]
+async fn conversation_dispatch_binding_lookup_error_settles_admitted_attempt() {
+    let fixture = turn_command_fixture("turn-binding-lookup-error");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-binding-lookup-error").await;
+
+    // Host resolution only needs the binding's routing fields. Corrupt the unused
+    // configuration payload so host resolution succeeds, but the subsequent full
+    // AgentBinding decode fails at the supervisor's dedicated lookup boundary.
+    fixture
+        .connection()
+        .execute(
+            "UPDATE agent_bindings SET configuration_json='not-json' WHERE workspace_id=?1 AND agent_binding_id=?2",
+            rusqlite::params![WORKSPACE_A, "turn-command-binding"],
+        )
+        .expect("inject a binding decode failure without breaking host resolution");
+
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-binding-lookup-correlation",
+        )
+        .await;
+
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::BindingLookup)
+    );
+    assert_eq!(
+        fixture.turn_row(&turn_id).0,
+        "FAILED",
+        "binding decode failure after admission cannot strand the OPEN turn"
+    );
+    assert_eq!(
+        fixture.intents(&turn_id),
+        vec![(0, "SETTLED".to_owned())],
+        "the unclaimed intent settles with the failed attempt"
+    );
+    let session_count: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("count sessions before reservation");
+    assert_eq!(
+        session_count, 0,
+        "binding lookup fails before session reservation"
+    );
+}
+
+#[tokio::test]
+async fn conversation_dispatch_session_reservation_error_settles_claimed_attempt() {
+    let fixture = turn_command_fixture("turn-session-reservation-error");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-session-reservation-error").await;
+
+    // Fail after the supervisor has claimed the intent but before a STARTING session
+    // can be committed. This exercises settlement of the exact claimed attempt.
+    fixture
+        .connection()
+        .execute_batch(
+            "CREATE TRIGGER reject_starting_conversation_session BEFORE INSERT ON agent_sessions WHEN NEW.status='STARTING' BEGIN SELECT RAISE(ABORT, 'injected session reservation failure'); END;",
+        )
+        .expect("install session reservation fault");
+
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-session-reservation-correlation",
+        )
+        .await;
+
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::SessionReservation)
+    );
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    let session_count: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("count the failed reservation");
+    assert_eq!(session_count, 0, "failed STARTING reservation is atomic");
+}
+
+#[tokio::test]
+async fn conversation_dispatch_does_not_admit_a_fabricated_ready_host() {
+    let fixture = turn_command_fixture("turn-host-instance-create-error");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-host-instance-create-error").await;
+
+    // The fixture seeds a lifecycle-ready host for other dispatch-stage tests. Remove
+    // it here to confirm dispatch no longer fabricates READY before any native process
+    // exists. This fixture's Codex endpoint is intentionally not Send-capable, so the
+    // turn must settle at the provider boundary without creating a false host record.
+    fixture
+        .connection()
+        .execute(
+            "DELETE FROM agent_host_instances WHERE host_instance_id=?1",
+            ["host-turn-command-binding-endpoint"],
+        )
+        .expect("remove the fixture host to exercise lazy host creation");
+
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-host-instance-create-error-correlation",
+        )
+        .await;
+
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::ProviderExecution)
+    );
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    let session_count: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("count any session reservation");
+    assert_eq!(
+        session_count, 1,
+        "the claimed attempt has one reserved session"
+    );
+    let host_count: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM agent_host_instances WHERE host_instance_id LIKE 'host-ses-%' AND state='READY'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count any falsely-ready hosts");
+    assert_eq!(
+        host_count, 0,
+        "a host is not READY until native readiness is observed"
+    );
+}
+
+#[tokio::test]
+async fn conversation_dispatch_intent_claim_error_settles_unclaimed_attempt() {
+    let fixture = turn_command_fixture("turn-dispatch-intent-claim-error");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-dispatch-intent-claim-error").await;
+
+    // Fail the durable compare-and-swap before any AgentSession reservation. The
+    // admitted OPEN turn must still reach a durable terminal state, and no native
+    // session may be created for an intent the dispatcher did not claim.
+    fixture
+        .connection()
+        .execute_batch(
+            "CREATE TRIGGER reject_conversation_dispatch_claim BEFORE UPDATE OF state ON conversation_dispatch_intents WHEN NEW.state='CLAIMED' BEGIN SELECT RAISE(ABORT, 'injected dispatch claim failure'); END;",
+        )
+        .expect("install dispatch-intent claim fault");
+
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-dispatch-intent-claim-correlation",
+        )
+        .await;
+
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::DispatchIntentClaim)
+    );
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    let session_count: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("count sessions for an unclaimed dispatch");
+    assert_eq!(session_count, 0, "unclaimed intent owns no AgentSession");
+}
+
+#[tokio::test]
+async fn conversation_dispatch_settlement_failure_stays_fenced_until_startup_recovery() {
+    let fixture = turn_command_fixture("turn-dispatch-settlement-recovery");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-dispatch-settlement-recovery").await;
+
+    // Fail the STARTING-session reservation after the dispatch intent is claimed,
+    // then prevent its settlement transaction from committing. The claimed intent
+    // must fence dispatch until startup recovery.
+    fixture
+        .connection()
+        .execute_batch(
+            "CREATE TRIGGER reject_starting_conversation_session BEFORE INSERT ON agent_sessions
+             WHEN NEW.status='STARTING'
+             BEGIN SELECT RAISE(ABORT, 'injected session reservation failure'); END;
+             CREATE TRIGGER reject_conversation_settlement BEFORE INSERT ON domain_events
+             WHEN NEW.type='conversation.turn.settled.v1'
+             BEGIN SELECT RAISE(ABORT, 'injected settlement outage'); END;",
+        )
+        .expect("inject a persistent settlement failure");
+
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-dispatch-settlement-recovery-correlation",
+        )
+        .await;
+
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::Settlement)
+    );
+    assert_eq!(fixture.turn_row(&turn_id).0, "OPEN");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "CLAIMED".to_owned())]);
+    assert!(
+        fixture
+            .connection()
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM agent_sessions WHERE conversation_turn_id=?1)",
+                [&turn_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("check no native session was reserved")
+    );
+
+    fixture
+        .connection()
+        .execute_batch(
+            "DROP TRIGGER reject_starting_conversation_session;
+             DROP TRIGGER reject_conversation_settlement;",
+        )
+        .expect("restore settlement storage for restart recovery");
+    let report = crate::agents::conversation_recovery::recover_conversation_sessions(
+        &fixture.store,
+        RUNTIME,
+        OWNER,
+    );
+
+    assert_eq!((report.failures, report.intents_settled), (0, 1));
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    let reason: String = fixture
+        .connection()
+        .query_row(
+            "SELECT json_extract(payload_json,'$.reason_code') FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1 AND type='conversation.turn.settled.v1'",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("read the recovery reason");
+    assert_eq!(reason, "RUNTIME_RESTARTED");
+}
+
+#[tokio::test]
+async fn conversation_blocking_dispatch_panic_settles_admitted_attempt() {
+    let fixture = turn_command_fixture("turn-blocking-dispatch-panic");
+    let (_turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-blocking-dispatch-panic").await;
+    let host = SqliteConversationStore::new(fixture.store.clone())
+        .resolve_conversation_session_host_for_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            &turn_id,
+        )
+        .expect("resolve turn-pinned host")
+        .expect("fixture host is eligible");
+    let session_id = format!("{turn_id}-starting-session");
+    let now = "2026-11-15T12:00:00Z";
+    fixture
+        .store
+        .start_conversation_agent_session(storage_core::ConversationAgentSessionStart {
+            request: WorkspaceCreateRequest {
+                principal_id: OWNER.to_owned(),
+                request_id: format!("req-{session_id}"),
+                request_payload: serde_json::json!({
+                    "operation":"agent-session.start-conversation.v1",
+                    "workspace_id":WORKSPACE_A,
+                    "conversation_id":fixture.conversation_id,
+                    "conversation_turn_id":turn_id,
+                    "agent_session_id":session_id,
+                }),
+            },
+            session: storage_core::AgentSessionRecord {
+                agent_session_id: session_id.clone(),
+                workspace_id: WORKSPACE_A.to_owned(),
+                scope_kind: "CONVERSATION".to_owned(),
+                conversation_id: Some(fixture.conversation_id.to_owned()),
+                conversation_turn_id: Some(turn_id.clone()),
+                task_id: None,
+                task_spec_revision: None,
+                attempt_id: None,
+                agent_binding_id: host.agent_binding_id.clone(),
+                endpoint_id: host.endpoint_id.clone(),
+                runtime_id: host.runtime_id.clone(),
+                runtime_incarnation_id: host.runtime_incarnation_id.clone(),
+                configuration_digest: None,
+                harness_descriptor_digest: None,
+                status: "STARTING".to_owned(),
+                started_at: now.to_owned(),
+                last_event_at: Some(now.to_owned()),
+                closed_at: None,
+                version: 1,
+            },
+            event: EventDraft {
+                event_id: format!("event-{session_id}-starting"),
+                workspace_id: WORKSPACE_A.to_owned(),
+                entity_type: "AgentSession".to_owned(),
+                entity_id: session_id.clone(),
+                origin_runtime_id: RUNTIME.to_owned(),
+                entity_revision: 1,
+                hlc_timestamp: now.to_owned(),
+                correlation_id: "turn-blocking-dispatch-panic-correlation".to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "agent.session.starting.v1".to_owned(),
+                payload: serde_json::json!({
+                    "agent_session_id":session_id,
+                    "task_spec_revision":null,
+                    "scope":{
+                        "kind":"CONVERSATION",
+                        "conversation_id":fixture.conversation_id,
+                        "conversation_turn_id":turn_id,
+                    },
+                    "agent_binding_id":host.agent_binding_id,
+                    "endpoint_id":host.endpoint_id,
+                    "runtime_id":host.runtime_id,
+                    "runtime_incarnation_id":host.runtime_incarnation_id,
+                    "session_state":"STARTING",
+                    "reported_at":now,
+                }),
+                recorded_at: now.to_owned(),
+            },
+        })
+        .expect("commit the STARTING session before the worker failure");
+    let join_result = tokio::task::spawn_blocking(
+        || -> Result<(), crate::agents::supervisor::DispatchFailureClass> {
+            panic!("injected worker panic with private detail");
+        },
+    )
+    .await;
+    let store = fixture.store.clone();
+    let conversation_id = fixture.conversation_id.to_owned();
+    let turn_id_for_recovery = turn_id.clone();
+    let session_id_for_recovery = session_id.clone();
+    let recovered = crate::agents::supervisor::join_dispatch_or_recover(join_result, move || {
+        crate::agents::supervisor::recover_blocking_dispatch_failure(
+            &store,
+            RUNTIME,
+            OWNER,
+            WORKSPACE_A,
+            &conversation_id,
+            &turn_id_for_recovery,
+            Some(&session_id_for_recovery),
+            "turn-blocking-dispatch-panic-correlation",
+        )
+    })
+    .await;
+
+    assert_eq!(
+        recovered,
+        Err(crate::agents::supervisor::DispatchFailureClass::BlockingTask)
+    );
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    let session_status: String = fixture
+        .connection()
+        .query_row(
+            "SELECT status FROM agent_sessions WHERE agent_session_id=?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .expect("read the stranded reservation");
+    assert_eq!(
+        session_status, "LOST",
+        "the exact STARTING session is released"
+    );
+    let message_counts: (i64, i64) = fixture
+        .connection()
+        .query_row(
+            "SELECT SUM(role='USER'), SUM(role='AGENT') FROM conversation_messages WHERE turn_id=?1",
+            [&turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("count messages for the failed turn");
+    assert_eq!(
+        message_counts,
+        (1, 0),
+        "the USER message remains; no answer is fabricated"
+    );
+    let reason: String = fixture
+        .connection()
+        .query_row(
+            "SELECT json_extract(payload_json,'$.reason_code') FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1 AND type='conversation.turn.settled.v1'",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("read the typed settlement reason");
+    assert_eq!(reason, "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE");
 }
 
 impl TurnCommandFixture {
@@ -1871,8 +2654,12 @@ async fn conversation_stop_and_retry_failed_turn_lifecycle() {
         .command("turn-failed", "retry", "retry-key-2", 3)
         .await;
     assert_eq!(stale.status(), StatusCode::PRECONDITION_FAILED);
-    let not_failed = fixture
-        .command("turn-failed", "retry", "retry-key-3", 4)
+    // Keep the status-conflict assertion independent both from asynchronous dispatch
+    // settling the retried attempt and from the one-active-turn Conversation guard.
+    let running_fixture = turn_command_fixture("turn-retry-running-workspace");
+    running_fixture.seed_turn("turn-running", "RUNNING", 4, 0);
+    let not_failed = running_fixture
+        .command("turn-running", "retry", "retry-key-3", 4)
         .await;
     assert_eq!(not_failed.status(), StatusCode::CONFLICT);
 }

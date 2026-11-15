@@ -337,13 +337,10 @@ impl TurnObserver for TurnActivityRecorder {
                 };
                 self.record("TOOL", status, activity_call_ref(call_id), None);
             }
-            NormalizedAgentEvent::PermissionAsked { permission_id } => {
-                self.record(
-                    "PERMISSION",
-                    "ASKED",
-                    activity_call_ref(permission_id),
-                    None,
-                );
+            NormalizedAgentEvent::PermissionAsked { .. } => {
+                // The native permission ID is a Runtime-local reply key, not a
+                // public activity correlation reference or durable record.
+                self.record("PERMISSION", "ASKED", None, None);
             }
             NormalizedAgentEvent::FileChanged { .. } => self.record("FILE", "UPDATED", None, None),
             NormalizedAgentEvent::TodoUpdated { count } => {
@@ -538,10 +535,19 @@ mod tests {
             "label keeps only safe characters"
         );
         assert_eq!(frames[1]["status"], "FAILED");
+        assert!(
+            frames[4]["call_ref"].is_null(),
+            "native permission IDs must not enter public frames"
+        );
         let rows = stored.lock().unwrap();
         assert_eq!(rows.len(), 5);
         assert_eq!(rows[3].kind, "TODO");
         assert_eq!(rows[3].label.as_deref(), Some("3"));
+        assert_eq!(rows[4].kind, "PERMISSION");
+        assert_eq!(
+            rows[4].call_ref, None,
+            "native permission IDs must not be persisted"
+        );
         assert!(rows.iter().all(|r| r.kind != "EFFECT"));
     }
 

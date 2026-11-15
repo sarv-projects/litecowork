@@ -16,6 +16,7 @@ pub(crate) mod control_descriptor;
 mod conversation_prompt;
 pub(crate) mod conversation_recovery;
 pub(crate) mod descriptor_service;
+pub(crate) mod host_supervisor;
 pub(crate) mod matchmaker;
 pub(crate) mod module_registry;
 pub(crate) mod modules;

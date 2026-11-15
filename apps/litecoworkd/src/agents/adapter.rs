@@ -31,6 +31,7 @@
               module tests."
 )]
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -260,8 +261,9 @@ pub(crate) trait AgentAdapter {
     /// Phase 1: version/capability probe.
     fn probe_version(&mut self) -> Result<AdapterVersionInfo, TurnFailure>;
 
-    /// Phase 2: create the native session; returns the opaque native handle.
-    fn create_session(&mut self) -> Result<String, TurnFailure>;
+    /// Phase 2: create the native session at the revalidated Workspace location;
+    /// returns the opaque native handle.
+    fn create_session(&mut self, workspace_directory: &Path) -> Result<String, TurnFailure>;
 
     /// Phase 3: dispatch the bounded committed context to the native session.
     /// Must be called only after the activation commit (AC-004/AC-005).
@@ -285,7 +287,9 @@ pub(crate) trait AgentAdapter {
     fn interrupt(&mut self, native_session_id: &str) -> Result<bool, TurnFailure>;
 
     /// Phase 5b: stop and reap the native process. Idempotent.
-    fn shutdown(&mut self);
+    /// Stop and reap the per-turn host process. Returns true only when process
+    /// exit was observed; callers must keep host state unknown on false.
+    fn shutdown(&mut self) -> bool;
 }
 
 /// Exact provider identity for the launch catalog. Selection is by this closed
@@ -386,7 +390,8 @@ pub(crate) mod acp_method {
 pub(crate) trait AcpClientHandler {
     /// Answer a native permission request. The returned decision is sent back
     /// through the harness; LiteCowork records a REPORTED native prompt, never
-    /// a grant. An unanswered prompt must time out to the harness default.
+    /// a grant. `Defer` maps to ACP's explicit cancelled outcome; ACP does not
+    /// define a harness default or an implicit unanswered-prompt timeout.
     fn request_permission(&mut self, request: &AcpPermissionRequest) -> AcpPermissionDecision;
 
     /// Read a text file on the Client's behalf, enforcing the Workspace
@@ -419,8 +424,8 @@ pub(crate) struct AcpPermissionRequest {
 pub(crate) enum AcpPermissionDecision {
     Allow,
     Deny,
-    /// No owner answer before the harness default deadline; defer to the
-    /// harness default without fabricating an answer.
+    /// No owner answer is available. The ACP adapter must respond with the
+    /// protocol's cancelled outcome; it must never imply a default approval.
     Defer,
 }
 
@@ -579,11 +584,11 @@ impl AgentAdapter for OpenCodeAdapter {
         }
     }
 
-    fn create_session(&mut self) -> Result<String, TurnFailure> {
+    fn create_session(&mut self, workspace_directory: &Path) -> Result<String, TurnFailure> {
         // The V2 session API has no title; the transport refuses a title rather
         // than dropping it, so none is supplied.
         self.server
-            .create_session(None)
+            .create_session(None, workspace_directory)
             .map_err(Self::map_transport_error)
     }
 
@@ -637,8 +642,8 @@ impl AgentAdapter for OpenCodeAdapter {
             .map_err(Self::map_transport_error)
     }
 
-    fn shutdown(&mut self) {
-        let _ = self.server.stop();
+    fn shutdown(&mut self) -> bool {
+        self.server.stop() == OpenCodeProcessState::Exited
     }
 }
 
@@ -693,9 +698,10 @@ fn drive_opencode_stream<S: RawEventSource>(
 /// The drive loop with a cooperative Stop. When `cancel` is set the loop calls
 /// `interrupt` exactly once; an unacknowledged interrupt, or no observed
 /// quiescence within `budget.quiescence_timeout`, ends in `StopUnconfirmed`. After an
-/// acknowledged interrupt the first terminal observation (idle, provider error frame
-/// or closed stream) is a stop observation, never a completion: a completion that
-/// was already observed before the interrupt was sent has been returned earlier.
+/// acknowledged interrupt, a final non-empty text part followed by idle preserves
+/// completion, a correlated provider error preserves failure, and partial text or a
+/// closed stream followed by quiescence is treated as stopped. Live provider ordering
+/// remains unqualified until the pinned event sequence is captured.
 fn drive_opencode_stream_cancellable<S: RawEventSource>(
     stream: &mut S,
     normalizer: &mut OpenCodeEventNormalizer,
@@ -724,6 +730,7 @@ fn drive_opencode_stream_observed<S: RawEventSource>(
     let mut quiescence_deadline: Option<Instant> = None;
     let mut answer_text = String::new();
     let mut saw_text = false;
+    let mut saw_ended_text = false;
 
     loop {
         let now = Instant::now();
@@ -767,10 +774,20 @@ fn drive_opencode_stream_observed<S: RawEventSource>(
                     }
                     Some(NormalizedAgentEvent::TextEnded { text }) => {
                         saw_text = true;
+                        saw_ended_text = true;
                         answer_text = text;
                     }
                     Some(NormalizedAgentEvent::Idle) => {
                         if stopping {
+                            // The current normalizer treats a final text part followed
+                            // by the idle boundary as completion. Partial text followed
+                            // by idle remains stopped; live provider semantics still
+                            // require separate qualification.
+                            if saw_ended_text && !answer_text.trim().is_empty() {
+                                return Ok(TurnObservation::Completed {
+                                    answer_text: answer_text.trim().to_owned(),
+                                });
+                            }
                             return Ok(TurnObservation::Stopped);
                         }
                         if saw_text && !answer_text.trim().is_empty() {
@@ -783,9 +800,6 @@ fn drive_opencode_stream_observed<S: RawEventSource>(
                     Some(NormalizedAgentEvent::ExecutionSettled {
                         outcome: super::normalizer::ToolOutcome::Failed,
                     }) => {
-                        if stopping {
-                            return Ok(TurnObservation::Stopped);
-                        }
                         return Err(TurnFailure::ProviderError);
                     }
                     // Reasoning, tool, file, todo, step, usage and other
@@ -1238,6 +1252,74 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
             })
         );
         assert_eq!(interrupts, 0);
+    }
+
+    #[test]
+    fn selected_adapter_conversation_completion_observed_during_stop_wins_the_race() {
+        // The stop request has already been sent, but the native stream then reports
+        // a completed text part followed by session.idle. The observed answer is the
+        // winning outcome; quiescence alone must not relabel it as Stopped.
+        let cancel = CancelSignal::new();
+        cancel.request();
+        let mut frames = std::collections::VecDeque::new();
+        frames.push_back(Ok(Some(RawEvent {
+            event_type: Some("message.part.updated".to_owned()),
+            data: json!({"type": "message.part.updated", "properties": {"part": {
+                "type": "text", "sessionID": FIXTURE_SESSION, "messageID": "m", "id": "p",
+                "text": "completed during stop", "time": {"start": 1, "end": 2}}}}),
+        })));
+        frames.push_back(Ok(Some(idle_frame())));
+        let mut source = ScriptedSource {
+            frames,
+            then_quiet: false,
+        };
+        let mut normalizer = OpenCodeEventNormalizer::new(FIXTURE_SESSION);
+        let mut interrupts = 0;
+        let observation = drive_opencode_stream_cancellable(
+            &mut source,
+            &mut normalizer,
+            stop_budget(),
+            Instant::now(),
+            Some(&cancel),
+            &mut || {
+                interrupts += 1;
+                true
+            },
+        );
+        assert_eq!(
+            observation,
+            Ok(TurnObservation::Completed {
+                answer_text: "completed during stop".to_owned()
+            })
+        );
+        assert_eq!(interrupts, 1, "the interrupt was sent exactly once");
+    }
+
+    #[test]
+    fn selected_adapter_conversation_provider_failure_observed_during_stop_wins_the_race() {
+        let cancel = CancelSignal::new();
+        cancel.request();
+        let mut source = ScriptedSource {
+            frames: [Ok(Some(RawEvent {
+                event_type: Some("session.error".to_owned()),
+                data: json!({"type": "session.error", "properties": {
+                    "sessionID": FIXTURE_SESSION, "error": {"name": "ProviderError"}
+                }}),
+            }))]
+            .into_iter()
+            .collect(),
+            then_quiet: false,
+        };
+        let mut normalizer = OpenCodeEventNormalizer::new(FIXTURE_SESSION);
+        let observation = drive_opencode_stream_cancellable(
+            &mut source,
+            &mut normalizer,
+            stop_budget(),
+            Instant::now(),
+            Some(&cancel),
+            &mut || true,
+        );
+        assert_eq!(observation, Err(TurnFailure::ProviderError));
     }
 
     #[test]

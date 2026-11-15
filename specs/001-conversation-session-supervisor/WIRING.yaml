@@ -32,14 +32,14 @@ nodes:
     owner: "AgentTurnCoordinator"
     kind: "orchestrator"
     responsibility: "Target owner for turn sequencing, context acquisition, supervisor handoff, ordered outcomes, retry and continuation"
-    implementation_status: "PARTIAL CODE: submit and retry call dispatch_admitted_turn; it asynchronously invokes AgentSessionSupervisor. It does not yet own context acquisition, ordered outcomes, retry/continuation policy, or settlement; early supervisor errors can leave the intent/turn unresolved until restart recovery"
+    implementation_status: "PARTIAL CODE: submit and retry call dispatch_admitted_turn; it asynchronously invokes AgentSessionSupervisor. T20 uses closed dispatch failure classes and bounded settlement retries. A blocking-worker JoinError retains the Runtime-local AgentSession identity and starts an independent exact-attempt settlement; the SQLite regression proves the turn becomes FAILED, a committed STARTING session becomes LOST, the intent settles, and no AGENT answer is fabricated. Profile-catalog and binding-decode fault tests cover ProfileLookup and BindingLookup after host resolution; both leave the admitted turn FAILED, intent SETTLED and no session reservation. If recovery cannot commit, SETTLEMENT is reported and startup recovery retains the durable-fence path. The captured-writer regression proves provider/secret details are absent from the structured stderr bytes; panic-hook and external collector behavior are not verified. It does not yet own context acquisition, ordered outcomes, retry/continuation policy, or the full service boundary; exhaustive setup-stage fault evidence remains open"
     inputs: ["committed turn", "pinned binding", "context package", "normalized outcome"]
     outputs: ["asynchronous supervisor dispatch request"]
   - id: "session-supervisor"
     owner: "AgentSessionSupervisor"
     kind: "runtime supervisor"
     responsibility: "Partially implemented per-turn AgentSession reservation, OpenCode Server startup, readiness activation, bounded event reading and result commit"
-    implementation_status: "PARTIAL CODE: OpenCode v2.0.32 path and v29 dispatch-intent claim are wired. Early lookup/claim/reservation errors can escape without settlement; OpenCode completion-vs-interrupt ambiguity remains; no separately wired AgentHostSupervisor"
+    implementation_status: "PARTIAL CODE: OpenCode v2.0.32 path and v29 dispatch-intent claim are wired. T04/T07 fixtures preserve explicit normalized completion or provider failure observed during Stop; SQLite accepts exactly the observed Stop version edge and emits the actual CANCEL_REQUESTED-to-COMPLETED aggregate edge. StopUnconfirmed leaves CANCEL_REQUESTED but its private outcome is discarded and no typed recovery state is projected. Live pinned-provider semantics and partial/ambiguous output remain unqualified. T03 now persists a unique per-session AgentHostInstance as STARTING before OpenCode spawn, records READY only after the native startup and health checks, stores a Runtime-local PID reference, and records STOPPED only on observed exit; early-error drop attempts DEGRADED. If READY persistence fails and child stop is unconfirmed, the helper re-reads the host record and best-effort marks an extant STARTING/READY/BUSY state DEGRADED, including the lost-ack READY case. A 2026-11-15 T03 CODE regression also carries the committed STARTING AgentSession version into activation CAS and derives the started-event revision with checked arithmetic; the helper regression covers a non-initial version and rejects zero/overflow. This is not a SQLite fault-injection or successful provider-turn test. Five recording-store helper tests cover this mapping; they do not inject SQLite faults or run an OpenCode first-send. A-101 remains open: the current post-stop persistence skips STOPPING and storage allows direct-to-STOPPED edges absent from STATE-MACHINES; the owner-authorized T03/T04 storage alignment is not implemented. The former fabricated READY insertion is removed, but this does not implement the target shared AgentHostSupervisor, process reuse, retained lease, idle TTL, restart reconciliation, or same-host multi-root proof. The adapter still owns and stops the process per turn, including on StopUnconfirmed; the accepted retention rule remains incomplete. Pinned v2.0.32 foreground serve has no public graceful-shutdown route; do not use the separate opencode service stop command. Linux process ownership uses a process group, not the accepted cgroup. Remaining: setup-stage fault coverage, external collector checks, host lifecycle/StopUnconfirmed recovery, and packaged provider qualification"
     inputs: ["exact turn scope", "pinned host", "context package", "adapter observations"]
     outputs: ["storage lifecycle commands", "normalized outcome stream"]
   - id: "invocation-runner"
@@ -52,13 +52,14 @@ nodes:
     owner: "AgentHostSupervisor"
     kind: "process supervisor"
     responsibility: "Target boundary for host process, health, concurrency, references and owned-process stop"
-    implementation_status: "TARGET_ONLY: active dispatch creates/updates a SQLite host record but directly starts/stops OpenCode per turn; no separately wired AgentHostSupervisor was found"
+    implementation_status: "PARTIAL CODE: production OpenCode dispatch calls start_host_process to persist per-session STARTING before spawn and READY after observed startup/health, with a private PID reference. COMPLETED/CANCELLED/FAILED Conversation and session settlement now precedes per-turn shutdown; observed exit then records STOPPED, otherwise DEGRADED. On an unconfirmed stop after READY persistence failure, the helper re-reads the row and best-effort transitions STARTING/READY/BUSY to DEGRADED, including an ambiguous committed READY transition. Five recording-store tests exercise this mapping; no real SQLite fault or provider process is used. A-101 remains open: native stop currently precedes the durable STOPPING transition, and storage accepts direct-to-STOPPED edges absent from STATE-MACHINES. The helper does not own a reusable process pool. The target shared AgentHostSupervisor, host-use lease, idle-TTL stop, daemon-restart reconciliation, neutral Runtime cwd, same-host multi-root proof, and StopUnconfirmed session reference remain absent; per-turn OpenCodeAdapter still owns and kills its server"
     inputs: ["endpoint and Runtime incarnation"]
     outputs: ["host instance identity", "bounded readiness/health observation"]
   - id: "agent-adapter"
     owner: "Qualified AgentAdapter"
     kind: "protocol adapter"
-    responsibility: "Harness-specific session create, input, event, interrupt and stop transport"
+    responsibility: "Harness-specific per-turn session create, input, bounded event and interrupt transport; each OpenCode session gets the revalidated Workspace location explicitly; per-turn cleanup never stops a shared host process"
+    implementation_status: "CODE: OpenCodeAdapter accepts the revalidated Workspace path and sends it in the session-create location field; one Windows fake-transport test captures two distinct paths through one server handle. The current adapter still owns the per-turn server and its shutdown reports only whether process exit was observed; there is no shared host or live provider location evidence"
     inputs: ["bounded Conversation context", "native process/session identity"]
     outputs: ["untrusted bounded protocol frames"]
   - id: "native-host"
@@ -107,7 +108,13 @@ edges:
     to: "turn-coordinator"
     kind: "post-commit dispatch handoff"
     implementation_status: "PARTIAL CODE: submit and retry invoke dispatch_admitted_turn after the durable storage commit"
-    contract: "admitted turn and correlation ID; coordinator claims dispatch intent before STARTING"
+    contract: "admitted turn and correlation ID; supervisor claims dispatch intent before STARTING; first-send intent on an unselected New Chat does not reach this edge"
+  - id: "e23"
+    from: "desktop-ui"
+    to: "operator"
+    kind: "Conversation create command"
+    implementation_status: "CODE/SERVED: when sendTurn has no selected Conversation it invokes create_conversation only, then restores the draft into the created Conversation for a separate second Send; no USER message, turn or dispatch intent is admitted by the first click"
+    contract: "POST /v1/conversations; authenticated selected-Workspace owner and Idempotency-Key; create receipt is distinct from turn admission; the carried draft is process-local and has no turn receipt"
   - id: "e04"
     from: "conversation-service"
     to: "turn-coordinator"
@@ -135,12 +142,13 @@ edges:
     from: "session-supervisor"
     to: "host-supervisor"
     kind: "local-process-control"
+    implementation_status: "PARTIAL CODE: session supervisor calls start_host_process for OpenCode and reconciles STOPPED/DEGRADED on shutdown; failed READY persistence plus unconfirmed cleanup best-effort records DEGRADED after re-reading state. A-101 also records the unresolved STOPPING-before-stop order and unsupported direct terminal edges in the storage validator. No reusable pool or TTL"
     contract: "exact endpoint and Runtime incarnation"
   - id: "e09"
     from: "session-supervisor"
     to: "agent-adapter"
     kind: "adapter-call"
-    contract: "versioned adapter contract; no DB transaction held"
+    contract: "versioned adapter contract; no DB transaction held; OpenCode session creation carries the exact revalidated Workspace location independently of neutral host cwd"
   - id: "e10"
     from: "agent-adapter"
     to: "native-host"
@@ -160,7 +168,7 @@ edges:
     from: "session-supervisor"
     to: "turn-coordinator"
     kind: "lifecycle-outcome"
-    implementation_status: "TARGET_ONLY: coordinator starts supervisor asynchronously and only logs its Result; it does not consume a normalized outcome stream"
+    implementation_status: "PARTIAL CODE: coordinator starts supervisor asynchronously and logs only a structured JSON diagnostic from the closed DispatchFailureClass; it does not consume a normalized outcome stream or own settlement"
     contract: "normalized correlated events and final outcome"
   - id: "e14"
     from: "turn-coordinator"
@@ -172,8 +180,8 @@ edges:
     from: "session-supervisor"
     to: "sqlite-store"
     kind: "transaction"
-    implementation_status: "CODE: OpenCode supervisor invokes SQLite directly; target ConversationService settlement boundary is not wired"
-    contract: "Implemented SQLite atomic AGENT message + terminal turn + session close + events + snapshots + request receipt; qualification/negative cases remain"
+    implementation_status: "CODE: OpenCode supervisor invokes SQLite directly; target ConversationService settlement boundary is not wired. T07 CODE regression covers completion after the one committed Stop version bump and rewrites the settled event edge/version from the transaction's current row"
+    contract: "Implemented SQLite atomic AGENT message + terminal turn + session close + events + snapshots + request receipt; provider, timeout, negative and packaged qualification cases remain"
   - id: "e16"
     from: "sqlite-store"
     to: "presentation-operator"
@@ -200,6 +208,11 @@ edges:
     kind: "provider-input-outcome"
     contract: "confirmed acceptance, rejection with current key, or ambiguous state; no fresh AgentSession before confirmed acceptance"
 transactions:
+  - id: "tx-conversation-create"
+    owner: "Operator route via Storage (target owner: ConversationService)"
+    atomic_records: ["Conversation", "conversation.created.v1", "idempotency receipt"]
+    external_calls_inside: false
+    implementation_status: "CODE/SERVED: creates an empty Conversation only. The current New Chat first-Send UI carries its draft outside this transaction and does not admit a turn until a later Send; that cross-transaction user journey is incomplete"
   - id: "tx-turn-admission"
     owner: "Operator route via Storage (target owner: ConversationService)"
     atomic_records: ["USER ConversationMessage", "OPEN ConversationTurn", "conversation.message.added.v1", "conversation.turn.created.v2", "request receipt", "snapshot/projection", "v29 dispatch intent"]
@@ -209,6 +222,11 @@ transactions:
     owner: "AgentSessionStore"
     atomic_records: ["STARTING AgentSession", "agent.session.starting.v1", "idempotency receipt"]
     external_calls_inside: false
+  - id: "tx-host-instance-start-readiness"
+    owner: "AgentHostStore via start_host_process (target owner: AgentHostSupervisor)"
+    atomic_records: ["STARTING AgentHostInstance", "READY after observed OpenCode startup/health", "FAILED if native startup fails"]
+    external_calls_inside: false
+    implementation_status: "PARTIAL CODE: each OpenCode Conversation session has a unique local host row; process startup/readiness run outside SQLite; terminal turn/session settlement runs before per-turn shutdown, followed by STOPPED/DEGRADED reconciliation. StopUnconfirmed still drops/stops the owned process without retaining its session reference. Shared-host leases, TTL, restart reconciliation, neutral Runtime cwd, same-host multi-root proof and uncertain-stop retention are not implemented"
   - id: "tx-session-activation"
     owner: "AgentSessionStore"
     atomic_records: ["ACTIVE AgentSession", "RUNNING ConversationTurn", "agent.session.started.v1", "conversation.turn.status.changed.v1", "snapshots", "Runtime-local AgentSessionHostBinding"]
@@ -247,7 +265,7 @@ external_boundaries:
 recovery:
   owner: "Runtime startup recovery with Storage (target orchestration owners: AgentTurnCoordinator / ConversationService)"
   source_of_truth: ["AgentSession", "ConversationTurn", "DomainEvent", "AgentSessionHostBinding"]
-  implementation_status: "CODE: runtime startup invokes agents/conversation_recovery.rs; unsettled prior-incarnation intents are FAILED with RUNTIME_RESTARTED, orphan STARTING sessions are released LOST; no real process-kill or exact-provider SYSTEM/USER qualification"
+  implementation_status: "PARTIAL CODE: runtime startup invokes agents/conversation_recovery.rs before Operator admission; tests cover seeded RUNNING/CANCEL_REQUESTED/OPEN-UNCLAIMED states, a CLAIMED intent after settlement failure, prior-incarnation RUNNING + ACTIVE AgentSession recovery to FAILED/LOST with binding release, and an orphan STARTING -> LOST with turn/intent settlement and idempotency; exact failed-turn UI/Retry projection, the crash-after-final-commit case, the full matrix, and real process-kill or packaged restart qualification remain open"
   known_gap: "Live provider quiescence, crash/restart and packaged recovery qualification remain open"
   restart_action: "Settle prior-incarnation unsettled intents FAILED with RUNTIME_RESTARTED, release orphan STARTING sessions LOST; never replay uncertain prompt across incarnation"
   ui_action: "resume durable projection cursor and authorized snapshot; discard non-replayable transient frames"

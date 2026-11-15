@@ -106,8 +106,10 @@ fn materialize_one(
     if record.sensitivity == "RESTRICTED" {
         return Err(MaterializeError::Restricted);
     }
-    if let (Some(pinned), Some(head)) = (&part.revision_id, &record.current_revision_id)
-        && pinned != head
+    if part
+        .revision_id
+        .as_deref()
+        .is_some_and(|pinned| record.current_revision_id.as_deref() != Some(pinned))
     {
         return Err(MaterializeError::StaleRevision);
     }
@@ -589,6 +591,78 @@ mod tests {
         assert_eq!(
             check_resource_refs(&store, WORKSPACE, &[reference(WORKSPACE, "notes", None)]),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn conversation_resource_materialization_refuses_pinned_revision_without_unique_current_head() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = open(&directory);
+        workspace(&store, WORKSPACE);
+        let revision = resource(
+            &store,
+            WORKSPACE,
+            "branching-notes",
+            "notes.txt",
+            "text/plain",
+            "PERSONAL",
+            b"branch content",
+        );
+
+        // Simulate a legacy conflicted Resource row. The current schema's write trigger
+        // prevents creating this state through a normal mutation, but a valid older DB can
+        // already contain a null head when opened by a newer binary.
+        let connection = rusqlite::Connection::open(directory.path().join("state.sqlite3"))
+            .expect("open fixture database");
+        connection
+            .busy_timeout(std::time::Duration::from_secs(2))
+            .expect("set fixture database timeout");
+        connection
+            .execute_batch("DROP TRIGGER resource_content_blob_registry_head_update_guard")
+            .expect("allow legacy conflict fixture");
+        let (digest, size_bytes, media_type): (String, i64, String) = connection
+            .query_row(
+                "SELECT content_digest, size_bytes, media_type FROM resource_revisions WHERE resource_id = ?1 AND resource_revision_id = ?2",
+                rusqlite::params!["branching-notes", revision],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("read first revision metadata");
+        connection
+            .execute(
+                "INSERT INTO resource_revisions(resource_revision_id, resource_id, provider_revision, content_digest, size_bytes, media_type, observed_at, created_by_json) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, '{}')",
+                rusqlite::params![
+                    "revision-branching-notes-sibling",
+                    "branching-notes",
+                    digest,
+                    size_bytes,
+                    media_type,
+                    NOW
+                ],
+            )
+            .expect("add an incomparable sibling revision");
+        let changed = connection
+            .execute(
+                "UPDATE resources SET current_revision_id = NULL WHERE workspace_id = ?1 AND resource_id = ?2",
+                rusqlite::params![WORKSPACE, "branching-notes"],
+            )
+            .expect("remove unique current head");
+        assert_eq!(changed, 1);
+
+        let pinned = reference(WORKSPACE, "branching-notes", Some(&revision));
+        assert_eq!(
+            materialize_conversation_resources(
+                &store,
+                WORKSPACE,
+                package(json!([pinned.clone()]), None),
+            )
+            .err(),
+            Some(MaterializeError::StaleRevision),
+            "dispatch-time materialization must refuse a branch when no unique head exists"
+        );
+        assert_eq!(
+            check_resource_refs(&store, WORKSPACE, &[pinned]),
+            Err(MaterializeError::StaleRevision),
+            "submit-time validation must apply the same unique-head rule"
         );
     }
 }

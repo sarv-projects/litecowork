@@ -457,16 +457,18 @@ Cross-cutting owner issue A-83: the accepted revision 1.0 AC-009/CommandReceipt 
 
 ## 008-T22 - Review revision 1.1 scope, attachment and authority decisions
 
-- **Status:** NOT STARTED (revision 1.1 TARGET; owner review/promotion required before implementation)
+- **Status:** PARTIAL (2026-11-14 TARGET design updated; owner review/promotion and remaining decisions required before implementation)
 - **Depends on:** NONE
 - **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
 - **Owner:** Desktop shell, Environments, Trust, Product
 - **Allowed paths:** this package; docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md; docs/V1-INTEGRATED-TERMINAL-LLD.md; owning global contracts
-- **Contract:** SPEC section 20 AC-020 through AC-027; Computer LLD; Integrated Terminal LLD revision 1.1.
-- **Change intent:** Record the explicit user scope correction; reconcile B-32/AC-016, observation-only Desktop attachment, physical input-domain arbitration, Conversation vision grant scope, out-of-app emergency takeover reachability while the target app is foreground, manual-host terminal decision, and A-83's per-command receipt versus PTY input evidence conflict. The active Computer session shows a persistent, non-modal in-app Take over/Stop run strip; a native/global trigger covers the background case. Ordinary text-only runs use their own Stop control and never show Computer Take over without an active Computer input lease. Pin exact OS/provider candidates only after review.
+- **Contract:** SPEC section 20 AC-020 through AC-029; Computer LLD; Integrated Terminal LLD revision 1.1; Workspace Experience Revision.
+- **Change intent:** Record the explicit user scope correction; reconcile B-32/AC-016, observation-only Desktop attachment, physical input-domain arbitration, Conversation vision grant scope, out-of-app emergency takeover reachability while the target app is foreground, manual-host terminal decision, and A-83's per-command receipt versus PTY input evidence conflict. Add the 2026-11-14 universal-workspace scope: contextual object tabs, searchable +/New tab discovery, object-reference reauthorization and the distinction between provider-reported public agent status and private native-harness internals. Add the companion navigation decision for owner review: one conversation-led workspace with New Chat, Projects and unified Recents in the frequent navigation set; domain pages are contextually linked or grouped under one More entry; there is no separate Chat/Code/Cowork mode switch. The active Computer session shows a persistent, non-modal in-app Take over/Stop run strip; a native/global trigger covers the background case. Ordinary text-only runs use their own Stop control and never show Computer Take over without an active Computer input lease. External-app handoff remains a separate unapproved decision. Pin exact OS/provider candidates only after review.
 - **Acceptance:**
   - [ ] Recorded owner decisions distinguish local preview, model disclosure and input; no unsupported Task or isolation bypass; no fabricated acceptance.
   - [ ] A-83 defines whether terminal receipts describe process termination, a separately admitted ProcessRunner command, or a qualified shell-integration signal; untrusted PTY output is never treated as verified Task/Effect evidence.
+  - [ ] The generalized workspace shell is distinguished from provider availability; chooser/tab selection creates no authority or process side effect; URL entry is owned by a qualified Browser path; public agent status is not inferred from ACP; external **Open with** behavior remains explicitly out of V1 until separately reviewed.
+  - [ ] Navigation review decides whether unified Projects/Recents replace the four permanent workspace destinations; if approved, each existing domain route has a reachable contextual or More entry and keyboard/focus behavior without creating duplicate state owners.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py specs/008-workbench-browser-terminal-computer` (implementation filters are targets to add, not tests run in this documentation pass).
 - **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
 - **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
@@ -524,10 +526,11 @@ Cross-cutting owner issue A-83: the accepted revision 1.0 AC-009/CommandReceipt 
 - **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
 - **Owner:** Desktop UI, Desktop shell, Environments
 - **Allowed paths:** apps/litecowork-ui/src/workbench/; apps/litecowork-ui/src-tauri/src/; apps/litecoworkd/src/; adjacent tests; UI ledgers
-- **Contract:** SPEC section 20 AC-020 through AC-027; Computer LLD; Integrated Terminal LLD revision 1.1.
-- **Change intent:** Implement object-view tabs and + chooser, exact-version Canvas/editor binding, deterministic validated shell defaults and single stdin arbiter. Respect current terminal provider blockers; manual-host mode stays unavailable unless T22 explicitly resolves and promotes it. Depend on T10/T11 and per-platform admission for terminal execution, existing Artifact contracts for Canvas.
+- **Contract:** SPEC section 20 AC-020 through AC-029; Computer LLD; Integrated Terminal LLD revision 1.1; Workspace Experience Revision.
+- **Change intent:** Implement contextual object-view tabs and searchable + chooser (not a fixed row of specialist tools), exact-version Canvas/editor binding, deterministic validated shell defaults and single stdin arbiter. Reauthorize each object when opened/restored; do not start capture/processes or dispatch work on selection. Respect current terminal provider blockers; manual-host mode stays unavailable unless T22 explicitly resolves and promotes it. Depend on T10/T11 and per-platform admission for terminal execution, existing Artifact contracts for Canvas. Do not add external-app handoff or native subagent internals without a separately accepted owner contract/provider capability.
 - **Acceptance:**
   - [ ] AC-025/026/027: no automatic spawn/capture on tool selection, retained provider identity, dirty-draft guard, no agent access to manual shell, partial-input takeover/Return, accessible compact/narrow views, and live Computer tab selection only after explicit local-view permission without keyboard/chat focus theft.
+  - [ ] AC-028/029: current owner readiness gates chooser entries; foreign/revoked objects fail closed; URL action appears only with the Browser owner path; public agent status requires a correlated supported provider projection; selection/restore causes no provider/process side effects.
 - **Command:** `pnpm --dir apps/litecowork-ui test` (implementation filters are targets to add, not tests run in this documentation pass).
 - **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
 - **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.
@@ -539,10 +542,10 @@ Cross-cutting owner issue A-83: the accepted revision 1.0 AC-009/CommandReceipt 
 - **Cross-package prerequisites:** Feature 011 authenticated IPC and Runtime incarnation; Feature 005 for agent execution/Environment authority; Feature 007 for Canvas; see PLAN revision 1.1.
 - **Owner:** QA, Product, Desktop shell, Environments
 - **Allowed paths:** this package; docs/ACCEPTANCE-AND-E2E-PLAN.md; docs/IMPLEMENTATION-STATUS.md; CURRENT-RUN.md; UI ledgers; packaged tests
-- **Contract:** SPEC section 20 AC-020 through AC-027; Computer LLD; Integrated Terminal LLD revision 1.1.
+- **Contract:** SPEC section 20 AC-020 through AC-029; Computer LLD; Integrated Terminal LLD revision 1.1; Workspace Experience Revision.
 - **Change intent:** Trace every exact control through authenticated IPC, authorization, owner transaction/fence, provider receipt, projection and recovery. Record build/OS/provider/auth/shell and CODE/SYSTEM/owner USER evidence. Reconcile AC-016 historical baseline with selected revision 1.1 release rows.
 - **Acceptance:**
-  - [ ] All AC-020..027 and denial/replay/timeout/cancel/crash/reconnect/physical takeover cases pass per exact platform; no source-only qualification; terminal B-35 remains explicit.
+  - [ ] All AC-020..029 and denial/replay/timeout/cancel/crash/reconnect/physical takeover cases pass per exact platform; no source-only qualification; terminal B-35 remains explicit.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py specs/008-workbench-browser-terminal-computer` (implementation filters are targets to add, not tests run in this documentation pass).
 - **Evidence:** Exact command/results, owner decision, OS/build/provider and evidence level in CURRENT-RUN.md and implementation status.
 - **Stop:** Stop on missing owner decision, unpromoted machine contract, unsupported required enforcement, or any claim beyond observed evidence.

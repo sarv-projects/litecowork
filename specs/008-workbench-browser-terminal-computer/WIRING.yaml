@@ -1,5 +1,7 @@
 feature_id: "008"
 status: "IN_REVIEW"
+# TARGET only: the contextual object-tab shell reads existing owner objects and local layout state.
+# Tab selection/restore has no edge that starts a provider, grants authority or dispatches work.
 nodes:
   - id: "ui"
     owner: Desktop UI

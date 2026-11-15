@@ -9,7 +9,7 @@
 
 ## 1. Product shell and navigation
 
-LiteCowork is one desktop workspace, not separate Chat, Code and Cowork applications. The shell has a persistent left navigation rail, a central working surface and a contextual right Workbench. The selected Workspace scopes conversations, Coworkers, resources, Tasks, routines, Automations, artifacts and permissions.
+LiteCowork is one desktop workspace, not separate Chat, Code and Cowork applications. The shell has a compact left navigation, a central Conversation surface and a contextual right object workspace. The selected Workspace scopes conversations, Coworkers, resources, Tasks, routines, Automations, artifacts and permissions.
 
 The normal entry point is New Chat. Ordinary questions do not force Task creation, Coworker setup, a workflow wizard or capability installation. New Task is an explicit route/action for durable outcome-oriented work.
 
@@ -27,7 +27,7 @@ Primary navigation:
 | More > Discover | Capabilities and marketplace | Secondary entry; source, compatibility, installation, Connections and grants remain distinct |
 | Settings | Runtime, Workspace, agents, privacy and preferences | Every operational setting has a persisted owner or is visibly a local UI preference |
 
-The persistent workspace destinations are Work, Coworkers, Library and Automations. Needs You is a compact attention entry; Settings is in the footer. A collapsed More disclosure contains Discover, explicit New Task, Dashboard, Goals, Notifications and Ideas; Routines is reached inside Automations. The table above is a route/surface catalog, not an instruction to expose all entries permanently. Goals, Notifications and Suggestions remain secondary Workspace surfaces. They must use their own owner contracts and must not crowd the primary navigation or imply unavailable delivery/execution capabilities.
+The accepted persistent workspace destinations are Work, Coworkers, Library and Automations. Needs You is a compact attention entry; Settings is in the footer. A collapsed More disclosure contains Discover, explicit New Task, Dashboard, Goals, Notifications and Ideas; Routines is reached inside Automations. The table above is a route/surface catalog, not an instruction to expose all entries permanently. The 2026-11-14 revision proposes New Chat, Projects and unified Recents as frequent entry points with domain destinations grouped under More; this proposal is recorded in [Workspace Experience Revision](WORKSPACE-EXPERIENCE-REVISION-2026-11.md) and does not replace the accepted baseline until owner review. Goals, Notifications and Suggestions remain secondary Workspace surfaces. They must use their own owner contracts and must not crowd the primary navigation or imply unavailable delivery/execution capabilities.
 
 ### Default layout and responsive behavior
 
@@ -185,7 +185,13 @@ The Library's Saved, Task outputs (TRANSIENT) and Archived views list already co
 
 ## 9. Workbench
 
-The Workbench is a contextual panel over actual authorized objects. It is not a set of mock demos.
+Workbench is an internal owner term for the contextual object workspace, not a separate user-facing destination or specialist mode. The pane is titled by its active object (or shows a compact start surface when empty). It holds actual authorized objects, not a permanent palette of specialist tool tabs or a set of mock demos; object types and actions are bounded by their owning contracts and current provider readiness.
+
+The target shell has an object tab strip and **+ / New tab** chooser. Tabs identify the actual object or view (for example, a file revision, diff, agent activity projection, browser session, Computer session, terminal session, Canvas/Artifact or a rendered answer), not an implied always-on tool. The chooser can search available object types or Workspace objects and explains unavailable prerequisites. A **URL** entry is offered only through a qualified Browser owner path with that provider's URL/navigation policy; it is not a generic way to open an arbitrary local path or an unreviewed agent-supplied destination. Selection, opening a reference, restoring layout and changing tabs are view operations only: they never grant access, start a process, begin capture, dispatch work, or revive authority. Reopening a persisted reference reauthorizes it against the current Workspace and owner state. A bounded overflow/close menu and keyboard navigation keep the strip usable with many tabs; the left navigation remains compact.
+
+**Navigation revision for owner review:** simplify the current four-destination sidebar proposal to one workspace home with **New Chat**, **Projects**, and unified **Recents**; show **Needs You** as a count, place infrequent domain pages under **More**, and keep Settings at the bottom. Conversations and work items remain discoverable in the same recent history, with filters rather than separate product histories. No separate Chat/Code/Cowork mode switch is introduced. The accepted four-destination baseline remains active until this revision is explicitly reviewed. See [Workspace Experience Revision](WORKSPACE-EXPERIENCE-REVISION-2026-11.md).
+
+This is the product's broad workspace direction, not a claim that LiteCowork replaces desktop applications or controls unmediated native-agent tools. An optional **Open with** handoff for a file is a separate future owner decision: it must pin the exact file revision, use an explicit user gesture, identify the external application, and state that external edits are not LiteCowork-mediated or automatically reconciled. It is not part of the V1 promise in this contract revision.
 
 | View | Required behavior | Current boundary |
 |---|---|---|
@@ -198,6 +204,8 @@ The Workbench is a contextual panel over actual authorized objects. It is not a 
 | Activity | Persisted events, provider reports and verified records with assurance level | Current pane states that no Activity source is served; it shows no synthetic token/process traces. |
 | Artifact preview/edit | Format-specific renderer/editor and revision commit | Only enable features proven by that Artifact handler |
 | Inspector | Redacted execution, authorization and recovery detail | No secrets, native handles or unverified state |
+
+The table lists object families, not a required fixed tab row. Show a tab only for an open object/view, and only show actions supported by its owner. Agent activity can expose correlated, provider-reported public status where a supported projection exists; native private subagent transcripts, hidden reasoning and unsupported controls are not surfaced. A live Computer view is the requested target when independently permitted and qualified; status-only UNAVAILABLE remains the current behavior. The app-chrome Take over/Stop run strip remains independent of selected tab while a mediated Computer input lease is active.
 
 A terminal session belongs to the daemon Environment, not the React component. Switching tabs detaches the view; it does not kill the process. Runtime restart marks an old PTY lost and never silently reruns the command. Bounded output retention, backpressure and explicit termination are mandatory.
 
