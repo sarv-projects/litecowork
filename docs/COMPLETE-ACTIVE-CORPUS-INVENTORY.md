@@ -9,9 +9,9 @@ This is an inventory, not proof that every sentence is correct, implemented,
 integrated or qualified. The authority chain is in docs/README.md. Current source
 evidence is in docs/IMPLEMENTATION-STATUS.md.
 
-- Included files: 372
-- Included lines: 77628
-- Included bytes: 7770604
+- Included files: 373
+- Included lines: 77871
+- Included bytes: 7838046
 - Per-file SHA-256: docs/audit/active-corpus-manifest.csv
 - This manifest excludes itself to avoid a self-referential hash/count.
 - reading/ contains derived audit snapshots and is intentionally excluded.
@@ -25,10 +25,10 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | apps/ | 3 | 273 |
 | capabilities/ | 1 | 133 |
 | crates/ | 1 | 137 |
-| docs/ | 150 | 50766 |
-| repository root | 8 | 2799 |
+| docs/ | 150 | 50795 |
+| repository root | 8 | 2877 |
 | scripts/ | 1 | 14 |
-| specs/ | 201 | 23269 |
+| specs/ | 202 | 23405 |
 
 ## Complete file manifest
 
@@ -44,7 +44,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | AGENTS.md | 133 | 11515 | e534272a21474a59 |
 | ARCHITECTURE.md | 824 | 58190 | 45248d5f5a1a6ca7 |
 | CONTRIBUTING.md | 81 | 6032 | 2fc07511243a861e |
-| CURRENT-RUN.md | 837 | 191903 | 5a860d68ca300a61 |
+| CURRENT-RUN.md | 915 | 222577 | af5c1d3f616c62ab |
 | GLOSSARY.md | 292 | 12637 | bd9ffa34cb5ee0a0 |
 | README.md | 93 | 8289 | 3727827fd285fbe4 |
 | apps/litecowork-ui/README.md | 77 | 4351 | c47d822925a4b15b |
@@ -59,7 +59,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/AGENT-ACCOUNT-ROUTE-MATRIX.md | 105 | 13947 | 4c6732bf0ea16f6e |
 | docs/AGENT-CONTROL.md | 1347 | 55342 | 6700424469327bdb |
 | docs/AGENT-FABRIC.md | 497 | 32590 | 2a40c04496cfb4ec |
-| docs/API.md | 2441 | 172954 | 71409b02ac58d0cd |
+| docs/API.md | 2467 | 174898 | e7959b57512c3fbd |
 | docs/ARTIFACTS-EVIDENCE.md | 378 | 23528 | 578bcdabd6d2a17d |
 | docs/AUTOMATION.md | 705 | 42580 | e414de5ea42faeec |
 | docs/BENCHMARKS.md | 754 | 45114 | 42f307511fe0d5ac |
@@ -96,7 +96,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/HANDOFF-NEXT-AGENT-2026-11.md | 841 | 191950 | 4d18924863b3c0b5 |
 | docs/HOST-GUIDANCE.md | 138 | 5902 | c2a6b68146651635 |
 | docs/IMPLEMENTATION-MASTER-PLAN.md | 168 | 12860 | e901a943fa3b9ad6 |
-| docs/IMPLEMENTATION-STATUS.md | 383 | 98026 | 2eb15bacccd4be52 |
+| docs/IMPLEMENTATION-STATUS.md | 385 | 102504 | 94bacf60f6fccfc9 |
 | docs/IMPLEMENTATION.md | 232 | 9336 | c9dbf532b8948bbc |
 | docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md | 73 | 12251 | 2f50c42dfe67bada |
 | docs/INTERACTIVE-ARTIFACT-RUNTIME.md | 135 | 20237 | 6d5d6bd44fb9dd82 |
@@ -161,8 +161,8 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md | 63 | 8162 | 21ee35867ca419f1 |
 | docs/V1-SETTINGS-CONTRACT-LEDGER.md | 235 | 59062 | ca708a1e14166a4f |
 | docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md | 351 | 37853 | 375da7f1482fe2da |
-| docs/V1-UI-ACTION-STATE-LEDGER.md | 79 | 17068 | afa9b49e9c15851a |
-| docs/V1-UI-SCREEN-CONTRACT.md | 386 | 58741 | 94938e7583b2234a |
+| docs/V1-UI-ACTION-STATE-LEDGER.md | 80 | 17491 | 8513f0ec9d0ad196 |
+| docs/V1-UI-SCREEN-CONTRACT.md | 386 | 59042 | a9b937d14599918e |
 | docs/V1-WORKFLOW-EVENT-LLD.md | 139 | 14813 | aa20f0e960080e6e |
 | docs/VIABILITY-VS-COMPETITORS.md | 239 | 24161 | cac988e17f7a3ca5 |
 | docs/WORKSPACE-EXPERIENCE-REVISION-2026-11.md | 186 | 33715 | b7935b79dcb0fa7e |
@@ -207,14 +207,15 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | scripts/retired/README.md | 14 | 1081 | 16253b8f56ab2730 |
 | specs/001-conversation-session-supervisor/DATA-MODEL.md | 79 | 10232 | 1745cf92da06d41b |
 | specs/001-conversation-session-supervisor/PLAN.md | 117 | 10598 | e3a4d0fb3027cacc |
-| specs/001-conversation-session-supervisor/README.md | 31 | 5116 | ff540f630c85dbb8 |
-| specs/001-conversation-session-supervisor/RESEARCH.md | 158 | 33380 | 0b7747b20e34f3e1 |
-| specs/001-conversation-session-supervisor/SPEC.md | 397 | 59028 | 6797c2d399251fdd |
-| specs/001-conversation-session-supervisor/TASKS.md | 574 | 103559 | 9cc4d0db8d30db37 |
-| specs/001-conversation-session-supervisor/contracts/README.md | 12 | 841 | db996aef02f977b4 |
-| specs/001-conversation-session-supervisor/contracts/api-events.md | 63 | 7324 | e0681f75b182f2cf |
+| specs/001-conversation-session-supervisor/README.md | 32 | 5336 | 7d12fb55bdfb51e7 |
+| specs/001-conversation-session-supervisor/RESEARCH.md | 165 | 36776 | cb4b739d9db2d20e |
+| specs/001-conversation-session-supervisor/SPEC.md | 397 | 60485 | 3a6e859d46b54fdf |
+| specs/001-conversation-session-supervisor/TASKS.md | 574 | 107100 | de6ab44754db4551 |
+| specs/001-conversation-session-supervisor/contracts/README.md | 13 | 1008 | 1876e3bb467eff45 |
+| specs/001-conversation-session-supervisor/contracts/api-events.md | 69 | 8842 | 557597141c95823e |
 | specs/001-conversation-session-supervisor/contracts/errors-recovery.md | 78 | 9090 | 47de1c535b262d4f |
-| specs/001-conversation-session-supervisor/contracts/ui-behavior.md | 108 | 18208 | a7949f705a983ed5 |
+| specs/001-conversation-session-supervisor/contracts/native-permission-design.md | 117 | 17727 | 125edff259a47ca4 |
+| specs/001-conversation-session-supervisor/contracts/ui-behavior.md | 112 | 19411 | f6e4fea0c4907649 |
 | specs/002-native-agent-install-auth-binding/DATA-MODEL.md | 44 | 5793 | 6abe39c9aac9b6c9 |
 | specs/002-native-agent-install-auth-binding/PLAN.md | 54 | 4876 | 5ed090245ca7b584 |
 | specs/002-native-agent-install-auth-binding/README.md | 40 | 5364 | 855e41bcfd9f2d42 |
@@ -230,7 +231,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | specs/003-workspace-roots-context-ingestion/README.md | 36 | 4695 | 521d0b1ac3b498d5 |
 | specs/003-workspace-roots-context-ingestion/RESEARCH.md | 66 | 11285 | 0536afa48b99ab9c |
 | specs/003-workspace-roots-context-ingestion/SPEC.md | 341 | 33713 | 3b8c44c504f2ef14 |
-| specs/003-workspace-roots-context-ingestion/TASKS.md | 378 | 45737 | 4c29cc769ae2516b |
+| specs/003-workspace-roots-context-ingestion/TASKS.md | 378 | 46130 | bef3ffb352b8b8b6 |
 | specs/003-workspace-roots-context-ingestion/contracts/README.md | 9 | 351 | 5eec3c904cd05b4d |
 | specs/003-workspace-roots-context-ingestion/contracts/api-events.md | 11 | 2211 | 815c53e7fbeb7429 |
 | specs/003-workspace-roots-context-ingestion/contracts/errors-recovery.md | 9 | 1046 | 23b50b52397b4c9a |

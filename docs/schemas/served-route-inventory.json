@@ -193,6 +193,13 @@
     },
     {
       "method": "GET",
+      "path": "/v1/conversations/{conversation_id}/turns/{turn_id}/permissions",
+      "openapi_path": "/conversations/{conversationId}/turns/{turnId}/permissions",
+      "operation_id": "listLiveConversationTurnPermissions",
+      "source": "apps/litecoworkd/src/conversation_operator.rs"
+    },
+    {
+      "method": "GET",
       "path": "/v1/coworkers",
       "openapi_path": "/coworkers",
       "operation_id": "listCoworkers",
@@ -1416,6 +1423,11 @@
       "method": "POST",
       "path": "/conversations/{conversationId}/messages",
       "operation_id": "appendConversationMessage"
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply",
+      "operation_id": "replyConversationPermission"
     },
     {
       "method": "POST",

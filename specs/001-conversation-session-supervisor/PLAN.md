@@ -61,7 +61,7 @@ flowchart TD
 | Session/host lifecycle | focused `apps/litecoworkd/src/agents/` modules | Agent Runtime | No direct turn aggregate writes from Supervisor |
 | Storage API | `crates/storage-core/src/conversation.rs`, `crates/storage-core/src/lib.rs` | Storage | Exact request/result contract; handle redaction |
 | SQLite operations | `crates/storage-sqlite/src/conversations.rs`, `crates/storage-sqlite/src/lib.rs` | Storage | Immediate transaction; immutable event prefix; atomic event/snapshot/receipt |
-| Native adapter | one selected `apps/litecoworkd/src/agents/<adapter>.rs` | Agent Runtime | Transport only; version pin; bounded untrusted frames |
+| Native adapter | one selected `apps/litecoworkd/src/agents/<adapter>.rs`; T27 also uses `apps/litecoworkd/src/agents/adapter.rs` for bounded in-turn permission-command servicing | Agent Runtime | Transport only; version pin; bounded untrusted frames; active adapter retains exclusive ownership of its provider server |
 | Desktop UI | `apps/litecowork-ui/src/conversations/` | UI | Keep disabled until end-to-end qualification |
 | Tauri bridge | `apps/litecowork-ui/src-tauri/src/conversation_stream_bridge.rs` | Desktop bridge | Existing projection cursor/backpressure |
 | Contracts/docs | API, EVENTS, STORAGE, SERVICES, STATE-MACHINES, SCHEMAS, AGENT-CONTROL, NATIVE-COMPOSER | Domain owners | Promote global contracts atomically |

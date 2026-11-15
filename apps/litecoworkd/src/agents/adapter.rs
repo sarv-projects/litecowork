@@ -918,6 +918,50 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
     const FIXTURE: &str = include_str!("fixtures/opencode_v2_0_32_turn.jsonl");
     const FIXTURE_SESSION: &str = "ses_fixture_REDACTED";
 
+    #[test]
+    fn runtime_permission_commands_are_serviced_before_each_provider_poll() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct ControlObservedSource(Arc<AtomicUsize>);
+        impl RawEventSource for ControlObservedSource {
+            fn next_raw(
+                &mut self,
+                _timeout: Duration,
+            ) -> Result<Option<RawEvent>, OpenCodeError> {
+                assert!(
+                    self.0.load(Ordering::SeqCst) > 0,
+                    "Runtime control must be drained before waiting on provider events"
+                );
+                Err(OpenCodeError::StreamClosed)
+            }
+        }
+
+        let serviced = Arc::new(AtomicUsize::new(0));
+        let mut source = ControlObservedSource(Arc::clone(&serviced));
+        let mut normalizer = OpenCodeEventNormalizer::new(FIXTURE_SESSION);
+        let control = Arc::clone(&serviced);
+        let mut service_control = move || {
+            control.fetch_add(1, Ordering::SeqCst);
+        };
+
+        let result = drive_opencode_stream_observed_with_control(
+            &mut source,
+            &mut normalizer,
+            StreamBudget::default(),
+            Instant::now(),
+            None,
+            &mut || false,
+            None,
+            &mut service_control,
+        );
+
+        assert_eq!(result, Err(TurnFailure::EmptyResponse));
+        assert_eq!(serviced.load(Ordering::SeqCst), 1);
+    }
+
     /// Replays committed fixture lines as raw events. A `None`-yielding variant
     /// can be interleaved to simulate heartbeat quiet for the watchdog test.
     struct FixtureSource {

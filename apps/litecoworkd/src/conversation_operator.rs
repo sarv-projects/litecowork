@@ -143,6 +143,10 @@ where
             get(list_conversation_turn_activity),
         )
         .route(
+            "/v1/conversations/{conversation_id}/turns/{turn_id}/permissions",
+            get(list_live_conversation_turn_permissions),
+        )
+        .route(
             "/v1/conversations/{conversation_id}/turns/{turn_id}/retry",
             post(retry_conversation_turn),
         )
@@ -604,6 +608,71 @@ struct TurnActivityPage {
     /// Always `REPORTED`: these are the native agent's own statements, never Effects.
     attribution: &'static str,
     items: Vec<storage_core::conversation::ConversationActivityRecord>,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct LiveConversationPermissionSnapshot {
+    workspace_id: String,
+    conversation_id: String,
+    turn_id: String,
+    retry_ordinal: u32,
+    items: Vec<crate::agents::supervisor::NativePermissionPromptView>,
+}
+
+/// Read only the exact attempt's ephemeral permission prompts. Historical REPORTED
+/// activity is not consulted to reconstruct live prompts.
+async fn list_live_conversation_turn_permissions(
+    State(state): State<ConversationApiState>,
+    Path((conversation_id, turn_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    if !valid_task_query_id(&turn_id) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Turn ID is invalid",
+        ));
+    }
+    load_authorized_conversation(&state, &workspace_id, &conversation_id).await?;
+    let store = state.store.clone();
+    let turn_workspace = workspace_id.clone();
+    let turn_conversation = conversation_id.clone();
+    let turn_lookup = turn_id.clone();
+    let turn = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).get_conversation_turn(
+            &turn_workspace,
+            &turn_conversation,
+            &turn_lookup,
+        )
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?
+    .ok_or_else(not_found)?;
+    let items = state
+        .supervisor
+        .as_ref()
+        .map(|supervisor| {
+            supervisor.list_live_native_permissions(
+                &workspace_id,
+                &conversation_id,
+                &turn_id,
+                turn.retry_ordinal,
+            )
+        })
+        .unwrap_or_default();
+    Ok(no_store(
+        Json(LiveConversationPermissionSnapshot {
+            workspace_id,
+            conversation_id,
+            turn_id,
+            retry_ordinal: turn.retry_ordinal,
+            items,
+        })
+        .into_response(),
+    ))
 }
 
 /// Read-only, bounded, ordered REPORTED activity observations for one turn attempt

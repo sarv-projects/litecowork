@@ -71,8 +71,8 @@ def main() -> int:
     # pre-existing POST /v1/stream; those four are recorded served-but-not-yet-in-OpenAPI
     # debt, and the inventory is generated from source by scripts/audit_served_routes.py.
     counts = (len(inventory.get("served", [])), len(outside), len(inventory.get("target_only", [])))
-    if counts != (178, 4, 53):
-        errors.append(f"Route inventory count drift: {counts}; expected (178, 4, 53)")
+    if counts != (179, 4, 54):
+        errors.append(f"Route inventory count drift: {counts}; expected (179, 4, 54)")
     if inventory.get("version") != 3:
         errors.append(f"Unexpected route inventory version: {inventory.get('version')}")
 

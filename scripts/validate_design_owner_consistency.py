@@ -114,8 +114,8 @@ try:
     # /v1/conversations/{conversation_id}, POST .../archive and POST .../unarchive before their
     # OpenAPI contracts are promoted, alongside the pre-existing POST /v1/stream. Regenerate with
     # scripts/audit_served_routes.py --write and re-run this guard after any route change.
-    if counts != (178, 4, 53):
-        issues.append(f"SERVED INVENTORY count drift: {counts}, expected (178, 4, 53)")
+    if counts != (179, 4, 54):
+        issues.append(f"SERVED INVENTORY count drift: {counts}, expected (179, 4, 54)")
 except (OSError, json.JSONDecodeError) as exc:
     issues.append(f"SERVED INVENTORY unreadable: {exc}")
 

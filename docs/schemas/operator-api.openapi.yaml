@@ -571,6 +571,62 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ConversationTurnActivityPage'}
         default: {$ref: '#/components/responses/Error'}
+  /conversations/{conversationId}/turns/{turnId}/permissions:
+    get:
+      tags: [conversations]
+      operationId: listLiveConversationTurnPermissions
+      description: SERVED partial implementation for 001-T27. Returns only live, Runtime-local native permission prompts for the exact authorized turn attempt. This is not reconstructed from REPORTED activity and contains no native session/request IDs, raw metadata, absolute paths, or durable permission decision. The reply operation and UI journey remain target-only.
+      parameters:
+      - {$ref: '#/components/parameters/ConversationId'}
+      - name: turnId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+      responses:
+        '200':
+          description: Bounded live permission snapshot for the exact active turn
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationLivePermissionSnapshot'}
+        default: {$ref: '#/components/responses/Error'}
+  /conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply:
+    post:
+      tags: [conversations]
+      operationId: replyConversationPermission
+      description: TARGET for 001-T27. Replies through the exact active native session after owner, Workspace, turn, Runtime-incarnation and pending-prompt checks. Identical idempotent replay is Runtime-local; no provider ID is accepted from the client. REJECT_SESSION_PENDING rejects all requests pending in that provider session at the time OpenCode applies the reply.
+      parameters:
+      - {$ref: '#/components/parameters/ConversationId'}
+      - name: turnId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+      - name: promptToken
+        in: path
+        required: true
+        schema: {type: string, minLength: 32, maxLength: 128}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConversationPermissionReplyRequest'}
+      responses:
+        '200':
+          description: Provider acknowledgment or current reconciled prompt state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationPermissionReplyReceipt'}
+        '409':
+          description: Conflicting decision, stale prompt state, or scope/version conflict
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '410':
+          description: Prompt or owning native session has ended; no reply was replayed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        default: {$ref: '#/components/responses/Error'}
   /conversations/{conversationId}/turns/{turnId}/retry:
     post:
       tags: [conversations]
@@ -7507,6 +7563,48 @@ components:
         call_ref: {type: [string, 'null'], maxLength: 128}
         label: {type: [string, 'null'], maxLength: 128}
         created_at: {type: string}
+    ConversationLivePermissionSnapshot:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, conversation_id, turn_id, retry_ordinal, items]
+      properties:
+        workspace_id: {type: string, minLength: 1, maxLength: 256}
+        conversation_id: {type: string, minLength: 1, maxLength: 256}
+        turn_id: {type: string, minLength: 1, maxLength: 256}
+        retry_ordinal: {type: integer, minimum: 0}
+        items:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/ConversationLivePermissionPrompt'}
+    ConversationLivePermissionPrompt:
+      type: object
+      additionalProperties: false
+      required: [prompt_token, state, action, resource_count, resources]
+      properties:
+        prompt_token: {type: string, minLength: 32, maxLength: 128}
+        state: {type: string, enum: [PENDING, REPLYING, ANSWERED, OUTCOME_UNKNOWN, SESSION_ENDED]}
+        action: {type: string, minLength: 1, maxLength: 128}
+        explanation: {type: [string, 'null'], maxLength: 512}
+        resource_count: {type: integer, minimum: 0, maximum: 64}
+        resources:
+          type: array
+          maxItems: 16
+          items: {type: string, minLength: 1, maxLength: 128}
+        decision: {type: [string, 'null'], enum: [ALLOW_ONCE, REJECT_SESSION_PENDING, null]}
+    ConversationPermissionReplyRequest:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision: {type: string, enum: [ALLOW_ONCE, REJECT_SESSION_PENDING]}
+    ConversationPermissionReplyReceipt:
+      type: object
+      additionalProperties: false
+      required: [prompt_token, state, decision]
+      properties:
+        prompt_token: {type: string, minLength: 32, maxLength: 128}
+        state: {type: string, enum: [PENDING, REPLYING, ANSWERED, OUTCOME_UNKNOWN, SESSION_ENDED]}
+        decision: {type: [string, 'null'], enum: [ALLOW_ONCE, REJECT_SESSION_PENDING, null]}
     TimelinePage:
       type: object
       required: [items]

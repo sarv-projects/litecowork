@@ -22,6 +22,11 @@
 
 use serde_json::Value;
 
+fn bounded_string<const MAX_BYTES: usize>(text: &str) -> Option<String> {
+    (!text.trim().is_empty() && text.len() <= MAX_BYTES && !text.chars().any(char::is_control))
+        .then(|| text.to_owned())
+}
+
 /// Reasoning content is never stored or shown to the owner unless the harness
 /// itself marks it user-visible. OpenCode v2.0.32 does not mark reasoning parts
 /// user-visible, so [`ReasoningVisibility::Hidden`] is the only value this
@@ -74,7 +79,18 @@ pub(crate) enum NormalizedAgentEvent {
     },
     /// The harness is asking the owner a native permission question. This is a
     /// native prompt answered through the harness, never a LiteCowork grant.
-    PermissionAsked { permission_id: String },
+    PermissionAsked {
+        /// Private native reply key. Never persist or project this identifier.
+        permission_id: String,
+        /// Session identity from the correlated event envelope; Runtime-local only.
+        native_session_id: String,
+        /// Provider-reported operation name, still untrusted display text.
+        action: String,
+        /// Provider resource identifiers/paths, Runtime-local and untrusted.
+        resources: Vec<String>,
+        /// Optional provider explanation; Runtime-local and untrusted.
+        message: Option<String>,
+    },
     /// A file was changed by the agent (REPORTED observation only).
     FileChanged { path_present: bool },
     /// The native plan/todo list changed.
@@ -170,7 +186,11 @@ impl OpenCodeEventNormalizer {
                     outcome: ToolOutcome::Failed,
                 },
             ),
-            "permission.asked" | "permission.updated" => self.on_permission(properties),
+            "permission.asked" => self.on_permission(properties),
+            "permission.updated" => {
+                let _ = self.correlate_session(properties);
+                None
+            }
             "todo.updated" => self.on_todo(properties),
             "file.edited" | "file.watcher.updated" => self.on_file(properties),
             "session.created" | "session.updated" | "session.compacted" | "session.status"
@@ -292,15 +312,44 @@ impl OpenCodeEventNormalizer {
     }
 
     fn on_permission(&mut self, properties: Option<&Value>) -> Option<NormalizedAgentEvent> {
-        if !self.correlate_session(properties) {
+        let Some(properties) = properties else {
+            return None;
+        };
+        if !self.correlate_session(Some(properties)) {
             return None;
         }
+        let session_id = session_id_of(properties)?;
+        if session_id.len() > 128 {
+            return None;
+        }
+        let session_id = session_id.to_owned();
         let permission_id = properties
-            .and_then(|p| p.get("id").or_else(|| p.get("permissionID")))
+            .get("id")
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        Some(NormalizedAgentEvent::PermissionAsked { permission_id })
+            .and_then(bounded_string::<128>)?;
+        let action = properties
+            .get("action")
+            .and_then(Value::as_str)
+            .and_then(bounded_string::<128>)?;
+        let resources_value = properties.get("resources")?.as_array()?;
+        if resources_value.len() > 64 {
+            return None;
+        }
+        let resources = resources_value
+            .iter()
+            .map(|value| value.as_str().and_then(bounded_string::<512>))
+            .collect::<Option<Vec<_>>>()?;
+        let message = match properties.get("message") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(value.as_str().and_then(bounded_string::<512>)?),
+        };
+        Some(NormalizedAgentEvent::PermissionAsked {
+            permission_id,
+            native_session_id: session_id,
+            action,
+            resources,
+            message,
+        })
     }
 
     fn on_todo(&mut self, properties: Option<&Value>) -> Option<NormalizedAgentEvent> {
@@ -485,10 +534,20 @@ mod opencode_event_normalizer_tests {
             norm.normalize(
                 None,
                 &json!({"type": "permission.asked",
-                    "properties": {"sessionID": SESSION, "id": "perm_1"}})
+                "properties": {
+                    "sessionID": SESSION,
+                    "id": "perm_1",
+                    "action": "read",
+                    "resources": ["/workspace/report.csv"],
+                    "message": "May I inspect this file?"
+                }})
             ),
             Some(NormalizedAgentEvent::PermissionAsked {
-                permission_id: "perm_1".to_owned()
+                permission_id: "perm_1".to_owned(),
+                native_session_id: SESSION.to_owned(),
+                action: "read".to_owned(),
+                resources: vec!["/workspace/report.csv".to_owned()],
+                message: Some("May I inspect this file?".to_owned()),
             })
         );
         assert_eq!(
@@ -514,6 +573,22 @@ mod opencode_event_normalizer_tests {
             ),
             Some(NormalizedAgentEvent::Idle)
         );
+    }
+
+    #[test]
+    fn permission_asked_requires_bounded_pinned_payload() {
+        let mut norm = normalizer();
+        for properties in [
+            json!({"sessionID": SESSION, "id": "perm", "resources": []}),
+            json!({"sessionID": SESSION, "id": "perm", "action": "read"}),
+            json!({"sessionID": SESSION, "id": "perm", "action": "read", "resources": "file"}),
+            json!({"sessionID": SESSION, "id": "perm", "action": "read", "resources": vec!["x"; 65]}),
+            json!({"sessionID": "foreign", "id": "perm", "action": "read", "resources": []}),
+        ] {
+            let event = json!({"type": "permission.asked", "properties": properties});
+            assert_eq!(norm.normalize(None, &event), None);
+        }
+        assert_eq!(norm.counters().foreign_session, 1);
     }
 
     #[test]

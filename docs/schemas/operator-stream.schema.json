@@ -19,6 +19,9 @@
       "$ref": "#/$defs/turn_activity"
     },
     {
+      "$ref": "#/$defs/turn_permission"
+    },
+    {
       "$ref": "#/$defs/rich_draft"
     },
     {
@@ -542,6 +545,26 @@
         "status": {"enum": ["STARTED", "PROGRESS", "SUCCEEDED", "FAILED", "ASKED", "UPDATED", "ENDED", "REDUCED"]},
         "call_ref": {"type": ["string", "null"], "maxLength": 128},
         "label": {"type": ["string", "null"], "maxLength": 128}
+      },
+      "additionalProperties": false
+    },
+    "turn_permission": {
+      "type": "object",
+      "required": ["type", "workspace_id", "conversation_id", "turn_id", "retry_ordinal", "sequence", "prompt_token", "state", "action", "resource_count", "resources"],
+      "properties": {
+        "type": {"const": "turn.permission"},
+        "workspace_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "conversation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "turn_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "retry_ordinal": {"type": "integer", "minimum": 0},
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 64},
+        "prompt_token": {"type": "string", "minLength": 32, "maxLength": 128},
+        "state": {"enum": ["PENDING", "REPLYING", "ANSWERED", "OUTCOME_UNKNOWN", "SESSION_ENDED"]},
+        "action": {"type": "string", "minLength": 1, "maxLength": 128},
+        "explanation": {"type": ["string", "null"], "maxLength": 512},
+        "resource_count": {"type": "integer", "minimum": 0, "maximum": 64},
+        "resources": {"type": "array", "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "decision": {"enum": ["ALLOW_ONCE", "REJECT_SESSION_PENDING", null]}
       },
       "additionalProperties": false
     },

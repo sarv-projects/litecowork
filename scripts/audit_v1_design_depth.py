@@ -109,9 +109,9 @@ def main() -> int:
         )
     # Four routes are served outside OpenAPI until the Feature 014 Conversation contracts and
     # the pre-existing POST /v1/stream are promoted into operator-api.openapi.yaml.
-    if (served_count, outside_count, target_count) != (178, 4, 53):
+    if (served_count, outside_count, target_count) != (179, 4, 54):
         errors.append(
-            f"Composed route count drift: {(served_count, outside_count, target_count)}, expected (178, 4, 53)"
+            f"Composed route count drift: {(served_count, outside_count, target_count)}, expected (179, 4, 54)"
         )
     for required in ("Conversation", "Task", "Coworker", "Automation", "Discover",
                      "Library", "Workbench", "Settings"):

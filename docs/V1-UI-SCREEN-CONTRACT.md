@@ -102,7 +102,7 @@ The current Work screen lists persisted Tasks, opens Task details, supports obje
 
 ## 4. Needs You
 
-Needs You is an actionable inbox, not a decorative count or general activity feed. It groups persisted approvals, UserRequests, authentication actions, conflicts, human takeovers and recovery decisions.
+Needs You is an actionable inbox, not a decorative count or general activity feed. It groups persisted approvals, UserRequests, authentication actions, conflicts, human takeovers and recovery decisions. A native Conversation permission may appear only as a live Runtime-backed item; it is not restored from historical REPORTED activity and disappears or becomes ended when its native session ends. OpenCode v2.0.32 rejection is disclosed as rejecting all requests currently pending in that same session.
 
 Each item identifies the exact Workspace, Task/Conversation/Coworker, requester, requested action, scope, expiry, consequences and current state. A user response binds to the exact request/operation/version. An approval is never represented as a free-floating "yes"; it must be bound to the action, target, plan/effect digest, scope, expiry and owner identity.
 

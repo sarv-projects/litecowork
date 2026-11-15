@@ -65,6 +65,393 @@ use storage_core::{
 };
 use zeroize::Zeroizing;
 
+#[cfg(windows)]
+mod workspace_root_lifecycle_windows_tests {
+    use super::*;
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use domain_workspace::{
+        AddWorkspaceRoot, ChangeWorkspaceRootStatus, CreateWorkspace, EventContext,
+        RevokeWorkspaceRoot, WorkspaceRootService, WorkspaceService,
+    };
+    use sha2::{Digest, Sha256};
+    use std::{sync::Arc, time::Duration};
+    use storage_core::{
+        DeviceIdentityRecord, LocalFileIdentityBindingRecord,
+        RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+        RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
+        RuntimeWorkspaceBindingStore, WorkspaceCreateRequest, WorkspaceRootStatusAction,
+        WorkspaceRootStore,
+    };
+
+    const OWNER: &str = "windows-root-lifecycle-owner";
+    const WORKSPACE: &str = "windows-root-lifecycle-workspace";
+    const ROOT: &str = "windows-root-lifecycle-root";
+    const RUNTIME: &str = "windows-root-lifecycle-runtime";
+    const INCARNATION: &str = "windows-root-lifecycle-incarnation";
+    const NOW: &str = "2026-11-15T10:00:00Z";
+
+    struct TestKeys;
+
+    impl WorkspaceBlobKeyProvider for TestKeys {
+        fn current_key(
+            &self,
+            _workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Ok(WorkspaceBlobKey {
+                version: 1,
+                bytes: Zeroizing::new([31_u8; 32]),
+            })
+        }
+
+        fn key_by_version(
+            &self,
+            workspace_id: &str,
+            purpose: BlobPurpose,
+            version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            if version != 1 {
+                return Err(StoreError::Blob(
+                    "unknown Windows lifecycle test key".to_owned(),
+                ));
+            }
+            self.current_key(workspace_id, purpose)
+        }
+    }
+
+    struct Fixture {
+        database_directory: tempfile::TempDir,
+        _root_directory: tempfile::TempDir,
+        store: SqliteWorkspaceStore,
+    }
+
+    impl Fixture {
+        fn connection(&self) -> rusqlite::Connection {
+            rusqlite::Connection::open(
+                self.database_directory
+                    .path()
+                    .join("state")
+                    .join("state.sqlite3"),
+            )
+            .expect("inspect SQLite")
+        }
+    }
+
+    fn event(id: &str) -> EventContext {
+        EventContext {
+            event_id: id.to_owned(),
+            origin_runtime_id: RUNTIME.to_owned(),
+            hlc_timestamp: NOW.to_owned(),
+            correlation_id: format!("correlation-{id}"),
+            causation_id: None,
+            recorded_at: NOW.to_owned(),
+        }
+    }
+
+    fn fixture() -> Fixture {
+        let database_directory = tempfile::tempdir().expect("temporary SQLite directory");
+        let root_directory = tempfile::tempdir().expect("real Windows root directory");
+        let store = SqliteWorkspaceStore::open(
+            database_directory
+                .path()
+                .join("state")
+                .join("state.sqlite3"),
+            Arc::new(FileBlobStore::new(
+                database_directory.path().join("blobs"),
+                TestKeys,
+            )),
+            SqliteConfig {
+                writer_queue_capacity: 8,
+                busy_timeout: Duration::from_secs(1),
+            },
+        )
+        .expect("SQLite store opens");
+
+        WorkspaceService::new(store.clone())
+            .create(CreateWorkspace {
+                workspace_id: WORKSPACE.to_owned(),
+                name: "Windows root lifecycle test".to_owned(),
+                owner_principal_id: OWNER.to_owned(),
+                event: event("workspace-created"),
+            })
+            .expect("Workspace is created");
+
+        let public_key = [23_u8; 32];
+        store
+            .register_local_incarnation(
+                RuntimeRecord {
+                    runtime_id: RUNTIME.to_owned(),
+                    device_identity: DeviceIdentityRecord {
+                        device_id: format!(
+                            "ed25519-sha256:{}",
+                            hex::encode(Sha256::digest(public_key))
+                        ),
+                        public_key: format!("ed25519:{}", hex::encode(public_key)),
+                        key_version: 1,
+                        issued_at: NOW.to_owned(),
+                        display_name: None,
+                    },
+                    runtime_version: "0.1.0-windows-root-test".to_owned(),
+                    platform: "windows".to_owned(),
+                    architecture: "x86_64".to_owned(),
+                    roles: vec!["OPERATOR_ENDPOINT".to_owned()],
+                    trust_zone: "PERSONAL_DEVICE".to_owned(),
+                    availability: "RECOVERING".to_owned(),
+                    startup_policy: "MANUAL".to_owned(),
+                    current_incarnation_id: INCARNATION.to_owned(),
+                    resource_capacity: serde_json::json!({"sampled_at": NOW}),
+                    last_seen: NOW.to_owned(),
+                },
+                RuntimeIncarnationRecord {
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    runtime_id: RUNTIME.to_owned(),
+                    process_started_at: NOW.to_owned(),
+                    litecowork_version: "0.1.0-windows-root-test".to_owned(),
+                    recovered_from_unclean_shutdown: false,
+                    recovery_state: "RECOVERING".to_owned(),
+                    ready_at: None,
+                    stopped_at: None,
+                    version: 1,
+                },
+                RuntimeIncarnationLocalObservationRecord {
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    os_boot_id: Some("windows-root-test-boot".to_owned()),
+                    observed_at: NOW.to_owned(),
+                },
+            )
+            .expect("local Runtime registers");
+        store
+            .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                expected_version: 1,
+                recovery_state: "DEGRADED".to_owned(),
+                availability: "DEGRADED".to_owned(),
+                observed_at: NOW.to_owned(),
+                stopped_at: None,
+            })
+            .expect("Runtime becomes available for local work");
+        store
+            .enroll_local_runtime(storage_core::LocalRuntimeWorkspaceEnrollmentRequest {
+                request: WorkspaceCreateRequest {
+                    principal_id: OWNER.to_owned(),
+                    request_id: "windows-root-runtime-enrollment".to_owned(),
+                    request_payload: serde_json::json!({"workspace_id": WORKSPACE}),
+                },
+                expected_workspace_version: 1,
+                runtime_workspace_binding_id: "windows-root-runtime-binding".to_owned(),
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                now: NOW.to_owned(),
+                correlation_id: "windows-root-enrollment-correlation".to_owned(),
+            })
+            .expect("Runtime enrolls in Workspace");
+
+        let root_path = std::fs::canonicalize(root_directory.path())
+            .expect("canonicalize real Windows test directory");
+        let root_path = root_path.to_string_lossy();
+        let root_path = root_path
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&root_path)
+            .replace('/', "\\");
+        let locator_bytes = root_path
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        let marker = b"windows-root-lifecycle-test-identity";
+        let identity_digest = format!("sha256:{}", hex::encode(Sha256::digest(marker)));
+        let file_identity_digest = hex::encode(Sha256::digest(marker));
+        WorkspaceRootService::new(store.clone())
+            .add_root(AddWorkspaceRoot {
+                workspace_id: WORKSPACE.to_owned(),
+                expected_workspace_version: 1,
+                principal_id: OWNER.to_owned(),
+                request_id: "windows-root-create".to_owned(),
+                resource_id: "windows-root-resource".to_owned(),
+                identity_digest: identity_digest.clone(),
+                file_identity: serde_json::json!({
+                    "filesystem_instance_id": format!("sha256:{file_identity_digest}"),
+                    "volume_id": null,
+                    "file_id": format!("sha256:{file_identity_digest}"),
+                    "generation": null,
+                    "platform_kind": "WINDOWS_VOLUME_FILE_ID_128",
+                }),
+                location_id: "windows-root-location".to_owned(),
+                locator_ref_id: "windows-root-locator-ref".to_owned(),
+                workspace_root_id: ROOT.to_owned(),
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                private_locator: format!(
+                    "windows-path-u16le-b64:{}",
+                    URL_SAFE_NO_PAD.encode(locator_bytes)
+                ),
+                file_identity_binding: LocalFileIdentityBindingRecord {
+                    location_id: "windows-root-location".to_owned(),
+                    runtime_id: RUNTIME.to_owned(),
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    raw_filesystem_instance_id: "0123456789abcdef".to_owned(),
+                    raw_volume_id: None,
+                    raw_file_id: "0123456789abcdef0123456789abcdef".to_owned(),
+                    raw_generation: None,
+                    platform_kind: "WINDOWS_VOLUME_FILE_ID_128".to_owned(),
+                    observed_at: NOW.to_owned(),
+                },
+                display_name: "Windows lifecycle root".to_owned(),
+                watch_policy: "METADATA".to_owned(),
+                replication_policy: "NONE".to_owned(),
+                event: event("root-created"),
+            })
+            .expect("WorkspaceRoot is created with a canonical Windows locator");
+
+        Fixture {
+            database_directory,
+            _root_directory: root_directory,
+            store,
+        }
+    }
+
+    fn status_change(
+        action: WorkspaceRootStatusAction,
+        request_id: &str,
+        expected_version: u64,
+    ) -> ChangeWorkspaceRootStatus {
+        ChangeWorkspaceRootStatus {
+            workspace_id: WORKSPACE.to_owned(),
+            workspace_root_id: ROOT.to_owned(),
+            principal_id: OWNER.to_owned(),
+            request_id: request_id.to_owned(),
+            expected_version,
+            action,
+            runtime_id: None,
+            runtime_incarnation_id: None,
+            event: event(&format!("event-{request_id}")),
+        }
+    }
+
+    #[test]
+    fn workspace_root_lifecycle_windows_pause_fences_and_stale_version_loses() {
+        let fixture = fixture();
+        let service = WorkspaceRootService::new(fixture.store.clone());
+        let paused = service
+            .change_root_status(status_change(WorkspaceRootStatusAction::Pause, "pause", 1))
+            .expect("pause commits");
+        assert_eq!(
+            (paused.root.status.as_str(), paused.root.version),
+            ("PAUSED", 2)
+        );
+        assert!(
+            fixture
+                .store
+                .get_workspace_root_scan_candidate(OWNER, WORKSPACE, ROOT, RUNTIME, INCARNATION)
+                .expect("read scan candidate")
+                .is_none()
+        );
+        assert!(matches!(
+            service
+                .change_root_status(status_change(
+                    WorkspaceRootStatusAction::Pause,
+                    "stale-pause",
+                    1
+                ))
+                .expect_err("stale pause must conflict"),
+            StoreError::Conflict {
+                expected: Some(1),
+                actual: Some(2)
+            }
+        ));
+    }
+
+    #[test]
+    fn workspace_root_lifecycle_windows_revoke_deletes_bindings_and_is_terminal() {
+        let fixture = fixture();
+        let revoked = WorkspaceRootService::new(fixture.store.clone())
+            .revoke_root(RevokeWorkspaceRoot {
+                workspace_id: WORKSPACE.to_owned(),
+                workspace_root_id: ROOT.to_owned(),
+                principal_id: OWNER.to_owned(),
+                request_id: "revoke".to_owned(),
+                expected_version: 1,
+                event: event("event-revoke"),
+            })
+            .expect("revoke commits");
+        assert_eq!(revoked.root.status, "REVOKED");
+
+        let connection = fixture.connection();
+        for table in ["resource_location_bindings", "file_identity_bindings"] {
+            let count: i64 = connection
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE location_id=?1"),
+                    ["windows-root-location"],
+                    |row| row.get(0),
+                )
+                .expect("read private binding count");
+            assert_eq!(count, 0, "{table} is removed during revoke");
+        }
+
+        let mut resume = status_change(WorkspaceRootStatusAction::Resume, "resume", 2);
+        resume.runtime_id = Some(RUNTIME.to_owned());
+        resume.runtime_incarnation_id = Some(INCARNATION.to_owned());
+        assert!(
+            WorkspaceRootService::new(fixture.store.clone())
+                .change_root_status(resume)
+                .is_err()
+        );
+        assert_eq!(
+            fixture
+                .store
+                .get_workspace_root(WORKSPACE, ROOT)
+                .expect("read root")
+                .expect("root remains durable")
+                .status,
+            "REVOKED"
+        );
+    }
+
+    #[test]
+    fn workspace_root_lifecycle_windows_replays_and_hides_foreign_owner() {
+        let fixture = fixture();
+        let service = WorkspaceRootService::new(fixture.store.clone());
+        let first = service
+            .change_root_status(status_change(
+                WorkspaceRootStatusAction::Pause,
+                "pause-key",
+                1,
+            ))
+            .expect("pause commits");
+        let replay = service
+            .change_root_status(status_change(
+                WorkspaceRootStatusAction::Pause,
+                "pause-key",
+                1,
+            ))
+            .expect("identical replay returns receipt");
+        assert_eq!(
+            (replay.root.status.as_str(), replay.root.version),
+            ("PAUSED", 2)
+        );
+        assert_eq!(replay, first);
+        assert!(
+            service
+                .change_root_status(status_change(
+                    WorkspaceRootStatusAction::Resume,
+                    "pause-key",
+                    1
+                ))
+                .is_err()
+        );
+
+        let mut foreign = status_change(WorkspaceRootStatusAction::Pause, "foreign", 2);
+        foreign.principal_id = "foreign-owner".to_owned();
+        assert_eq!(
+            service
+                .change_root_status(foreign)
+                .expect_err("foreign owner is hidden"),
+            StoreError::NotFound
+        );
+    }
+}
+
 /// Removes the v28 and v29 objects and receipts so a fixture can return to the v27 boundary.
 pub(crate) const DOWNGRADE_V29_TO_V27_SQL: &str =
     "DROP TABLE IF EXISTS conversation_owner_side_notes;

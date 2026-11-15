@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::Serialize;
 use serde_json::json;
 use storage_core::conversation::{
     CommitConversationAgentResponse, ConversationMessageRecord, ConversationSessionEnd,
@@ -30,13 +31,314 @@ use storage_sqlite::{SqliteConversationStore, SqliteWorkspaceStore};
 
 use super::adapter::{
     AgentAdapter, CancelSignal, ObserverSet, OpenCodeAdapter, StreamBudget, TurnObservation,
-    UsageCollector,
+    TurnObserver, UsageCollector,
 };
 use super::host_supervisor::{HostStartError, start_host_process};
 use super::native_provider::NativeProviderKey;
+use super::normalizer::NormalizedAgentEvent;
 use super::opencode_server::{
     OpenCodeEnvironment, OpenCodeServer, OpenCodeServerConfig, OpenCodeServerProtocol,
 };
+
+const MAX_NATIVE_PERMISSION_PROMPTS_PER_TURN: usize = 32;
+const MAX_NATIVE_PERMISSION_PROMPTS_PER_RUNTIME: usize = 256;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NativePermissionScope {
+    workspace_id: String,
+    conversation_id: String,
+    turn_id: String,
+    retry_ordinal: u32,
+    runtime_incarnation_id: String,
+    native_session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum NativePermissionState {
+    Pending,
+    Replying,
+    Answered,
+    OutcomeUnknown,
+    SessionEnded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct NativePermissionPromptView {
+    prompt_token: String,
+    state: NativePermissionState,
+    action: String,
+    explanation: Option<String>,
+    resource_count: usize,
+    resources: Vec<String>,
+    decision: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct NativePermissionPrompt {
+    scope: NativePermissionScope,
+    native_request_id: String,
+    native_resources: Vec<String>,
+    view: NativePermissionPromptView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativePermissionRegistryError {
+    ForeignSession,
+    InvalidPrompt,
+    ConflictingDuplicate,
+    Capacity,
+    TokenCollision,
+    Poisoned,
+}
+
+/// Ephemeral, process-local permission correlation. Native provider identifiers
+/// exist only in this registry and never in its serializable prompt projection.
+#[derive(Clone, Default)]
+struct NativePermissionRegistry {
+    prompts: Arc<Mutex<HashMap<String, NativePermissionPrompt>>>,
+}
+
+impl NativePermissionRegistry {
+    fn register(
+        &self,
+        scope: &NativePermissionScope,
+        event: &NormalizedAgentEvent,
+    ) -> Result<NativePermissionPromptView, NativePermissionRegistryError> {
+        let NormalizedAgentEvent::PermissionAsked {
+            permission_id,
+            native_session_id,
+            action,
+            resources,
+            message,
+        } = event
+        else {
+            return Err(NativePermissionRegistryError::InvalidPrompt);
+        };
+        for _ in 0..3 {
+            let mut token_bytes = [0_u8; 32];
+            getrandom::fill(&mut token_bytes)
+                .map_err(|_| NativePermissionRegistryError::InvalidPrompt)?;
+            let token = hex::encode(token_bytes);
+            match self.register_with_token(
+                scope,
+                native_session_id,
+                token,
+                permission_id.clone(),
+                action.clone(),
+                message.clone(),
+                resources.clone(),
+            ) {
+                Err(NativePermissionRegistryError::TokenCollision) => continue,
+                result => return result,
+            }
+        }
+        Err(NativePermissionRegistryError::TokenCollision)
+    }
+
+    fn register_with_token(
+        &self,
+        scope: &NativePermissionScope,
+        observed_session_id: &str,
+        token: String,
+        native_request_id: String,
+        action: String,
+        explanation: Option<String>,
+        native_resources: Vec<String>,
+    ) -> Result<NativePermissionPromptView, NativePermissionRegistryError> {
+        if observed_session_id != scope.native_session_id {
+            return Err(NativePermissionRegistryError::ForeignSession);
+        }
+        if !(32..=128).contains(&token.len())
+            || !token
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+            || native_request_id.is_empty()
+            || native_request_id.len() > 128
+            || native_request_id.chars().any(char::is_control)
+            || native_resources.len() > 64
+        {
+            return Err(NativePermissionRegistryError::InvalidPrompt);
+        }
+        let action = permission_display_text(&action, 128)
+            .filter(|value| !value.is_empty())
+            .ok_or(NativePermissionRegistryError::InvalidPrompt)?;
+        let explanation = explanation
+            .as_deref()
+            .and_then(|value| permission_display_text(value, 512));
+        let mut prompts = self
+            .prompts
+            .lock()
+            .map_err(|_| NativePermissionRegistryError::Poisoned)?;
+
+        if let Some(existing) = prompts
+            .values()
+            .find(|prompt| prompt.scope == *scope && prompt.native_request_id == native_request_id)
+        {
+            if existing.view.action == action
+                && existing.view.explanation == explanation
+                && existing.native_resources == native_resources
+            {
+                return Ok(existing.view.clone());
+            }
+            return Err(NativePermissionRegistryError::ConflictingDuplicate);
+        }
+
+        if prompts.contains_key(&token) {
+            return Err(NativePermissionRegistryError::TokenCollision);
+        }
+        if prompts.len() >= MAX_NATIVE_PERMISSION_PROMPTS_PER_RUNTIME
+            || prompts
+                .values()
+                .filter(|prompt| prompt.scope == *scope)
+                .count()
+                >= MAX_NATIVE_PERMISSION_PROMPTS_PER_TURN
+        {
+            return Err(NativePermissionRegistryError::Capacity);
+        }
+
+        let view = NativePermissionPromptView {
+            prompt_token: token.clone(),
+            state: NativePermissionState::Pending,
+            action,
+            explanation,
+            resource_count: native_resources.len(),
+            resources: (0..native_resources.len().min(16))
+                .map(|index| format!("Resource {}", index + 1))
+                .collect(),
+            decision: None,
+        };
+        prompts.insert(
+            token,
+            NativePermissionPrompt {
+                scope: scope.clone(),
+                native_request_id,
+                native_resources,
+                view: view.clone(),
+            },
+        );
+        Ok(view)
+    }
+
+    fn snapshot(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+    ) -> Vec<NativePermissionPromptView> {
+        let Ok(prompts) = self.prompts.lock() else {
+            return Vec::new();
+        };
+        let mut result = prompts
+            .values()
+            .filter(|prompt| {
+                prompt.scope.workspace_id == workspace_id
+                    && prompt.scope.conversation_id == conversation_id
+                    && prompt.scope.turn_id == turn_id
+                    && prompt.scope.retry_ordinal == retry_ordinal
+            })
+            .map(|prompt| prompt.view.clone())
+            .collect::<Vec<_>>();
+        result.sort_by(|left, right| left.prompt_token.cmp(&right.prompt_token));
+        result
+    }
+
+    fn end_attempt(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+    ) {
+        let Ok(mut prompts) = self.prompts.lock() else {
+            return;
+        };
+        for prompt in prompts.values_mut().filter(|prompt| {
+            prompt.scope.workspace_id == workspace_id
+                && prompt.scope.conversation_id == conversation_id
+                && prompt.scope.turn_id == turn_id
+                && prompt.scope.retry_ordinal == retry_ordinal
+        }) {
+            if matches!(
+                prompt.view.state,
+                NativePermissionState::Pending | NativePermissionState::Replying
+            ) {
+                prompt.view.state = NativePermissionState::SessionEnded;
+            }
+        }
+    }
+}
+
+struct NativePermissionObserver {
+    registry: NativePermissionRegistry,
+    scope: NativePermissionScope,
+    bus: crate::transient_frames::TransientFrameBus,
+    sequence: u32,
+}
+
+impl NativePermissionObserver {
+    fn new(
+        registry: NativePermissionRegistry,
+        scope: NativePermissionScope,
+        bus: crate::transient_frames::TransientFrameBus,
+    ) -> Self {
+        Self {
+            registry,
+            scope,
+            bus,
+            sequence: 0,
+        }
+    }
+}
+
+impl TurnObserver for NativePermissionObserver {
+    fn on_event(&mut self, event: &NormalizedAgentEvent) {
+        if self.sequence >= 64 {
+            return;
+        }
+        let Ok(prompt) = self.registry.register(&self.scope, event) else {
+            return;
+        };
+        self.sequence += 1;
+        let frame = json!({
+            "type": "turn.permission",
+            "workspace_id": self.scope.workspace_id,
+            "conversation_id": self.scope.conversation_id,
+            "turn_id": self.scope.turn_id,
+            "retry_ordinal": self.scope.retry_ordinal,
+            "sequence": self.sequence,
+            "prompt_token": prompt.prompt_token,
+            "state": "PENDING",
+            "action": prompt.action,
+            "explanation": prompt.explanation,
+            "resource_count": prompt.resource_count,
+            "resources": prompt.resources,
+            "decision": prompt.decision,
+        });
+        if let Ok(bytes) = serde_json::to_vec(&frame) {
+            self.bus.publish(crate::transient_frames::TransientFrame {
+                workspace_id: self.scope.workspace_id.clone(),
+                conversation_id: self.scope.conversation_id.clone(),
+                bytes,
+            });
+        }
+    }
+
+    fn finish(&mut self) {}
+}
+
+fn permission_display_text(raw: &str, max_bytes: usize) -> Option<String> {
+    let mut cleaned = String::new();
+    for character in raw.chars().filter(|character| !character.is_control()) {
+        if cleaned.len() + character.len_utf8() > max_bytes {
+            break;
+        }
+        cleaned.push(character);
+    }
+    let cleaned = cleaned.trim().to_owned();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
 
 /// Closed diagnostic classes for failures after durable turn admission. Never add provider
 /// or storage error text here: diagnostics are an operational index, not a detail channel.
@@ -79,6 +381,17 @@ fn settle_dispatch_failure(
         Ok(()) => failure,
         Err(_) => DispatchFailureClass::Settlement,
     }
+}
+
+/// An admitted turn whose pinned host is unavailable has a known, non-provider outcome.
+/// Retry transient local settlement failures so the current daemon can persist that outcome
+/// without waiting for restart; if settlement still cannot be confirmed, the unclaimed
+/// durable intent remains available to startup recovery.
+fn settle_unavailable_host_attempt(
+    settle: impl FnMut() -> Result<(), storage_core::StoreError>,
+) -> Result<(), DispatchFailureClass> {
+    retry_transient_store_commit(3, Duration::from_millis(100), settle)
+        .map_err(|_| DispatchFailureClass::Settlement)
 }
 
 /// Host-normalized final-response identity. A native session handle must never
@@ -202,6 +515,7 @@ pub struct AgentSessionSupervisor {
     store: SqliteWorkspaceStore,
     runtime_id: String,
     cancels: CancelRegistry,
+    native_permissions: NativePermissionRegistry,
 }
 
 impl AgentSessionSupervisor {
@@ -210,7 +524,30 @@ impl AgentSessionSupervisor {
             store,
             runtime_id,
             cancels: Arc::new(Mutex::new(HashMap::new())),
+            native_permissions: NativePermissionRegistry::default(),
         }
+    }
+
+    pub(crate) fn list_live_native_permissions(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+    ) -> Vec<NativePermissionPromptView> {
+        self.native_permissions
+            .snapshot(workspace_id, conversation_id, turn_id, retry_ordinal)
+    }
+
+    fn end_native_permissions_for_attempt(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+    ) {
+        self.native_permissions
+            .end_attempt(workspace_id, conversation_id, turn_id, retry_ordinal);
     }
 
     /// Signals the live dispatch of one turn attempt to interrupt its native session.
@@ -293,19 +630,20 @@ impl AgentSessionSupervisor {
 
                 let Some(host) = host_opt else {
                     // No eligible host: settle the attempt FAILED (AGENT_UNAVAILABLE).
-                    settle_attempt_failed(
-                        &store,
-                        &runtime_id,
-                        &principal,
-                        &workspace,
-                        &conversation,
-                        &turn_id,
-                        None,
-                        "AGENT_UNAVAILABLE",
-                        &correlation,
-                        None,
-                    )
-                    .map_err(|_| DispatchFailureClass::Settlement)?;
+                    settle_unavailable_host_attempt(|| {
+                        settle_attempt_failed(
+                            &store,
+                            &runtime_id,
+                            &principal,
+                            &workspace,
+                            &conversation,
+                            &turn_id,
+                            None,
+                            "AGENT_UNAVAILABLE",
+                            &correlation,
+                            None,
+                        )
+                    })?;
                     return Ok(());
                 };
 
@@ -433,6 +771,13 @@ impl AgentSessionSupervisor {
                     &host.runtime_incarnation_id,
                     &correlation,
                     &cancel,
+                    &supervisor.native_permissions,
+                );
+                supervisor.end_native_permissions_for_attempt(
+                    &workspace,
+                    &conversation,
+                    &turn_id,
+                    turn.retry_ordinal,
                 );
 
                 // Transient presentation control frame: a committed message supersedes the
@@ -1003,6 +1348,7 @@ fn execute_agent_turn(
     host_runtime_incarnation_id: &str,
     correlation_id: &str,
     cancel: &CancelSignal,
+    native_permissions: &NativePermissionRegistry,
 ) -> Result<TurnOutcome, String> {
     let conv_store = SqliteConversationStore::new(store.clone());
 
@@ -1106,8 +1452,25 @@ fn execute_agent_turn(
                     "OpenCode host readiness state is unconfirmed".to_owned()
                 }
                 HostStartError::CleanupPending(mut process) => {
-                    let _ = process.stop();
-                    "OpenCode host cleanup remains unconfirmed".to_owned()
+                    let process_identity_ref = process.process_identity_ref();
+                    let exit_observed = matches!(
+                        process.stop(),
+                        super::opencode_server::OpenCodeProcessState::Exited
+                    );
+                    let cleanup_settled = super::host_supervisor::settle_host_cleanup_retry(
+                        store,
+                        host_runtime_id,
+                        host_runtime_incarnation_id,
+                        host_instance_id,
+                        &process_identity_ref,
+                        exit_observed,
+                        &now_utc_rfc3339,
+                    );
+                    if cleanup_settled {
+                        "OpenCode readiness commit failed; startup process was stopped".to_owned()
+                    } else {
+                        "OpenCode host cleanup remains unconfirmed".to_owned()
+                    }
                 }
             })?;
             let mut host_state_guard = ReadyHostStateGuard::new(
@@ -1120,34 +1483,7 @@ fn execute_agent_turn(
             // Drive the native boundary through the provider-neutral AgentAdapter
             // (001-T04) rather than hand-parsing SSE. The host process is durable
             // STARTING before spawn and READY only after native health is observed.
-            let usage_collector = UsageCollector::default();
-            let mut adapter = OpenCodeAdapter::new(server)
-                .with_cancel(cancel.clone())
-                .with_observer(Box::new(ObserverSet(vec![
-                    Box::new(crate::transient_frames::TurnFramePublisher::new(
-                        crate::transient_frames::transient_bus().clone(),
-                        workspace_id,
-                        conversation_id,
-                        turn_id,
-                        retry_ordinal,
-                    )),
-                    Box::new(usage_collector.clone()),
-                    Box::new(crate::transient_frames::TurnActivityRecorder::new(
-                        crate::transient_frames::transient_bus().clone(),
-                        workspace_id,
-                        conversation_id,
-                        turn_id,
-                        retry_ordinal,
-                        {
-                            let activity_store = conv_store.clone();
-                            Box::new(move |record| {
-                                activity_store
-                                    .append_conversation_turn_activity(record)
-                                    .is_ok()
-                            })
-                        },
-                    )),
-                ])));
+            let mut adapter = OpenCodeAdapter::new(server).with_cancel(cancel.clone());
 
             // Phase 1: version/capability probe (B-03). A failed probe is a typed
             // FAILED turn with the USER message kept and no fallback (AC-015).
@@ -1159,6 +1495,47 @@ fn execute_agent_turn(
             let native_session = adapter
                 .create_session(&working_dir)
                 .map_err(|f| format!("OpenCode create_session failed: {}", f.reason_code()))?;
+
+            // Attach observers only after the provider returned its exact native
+            // session ID; permission correlation must never infer this identity.
+            let usage_collector = UsageCollector::default();
+            adapter = adapter.with_observer(Box::new(ObserverSet(vec![
+                Box::new(NativePermissionObserver::new(
+                    native_permissions.clone(),
+                    NativePermissionScope {
+                        workspace_id: workspace_id.to_owned(),
+                        conversation_id: conversation_id.to_owned(),
+                        turn_id: turn_id.to_owned(),
+                        retry_ordinal,
+                        runtime_incarnation_id: host_runtime_incarnation_id.to_owned(),
+                        native_session_id: native_session.clone(),
+                    },
+                    crate::transient_frames::transient_bus().clone(),
+                )),
+                Box::new(crate::transient_frames::TurnFramePublisher::new(
+                    crate::transient_frames::transient_bus().clone(),
+                    workspace_id,
+                    conversation_id,
+                    turn_id,
+                    retry_ordinal,
+                )),
+                Box::new(usage_collector.clone()),
+                Box::new(crate::transient_frames::TurnActivityRecorder::new(
+                    crate::transient_frames::transient_bus().clone(),
+                    workspace_id,
+                    conversation_id,
+                    turn_id,
+                    retry_ordinal,
+                    {
+                        let activity_store = conv_store.clone();
+                        Box::new(move |record| {
+                            activity_store
+                                .append_conversation_turn_activity(record)
+                                .is_ok()
+                        })
+                    },
+                )),
+            ])));
 
             // Activate session in SQLite
             let now = now_utc_rfc3339();
@@ -1487,6 +1864,188 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_permission_registry_projects_opaque_scoped_prompt_without_native_identifiers() {
+        let registry = NativePermissionRegistry::default();
+        let token = "a".repeat(64);
+        let scope = NativePermissionScope {
+            workspace_id: "ws-one".to_owned(),
+            conversation_id: "conv-one".to_owned(),
+            turn_id: "turn-one".to_owned(),
+            retry_ordinal: 0,
+            runtime_incarnation_id: "inc-one".to_owned(),
+            native_session_id: "native-session-secret".to_owned(),
+        };
+        let prompt = registry
+            .register_with_token(
+                &scope,
+                &scope.native_session_id,
+                token.clone(),
+                "native-request-secret".to_owned(),
+                "writeFile".to_owned(),
+                Some("Update the selected file".to_owned()),
+                vec!["C:/private/workspace/secret.txt".to_owned()],
+            )
+            .expect("register normalized native permission");
+
+        let serialized = serde_json::to_string(&prompt).expect("serialize public prompt");
+        assert!(serialized.contains(&token));
+        assert!(serialized.contains("writeFile"));
+        assert_eq!(prompt.resource_count, 1);
+        assert_eq!(prompt.resources, ["Resource 1"]);
+        assert!(!serialized.contains("native-session-secret"));
+        assert!(!serialized.contains("native-request-secret"));
+        assert!(!serialized.contains("C:/private/workspace/secret.txt"));
+
+        assert_eq!(
+            registry.register_with_token(
+                &scope,
+                &scope.native_session_id,
+                "b".repeat(64),
+                "native-request-secret".to_owned(),
+                "writeFile".to_owned(),
+                Some("Update the selected file".to_owned()),
+                vec!["C:/private/workspace/secret.txt".to_owned()],
+            ),
+            Ok(prompt.clone()),
+            "an identical provider notification is idempotent"
+        );
+        assert_eq!(
+            registry.register_with_token(
+                &scope,
+                &scope.native_session_id,
+                "c".repeat(64),
+                "native-request-secret".to_owned(),
+                "deleteFile".to_owned(),
+                Some("Update the selected file".to_owned()),
+                vec!["C:/private/workspace/secret.txt".to_owned()],
+            ),
+            Err(NativePermissionRegistryError::ConflictingDuplicate)
+        );
+
+        let wrong_turn = NativePermissionScope {
+            turn_id: "turn-other".to_owned(),
+            ..scope.clone()
+        };
+        assert!(
+            registry
+                .snapshot(
+                    &wrong_turn.workspace_id,
+                    &wrong_turn.conversation_id,
+                    &wrong_turn.turn_id,
+                    wrong_turn.retry_ordinal,
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            registry.snapshot(
+                &scope.workspace_id,
+                &scope.conversation_id,
+                &scope.turn_id,
+                scope.retry_ordinal,
+            ),
+            [prompt]
+        );
+        registry.end_attempt(
+            &scope.workspace_id,
+            &scope.conversation_id,
+            &scope.turn_id,
+            scope.retry_ordinal,
+        );
+        assert_eq!(
+            registry.snapshot(
+                &scope.workspace_id,
+                &scope.conversation_id,
+                &scope.turn_id,
+                scope.retry_ordinal,
+            )[0]
+            .state,
+            NativePermissionState::SessionEnded
+        );
+    }
+
+    #[test]
+    fn native_permission_registry_rejects_foreign_session_and_conflicting_duplicate() {
+        let registry = NativePermissionRegistry::default();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-one".to_owned(),
+            conversation_id: "conv-one".to_owned(),
+            turn_id: "turn-one".to_owned(),
+            retry_ordinal: 0,
+            runtime_incarnation_id: "inc-one".to_owned(),
+            native_session_id: "native-session-one".to_owned(),
+        };
+        assert_eq!(
+            registry.register_with_token(
+                &scope,
+                "foreign-native-session",
+                "opaque-prompt-token-000000000000000000000001".to_owned(),
+                "native-request-one".to_owned(),
+                "readFile".to_owned(),
+                None,
+                vec![],
+            ),
+            Err(NativePermissionRegistryError::ForeignSession)
+        );
+        let event = NormalizedAgentEvent::PermissionAsked {
+            permission_id: "native-request-one".to_owned(),
+            native_session_id: scope.native_session_id.clone(),
+            action: "readFile".to_owned(),
+            resources: vec!["/private/path".to_owned()],
+            message: None,
+        };
+        let registered = registry
+            .register(&scope, &event)
+            .expect("generate an opaque prompt token");
+        assert_eq!(registered.prompt_token.len(), 64);
+        assert!(
+            registered
+                .prompt_token
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        );
+    }
+
+    #[test]
+    fn native_permission_observer_publishes_only_scoped_sanitized_frame() {
+        let registry = NativePermissionRegistry::default();
+        let bus = crate::transient_frames::TransientFrameBus::for_tests();
+        let mut receiver = bus.subscribe();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-one".to_owned(),
+            conversation_id: "conv-one".to_owned(),
+            turn_id: "turn-one".to_owned(),
+            retry_ordinal: 2,
+            runtime_incarnation_id: "inc-one".to_owned(),
+            native_session_id: "native-session-secret".to_owned(),
+        };
+        let mut observer = NativePermissionObserver::new(registry, scope, bus);
+        observer.on_event(&NormalizedAgentEvent::PermissionAsked {
+            permission_id: "native-request-secret".to_owned(),
+            native_session_id: "native-session-secret".to_owned(),
+            action: "writeFile".to_owned(),
+            resources: vec!["C:/private/file.txt".to_owned()],
+            message: Some("Please update this file".to_owned()),
+        });
+
+        let frame = receiver.try_recv().expect("permission event published");
+        let value: serde_json::Value =
+            serde_json::from_slice(&frame.bytes).expect("valid permission frame");
+        assert_eq!(value["type"], "turn.permission");
+        assert_eq!(value["workspace_id"], "ws-one");
+        assert_eq!(value["conversation_id"], "conv-one");
+        assert_eq!(value["turn_id"], "turn-one");
+        assert_eq!(value["retry_ordinal"], 2);
+        assert_eq!(value["sequence"], 1);
+        assert_eq!(value["state"], "PENDING");
+        assert_eq!(value["action"], "writeFile");
+        assert_eq!(value["resources"], serde_json::json!(["Resource 1"]));
+        let serialized = value.to_string();
+        assert!(!serialized.contains("native-session-secret"));
+        assert!(!serialized.contains("native-request-secret"));
+        assert!(!serialized.contains("C:/private/file.txt"));
+    }
+
+    #[test]
     fn activation_versions_derive_from_committed_starting_version() {
         assert_eq!(session_activation_versions(17), Some((17, 18)));
         assert_eq!(session_activation_versions(0), None);
@@ -1676,6 +2235,22 @@ mod tests {
             "SETTLEMENT",
             "permanent settlement details collapse to a closed class for recovery"
         );
+    }
+
+    #[test]
+    fn conversation_unavailable_host_settlement_retries_transient_store_failure() {
+        let mut calls = 0;
+        let result = settle_unavailable_host_attempt(|| {
+            calls += 1;
+            if calls == 1 {
+                Err(StoreError::Busy)
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(calls, 2, "transient no-host settlement is retried");
     }
 
     #[test]

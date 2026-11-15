@@ -24,6 +24,7 @@ By owner approval on 2026-11-09 (see [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](..
 - [RESEARCH.md](RESEARCH.md) - sources, verified evidence, alternatives and open questions.
 - [WIRING.yaml](WIRING.yaml) - component/owner/transaction graph.
 - [contracts/](contracts/README.md) - API/event and failure/recovery contract use.
+- [Native permission flow design](contracts/native-permission-design.md) - T27 owner design; Runtime-local correlation, served snapshot GET, target reply path, adapter-owned provider call, Needs You and recovery (not integrated or qualified).
 
 ## Canonical owners
 

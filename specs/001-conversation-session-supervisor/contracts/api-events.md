@@ -55,6 +55,12 @@ The durable presentation snapshot/upsert cursor is the canonical reconnect mecha
 
 The implemented transient `turn.delta` frames follow this contract: their payload must be bounded and carry exact Workspace, Conversation, turn, retry ordinal, AgentSession and monotonic per-session/turn sequence identity. They are local, ephemeral and not domain events. Do not persist partial delta as ConversationMessage. A gap may be replayed only if the adapter guarantees stable replay; otherwise discard delta buffer and resync. A final committed message supersedes any transient text.
 
+### T27 snapshot/reply operations and transient frame
+
+The `GET .../turns/{turn_id}/permissions` snapshot operation is now SERVED for an authenticated owner and exact persisted turn retry ordinal. It reads only the Runtime-local registry and does not reconstruct state from history. The `POST .../permissions/{prompt_token}/reply` operation remains TARGET. Neither operation mutates SQLite Conversation state. The client token is opaque and scoped to the authenticated Workspace, Conversation, exact turn/retry and Runtime incarnation. The reply body is closed to `ALLOW_ONCE` and `REJECT_SESSION_PENDING`; the latter is explicitly session-wide for requests pending when OpenCode applies it. Native IDs and paths are absent from API and stream payloads.
+
+`turn.permission` is ephemeral and carries Workspace/Conversation/turn/retry correlation, a bounded sequence, the opaque prompt token, current state, sanitized action/explanation and bounded resource display names. A normalized-event producer and private registry now emit this frame as CODE; resource names are generic labels pending safe Workspace-relative display logic. It is not a DomainEvent, receipt, grant, Effect or durable activity record. Reconnect can now read the served live snapshot route; persisted `PERMISSION/ASKED` remains historical REPORTED activity. See [native permission design](native-permission-design.md) for transitions, provider reconciliation and recovery. Full reply handling, UI consumption and qualification remain absent.
+
 `transient_frames.rs` implements bounded turn.delta and turn.settled producers consumed by the supervisor/Operator stream path. A production rich.draft publisher and full native-provider qualification remain open under Feature 016 and T09. Source producers are not SYSTEM/USER evidence.
 
 ## 6. Security contract

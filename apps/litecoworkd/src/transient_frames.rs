@@ -518,6 +518,10 @@ mod tests {
         recorder.on_event(&NormalizedAgentEvent::TodoUpdated { count: 3 });
         recorder.on_event(&NormalizedAgentEvent::PermissionAsked {
             permission_id: "perm-1".into(),
+            native_session_id: "session-1".into(),
+            action: "read".into(),
+            resources: vec!["/workspace/a.txt".into()],
+            message: None,
         });
         recorder.on_event(&NormalizedAgentEvent::TextDelta {
             text: "ignored".into(),

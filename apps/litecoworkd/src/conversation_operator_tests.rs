@@ -2028,6 +2028,63 @@ async fn conversation_dispatch_host_resolution_error_settles_the_admitted_attemp
 }
 
 #[tokio::test]
+async fn conversation_dispatch_host_unavailable_after_admission_settles_attempt() {
+    let fixture = turn_command_fixture("turn-host-unavailable-after-admission");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-host-unavailable-after-admission").await;
+
+    // Admission observed an eligible endpoint. Model the offer becoming
+    // unauthenticated before asynchronous dispatch resolves the pinned host.
+    // The admitted USER message must remain durable, with no session or answer.
+    let changed = fixture
+        .connection()
+        .execute(
+            "UPDATE runtime_offers SET readiness='NEEDS_AUTH' WHERE runtime_id=?1 AND runtime_incarnation_id=?2 AND offer_kind='AGENT_ENDPOINT' AND offer_ref=?3",
+            rusqlite::params![
+                "turn-command-binding-runtime",
+                "turn-command-binding-incarnation",
+                "turn-command-binding-endpoint",
+            ],
+        )
+        .expect("make the pinned endpoint unavailable after admission");
+    assert_eq!(changed, 1, "the fixture has one offer for its binding");
+
+    let result = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-host-unavailable-after-admission-correlation",
+        )
+        .await;
+
+    assert_eq!(result, Ok(()), "unavailable host is a settled outcome");
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    let (reason, user_count, answer_count, session_count): (String, i64, i64, i64) = fixture
+        .connection()
+        .query_row(
+            "SELECT
+               (SELECT json_extract(payload_json,'$.reason_code') FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1 AND type='conversation.turn.settled.v1'),
+               (SELECT COUNT(*) FROM conversation_messages WHERE turn_id=?1 AND role='USER'),
+               (SELECT COUNT(*) FROM conversation_messages WHERE turn_id=?1 AND role='AGENT'),
+               (SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1)",
+            [&turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read the post-admission unavailable outcome");
+    assert_eq!(reason, "AGENT_UNAVAILABLE");
+    assert_eq!(
+        user_count, 1,
+        "keep the admitted input for an explicit retry"
+    );
+    assert_eq!(answer_count, 0, "do not invent an agent answer");
+    assert_eq!(session_count, 0, "do not reserve a session without a host");
+}
+
+#[tokio::test]
 async fn conversation_dispatch_profile_lookup_error_settles_claimed_attempt() {
     let fixture = turn_command_fixture("turn-profile-lookup-error");
     let (turn, turn_id) =
@@ -2077,6 +2134,63 @@ async fn conversation_dispatch_profile_lookup_error_settles_claimed_attempt() {
         session_count, 0,
         "profile lookup fails before session reservation"
     );
+}
+
+#[tokio::test]
+async fn conversation_dispatch_missing_profile_settles_claimed_attempt() {
+    let fixture = turn_command_fixture("turn-profile-missing");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-profile-missing").await;
+
+    // Host resolution reads the immutable pinned binding and endpoint/offer joins, not
+    // the profile catalog. Remove the catalog row after admission so the later lookup
+    // succeeds as a query but cannot find the pinned provider profile.
+    let profile_id: String = fixture
+        .connection()
+        .query_row(
+            "SELECT agent_profile_id FROM agent_bindings WHERE workspace_id=?1 AND agent_binding_id=?2",
+            rusqlite::params![WORKSPACE_A, "turn-command-binding"],
+            |row| row.get(0),
+        )
+        .expect("read the profile pinned by the binding");
+    let catalog_connection = fixture.connection();
+    catalog_connection
+        .execute_batch("PRAGMA foreign_keys=OFF;")
+        .expect("disable fixture-only foreign key enforcement");
+    let changed = catalog_connection
+        .execute(
+            "DELETE FROM agent_profiles WHERE agent_profile_id=?1",
+            [&profile_id],
+        )
+        .expect("remove the profile row while preserving the admitted binding");
+    assert_eq!(changed, 1, "the pinned profile row is removed");
+
+    let failure = fixture
+        .supervisor
+        .dispatch_turn(
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-profile-missing-correlation",
+        )
+        .await;
+
+    assert_eq!(
+        failure,
+        Err(crate::agents::supervisor::DispatchFailureClass::ProfileLookup)
+    );
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    let session_count: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("count sessions before reservation");
+    assert_eq!(session_count, 0, "missing profile fails before reservation");
 }
 
 #[tokio::test]
@@ -2722,6 +2836,59 @@ async fn turn_activity_records_route_returns_reported_rows_scoped_to_the_turn_at
     );
     let foreign = get(WORKSPACE_B, uri).await;
     assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn live_permission_snapshot_route_is_owner_scoped_and_attempt_bound() {
+    let fixture = turn_command_fixture("live-permission-snapshot-route-workspace");
+    fixture.seed_turn("turn-live-permission", "RUNNING", 2, 1);
+    let get = |workspace: &'static str, uri: String| {
+        let mut request = Request::get(uri)
+            .header("x-workspace-id", workspace)
+            .body(Body::empty())
+            .expect("permission snapshot request");
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+        let router = fixture.router.clone();
+        async move {
+            router
+                .oneshot(request)
+                .await
+                .expect("permission snapshot route responds")
+        }
+    };
+
+    let uri = format!(
+        "/v1/conversations/{}/turns/turn-live-permission/permissions",
+        fixture.conversation_id
+    );
+    let response = get(WORKSPACE_A, uri.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("snapshot body");
+    let snapshot: serde_json::Value = serde_json::from_slice(&bytes).expect("snapshot JSON");
+    assert_eq!(snapshot["workspace_id"], WORKSPACE_A);
+    assert_eq!(snapshot["conversation_id"], fixture.conversation_id);
+    assert_eq!(snapshot["turn_id"], "turn-live-permission");
+    assert_eq!(snapshot["retry_ordinal"], 1);
+    assert!(
+        snapshot["items"]
+            .as_array()
+            .expect("snapshot items")
+            .is_empty()
+    );
+
+    let foreign = get(WORKSPACE_B, uri.clone()).await;
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    let missing = get(
+        WORKSPACE_A,
+        format!(
+            "/v1/conversations/{}/turns/turn-missing/permissions",
+            fixture.conversation_id
+        ),
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

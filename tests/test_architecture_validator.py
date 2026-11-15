@@ -415,9 +415,9 @@ class CICoverageContractTests(unittest.TestCase):
                 encoding="utf-8"
             )
         self.assertIn("not semantic or runtime qualification", report)
-        self.assertIn("OpenAPI operations: 231", report)
-        self.assertIn("Composed Operator OpenAPI registrations: 178", report)
-        self.assertIn("OpenAPI target-only operations: 53", report)
+        self.assertIn("OpenAPI operations: 233", report)
+        self.assertIn("Composed Operator OpenAPI registrations: 179", report)
+        self.assertIn("OpenAPI target-only operations: 54", report)
         self.assertNotIn("Actual OpenAPI?", report)
 
     def test_freshness_helper_detects_stale_output_and_restores_snapshot(self):

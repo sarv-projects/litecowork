@@ -100,6 +100,95 @@ fn mark_host_stopped(
         .is_ok()
 }
 
+fn reconcile_observed_host_exit(
+    store: &dyn AgentHostStore,
+    runtime_id: &str,
+    runtime_incarnation_id: &str,
+    host_instance_id: &str,
+    process_identity_ref: &str,
+    now: &impl Fn() -> String,
+) -> bool {
+    // A storage error may hide a committed transition or be transient. Re-read
+    // after every compare-and-set and make only a small bounded number of retries
+    // before leaving the lifecycle explicitly unresolved.
+    for _ in 0..4 {
+        let Ok(Some(host)) =
+            store.get_agent_host_instance(runtime_id, runtime_incarnation_id, host_instance_id)
+        else {
+            return false;
+        };
+        match host.state.as_str() {
+            "STOPPED" | "FAILED" => return true,
+            "STARTING" => {
+                if store
+                    .transition_agent_host_instance(
+                        runtime_id,
+                        runtime_incarnation_id,
+                        host_instance_id,
+                        "STARTING",
+                        "FAILED",
+                        &now(),
+                        Some(process_identity_ref),
+                    )
+                    .is_ok()
+                {
+                    return true;
+                }
+            }
+            "READY" | "DEGRADED" => {
+                let _ = store.transition_agent_host_instance(
+                    runtime_id,
+                    runtime_incarnation_id,
+                    host_instance_id,
+                    &host.state,
+                    "STOPPING",
+                    &now(),
+                    Some(process_identity_ref),
+                );
+            }
+            "STOPPING" => {
+                if mark_host_stopped(
+                    store,
+                    runtime_id,
+                    runtime_incarnation_id,
+                    host_instance_id,
+                    process_identity_ref,
+                    now,
+                ) {
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+    }
+    matches!(
+        store.get_agent_host_instance(runtime_id, runtime_incarnation_id, host_instance_id),
+        Ok(Some(ref current)) if matches!(current.state.as_str(), "STOPPED" | "FAILED")
+    )
+}
+
+pub(crate) fn settle_host_cleanup_retry(
+    store: &dyn AgentHostStore,
+    runtime_id: &str,
+    runtime_incarnation_id: &str,
+    host_instance_id: &str,
+    process_identity_ref: &str,
+    exit_observed: bool,
+    now: &impl Fn() -> String,
+) -> bool {
+    if !exit_observed {
+        return false;
+    }
+    reconcile_observed_host_exit(
+        store,
+        runtime_id,
+        runtime_incarnation_id,
+        host_instance_id,
+        process_identity_ref,
+        now,
+    )
+}
+
 /// Persists STARTING before native work and commits READY only after the caller's
 /// process-start/readiness handshake succeeds. The caller performs native work only
 /// after `create_agent_host_instance` returns, so no native call runs in a storage tx.
@@ -171,22 +260,24 @@ pub(crate) fn start_host_process<T>(
                 &now,
             );
             match stop(process) {
-                Ok(()) if stopping => {
-                    if mark_host_stopped(
+                Ok(()) => {
+                    // This reconciles both a committed STOPPING row and the
+                    // case where the first STOPPING write failed transiently.
+                    // Never use a stale STARTING->FAILED CAS for a READY row.
+                    let exit_reconciled = reconcile_observed_host_exit(
                         store,
                         &runtime_id,
                         &runtime_incarnation_id,
                         &host_instance_id,
                         &process_identity_ref,
                         &now,
-                    ) {
+                    );
+                    if exit_reconciled {
                         Err(HostStartError::StoreUnavailable)
                     } else {
                         Err(HostStartError::StateUnconfirmed)
                     }
                 }
-                Ok(()) if mark_failed() => Err(HostStartError::StoreUnavailable),
-                Ok(()) => Err(HostStartError::StateUnconfirmed),
                 Err(process) if stopping => Err(HostStartError::CleanupPending(process)),
                 Err(process) => {
                     // If storage still shows STARTING, an unconfirmed failed startup
@@ -218,6 +309,7 @@ mod tests {
         events: Arc<Mutex<Vec<String>>>,
         fail_ready_once: Arc<Mutex<bool>>,
         commit_ready_then_fail: Arc<Mutex<bool>>,
+        fail_stopping_once: Arc<Mutex<bool>>,
         host: Arc<Mutex<Option<AgentHostInstanceRecord>>>,
     }
 
@@ -262,6 +354,13 @@ mod tests {
                             host.process_identity_ref = process_identity_ref.map(str::to_owned);
                         }
                     }
+                    return Err(StoreError::Busy);
+                }
+            }
+            if expected_state == "READY" && next_state == "STOPPING" {
+                let mut fail_stopping = self.fail_stopping_once.lock().expect("failure lock");
+                if *fail_stopping {
+                    *fail_stopping = false;
                     return Err(StoreError::Busy);
                 }
             }
@@ -485,7 +584,10 @@ mod tests {
             },
         );
 
-        assert!(matches!(result, Err(super::HostStartError::StoreUnavailable)));
+        assert!(matches!(
+            result,
+            Err(super::HostStartError::StoreUnavailable)
+        ));
         assert_eq!(
             *order.lock().expect("recording lock"),
             [
@@ -493,6 +595,124 @@ mod tests {
                 "transition:STARTING>READY:identity:process-handle",
                 "transition:READY>STOPPING:identity:process-handle",
                 "stop:observed-exit",
+                "transition:STOPPING>STOPPED:identity:process-handle"
+            ]
+        );
+        assert_eq!(
+            store
+                .host
+                .lock()
+                .expect("host lock")
+                .as_ref()
+                .map(|host| host.state.as_str()),
+            Some("STOPPED")
+        );
+    }
+
+    #[test]
+    fn observed_exit_retries_ready_to_stopping_after_initial_write_failure() {
+        let store = RecordingHostStore::default();
+        *store.fail_ready_once.lock().expect("failure lock") = true;
+        *store
+            .commit_ready_then_fail
+            .lock()
+            .expect("ambiguous commit lock") = true;
+        *store.fail_stopping_once.lock().expect("failure lock") = true;
+        let order = Arc::clone(&store.events);
+        let result = start_host_process(
+            &store,
+            host_record("STARTING"),
+            || "2026-11-14T00:00:08Z".to_owned(),
+            || Ok::<_, ()>("process-handle"),
+            |process| format!("identity:{process}"),
+            |process| {
+                order
+                    .lock()
+                    .expect("recording lock")
+                    .push("stop:observed-exit".to_owned());
+                assert_eq!(process, "process-handle");
+                Ok::<(), &str>(())
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(super::HostStartError::StoreUnavailable)
+        ));
+        assert_eq!(
+            *order.lock().expect("recording lock"),
+            [
+                "create:STARTING",
+                "transition:STARTING>READY:identity:process-handle",
+                "transition:READY>STOPPING:identity:process-handle",
+                "stop:observed-exit",
+                "transition:READY>STOPPING:identity:process-handle",
+                "transition:STOPPING>STOPPED:identity:process-handle"
+            ],
+            "after observed process exit, retry the durable lifecycle transition before settling STOPPED"
+        );
+        assert_eq!(
+            store
+                .host
+                .lock()
+                .expect("host lock")
+                .as_ref()
+                .map(|host| host.state.as_str()),
+            Some("STOPPED")
+        );
+    }
+
+    #[test]
+    fn observed_retry_after_stopping_commits_stopped() {
+        let store = RecordingHostStore::default();
+        let mut host = host_record("STOPPING");
+        host.process_identity_ref = Some("identity:process-handle".to_owned());
+        *store.host.lock().expect("host lock") = Some(host);
+
+        assert!(super::settle_host_cleanup_retry(
+            &store,
+            "runtime-test",
+            "incarnation-test",
+            "host-test",
+            "identity:process-handle",
+            true,
+            &|| "2026-11-14T00:00:07Z".to_owned(),
+        ));
+        assert_eq!(
+            *store.events.lock().expect("recording lock"),
+            ["transition:STOPPING>STOPPED:identity:process-handle"]
+        );
+        assert_eq!(
+            store
+                .host
+                .lock()
+                .expect("host lock")
+                .as_ref()
+                .map(|host| host.state.as_str()),
+            Some("STOPPED")
+        );
+    }
+
+    #[test]
+    fn observed_retry_after_degraded_commits_stopping_and_stopped() {
+        let store = RecordingHostStore::default();
+        let mut host = host_record("DEGRADED");
+        host.process_identity_ref = Some("identity:process-handle".to_owned());
+        *store.host.lock().expect("host lock") = Some(host);
+
+        assert!(super::settle_host_cleanup_retry(
+            &store,
+            "runtime-test",
+            "incarnation-test",
+            "host-test",
+            "identity:process-handle",
+            true,
+            &|| "2026-11-14T00:00:09Z".to_owned(),
+        ));
+        assert_eq!(
+            *store.events.lock().expect("recording lock"),
+            [
+                "transition:DEGRADED>STOPPING:identity:process-handle",
                 "transition:STOPPING>STOPPED:identity:process-handle"
             ]
         );

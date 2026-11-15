@@ -62,6 +62,7 @@ pub(crate) enum OpenCodeError {
     HttpStatus(u16),
     InvalidSessionId,
     InvalidMessageId,
+    InvalidPermissionRequestId,
     Timeout,
     StreamClosed,
 }
@@ -85,6 +86,23 @@ pub(crate) enum OpenCodeServerProtocol {
     V2_0_26,
     V2_0_28,
     V2_0_32,
+}
+
+/// Decisions intentionally exposed to the V1 permission bridge. `always` is
+/// omitted because it persists a provider rule and can resolve other requests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenCodePermissionDecision {
+    Once,
+    Reject,
+}
+
+impl OpenCodePermissionDecision {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::Reject => "reject",
+        }
+    }
 }
 
 impl OpenCodeServerProtocol {
@@ -650,6 +668,72 @@ impl OpenCodeServer {
         Ok(response.status == 204)
     }
 
+    /// Reads pending requests from the exact native session. The returned
+    /// provider payload must remain Runtime-local and be normalized before any
+    /// UI projection; this method does not establish user authorization.
+    pub(crate) fn list_session_permissions(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Value, OpenCodeError> {
+        validate_session_id(session_id)?;
+        let path = format!("/api/session/{session_id}/permission");
+        let response = self.request_with_response_limit(
+            "GET",
+            &path,
+            None,
+            "application/json",
+            MAX_PROFILE_RESPONSE_BYTES,
+        )?;
+        response_json(response)
+    }
+
+    /// Reads one pending request using both native identifiers. OpenCode
+    /// checks that the request belongs to the path session; LiteCowork must
+    /// independently correlate that pair to its Runtime-local registry.
+    pub(crate) fn get_session_permission(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<Value, OpenCodeError> {
+        validate_session_id(session_id)?;
+        validate_permission_request_id(request_id)?;
+        let path = format!("/api/session/{session_id}/permission/{request_id}");
+        let response = self.request_with_response_limit(
+            "GET",
+            &path,
+            None,
+            "application/json",
+            MAX_PROFILE_RESPONSE_BYTES,
+        )?;
+        response_json(response)
+    }
+
+    /// Replies only to an allowlisted native decision. `Reject` follows the
+    /// pinned provider's session-wide effect on requests pending at dispatch;
+    /// callers must disclose that before invoking this method. `Always` is
+    /// deliberately not representable here.
+    pub(crate) fn reply_session_permission(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        decision: OpenCodePermissionDecision,
+    ) -> Result<(), OpenCodeError> {
+        validate_session_id(session_id)?;
+        validate_permission_request_id(request_id)?;
+        let path = format!("/api/session/{session_id}/permission/{request_id}/reply");
+        let response = self.request(
+            "POST",
+            &path,
+            Some(json!({"decision": decision.as_str()})),
+            "application/json",
+        )?;
+        if response.status == 204 {
+            Ok(())
+        } else {
+            Err(OpenCodeError::InvalidResponse)
+        }
+    }
+
     /// Opens the native server-instance SSE event stream. OpenCode scopes it
     /// to this server's instance; callers must still
     /// correlate session IDs and treat payloads as untrusted observations.
@@ -997,6 +1081,18 @@ fn validate_session_id(id: &str) -> Result<(), OpenCodeError> {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
     {
         return Err(OpenCodeError::InvalidSessionId);
+    }
+    Ok(())
+}
+
+fn validate_permission_request_id(id: &str) -> Result<(), OpenCodeError> {
+    if id.is_empty()
+        || id.len() > MAX_SESSION_ID_BYTES
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(OpenCodeError::InvalidPermissionRequestId);
     }
     Ok(())
 }
@@ -1415,6 +1511,364 @@ mod tests {
         {
             OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace")
         }
+    }
+
+    #[test]
+    fn permission_transport_accepts_only_safe_request_ids_and_nonpersistent_decisions() {
+        assert_eq!(validate_permission_request_id("perm_01-test"), Ok(()));
+        assert_eq!(
+            validate_permission_request_id("../other-session"),
+            Err(OpenCodeError::InvalidPermissionRequestId)
+        );
+        assert_eq!(
+            validate_permission_request_id(&"x".repeat(MAX_SESSION_ID_BYTES + 1)),
+            Err(OpenCodeError::InvalidPermissionRequestId)
+        );
+        assert_eq!(OpenCodePermissionDecision::Once.as_str(), "once");
+        assert_eq!(OpenCodePermissionDecision::Reject.as_str(), "reject");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn permission_transport_uses_pinned_session_routes_and_decision_body() {
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        listener
+            .set_nonblocking(true)
+            .expect("make fake server accept bounded");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for expected_status in [200, 200, 204] {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(accepted) => break accepted,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept permission request before deadline: {error}"),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .expect("make accepted fake-server socket blocking");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .expect("set request timeout");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                let (header_end, content_length) = loop {
+                    if let Some(header_end) = request
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|index| index + 4)
+                    {
+                        let headers = String::from_utf8(request[..header_end].to_vec())
+                            .expect("HTTP headers are UTF-8");
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= header_end + content_length {
+                            break (header_end, content_length);
+                        }
+                    }
+                    let count = stream.read(&mut buffer).expect("read bounded request");
+                    assert_ne!(count, 0, "client closed before request completed");
+                    request.extend_from_slice(&buffer[..count]);
+                    assert!(request.len() <= MAX_REQUEST_BYTES + MAX_HEADER_BYTES);
+                };
+                let headers = String::from_utf8(request[..header_end].to_vec())
+                    .expect("HTTP headers are UTF-8");
+                let request_line = headers
+                    .lines()
+                    .next()
+                    .expect("HTTP request line")
+                    .to_owned();
+                let body = &request[header_end..header_end + content_length];
+                requests.push((request_line, body.to_vec()));
+                let response_body = if expected_status == 204 {
+                    String::new()
+                } else if requests.len() == 1 {
+                    r#"{"data":[]}"#.to_owned()
+                } else {
+                    r#"{"data":{"id":"perm_01","sessionID":"session-a"}}"#.to_owned()
+                };
+                let reason = if expected_status == 204 {
+                    "No Content"
+                } else {
+                    "OK"
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {expected_status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                )
+                .expect("write fake permission response");
+            }
+            requests
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(3),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+
+        assert_eq!(
+            server.list_session_permissions("session-a"),
+            Ok(serde_json::json!({"data": []}))
+        );
+        assert_eq!(
+            server.get_session_permission("session-a", "perm_01"),
+            Ok(serde_json::json!({
+                "data": {"id": "perm_01", "sessionID": "session-a"}
+            }))
+        );
+        assert_eq!(
+            server.reply_session_permission(
+                "session-a",
+                "perm_01",
+                OpenCodePermissionDecision::Once,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            captured.join().expect("captured permission requests"),
+            vec![
+                (
+                    "GET /api/session/session-a/permission HTTP/1.1".to_owned(),
+                    Vec::new()
+                ),
+                (
+                    "GET /api/session/session-a/permission/perm_01 HTTP/1.1".to_owned(),
+                    Vec::new()
+                ),
+                (
+                    "POST /api/session/session-a/permission/perm_01/reply HTTP/1.1".to_owned(),
+                    br#"{"decision":"once"}"#.to_vec()
+                )
+            ]
+        );
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn permission_transport_timeout_after_dispatch_is_ambiguous_and_not_retried() {
+        use std::{
+            io::Read,
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        let address = listener.local_addr().expect("fake server address");
+        let received = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept one reply request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("set bounded request read");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("read dispatched reply");
+            assert!(count > 0, "reply request reached the provider");
+            assert!(
+                String::from_utf8_lossy(&request[..count])
+                    .starts_with("POST /api/session/session-a/permission/perm_01/reply HTTP/1.1")
+            );
+            // Simulate a provider that received the decision but whose
+            // acknowledgment is lost. The caller must reconcile; transport
+            // must not silently issue a second decision.
+            listener
+                .set_nonblocking(true)
+                .expect("check for an automatic retry without blocking");
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(
+                matches!(
+                    listener.accept(),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+                ),
+                "ambiguous decision must not be automatically retried"
+            );
+            count
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_millis(50),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+
+        assert_eq!(
+            server.reply_session_permission(
+                "session-a",
+                "perm_01",
+                OpenCodePermissionDecision::Once,
+            ),
+            Err(OpenCodeError::Timeout)
+        );
+        assert!(received.join().expect("fake provider received one request") > 0);
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn permission_transport_closes_provider_denial_and_server_errors() {
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        listener
+            .set_nonblocking(true)
+            .expect("make fake server accept bounded");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            for status in [401_u16, 403, 500] {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(accepted) => break accepted,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept permission request before deadline: {error}"),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .expect("make accepted fake-server socket blocking");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .expect("set bounded request read");
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).expect("read permission reply");
+                assert!(count > 0, "request reached the provider");
+                let reason = match status {
+                    401 => "Unauthorized",
+                    403 => "Forbidden",
+                    _ => "Internal Server Error",
+                };
+                // The body intentionally contains a secret-like provider
+                // detail; the transport error must not preserve or expose it.
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} {reason}\r\nContent-Length: 22\r\nConnection: close\r\n\r\nprovider-secret-detail"
+                )
+                .expect("send bounded error response");
+            }
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(2),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+
+        for (status, expected) in [
+            (401, OpenCodeError::Unauthorized),
+            (403, OpenCodeError::Unauthorized),
+            (500, OpenCodeError::HttpStatus(500)),
+        ] {
+            let result = server.reply_session_permission(
+                "session-a",
+                "perm_01",
+                OpenCodePermissionDecision::Once,
+            );
+            assert_eq!(result, Err(expected), "HTTP status {status}");
+            assert!(!format!("{result:?}").contains("provider-secret-detail"));
+        }
+        captured.join().expect("captured provider error responses");
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
     }
 
     #[test]

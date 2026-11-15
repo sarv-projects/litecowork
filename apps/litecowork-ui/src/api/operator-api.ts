@@ -471,6 +471,40 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/conversations/{conversationId}/turns/{turnId}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description TARGET for 001-T27. Returns only live, Runtime-local native permission prompts for the exact active turn. This is not reconstructed from REPORTED activity and contains no native session/request IDs, raw metadata, absolute paths, or durable permission decision. */
+        get: operations["listLiveConversationTurnPermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description TARGET for 001-T27. Replies through the exact active native session after owner, Workspace, turn, Runtime-incarnation and pending-prompt checks. Identical idempotent replay is Runtime-local; no provider ID is accepted from the client. REJECT_SESSION_PENDING rejects all requests pending in that provider session at the time OpenCode applies the reply. */
+        post: operations["replyConversationPermission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}/turns/{turnId}/retry": {
         parameters: {
             query?: never;
@@ -5518,6 +5552,35 @@ export type components = {
             label: string | null;
             created_at: string;
         };
+        ConversationLivePermissionSnapshot: {
+            workspace_id: string;
+            conversation_id: string;
+            turn_id: string;
+            retry_ordinal: number;
+            items: components["schemas"]["ConversationLivePermissionPrompt"][];
+        };
+        ConversationLivePermissionPrompt: {
+            prompt_token: string;
+            /** @enum {string} */
+            state: "PENDING" | "REPLYING" | "ANSWERED" | "OUTCOME_UNKNOWN" | "SESSION_ENDED";
+            action: string;
+            explanation?: string | null;
+            resource_count: number;
+            resources: string[];
+            /** @enum {string|null} */
+            decision?: "ALLOW_ONCE" | "REJECT_SESSION_PENDING" | null;
+        };
+        ConversationPermissionReplyRequest: {
+            /** @enum {string} */
+            decision: "ALLOW_ONCE" | "REJECT_SESSION_PENDING";
+        };
+        ConversationPermissionReplyReceipt: {
+            prompt_token: string;
+            /** @enum {string} */
+            state: "PENDING" | "REPLYING" | "ANSWERED" | "OUTCOME_UNKNOWN" | "SESSION_ENDED";
+            /** @enum {string|null} */
+            decision: "ALLOW_ONCE" | "REJECT_SESSION_PENDING" | null;
+        };
         TimelinePage: {
             items: components["schemas"]["TimelineEntry"][];
             next_cursor?: string | null;
@@ -8513,6 +8576,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationTurnActivityPage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listLiveConversationTurnPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded live permission snapshot for the exact active turn */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationLivePermissionSnapshot"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    replyConversationPermission: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+                turnId: string;
+                promptToken: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationPermissionReplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Provider acknowledgment or current reconciled prompt state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationPermissionReplyReceipt"];
+                };
+            };
+            /** @description Conflicting decision, stale prompt state, or scope/version conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Prompt or owning native session has ended; no reply was replayed */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];

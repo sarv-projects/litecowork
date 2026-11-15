@@ -2376,6 +2376,32 @@ handling. Rich compilation/publication runs after semantic-message commit and ca
 turn settlement or Task completion. Frame shapes are defined in
 [`schemas/operator-stream.schema.json`](schemas/operator-stream.schema.json).
 
+### Live native Conversation permissions (001-T27, partial)
+
+`GET /v1/conversations/{conversationId}/turns/{turnId}/permissions` is SERVED as a
+bounded, authenticated snapshot from the current Runtime's in-memory registry, scoped to
+the authorized Workspace, Conversation and exact persisted retry ordinal. It does not reconstruct
+actionable prompts from persisted `PERMISSION/ASKED` activity. The target
+`POST /v1/conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply`
+accepts only `ALLOW_ONCE` or `REJECT_SESSION_PENDING` and a principal-scoped
+`Idempotency-Key`. The Runtime binds the opaque prompt token to the exact Workspace,
+Conversation, turn, retry ordinal, Runtime incarnation, native session and native request;
+the client cannot supply provider identifiers or URLs.
+
+`REJECT_SESSION_PENDING` reflects OpenCode v2.0.32 semantics: it rejects the selected
+permission and every permission pending in that same session when the provider applies the
+reply. The UI must disclose this before dispatch. Persistent `always` is excluded. The
+Runtime-local registry is not a durable permission store or LiteCowork grant. Identical
+replay within the same Runtime returns the current state; a conflicting replay conflicts.
+After an ambiguous provider reply, reconcile through the exact session's pending list/get
+route. If the request remains pending, restore the action; if its state cannot be proved,
+return `OUTCOME_UNKNOWN` without replaying the answer. Runtime restart invalidates tokens
+and never replays a decision. `turn.permission` is a bounded transient stream frame; it
+contains no native session/request ID, raw metadata or absolute resource path. The
+POST operation remains TARGET until its authenticated handler is integrated. The GET route
+being SERVED does not imply a UI caller, live native event, provider answer path or
+qualification; the full T27 journey remains incomplete.
+
 Workspace errors include WORKSPACE_ARCHIVED for writes to an archived Workspace and WORKSPACE_NOT_QUIESCENT when archive is requested while durable work, authority, or provider state remains unsettled. Its safe `details.blockers` list identifies blocker kinds and counts. A stale policy update returns STALE_WORKSPACE_VERSION. SELECTED_FOLDERS without one or more active same-Workspace root IDs returns INVALID_ARGUMENT; a missing, revoked, or unavailable selected root returns the corresponding typed resource error.
 
 ## Error envelope
