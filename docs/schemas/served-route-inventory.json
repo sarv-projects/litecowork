@@ -158,6 +158,13 @@
     },
     {
       "method": "GET",
+      "path": "/v1/conversation-permissions",
+      "openapi_path": "/conversation-permissions",
+      "operation_id": "listWorkspaceLiveConversationPermissions",
+      "source": "apps/litecoworkd/src/conversation_operator.rs"
+    },
+    {
+      "method": "GET",
       "path": "/v1/conversations",
       "openapi_path": "/conversations",
       "operation_id": "listConversations",
@@ -858,6 +865,13 @@
     },
     {
       "method": "POST",
+      "path": "/v1/conversations/{conversation_id}/turns/{turn_id}/permissions/{prompt_token}/reply",
+      "openapi_path": "/conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply",
+      "operation_id": "replyConversationPermission",
+      "source": "apps/litecoworkd/src/conversation_operator.rs"
+    },
+    {
+      "method": "POST",
       "path": "/v1/conversations/{conversation_id}/turns/{turn_id}/retry",
       "openapi_path": "/conversations/{conversationId}/turns/{turnId}/retry",
       "operation_id": "retryConversationTurn",
@@ -1423,11 +1437,6 @@
       "method": "POST",
       "path": "/conversations/{conversationId}/messages",
       "operation_id": "appendConversationMessage"
-    },
-    {
-      "method": "POST",
-      "path": "/conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply",
-      "operation_id": "replyConversationPermission"
     },
     {
       "method": "POST",

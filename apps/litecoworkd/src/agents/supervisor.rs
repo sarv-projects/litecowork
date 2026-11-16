@@ -10,12 +10,13 @@
 //! 5. Response Streaming & Terminal Settlement: Stream deltas collected and atomically committed
 //!    via `commit_conversation_agent_response`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use storage_core::conversation::{
     CommitConversationAgentResponse, ConversationMessageRecord, ConversationSessionEnd,
@@ -37,23 +38,63 @@ use super::host_supervisor::{HostStartError, start_host_process};
 use super::native_provider::NativeProviderKey;
 use super::normalizer::NormalizedAgentEvent;
 use super::opencode_server::{
-    OpenCodeEnvironment, OpenCodeServer, OpenCodeServerConfig, OpenCodeServerProtocol,
+    OpenCodeEnvironment, OpenCodeError, OpenCodePermissionDecision, OpenCodeServer,
+    OpenCodeServerConfig, OpenCodeServerProtocol,
 };
 
 const MAX_NATIVE_PERMISSION_PROMPTS_PER_TURN: usize = 32;
 const MAX_NATIVE_PERMISSION_PROMPTS_PER_RUNTIME: usize = 256;
+const MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION: usize = 8;
+const MAX_NATIVE_PERMISSION_IDEMPOTENCY_KEYS_PER_PROMPT: usize = 16;
+const MAX_NATIVE_PERMISSION_SEQUENCE_PER_TURN: u32 = 4_096;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The active turn worker is the only owner of the native server. Keep the
+/// permission operations behind this narrow boundary so worker dispatch and
+/// reconciliation can be exercised without launching an external process.
+trait NativePermissionProvider {
+    fn reply_session_permission(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        decision: OpenCodePermissionDecision,
+    ) -> Result<(), OpenCodeError>;
+
+    fn list_session_permissions(
+        &mut self,
+        session_id: &str,
+    ) -> Result<serde_json::Value, OpenCodeError>;
+}
+
+impl NativePermissionProvider for OpenCodeServer {
+    fn reply_session_permission(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        decision: OpenCodePermissionDecision,
+    ) -> Result<(), OpenCodeError> {
+        OpenCodeServer::reply_session_permission(self, session_id, request_id, decision)
+    }
+
+    fn list_session_permissions(
+        &mut self,
+        session_id: &str,
+    ) -> Result<serde_json::Value, OpenCodeError> {
+        OpenCodeServer::list_session_permissions(self, session_id)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct NativePermissionScope {
     workspace_id: String,
     conversation_id: String,
     turn_id: String,
     retry_ordinal: u32,
+    agent_session_id: String,
     runtime_incarnation_id: String,
     native_session_id: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum NativePermissionState {
     Pending,
@@ -63,8 +104,38 @@ enum NativePermissionState {
     SessionEnded,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum NativePermissionDecision {
+    AllowOnce,
+    RejectSessionPending,
+}
+
+impl NativePermissionDecision {
+    fn public_name(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "ALLOW_ONCE",
+            Self::RejectSessionPending => "REJECT_SESSION_PENDING",
+        }
+    }
+
+    fn provider_decision(self) -> OpenCodePermissionDecision {
+        match self {
+            Self::AllowOnce => OpenCodePermissionDecision::Once,
+            Self::RejectSessionPending => OpenCodePermissionDecision::Reject,
+        }
+    }
+}
+
+pub(crate) struct NativePermissionCommand {
+    prompt_token: String,
+    decision: NativePermissionDecision,
+    completed: tokio::sync::oneshot::Sender<()>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct NativePermissionPromptView {
+    sequence: u32,
     prompt_token: String,
     state: NativePermissionState,
     action: String,
@@ -74,12 +145,54 @@ pub(crate) struct NativePermissionPromptView {
     decision: Option<String>,
 }
 
+impl NativePermissionPromptView {
+    pub(crate) fn sequence(&self) -> u32 {
+        self.sequence
+    }
+
+    pub(crate) fn prompt_token(&self) -> &str {
+        &self.prompt_token
+    }
+
+    pub(crate) fn state_name(&self) -> &'static str {
+        match self.state {
+            NativePermissionState::Pending => "PENDING",
+            NativePermissionState::Replying => "REPLYING",
+            NativePermissionState::Answered => "ANSWERED",
+            NativePermissionState::OutcomeUnknown => "OUTCOME_UNKNOWN",
+            NativePermissionState::SessionEnded => "SESSION_ENDED",
+        }
+    }
+
+    pub(crate) fn decision(&self) -> Option<&str> {
+        self.decision.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativePermissionAttemptSnapshot {
+    pub(crate) sequence: u32,
+    pub(crate) items: Vec<NativePermissionPromptView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativePermissionWorkspaceItemView {
+    pub(crate) conversation_id: String,
+    pub(crate) turn_id: String,
+    pub(crate) retry_ordinal: u32,
+    pub(crate) sequence: u32,
+    pub(crate) agent_session_id: String,
+    pub(crate) runtime_incarnation_id: String,
+    pub(crate) prompt: NativePermissionPromptView,
+}
+
 #[derive(Clone, Debug)]
 struct NativePermissionPrompt {
     scope: NativePermissionScope,
     native_request_id: String,
     native_resources: Vec<String>,
     view: NativePermissionPromptView,
+    idempotency: Vec<(String, String, NativePermissionDecision)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +202,29 @@ enum NativePermissionRegistryError {
     ConflictingDuplicate,
     Capacity,
     TokenCollision,
+    StalePrompt,
+    ReplyConflict,
+    ReplyCapacity,
+    MailboxUnavailable,
     Poisoned,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativePermissionReplyError {
+    SessionEnded,
+    Conflict,
+    Unavailable,
+}
+
+impl From<NativePermissionRegistryError> for NativePermissionReplyError {
+    fn from(error: NativePermissionRegistryError) -> Self {
+        match error {
+            NativePermissionRegistryError::StalePrompt
+            | NativePermissionRegistryError::MailboxUnavailable => Self::SessionEnded,
+            NativePermissionRegistryError::ReplyConflict => Self::Conflict,
+            _ => Self::Unavailable,
+        }
+    }
 }
 
 /// Ephemeral, process-local permission correlation. Native provider identifiers
@@ -97,6 +232,7 @@ enum NativePermissionRegistryError {
 #[derive(Clone, Default)]
 struct NativePermissionRegistry {
     prompts: Arc<Mutex<HashMap<String, NativePermissionPrompt>>>,
+    mailboxes: Arc<Mutex<HashMap<NativePermissionScope, SyncSender<NativePermissionCommand>>>>,
 }
 
 impl NativePermissionRegistry {
@@ -197,7 +333,9 @@ impl NativePermissionRegistry {
             return Err(NativePermissionRegistryError::Capacity);
         }
 
+        let sequence = next_permission_sequence(&prompts, scope)?;
         let view = NativePermissionPromptView {
+            sequence,
             prompt_token: token.clone(),
             state: NativePermissionState::Pending,
             action,
@@ -215,9 +353,315 @@ impl NativePermissionRegistry {
                 native_request_id,
                 native_resources,
                 view: view.clone(),
+                idempotency: Vec::new(),
             },
         );
         Ok(view)
+    }
+
+    fn register_mailbox(
+        &self,
+        scope: NativePermissionScope,
+        sender: SyncSender<NativePermissionCommand>,
+        bus: crate::transient_frames::TransientFrameBus,
+    ) -> Result<NativePermissionMailboxRegistration, NativePermissionRegistryError> {
+        let mut mailboxes = self
+            .mailboxes
+            .lock()
+            .map_err(|_| NativePermissionRegistryError::Poisoned)?;
+        if mailboxes.contains_key(&scope) {
+            return Err(NativePermissionRegistryError::MailboxUnavailable);
+        }
+        mailboxes.insert(scope.clone(), sender);
+        Ok(NativePermissionMailboxRegistration {
+            registry: self.clone(),
+            scope,
+            bus,
+        })
+    }
+
+    fn begin_reply(
+        &self,
+        scope: &NativePermissionScope,
+        token: &str,
+        principal_id: &str,
+        idempotency_key: &str,
+        decision: NativePermissionDecision,
+    ) -> Result<NativePermissionReplyStart, NativePermissionRegistryError> {
+        let mut prompts = self
+            .prompts
+            .lock()
+            .map_err(|_| NativePermissionRegistryError::Poisoned)?;
+        for (other_token, other) in &*prompts {
+            if let Some((_, _, previous_decision)) = other
+                .idempotency
+                .iter()
+                .find(|(principal, key, _)| principal == principal_id && key == idempotency_key)
+            {
+                if other_token == token && other.scope == *scope && *previous_decision == decision {
+                    return Ok(NativePermissionReplyStart::Replay(other.view.clone()));
+                }
+                return Err(NativePermissionRegistryError::ReplyConflict);
+            }
+        }
+        if prompts.values().any(|other| {
+            other.scope == *scope
+                && other.scope.native_session_id == scope.native_session_id
+                && other.view.state == NativePermissionState::Replying
+        }) {
+            // One provider reply at a time preserves session-wide rejection semantics.
+            return Err(NativePermissionRegistryError::ReplyConflict);
+        }
+        let sequence = next_permission_sequence(&prompts, scope)?;
+        let prompt = prompts
+            .get_mut(token)
+            .filter(|prompt| prompt.scope == *scope)
+            .ok_or(NativePermissionRegistryError::StalePrompt)?;
+
+        if prompt.view.state != NativePermissionState::Pending {
+            return Err(match prompt.view.state {
+                NativePermissionState::SessionEnded => NativePermissionRegistryError::StalePrompt,
+                _ => NativePermissionRegistryError::ReplyConflict,
+            });
+        }
+        if prompt.idempotency.len() >= MAX_NATIVE_PERMISSION_IDEMPOTENCY_KEYS_PER_PROMPT {
+            return Err(NativePermissionRegistryError::ReplyCapacity);
+        }
+        let sender = self
+            .mailboxes
+            .lock()
+            .map_err(|_| NativePermissionRegistryError::Poisoned)?
+            .get(scope)
+            .cloned()
+            .ok_or(NativePermissionRegistryError::MailboxUnavailable)?;
+
+        prompt.view.state = NativePermissionState::Replying;
+        prompt.view.decision = Some(decision.public_name().to_owned());
+        prompt.view.sequence = sequence;
+        prompt.idempotency.push((
+            principal_id.to_owned(),
+            idempotency_key.to_owned(),
+            decision,
+        ));
+        Ok(NativePermissionReplyStart::Dispatch(sender))
+    }
+
+    fn rollback_unaccepted_reply(
+        &self,
+        scope: &NativePermissionScope,
+        token: &str,
+        principal_id: &str,
+        idempotency_key: &str,
+    ) {
+        let Ok(mut prompts) = self.prompts.lock() else {
+            return;
+        };
+        let sequence = next_permission_sequence(&prompts, scope).ok();
+        if let Some(prompt) = prompts
+            .get_mut(token)
+            .filter(|prompt| prompt.scope == *scope)
+            && prompt.view.state == NativePermissionState::Replying
+        {
+            prompt.view.state = NativePermissionState::Pending;
+            prompt.view.decision = None;
+            if let Some(sequence) = sequence {
+                prompt.view.sequence = sequence;
+            }
+            prompt
+                .idempotency
+                .retain(|(principal, key, _)| principal != principal_id || key != idempotency_key);
+        }
+    }
+
+    fn view_for_scope(
+        &self,
+        scope: &NativePermissionScope,
+        token: &str,
+    ) -> Option<NativePermissionPromptView> {
+        self.prompts
+            .lock()
+            .ok()?
+            .get(token)
+            .filter(|prompt| prompt.scope == *scope)
+            .map(|prompt| prompt.view.clone())
+    }
+
+    fn service_queued_commands(
+        &self,
+        server: &mut impl NativePermissionProvider,
+        scope: &NativePermissionScope,
+        receiver: &Receiver<NativePermissionCommand>,
+        bus: &crate::transient_frames::TransientFrameBus,
+    ) {
+        for _ in 0..MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION {
+            let command = match receiver.try_recv() {
+                Ok(command) => command,
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            };
+            self.apply_reply_command(server, scope, command, bus);
+        }
+    }
+
+    fn apply_reply_command(
+        &self,
+        server: &mut impl NativePermissionProvider,
+        scope: &NativePermissionScope,
+        command: NativePermissionCommand,
+        bus: &crate::transient_frames::TransientFrameBus,
+    ) {
+        let target = self.prompts.lock().ok().and_then(|prompts| {
+            prompts.get(&command.prompt_token).and_then(|prompt| {
+                (prompt.scope == *scope
+                    && prompt.view.state == NativePermissionState::Replying
+                    && prompt.view.decision.as_deref() == Some(command.decision.public_name()))
+                .then(|| {
+                    (
+                        prompt.scope.native_session_id.clone(),
+                        prompt.native_request_id.clone(),
+                    )
+                })
+            })
+        });
+        let Some((native_session_id, native_request_id)) = target else {
+            let _ = command.completed.send(());
+            return;
+        };
+
+        let changed = if server
+            .reply_session_permission(
+                &native_session_id,
+                &native_request_id,
+                command.decision.provider_decision(),
+            )
+            .is_ok()
+        {
+            self.acknowledge_reply(scope, &command.prompt_token, command.decision)
+        } else {
+            // An error can mean the provider applied the reply but the acknowledgment
+            // was lost. Read only the exact session's pending list; never replay POST.
+            let pending_ids = server
+                .list_session_permissions(&native_session_id)
+                .ok()
+                .and_then(|value| pending_permission_ids(&value, &native_session_id));
+            self.reconcile_reply(scope, &command.prompt_token, command.decision, pending_ids)
+        };
+        for prompt in changed {
+            publish_native_permission_prompt(bus, scope, &prompt);
+        }
+        let _ = command.completed.send(());
+    }
+
+    fn acknowledge_reply(
+        &self,
+        scope: &NativePermissionScope,
+        token: &str,
+        decision: NativePermissionDecision,
+    ) -> Vec<NativePermissionPromptView> {
+        let Ok(mut prompts) = self.prompts.lock() else {
+            return Vec::new();
+        };
+        let mut tokens = prompts
+            .iter()
+            .filter_map(|(prompt_token, prompt)| {
+                let affected = prompt.scope == *scope
+                    && (prompt_token == token
+                        || (decision == NativePermissionDecision::RejectSessionPending
+                            && prompt.view.state == NativePermissionState::Pending));
+                (affected
+                    && matches!(
+                        prompt.view.state,
+                        NativePermissionState::Pending | NativePermissionState::Replying
+                    ))
+                .then(|| prompt_token.clone())
+            })
+            .collect::<Vec<_>>();
+        tokens.sort();
+        let mut changed = Vec::with_capacity(tokens.len());
+        for prompt_token in tokens {
+            let Ok(sequence) = next_permission_sequence(&prompts, scope) else {
+                break;
+            };
+            if let Some(prompt) = prompts.get_mut(&prompt_token) {
+                prompt.view.state = NativePermissionState::Answered;
+                prompt.view.decision = Some(decision.public_name().to_owned());
+                prompt.view.sequence = sequence;
+                changed.push(prompt.view.clone());
+            }
+        }
+        changed
+    }
+
+    fn reconcile_reply(
+        &self,
+        scope: &NativePermissionScope,
+        token: &str,
+        decision: NativePermissionDecision,
+        pending_ids: Option<HashSet<String>>,
+    ) -> Vec<NativePermissionPromptView> {
+        let Ok(mut prompts) = self.prompts.lock() else {
+            return Vec::new();
+        };
+        let mut tokens = prompts
+            .iter()
+            .filter_map(|(prompt_token, prompt)| {
+                let affected = prompt.scope == *scope
+                    && (prompt_token == token
+                        || (decision == NativePermissionDecision::RejectSessionPending
+                            && prompt.view.state == NativePermissionState::Pending));
+                affected.then(|| prompt_token.clone())
+            })
+            .collect::<Vec<_>>();
+        tokens.sort();
+        let mut changed = Vec::with_capacity(tokens.len());
+        for prompt_token in tokens {
+            let Ok(sequence) = next_permission_sequence(&prompts, scope) else {
+                break;
+            };
+            let Some(prompt) = prompts.get_mut(&prompt_token) else {
+                continue;
+            };
+            let still_pending = pending_ids
+                .as_ref()
+                .is_some_and(|ids| ids.contains(&prompt.native_request_id));
+            if still_pending {
+                prompt.view.state = NativePermissionState::Pending;
+                prompt.view.decision = None;
+            } else {
+                prompt.view.state = NativePermissionState::OutcomeUnknown;
+                prompt.view.decision = Some(decision.public_name().to_owned());
+            }
+            prompt.view.sequence = sequence;
+            changed.push(prompt.view.clone());
+        }
+        changed
+    }
+
+    fn scope_for_token(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+        agent_session_id: &str,
+        runtime_incarnation_id: &str,
+        token: &str,
+    ) -> Result<NativePermissionScope, NativePermissionRegistryError> {
+        let prompts = self
+            .prompts
+            .lock()
+            .map_err(|_| NativePermissionRegistryError::Poisoned)?;
+        let prompt = prompts
+            .get(token)
+            .filter(|prompt| {
+                prompt.scope.workspace_id == workspace_id
+                    && prompt.scope.conversation_id == conversation_id
+                    && prompt.scope.turn_id == turn_id
+                    && prompt.scope.retry_ordinal == retry_ordinal
+                    && prompt.scope.agent_session_id == agent_session_id
+                    && prompt.scope.runtime_incarnation_id == runtime_incarnation_id
+            })
+            .ok_or(NativePermissionRegistryError::StalePrompt)?;
+        Ok(prompt.scope.clone())
     }
 
     fn snapshot(
@@ -226,9 +670,14 @@ impl NativePermissionRegistry {
         conversation_id: &str,
         turn_id: &str,
         retry_ordinal: u32,
-    ) -> Vec<NativePermissionPromptView> {
+        agent_session_id: &str,
+        runtime_incarnation_id: &str,
+    ) -> NativePermissionAttemptSnapshot {
         let Ok(prompts) = self.prompts.lock() else {
-            return Vec::new();
+            return NativePermissionAttemptSnapshot {
+                sequence: 0,
+                items: Vec::new(),
+            };
         };
         let mut result = prompts
             .values()
@@ -237,35 +686,161 @@ impl NativePermissionRegistry {
                     && prompt.scope.conversation_id == conversation_id
                     && prompt.scope.turn_id == turn_id
                     && prompt.scope.retry_ordinal == retry_ordinal
+                    && prompt.scope.agent_session_id == agent_session_id
+                    && prompt.scope.runtime_incarnation_id == runtime_incarnation_id
             })
             .map(|prompt| prompt.view.clone())
             .collect::<Vec<_>>();
-        result.sort_by(|left, right| left.prompt_token.cmp(&right.prompt_token));
+        result.sort_by(|left, right| left.sequence.cmp(&right.sequence));
+        let sequence = result
+            .iter()
+            .map(|prompt| prompt.sequence)
+            .max()
+            .unwrap_or(0);
+        NativePermissionAttemptSnapshot {
+            sequence,
+            items: result,
+        }
+    }
+
+    fn workspace_snapshot(&self, workspace_id: &str) -> Vec<NativePermissionWorkspaceItemView> {
+        let Ok(prompts) = self.prompts.lock() else {
+            return Vec::new();
+        };
+        let mut result = prompts
+            .values()
+            .filter(|prompt| {
+                prompt.scope.workspace_id == workspace_id
+                    && matches!(
+                        prompt.view.state,
+                        NativePermissionState::Pending
+                            | NativePermissionState::Replying
+                            | NativePermissionState::OutcomeUnknown
+                    )
+            })
+            .map(|prompt| NativePermissionWorkspaceItemView {
+                conversation_id: prompt.scope.conversation_id.clone(),
+                turn_id: prompt.scope.turn_id.clone(),
+                retry_ordinal: prompt.scope.retry_ordinal,
+                sequence: prompts
+                    .values()
+                    .filter(|candidate| candidate.scope == prompt.scope)
+                    .map(|candidate| candidate.view.sequence)
+                    .max()
+                    .unwrap_or(0),
+                agent_session_id: prompt.scope.agent_session_id.clone(),
+                runtime_incarnation_id: prompt.scope.runtime_incarnation_id.clone(),
+                prompt: prompt.view.clone(),
+            })
+            .collect::<Vec<_>>();
+        result.sort_by(|left, right| {
+            left.prompt
+                .sequence
+                .cmp(&right.prompt.sequence)
+                .then_with(|| left.prompt.prompt_token.cmp(&right.prompt.prompt_token))
+        });
         result
     }
 
-    fn end_attempt(
-        &self,
-        workspace_id: &str,
-        conversation_id: &str,
-        turn_id: &str,
-        retry_ordinal: u32,
-    ) {
+    fn end_attempt(&self, scope: &NativePermissionScope) -> Vec<NativePermissionPromptView> {
+        let Ok(mut prompts) = self.prompts.lock() else {
+            return Vec::new();
+        };
+        let mut tokens = prompts
+            .iter()
+            .filter_map(|(token, prompt)| {
+                (prompt.scope == *scope
+                    && matches!(
+                        prompt.view.state,
+                        NativePermissionState::Pending | NativePermissionState::Replying
+                    ))
+                .then(|| token.clone())
+            })
+            .collect::<Vec<_>>();
+        tokens.sort();
+        let mut changed = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            let Ok(sequence) = next_permission_sequence(&prompts, scope) else {
+                break;
+            };
+            if let Some(prompt) = prompts.get_mut(&token) {
+                prompt.view.state = NativePermissionState::SessionEnded;
+                prompt.view.sequence = sequence;
+                changed.push(prompt.view.clone());
+            }
+        }
+        changed
+    }
+
+    fn discard_scope(&self, scope: &NativePermissionScope) {
         let Ok(mut prompts) = self.prompts.lock() else {
             return;
         };
-        for prompt in prompts.values_mut().filter(|prompt| {
-            prompt.scope.workspace_id == workspace_id
-                && prompt.scope.conversation_id == conversation_id
-                && prompt.scope.turn_id == turn_id
-                && prompt.scope.retry_ordinal == retry_ordinal
-        }) {
-            if matches!(
-                prompt.view.state,
-                NativePermissionState::Pending | NativePermissionState::Replying
-            ) {
-                prompt.view.state = NativePermissionState::SessionEnded;
-            }
+        prompts.retain(|_, prompt| prompt.scope != *scope);
+    }
+}
+
+fn next_permission_sequence(
+    prompts: &HashMap<String, NativePermissionPrompt>,
+    scope: &NativePermissionScope,
+) -> Result<u32, NativePermissionRegistryError> {
+    let last = prompts
+        .values()
+        .filter(|prompt| prompt.scope == *scope)
+        .map(|prompt| prompt.view.sequence)
+        .max()
+        .unwrap_or(0);
+    last.checked_add(1)
+        .filter(|sequence| *sequence <= MAX_NATIVE_PERMISSION_SEQUENCE_PER_TURN)
+        .ok_or(NativePermissionRegistryError::Capacity)
+}
+
+fn pending_permission_ids(
+    value: &serde_json::Value,
+    expected_session_id: &str,
+) -> Option<HashSet<String>> {
+    let items = value.get("data")?.as_array()?;
+    if items.len() > MAX_NATIVE_PERMISSION_PROMPTS_PER_RUNTIME {
+        return None;
+    }
+    let mut pending = HashSet::with_capacity(items.len());
+    for item in items {
+        let request_id = item.get("id")?.as_str()?;
+        let session_id = item.get("sessionID")?.as_str()?;
+        if request_id.is_empty()
+            || request_id.len() > 128
+            || request_id.chars().any(char::is_control)
+            || session_id != expected_session_id
+            || !pending.insert(request_id.to_owned())
+        {
+            return None;
+        }
+    }
+    Some(pending)
+}
+
+enum NativePermissionReplyStart {
+    Replay(NativePermissionPromptView),
+    Dispatch(SyncSender<NativePermissionCommand>),
+}
+
+struct NativePermissionMailboxRegistration {
+    registry: NativePermissionRegistry,
+    scope: NativePermissionScope,
+    bus: crate::transient_frames::TransientFrameBus,
+}
+
+impl Drop for NativePermissionMailboxRegistration {
+    fn drop(&mut self) {
+        for prompt in self.registry.end_attempt(&self.scope) {
+            publish_native_permission_prompt(&self.bus, &self.scope, &prompt);
+        }
+        // Permission correlation is usable only while this exact native attempt is
+        // alive. Retaining terminal rows would exhaust the Runtime cap across
+        // sequential turns and leave stale tokens resident after session close.
+        self.registry.discard_scope(&self.scope);
+        if let Ok(mut mailboxes) = self.registry.mailboxes.lock() {
+            mailboxes.remove(&self.scope);
         }
     }
 }
@@ -274,7 +849,6 @@ struct NativePermissionObserver {
     registry: NativePermissionRegistry,
     scope: NativePermissionScope,
     bus: crate::transient_frames::TransientFrameBus,
-    sequence: u32,
 }
 
 impl NativePermissionObserver {
@@ -287,42 +861,45 @@ impl NativePermissionObserver {
             registry,
             scope,
             bus,
-            sequence: 0,
         }
+    }
+}
+
+fn publish_native_permission_prompt(
+    bus: &crate::transient_frames::TransientFrameBus,
+    scope: &NativePermissionScope,
+    prompt: &NativePermissionPromptView,
+) {
+    let frame = json!({
+        "type": "turn.permission",
+        "workspace_id": scope.workspace_id,
+        "conversation_id": scope.conversation_id,
+        "turn_id": scope.turn_id,
+        "retry_ordinal": scope.retry_ordinal,
+        "sequence": prompt.sequence,
+        "prompt_token": prompt.prompt_token,
+        "state": prompt.state_name(),
+        "action": prompt.action,
+        "explanation": prompt.explanation,
+        "resource_count": prompt.resource_count,
+        "resources": prompt.resources,
+        "decision": prompt.decision,
+    });
+    if let Ok(bytes) = serde_json::to_vec(&frame) {
+        bus.publish(crate::transient_frames::TransientFrame {
+            workspace_id: scope.workspace_id.clone(),
+            conversation_id: scope.conversation_id.clone(),
+            bytes,
+        });
     }
 }
 
 impl TurnObserver for NativePermissionObserver {
     fn on_event(&mut self, event: &NormalizedAgentEvent) {
-        if self.sequence >= 64 {
-            return;
-        }
         let Ok(prompt) = self.registry.register(&self.scope, event) else {
             return;
         };
-        self.sequence += 1;
-        let frame = json!({
-            "type": "turn.permission",
-            "workspace_id": self.scope.workspace_id,
-            "conversation_id": self.scope.conversation_id,
-            "turn_id": self.scope.turn_id,
-            "retry_ordinal": self.scope.retry_ordinal,
-            "sequence": self.sequence,
-            "prompt_token": prompt.prompt_token,
-            "state": "PENDING",
-            "action": prompt.action,
-            "explanation": prompt.explanation,
-            "resource_count": prompt.resource_count,
-            "resources": prompt.resources,
-            "decision": prompt.decision,
-        });
-        if let Ok(bytes) = serde_json::to_vec(&frame) {
-            self.bus.publish(crate::transient_frames::TransientFrame {
-                workspace_id: self.scope.workspace_id.clone(),
-                conversation_id: self.scope.conversation_id.clone(),
-                bytes,
-            });
-        }
+        publish_native_permission_prompt(&self.bus, &self.scope, &prompt);
     }
 
     fn finish(&mut self) {}
@@ -496,6 +1073,64 @@ fn session_activation_versions(starting_version: u64) -> Option<(u64, u64)> {
 /// Live per-turn Stop signals keyed by `(turn_id, retry_ordinal)`.
 type CancelRegistry = Arc<Mutex<HashMap<(String, u32), CancelSignal>>>;
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct DispatchAttemptKey {
+    workspace_id: String,
+    conversation_id: String,
+    turn_id: String,
+    retry_ordinal: u32,
+}
+
+/// Prevents exact idempotent request replays from running concurrent pre-claim setup
+/// paths in the same Runtime. The durable dispatch-intent CAS remains the cross-process
+/// owner; this registry closes the earlier in-process race before that CAS is reached.
+#[derive(Clone, Default)]
+struct DispatchRegistry {
+    active: Arc<Mutex<HashSet<DispatchAttemptKey>>>,
+}
+
+impl DispatchRegistry {
+    fn register(&self, key: DispatchAttemptKey) -> Option<DispatchRegistration> {
+        let mut active = match self.active.lock() {
+            Ok(active) => active,
+            Err(poisoned) => {
+                let active = poisoned.into_inner();
+                self.active.clear_poison();
+                active
+            }
+        };
+        if !active.insert(key.clone()) {
+            return None;
+        }
+        Some(DispatchRegistration {
+            registry: self.clone(),
+            key,
+        })
+    }
+}
+
+/// Releases an in-process dispatch owner when its blocking lifecycle exits, including
+/// panic and cancellation paths. The guard is moved into the blocking task so dropping
+/// an HTTP waiter cannot release ownership while native work is still running.
+struct DispatchRegistration {
+    registry: DispatchRegistry,
+    key: DispatchAttemptKey,
+}
+
+impl Drop for DispatchRegistration {
+    fn drop(&mut self) {
+        let mut active = match self.registry.active.lock() {
+            Ok(active) => active,
+            Err(poisoned) => {
+                let active = poisoned.into_inner();
+                self.registry.active.clear_poison();
+                active
+            }
+        };
+        active.remove(&self.key);
+    }
+}
+
 /// Removes a turn attempt's Stop signal when its dispatch ends, however it ends.
 struct CancelRegistration {
     registry: CancelRegistry,
@@ -515,6 +1150,7 @@ pub struct AgentSessionSupervisor {
     store: SqliteWorkspaceStore,
     runtime_id: String,
     cancels: CancelRegistry,
+    dispatches: DispatchRegistry,
     native_permissions: NativePermissionRegistry,
 }
 
@@ -524,6 +1160,7 @@ impl AgentSessionSupervisor {
             store,
             runtime_id,
             cancels: Arc::new(Mutex::new(HashMap::new())),
+            dispatches: DispatchRegistry::default(),
             native_permissions: NativePermissionRegistry::default(),
         }
     }
@@ -534,20 +1171,91 @@ impl AgentSessionSupervisor {
         conversation_id: &str,
         turn_id: &str,
         retry_ordinal: u32,
-    ) -> Vec<NativePermissionPromptView> {
-        self.native_permissions
-            .snapshot(workspace_id, conversation_id, turn_id, retry_ordinal)
+        agent_session_id: &str,
+        runtime_incarnation_id: &str,
+    ) -> NativePermissionAttemptSnapshot {
+        self.native_permissions.snapshot(
+            workspace_id,
+            conversation_id,
+            turn_id,
+            retry_ordinal,
+            agent_session_id,
+            runtime_incarnation_id,
+        )
     }
 
-    fn end_native_permissions_for_attempt(
+    pub(crate) fn list_workspace_live_native_permissions(
+        &self,
+        workspace_id: &str,
+    ) -> Vec<NativePermissionWorkspaceItemView> {
+        self.native_permissions.workspace_snapshot(workspace_id)
+    }
+
+    pub(crate) async fn reply_live_native_permission(
         &self,
         workspace_id: &str,
         conversation_id: &str,
         turn_id: &str,
         retry_ordinal: u32,
-    ) {
-        self.native_permissions
-            .end_attempt(workspace_id, conversation_id, turn_id, retry_ordinal);
+        principal_id: &str,
+        agent_session_id: &str,
+        runtime_incarnation_id: &str,
+        token: &str,
+        idempotency_key: &str,
+        decision: NativePermissionDecision,
+    ) -> Result<NativePermissionPromptView, NativePermissionReplyError> {
+        let scope = self
+            .native_permissions
+            .scope_for_token(
+                workspace_id,
+                conversation_id,
+                turn_id,
+                retry_ordinal,
+                agent_session_id,
+                runtime_incarnation_id,
+                token,
+            )
+            .map_err(NativePermissionReplyError::from)?;
+        match self
+            .native_permissions
+            .begin_reply(&scope, token, principal_id, idempotency_key, decision)
+            .map_err(NativePermissionReplyError::from)?
+        {
+            NativePermissionReplyStart::Replay(view) => Ok(view),
+            NativePermissionReplyStart::Dispatch(sender) => {
+                let (completed, response) = tokio::sync::oneshot::channel();
+                let command = NativePermissionCommand {
+                    prompt_token: token.to_owned(),
+                    decision,
+                    completed,
+                };
+                if let Err(error) = sender.try_send(command) {
+                    self.native_permissions.rollback_unaccepted_reply(
+                        &scope,
+                        token,
+                        principal_id,
+                        idempotency_key,
+                    );
+                    return Err(match error {
+                        TrySendError::Full(_) => NativePermissionReplyError::Unavailable,
+                        TrySendError::Disconnected(_) => NativePermissionReplyError::SessionEnded,
+                    });
+                }
+                if let Some(view) = self.native_permissions.view_for_scope(&scope, token) {
+                    publish_native_permission_prompt(
+                        crate::transient_frames::transient_bus(),
+                        &scope,
+                        &view,
+                    );
+                }
+                // Canceling the HTTP waiter does not cancel an already-admitted owner
+                // command. The Runtime still settles its local state and never replays.
+                let _ = response.await;
+                self.native_permissions
+                    .view_for_scope(&scope, token)
+                    .ok_or(NativePermissionReplyError::SessionEnded)
+            }
+        }
     }
 
     /// Signals the live dispatch of one turn attempt to interrupt its native session.
@@ -595,6 +1303,16 @@ impl AgentSessionSupervisor {
         turn: ConversationTurn,
         correlation_id: &str,
     ) -> Result<(), DispatchFailureClass> {
+        let Some(dispatch_registration) = self.dispatches.register(DispatchAttemptKey {
+            workspace_id: workspace_id.to_owned(),
+            conversation_id: conversation_id.to_owned(),
+            turn_id: turn.turn_id.clone(),
+            retry_ordinal: turn.retry_ordinal,
+        }) else {
+            // An exact idempotent replay is already owned by this Runtime. It must not
+            // perform pre-claim lookups whose failure could settle the active attempt.
+            return Ok(());
+        };
         let store = self.store.clone();
         let runtime_id = self.runtime_id.clone();
         let supervisor = self.clone();
@@ -614,6 +1332,7 @@ impl AgentSessionSupervisor {
         let recovery_correlation = correlation.clone();
 
         let dispatch_task = tokio::task::spawn_blocking(move || {
+            let _dispatch_registration = dispatch_registration;
             let mut session_id_for_failure: Option<String> = None;
             let dispatch_result = (|| -> Result<(), DispatchFailureClass> {
                 let conv_store = SqliteConversationStore::new(store.clone());
@@ -773,13 +1492,6 @@ impl AgentSessionSupervisor {
                     &cancel,
                     &supervisor.native_permissions,
                 );
-                supervisor.end_native_permissions_for_attempt(
-                    &workspace,
-                    &conversation,
-                    &turn_id,
-                    turn.retry_ordinal,
-                );
-
                 // Transient presentation control frame: a committed message supersedes the
                 // transient text; any other end leaves it marked incomplete in the UI.
                 {
@@ -1499,18 +2211,45 @@ fn execute_agent_turn(
             // Attach observers only after the provider returned its exact native
             // session ID; permission correlation must never infer this identity.
             let usage_collector = UsageCollector::default();
+            let permission_scope = NativePermissionScope {
+                workspace_id: workspace_id.to_owned(),
+                conversation_id: conversation_id.to_owned(),
+                turn_id: turn_id.to_owned(),
+                retry_ordinal,
+                agent_session_id: session_id.to_owned(),
+                runtime_incarnation_id: host_runtime_incarnation_id.to_owned(),
+                native_session_id: native_session.clone(),
+            };
+            let (permission_sender, permission_receiver) =
+                sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+            let permission_bus = crate::transient_frames::transient_bus().clone();
+            let _permission_mailbox = native_permissions
+                .register_mailbox(
+                    permission_scope.clone(),
+                    permission_sender,
+                    permission_bus.clone(),
+                )
+                .map_err(|_| "OpenCode permission command mailbox unavailable".to_owned())?;
+            let permission_registry = native_permissions.clone();
+            let control_scope = permission_scope.clone();
+            let control_cancel = cancel.clone();
+            let control_bus = permission_bus.clone();
+            adapter = adapter.with_control_service(Box::new(move |server| {
+                if !control_cancel.is_requested() {
+                    permission_registry.service_queued_commands(
+                        server,
+                        &control_scope,
+                        &permission_receiver,
+                        &control_bus,
+                    );
+                }
+                Ok(())
+            }));
             adapter = adapter.with_observer(Box::new(ObserverSet(vec![
                 Box::new(NativePermissionObserver::new(
                     native_permissions.clone(),
-                    NativePermissionScope {
-                        workspace_id: workspace_id.to_owned(),
-                        conversation_id: conversation_id.to_owned(),
-                        turn_id: turn_id.to_owned(),
-                        retry_ordinal,
-                        runtime_incarnation_id: host_runtime_incarnation_id.to_owned(),
-                        native_session_id: native_session.clone(),
-                    },
-                    crate::transient_frames::transient_bus().clone(),
+                    permission_scope,
+                    permission_bus.clone(),
                 )),
                 Box::new(crate::transient_frames::TurnFramePublisher::new(
                     crate::transient_frames::transient_bus().clone(),
@@ -1860,8 +2599,540 @@ fn reconcile_per_session_host_shutdown(
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::thread::JoinHandle;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) struct ProviderReply {
+        pub(crate) session_id: String,
+        pub(crate) request_id: String,
+        pub(crate) decision: &'static str,
+    }
+
+    struct RecordingProvider {
+        replies: Arc<Mutex<Vec<ProviderReply>>>,
+        reply_started: Option<SyncSender<()>>,
+        release_reply: Option<Receiver<()>>,
+    }
+
+    impl NativePermissionProvider for RecordingProvider {
+        fn reply_session_permission(
+            &mut self,
+            session_id: &str,
+            request_id: &str,
+            decision: OpenCodePermissionDecision,
+        ) -> Result<(), OpenCodeError> {
+            let decision = match decision {
+                OpenCodePermissionDecision::Once => "once",
+                OpenCodePermissionDecision::Reject => "reject",
+            };
+            self.replies
+                .lock()
+                .map_err(|_| OpenCodeError::InvalidResponse)?
+                .push(ProviderReply {
+                    session_id: session_id.to_owned(),
+                    request_id: request_id.to_owned(),
+                    decision,
+                });
+            if let Some(reply_started) = &self.reply_started {
+                let _ = reply_started.send(());
+            }
+            if let Some(release_reply) = &self.release_reply {
+                let _ = release_reply.recv();
+            }
+            Ok(())
+        }
+
+        fn list_session_permissions(
+            &mut self,
+            _session_id: &str,
+        ) -> Result<serde_json::Value, OpenCodeError> {
+            Ok(json!({ "data": [] }))
+        }
+    }
+
+    pub(crate) struct PermissionWorker {
+        mailbox: Option<NativePermissionMailboxRegistration>,
+        worker: Option<JoinHandle<()>>,
+        replies: Arc<Mutex<Vec<ProviderReply>>>,
+        reply_started: Option<Receiver<()>>,
+        release_reply: Option<SyncSender<()>>,
+    }
+
+    impl PermissionWorker {
+        pub(crate) async fn wait_for_provider_reply(&self) {
+            let reply_started = self
+                .reply_started
+                .as_ref()
+                .expect("blocked test worker has a reply-start notification");
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match reply_started.try_recv() {
+                        Ok(()) => return,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            tokio::time::sleep(Duration::from_millis(5)).await;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            panic!("fake provider worker ended before the reply call")
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("worker reaches the fake provider reply boundary");
+        }
+
+        pub(crate) fn close_mailbox(&mut self) {
+            drop(self.mailbox.take());
+        }
+
+        pub(crate) fn release_provider_reply(&mut self) {
+            if let Some(release_reply) = self.release_reply.take() {
+                let _ = release_reply.send(());
+            }
+        }
+
+        pub(crate) fn finish(mut self) -> Vec<ProviderReply> {
+            self.close_mailbox();
+            self.release_provider_reply();
+            self.worker
+                .take()
+                .expect("test permission worker thread exists")
+                .join()
+                .expect("test permission worker exits after mailbox closes");
+            self.replies
+                .lock()
+                .expect("test provider reply log remains available")
+                .clone()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_permission_worker(
+        supervisor: &AgentSessionSupervisor,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+        agent_session_id: &str,
+        runtime_incarnation_id: &str,
+        native_session_id: &str,
+        prompt_token: &str,
+        native_request_id: &str,
+    ) -> PermissionWorker {
+        start_permission_worker_internal(
+            supervisor,
+            workspace_id,
+            conversation_id,
+            turn_id,
+            retry_ordinal,
+            agent_session_id,
+            runtime_incarnation_id,
+            native_session_id,
+            prompt_token,
+            native_request_id,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_blocked_permission_worker(
+        supervisor: &AgentSessionSupervisor,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+        agent_session_id: &str,
+        runtime_incarnation_id: &str,
+        native_session_id: &str,
+        prompt_token: &str,
+        native_request_id: &str,
+    ) -> PermissionWorker {
+        start_permission_worker_internal(
+            supervisor,
+            workspace_id,
+            conversation_id,
+            turn_id,
+            retry_ordinal,
+            agent_session_id,
+            runtime_incarnation_id,
+            native_session_id,
+            prompt_token,
+            native_request_id,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_permission_worker_internal(
+        supervisor: &AgentSessionSupervisor,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        retry_ordinal: u32,
+        agent_session_id: &str,
+        runtime_incarnation_id: &str,
+        native_session_id: &str,
+        prompt_token: &str,
+        native_request_id: &str,
+        block_reply: bool,
+    ) -> PermissionWorker {
+        let scope = NativePermissionScope {
+            workspace_id: workspace_id.to_owned(),
+            conversation_id: conversation_id.to_owned(),
+            turn_id: turn_id.to_owned(),
+            retry_ordinal,
+            agent_session_id: agent_session_id.to_owned(),
+            runtime_incarnation_id: runtime_incarnation_id.to_owned(),
+            native_session_id: native_session_id.to_owned(),
+        };
+        let registry = supervisor.native_permissions.clone();
+        let bus = crate::transient_frames::TransientFrameBus::for_tests();
+        let (sender, receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let mailbox = registry
+            .register_mailbox(scope.clone(), sender, bus.clone())
+            .expect("test permission mailbox registers");
+        registry
+            .register_with_token(
+                &scope,
+                native_session_id,
+                prompt_token.to_owned(),
+                native_request_id.to_owned(),
+                "writeFile".to_owned(),
+                Some("Update the selected file".to_owned()),
+                Vec::new(),
+            )
+            .expect("test permission prompt registers in the Runtime registry");
+
+        let replies = Arc::new(Mutex::new(Vec::new()));
+        let provider_replies = Arc::clone(&replies);
+        let worker_registry = registry.clone();
+        let worker_scope = scope.clone();
+        let (reply_started, provider_reply_started) = if block_reply {
+            let (sender, receiver) = sync_channel(1);
+            (Some(receiver), Some(sender))
+        } else {
+            (None, None)
+        };
+        let (release_reply, provider_release_reply) = if block_reply {
+            let (sender, receiver) = sync_channel(1);
+            (Some(sender), Some(receiver))
+        } else {
+            (None, None)
+        };
+        let worker = std::thread::spawn(move || {
+            let mut provider = RecordingProvider {
+                replies: provider_replies,
+                reply_started: provider_reply_started,
+                release_reply: provider_release_reply,
+            };
+            while let Ok(command) = receiver.recv() {
+                worker_registry.apply_reply_command(&mut provider, &worker_scope, command, &bus);
+            }
+        });
+
+        PermissionWorker {
+            mailbox: Some(mailbox),
+            worker: Some(worker),
+            replies,
+            reply_started,
+            release_reply,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeNativePermissionProvider {
+        replies: Vec<(String, String, OpenCodePermissionDecision)>,
+        reply_result: Result<(), OpenCodeError>,
+        pending: serde_json::Value,
+        pending_sessions: Vec<String>,
+    }
+
+    impl NativePermissionProvider for FakeNativePermissionProvider {
+        fn reply_session_permission(
+            &mut self,
+            session_id: &str,
+            request_id: &str,
+            decision: OpenCodePermissionDecision,
+        ) -> Result<(), super::super::opencode_server::OpenCodeError> {
+            self.replies
+                .push((session_id.to_owned(), request_id.to_owned(), decision));
+            self.reply_result
+        }
+
+        fn list_session_permissions(
+            &mut self,
+            session_id: &str,
+        ) -> Result<serde_json::Value, super::super::opencode_server::OpenCodeError> {
+            self.pending_sessions.push(session_id.to_owned());
+            Ok(self.pending.clone())
+        }
+    }
+
+    #[test]
+    fn native_permission_worker_dispatches_exact_private_identifiers_once_and_publishes_ack() {
+        let registry = NativePermissionRegistry::default();
+        let bus = crate::transient_frames::TransientFrameBus::for_tests();
+        let mut frames = bus.subscribe();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-worker".to_owned(),
+            conversation_id: "conv-worker".to_owned(),
+            turn_id: "turn-worker".to_owned(),
+            retry_ordinal: 3,
+            agent_session_id: "agent-session-worker".to_owned(),
+            runtime_incarnation_id: "inc-worker".to_owned(),
+            native_session_id: "native-session-private".to_owned(),
+        };
+        let (sender, receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let _mailbox = registry
+            .register_mailbox(scope.clone(), sender, bus.clone())
+            .expect("active attempt mailbox is registered");
+        let token = "a".repeat(64);
+        registry
+            .register_with_token(
+                &scope,
+                &scope.native_session_id,
+                token.clone(),
+                "native-request-private".to_owned(),
+                "writeFile".to_owned(),
+                Some("Update the selected file".to_owned()),
+                vec!["C:/private/workspace/file.txt".to_owned()],
+            )
+            .expect("provider request is registered");
+
+        let NativePermissionReplyStart::Dispatch(reply_sender) = registry
+            .begin_reply(
+                &scope,
+                &token,
+                "owner-worker",
+                "permission-reply-key",
+                NativePermissionDecision::AllowOnce,
+            )
+            .expect("reply is admitted once")
+        else {
+            panic!("first decision must dispatch to the active worker");
+        };
+        let (completed, response) = tokio::sync::oneshot::channel();
+        reply_sender
+            .try_send(NativePermissionCommand {
+                prompt_token: token.clone(),
+                decision: NativePermissionDecision::AllowOnce,
+                completed,
+            })
+            .expect("reply command fits the bounded mailbox");
+
+        let mut provider = FakeNativePermissionProvider {
+            replies: Vec::new(),
+            reply_result: Ok(()),
+            pending: json!({ "data": [] }),
+            pending_sessions: Vec::new(),
+        };
+        registry.service_queued_commands(&mut provider, &scope, &receiver, &bus);
+        response
+            .blocking_recv()
+            .expect("worker acknowledges local command completion");
+
+        assert_eq!(
+            provider.replies,
+            [(
+                "native-session-private".to_owned(),
+                "native-request-private".to_owned(),
+                OpenCodePermissionDecision::Once,
+            )],
+            "the worker must reply once to the exact private provider scope and request"
+        );
+        let settled = registry
+            .view_for_scope(&scope, &token)
+            .expect("selected prompt remains in active attempt scope");
+        assert_eq!(settled.state_name(), "ANSWERED");
+        assert_eq!(settled.decision(), Some("ALLOW_ONCE"));
+
+        let frame = frames
+            .try_recv()
+            .expect("worker publishes the acknowledgment");
+        let frame_json: serde_json::Value =
+            serde_json::from_slice(&frame.bytes).expect("permission frame is valid JSON");
+        assert_eq!(frame_json["state"], "ANSWERED");
+        assert_eq!(frame_json["decision"], "ALLOW_ONCE");
+        let serialized = frame_json.to_string();
+        assert!(!serialized.contains("native-session-private"));
+        assert!(!serialized.contains("native-request-private"));
+        assert!(!serialized.contains("C:/private/workspace/file.txt"));
+    }
+
+    #[test]
+    fn native_permission_worker_rejects_same_session_pending_requests_once() {
+        let registry = NativePermissionRegistry::default();
+        let bus = crate::transient_frames::TransientFrameBus::for_tests();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-reject-worker".to_owned(),
+            conversation_id: "conv-reject-worker".to_owned(),
+            turn_id: "turn-reject-worker".to_owned(),
+            retry_ordinal: 0,
+            agent_session_id: "agent-session-reject-worker".to_owned(),
+            runtime_incarnation_id: "inc-reject-worker".to_owned(),
+            native_session_id: "native-session-reject-private".to_owned(),
+        };
+        let (sender, receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let _mailbox = registry
+            .register_mailbox(scope.clone(), sender, bus.clone())
+            .expect("active attempt mailbox is registered");
+        let selected = "a".repeat(64);
+        let other = "b".repeat(64);
+        for (token, request_id) in [
+            (&selected, "native-request-selected"),
+            (&other, "native-request-other-pending"),
+        ] {
+            registry
+                .register_with_token(
+                    &scope,
+                    &scope.native_session_id,
+                    token.clone(),
+                    request_id.to_owned(),
+                    "writeFile".to_owned(),
+                    None,
+                    vec![],
+                )
+                .expect("provider request is registered");
+        }
+
+        let NativePermissionReplyStart::Dispatch(reply_sender) = registry
+            .begin_reply(
+                &scope,
+                &selected,
+                "owner-reject-worker",
+                "reject-reply-key",
+                NativePermissionDecision::RejectSessionPending,
+            )
+            .expect("session rejection is admitted once")
+        else {
+            panic!("first decision must dispatch to the active worker");
+        };
+        let (completed, response) = tokio::sync::oneshot::channel();
+        reply_sender
+            .try_send(NativePermissionCommand {
+                prompt_token: selected.clone(),
+                decision: NativePermissionDecision::RejectSessionPending,
+                completed,
+            })
+            .expect("reply command fits the bounded mailbox");
+
+        let mut provider = FakeNativePermissionProvider {
+            replies: Vec::new(),
+            reply_result: Ok(()),
+            pending: json!({ "data": [] }),
+            pending_sessions: Vec::new(),
+        };
+        registry.service_queued_commands(&mut provider, &scope, &receiver, &bus);
+        response
+            .blocking_recv()
+            .expect("worker acknowledges local command completion");
+
+        assert_eq!(
+            provider.replies,
+            [(
+                "native-session-reject-private".to_owned(),
+                "native-request-selected".to_owned(),
+                OpenCodePermissionDecision::Reject,
+            )],
+            "the provider receives one rejection for the selected native request"
+        );
+        assert!(provider.pending_sessions.is_empty());
+        for token in [&selected, &other] {
+            let settled = registry
+                .view_for_scope(&scope, token)
+                .expect("same-session prompt remains in active scope");
+            assert_eq!(settled.state_name(), "ANSWERED");
+            assert_eq!(settled.decision(), Some("REJECT_SESSION_PENDING"));
+        }
+    }
+
+    #[test]
+    fn native_permission_worker_reconciles_ambiguous_reply_once_without_replay() {
+        let registry = NativePermissionRegistry::default();
+        let bus = crate::transient_frames::TransientFrameBus::for_tests();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-ambiguous-worker".to_owned(),
+            conversation_id: "conv-ambiguous-worker".to_owned(),
+            turn_id: "turn-ambiguous-worker".to_owned(),
+            retry_ordinal: 1,
+            agent_session_id: "agent-session-ambiguous-worker".to_owned(),
+            runtime_incarnation_id: "inc-ambiguous-worker".to_owned(),
+            native_session_id: "native-session-ambiguous-private".to_owned(),
+        };
+        let (sender, receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let _mailbox = registry
+            .register_mailbox(scope.clone(), sender, bus.clone())
+            .expect("active attempt mailbox is registered");
+        let token = "c".repeat(64);
+        registry
+            .register_with_token(
+                &scope,
+                &scope.native_session_id,
+                token.clone(),
+                "native-request-still-pending".to_owned(),
+                "writeFile".to_owned(),
+                None,
+                vec![],
+            )
+            .expect("provider request is registered");
+        let NativePermissionReplyStart::Dispatch(reply_sender) = registry
+            .begin_reply(
+                &scope,
+                &token,
+                "owner-ambiguous-worker",
+                "ambiguous-reply-key",
+                NativePermissionDecision::AllowOnce,
+            )
+            .expect("reply is admitted once")
+        else {
+            panic!("first decision must dispatch to the active worker");
+        };
+        let (completed, response) = tokio::sync::oneshot::channel();
+        reply_sender
+            .try_send(NativePermissionCommand {
+                prompt_token: token.clone(),
+                decision: NativePermissionDecision::AllowOnce,
+                completed,
+            })
+            .expect("reply command fits the bounded mailbox");
+
+        let mut provider = FakeNativePermissionProvider {
+            replies: Vec::new(),
+            reply_result: Err(OpenCodeError::Timeout),
+            pending: json!({
+                "data": [{
+                    "id": "native-request-still-pending",
+                    "sessionID": "native-session-ambiguous-private"
+                }]
+            }),
+            pending_sessions: Vec::new(),
+        };
+        registry.service_queued_commands(&mut provider, &scope, &receiver, &bus);
+        response
+            .blocking_recv()
+            .expect("worker acknowledges local command completion");
+
+        assert_eq!(
+            provider.replies.len(),
+            1,
+            "the uncertain reply is never replayed"
+        );
+        assert_eq!(
+            provider.pending_sessions,
+            ["native-session-ambiguous-private"]
+        );
+        let still_pending = registry
+            .view_for_scope(&scope, &token)
+            .expect("prompt remains in active attempt scope");
+        assert_eq!(still_pending.state_name(), "PENDING");
+        assert_eq!(still_pending.decision(), None);
+    }
 
     #[test]
     fn native_permission_registry_projects_opaque_scoped_prompt_without_native_identifiers() {
@@ -1872,6 +3143,7 @@ mod tests {
             conversation_id: "conv-one".to_owned(),
             turn_id: "turn-one".to_owned(),
             retry_ordinal: 0,
+            agent_session_id: "agent-session-one".to_owned(),
             runtime_incarnation_id: "inc-one".to_owned(),
             native_session_id: "native-session-secret".to_owned(),
         };
@@ -1933,33 +3205,323 @@ mod tests {
                     &wrong_turn.conversation_id,
                     &wrong_turn.turn_id,
                     wrong_turn.retry_ordinal,
+                    &wrong_turn.agent_session_id,
+                    &wrong_turn.runtime_incarnation_id,
                 )
+                .items
                 .is_empty()
         );
-        assert_eq!(
-            registry.snapshot(
-                &scope.workspace_id,
-                &scope.conversation_id,
-                &scope.turn_id,
-                scope.retry_ordinal,
-            ),
-            [prompt]
-        );
-        registry.end_attempt(
+        let active_snapshot = registry.snapshot(
             &scope.workspace_id,
             &scope.conversation_id,
             &scope.turn_id,
             scope.retry_ordinal,
+            &scope.agent_session_id,
+            &scope.runtime_incarnation_id,
+        );
+        assert_eq!(active_snapshot.sequence, 1);
+        assert_eq!(active_snapshot.items, [prompt]);
+        let ended = registry.end_attempt(&scope);
+        assert_eq!(ended.len(), 1);
+        assert_eq!(ended[0].sequence(), 2);
+        assert_eq!(
+            registry
+                .snapshot(
+                    &scope.workspace_id,
+                    &scope.conversation_id,
+                    &scope.turn_id,
+                    scope.retry_ordinal,
+                    &scope.agent_session_id,
+                    &scope.runtime_incarnation_id,
+                )
+                .items[0]
+                .state,
+            NativePermissionState::SessionEnded
+        );
+    }
+
+    #[test]
+    fn native_permission_registry_reclaims_prompt_capacity_when_attempt_ends() {
+        let registry = NativePermissionRegistry::default();
+        let mut registrations = Vec::new();
+        let mut receivers = Vec::new();
+        let mut next_prompt = 0_usize;
+
+        for attempt in 0..8 {
+            let scope = NativePermissionScope {
+                workspace_id: "ws-capacity".to_owned(),
+                conversation_id: format!("conv-{attempt}"),
+                turn_id: format!("turn-{attempt}"),
+                retry_ordinal: 0,
+                agent_session_id: format!("agent-session-{attempt}"),
+                runtime_incarnation_id: "inc-capacity".to_owned(),
+                native_session_id: format!("native-session-{attempt}"),
+            };
+            let (sender, receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+            registrations.push(
+                registry
+                    .register_mailbox(
+                        scope.clone(),
+                        sender,
+                        crate::transient_frames::TransientFrameBus::for_tests(),
+                    )
+                    .expect("active attempt mailbox is registered"),
+            );
+            receivers.push(receiver);
+
+            for _ in 0..MAX_NATIVE_PERMISSION_PROMPTS_PER_TURN {
+                registry
+                    .register_with_token(
+                        &scope,
+                        &scope.native_session_id,
+                        format!("{next_prompt:064x}"),
+                        format!("permission-{next_prompt}"),
+                        "writeFile".to_owned(),
+                        None,
+                        vec![],
+                    )
+                    .expect("active prompts fit the Runtime bound");
+                next_prompt += 1;
+            }
+        }
+
+        let overflow_scope = NativePermissionScope {
+            workspace_id: "ws-capacity".to_owned(),
+            conversation_id: "conv-overflow".to_owned(),
+            turn_id: "turn-overflow".to_owned(),
+            retry_ordinal: 0,
+            agent_session_id: "agent-session-overflow".to_owned(),
+            runtime_incarnation_id: "inc-capacity".to_owned(),
+            native_session_id: "native-session-overflow".to_owned(),
+        };
+        assert_eq!(
+            registry.register_with_token(
+                &overflow_scope,
+                &overflow_scope.native_session_id,
+                "f".repeat(64),
+                "permission-overflow".to_owned(),
+                "writeFile".to_owned(),
+                None,
+                vec![],
+            ),
+            Err(NativePermissionRegistryError::Capacity),
+            "the Runtime bound remains effective while all retained attempts are active"
+        );
+
+        drop(registrations.remove(0));
+        let (sender, receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let _registration = registry
+            .register_mailbox(
+                overflow_scope.clone(),
+                sender,
+                crate::transient_frames::TransientFrameBus::for_tests(),
+            )
+            .expect("a new attempt can register after the ended attempt is released");
+        receivers.push(receiver);
+        assert!(
+            registry
+                .register_with_token(
+                    &overflow_scope,
+                    &overflow_scope.native_session_id,
+                    "f".repeat(64),
+                    "permission-after-release".to_owned(),
+                    "writeFile".to_owned(),
+                    None,
+                    vec![],
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn native_permission_reply_fences_replay_and_reconciles_session_rejection() {
+        let registry = NativePermissionRegistry::default();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-reply".to_owned(),
+            conversation_id: "conv-reply".to_owned(),
+            turn_id: "turn-reply".to_owned(),
+            retry_ordinal: 1,
+            agent_session_id: "agent-session-reply".to_owned(),
+            runtime_incarnation_id: "inc-reply".to_owned(),
+            native_session_id: "native-session-reply".to_owned(),
+        };
+        let (sender, _receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let _mailbox = registry
+            .register_mailbox(
+                scope.clone(),
+                sender,
+                crate::transient_frames::TransientFrameBus::for_tests(),
+            )
+            .expect("attempt mailbox is registered");
+        let register = |token: &str, request_id: &str| {
+            registry
+                .register_with_token(
+                    &scope,
+                    &scope.native_session_id,
+                    token.to_owned(),
+                    request_id.to_owned(),
+                    "writeFile".to_owned(),
+                    None,
+                    vec![],
+                )
+                .expect("prompt is registered")
+        };
+        let selected = "a".repeat(64);
+        let second = "b".repeat(64);
+        let third = "c".repeat(64);
+        assert_eq!(register(&selected, "permission-selected").sequence(), 1);
+        assert_eq!(register(&second, "permission-second").sequence(), 2);
+        assert_eq!(register(&third, "permission-third").sequence(), 3);
+
+        assert!(matches!(
+            registry.begin_reply(
+                &scope,
+                &selected,
+                "owner-a",
+                "permission-key-1",
+                NativePermissionDecision::AllowOnce,
+            ),
+            Ok(NativePermissionReplyStart::Dispatch(_))
+        ));
+        let replay = registry
+            .begin_reply(
+                &scope,
+                &selected,
+                "owner-a",
+                "permission-key-1",
+                NativePermissionDecision::AllowOnce,
+            )
+            .expect("identical idempotency replay returns current state");
+        assert!(matches!(
+            replay,
+            NativePermissionReplyStart::Replay(NativePermissionPromptView {
+                sequence: 4,
+                state: NativePermissionState::Replying,
+                ..
+            })
+        ));
+        assert!(matches!(
+            registry.begin_reply(
+                &scope,
+                &selected,
+                "owner-a",
+                "permission-key-1",
+                NativePermissionDecision::RejectSessionPending,
+            ),
+            Err(NativePermissionRegistryError::ReplyConflict)
+        ));
+        assert!(
+            matches!(
+                registry.begin_reply(
+                    &scope,
+                    &second,
+                    "owner-a",
+                    "permission-key-1",
+                    NativePermissionDecision::AllowOnce,
+                ),
+                Err(NativePermissionRegistryError::ReplyConflict)
+            ),
+            "one principal cannot reuse a reply key for another prompt"
+        );
+        let acknowledged =
+            registry.acknowledge_reply(&scope, &selected, NativePermissionDecision::AllowOnce);
+        assert_eq!(acknowledged.len(), 1);
+        assert_eq!(acknowledged[0].sequence(), 5);
+
+        assert!(matches!(
+            registry.begin_reply(
+                &scope,
+                &second,
+                "owner-b",
+                "permission-key-1",
+                NativePermissionDecision::RejectSessionPending,
+            ),
+            Ok(NativePermissionReplyStart::Dispatch(_))
+        ));
+        let mut pending = HashSet::new();
+        pending.insert("permission-third".to_owned());
+        registry.reconcile_reply(
+            &scope,
+            &second,
+            NativePermissionDecision::RejectSessionPending,
+            Some(pending),
         );
         assert_eq!(
-            registry.snapshot(
-                &scope.workspace_id,
-                &scope.conversation_id,
-                &scope.turn_id,
-                scope.retry_ordinal,
-            )[0]
-            .state,
-            NativePermissionState::SessionEnded
+            registry
+                .view_for_scope(&scope, &second)
+                .expect("selected prompt")
+                .state,
+            NativePermissionState::OutcomeUnknown
+        );
+        assert_eq!(
+            registry
+                .view_for_scope(&scope, &second)
+                .expect("unknown prompt")
+                .sequence(),
+            7
+        );
+        assert_eq!(
+            registry
+                .view_for_scope(&scope, &third)
+                .expect("other pending prompt")
+                .state,
+            NativePermissionState::Pending,
+            "a pending-list result keeps other still-pending session prompts actionable"
+        );
+        assert_eq!(
+            registry
+                .view_for_scope(&scope, &third)
+                .expect("pending prompt")
+                .sequence(),
+            8
+        );
+        assert_eq!(
+            registry
+                .view_for_scope(&scope, &second)
+                .expect("selected prompt")
+                .decision(),
+            Some("REJECT_SESSION_PENDING"),
+            "an unresolved outcome retains the attempted decision for honest display"
+        );
+        assert_eq!(
+            registry
+                .view_for_scope(&scope, &third)
+                .expect("other pending prompt")
+                .decision(),
+            None,
+            "a confirmed still-pending prompt does not retain a stale attempted decision"
+        );
+
+        assert!(matches!(
+            registry.begin_reply(
+                &scope,
+                &third,
+                "owner-b",
+                "permission-key-2",
+                NativePermissionDecision::RejectSessionPending,
+            ),
+            Ok(NativePermissionReplyStart::Dispatch(_))
+        ));
+        registry.reconcile_reply(
+            &scope,
+            &third,
+            NativePermissionDecision::RejectSessionPending,
+            None,
+        );
+        assert_eq!(
+            registry
+                .view_for_scope(&scope, &third)
+                .expect("third prompt")
+                .state,
+            NativePermissionState::OutcomeUnknown,
+            "an unreadable pending list disables every possibly affected rejection"
+        );
+        assert_eq!(
+            registry
+                .view_for_scope(&scope, &third)
+                .expect("unknown prompt")
+                .sequence(),
+            10
         );
     }
 
@@ -1971,6 +3533,7 @@ mod tests {
             conversation_id: "conv-one".to_owned(),
             turn_id: "turn-one".to_owned(),
             retry_ordinal: 0,
+            agent_session_id: "agent-session-one".to_owned(),
             runtime_incarnation_id: "inc-one".to_owned(),
             native_session_id: "native-session-one".to_owned(),
         };
@@ -2015,17 +3578,19 @@ mod tests {
             conversation_id: "conv-one".to_owned(),
             turn_id: "turn-one".to_owned(),
             retry_ordinal: 2,
+            agent_session_id: "agent-session-one".to_owned(),
             runtime_incarnation_id: "inc-one".to_owned(),
             native_session_id: "native-session-secret".to_owned(),
         };
-        let mut observer = NativePermissionObserver::new(registry, scope, bus);
-        observer.on_event(&NormalizedAgentEvent::PermissionAsked {
+        let mut observer = NativePermissionObserver::new(registry.clone(), scope.clone(), bus);
+        let event = NormalizedAgentEvent::PermissionAsked {
             permission_id: "native-request-secret".to_owned(),
             native_session_id: "native-session-secret".to_owned(),
             action: "writeFile".to_owned(),
             resources: vec!["C:/private/file.txt".to_owned()],
             message: Some("Please update this file".to_owned()),
-        });
+        };
+        observer.on_event(&event);
 
         let frame = receiver.try_recv().expect("permission event published");
         let value: serde_json::Value =
@@ -2043,6 +3608,76 @@ mod tests {
         assert!(!serialized.contains("native-session-secret"));
         assert!(!serialized.contains("native-request-secret"));
         assert!(!serialized.contains("C:/private/file.txt"));
+
+        let token = value["prompt_token"].as_str().expect("opaque token");
+        registry.acknowledge_reply(&scope, token, NativePermissionDecision::AllowOnce);
+        observer.on_event(&event);
+        let duplicate = receiver
+            .try_recv()
+            .expect("duplicate permission event republishes its settled state");
+        let duplicate_value: serde_json::Value =
+            serde_json::from_slice(&duplicate.bytes).expect("valid duplicate frame");
+        assert_eq!(duplicate_value["sequence"], 2);
+        assert_eq!(duplicate_value["state"], "ANSWERED");
+    }
+
+    #[test]
+    fn native_permission_mailbox_publishes_session_end_before_discarding_prompt_scope() {
+        let registry = NativePermissionRegistry::default();
+        let bus = crate::transient_frames::TransientFrameBus::for_tests();
+        let mut receiver = bus.subscribe();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-end".to_owned(),
+            conversation_id: "conv-end".to_owned(),
+            turn_id: "turn-end".to_owned(),
+            retry_ordinal: 0,
+            agent_session_id: "agent-session-end".to_owned(),
+            runtime_incarnation_id: "inc-end".to_owned(),
+            native_session_id: "native-session-private".to_owned(),
+        };
+        let (sender, _receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let registration = registry
+            .register_mailbox(scope.clone(), sender, bus.clone())
+            .expect("attempt mailbox is registered");
+        let mut observer = NativePermissionObserver::new(registry.clone(), scope.clone(), bus);
+        observer.on_event(&NormalizedAgentEvent::PermissionAsked {
+            permission_id: "native-request-private".to_owned(),
+            native_session_id: scope.native_session_id.clone(),
+            action: "writeFile".to_owned(),
+            resources: vec!["C:/private/file.txt".to_owned()],
+            message: None,
+        });
+        let pending = receiver.try_recv().expect("pending prompt frame");
+        let pending_value: serde_json::Value =
+            serde_json::from_slice(&pending.bytes).expect("pending JSON");
+        assert_eq!(pending_value["sequence"], 1);
+        assert_eq!(pending_value["state"], "PENDING");
+
+        drop(registration);
+        let ended = receiver
+            .try_recv()
+            .expect("terminal prompt frame precedes scope removal");
+        let ended_value: serde_json::Value =
+            serde_json::from_slice(&ended.bytes).expect("terminal JSON");
+        assert_eq!(ended_value["sequence"], 2);
+        assert_eq!(ended_value["state"], "SESSION_ENDED");
+        let serialized = ended_value.to_string();
+        assert!(!serialized.contains("native-session-private"));
+        assert!(!serialized.contains("native-request-private"));
+        assert!(!serialized.contains("C:/private/file.txt"));
+
+        let snapshot = registry.snapshot(
+            &scope.workspace_id,
+            &scope.conversation_id,
+            &scope.turn_id,
+            scope.retry_ordinal,
+            &scope.agent_session_id,
+            &scope.runtime_incarnation_id,
+        );
+        assert!(
+            snapshot.items.is_empty(),
+            "prompt tokens are discarded after terminal delivery"
+        );
     }
 
     #[test]
@@ -2251,6 +3886,43 @@ mod tests {
 
         assert_eq!(result, Ok(()));
         assert_eq!(calls, 2, "transient no-host settlement is retried");
+    }
+
+    #[test]
+    fn conversation_dispatch_owner_registry_suppresses_exact_replay_until_worker_exits() {
+        let registry = DispatchRegistry::default();
+        let key = DispatchAttemptKey {
+            workspace_id: "ws-1".to_owned(),
+            conversation_id: "conv-1".to_owned(),
+            turn_id: "turn-1".to_owned(),
+            retry_ordinal: 0,
+        };
+
+        let first = registry
+            .register(key.clone())
+            .expect("first dispatcher owns the attempt");
+        assert!(
+            registry.register(key.clone()).is_none(),
+            "an exact idempotent replay must not start a competing pre-claim worker"
+        );
+        let another_retry = registry
+            .register(DispatchAttemptKey {
+                retry_ordinal: 1,
+                ..key.clone()
+            })
+            .expect("a later retry is a distinct attempt");
+        let another_conversation = registry
+            .register(DispatchAttemptKey {
+                conversation_id: "conv-2".to_owned(),
+                ..key.clone()
+            })
+            .expect("attempt ownership is scoped to its Conversation");
+
+        drop(first);
+        let after_worker_exit = registry
+            .register(key)
+            .expect("a settled worker releases local ownership for recovery/retry");
+        drop((after_worker_exit, another_retry, another_conversation));
     }
 
     #[test]

@@ -58,7 +58,7 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | 013 | IN_REVIEW (new 2026-11-09); B-36, B-37 DEFERRED by the owner 2026-11-10 (LiteSPM parts deferred); folded LiteSPM pin P-17 | T01..T21 | 013-T18, 013-T21 | E2E-06 | UC discover and install a package | W2 observe, W3 plan/apply |
 | 014 | IN_REVIEW (new); B-38 ACCEPTED as proposed 2026-11-10 | T01..T19 | 014-T17, 014-T19 | E2E-14 (adopted) | UC find, rename, archive, delete chats | W1 |
 | 015 | IN_REVIEW (new); B-39 ACCEPTED as proposed 2026-11-10; folded Mission Control/Compare P-14 | T01..T21 | 015-T17, 015-T18, 015-T21 | E2E-15 (adopted) | UC steer, pause and delegate a Task | W4 |
-| 016 | IN_REVIEW; baseline AC-001..AC-019 acceptance pending T01; extension AC-020..AC-027 separately gated at T25 (A-84); A-85 blocks MCP proposal exposure | T01..T25 | 016-T16, 016-T19, 016-T24 | E2E-11 | UC rich answer with fallback | W2 |
+| 016 | IN_REVIEW; baseline AC-001..AC-019 acceptance pending T01; extension AC-020..AC-028 separately gated at T25 (A-84); A-85 blocks MCP proposal exposure; A-103 Saved View boundary remains a proposal | T01..T25 | 016-T16, 016-T19, 016-T24 | E2E-11 | UC rich answer with fallback | W2 |
 | 017 | IN_REVIEW (new); B-41 ACCEPTED as proposed 2026-11-10 | T01..T18 | 017-T16, 017-T18 | E2E-12 | UC back up and restore | W6 |
 | 018 | IN_REVIEW (new); B-42 PROPOSED (open, BLOCKED); folded operator-api.ts codegen + drift gate P-18 | T01..T19 | 018-T16, 018-T19 | E2E-16 (adopted) | UC usage and support bundle | W6 |
 | 019 | IN_REVIEW (new); B-43, B-44 DEFERRED 2026-11-10 (release dependent) | T01..T23 | 019-T22, 019-T23 (V1 go/no-go) | all rows | UC install, update, sign-off | W0 skeleton, W6 qualification |
@@ -110,7 +110,7 @@ A task is traced to a test only when its TASKS.md status line says so. Snapshot 
 | 019 | CI skeleton, CODEOWNERS, secret scan, CSP audit, release schemas, matrix, evidence bundle, Linux deb config and scripts, updater UI reducer | B-43 and B-44 items DEFERRED; CI never ran on GitHub; no deb built |
 | 004 to 010, 015 to 018, 020 | Pre-existing foundations only | Not started; see each TASKS.md |
 
-Test baselines at this snapshot: `cargo test -p storage-sqlite --lib` 624 pass; `cargo test -p litecoworkd --bin litecoworkd` 656 pass, 1 ignored; UI `pnpm test` 5 pre-existing failures; served routes 178 / 1 local-only / 53 target-only; `SCHEMA_VERSION` 32. Full per-task detail: [CURRENT-RUN.md](../CURRENT-RUN.md) "Handoff status by package".
+Historical test baselines at the 2026-11-12 snapshot: `cargo test -p storage-sqlite --lib` 624 pass; `cargo test -p litecoworkd --bin litecoworkd` 656 pass, 1 ignored; UI `pnpm test` 5 pre-existing failures; served routes 178 / 1 local-only / 53 target-only; `SCHEMA_VERSION` 32. Full per-task detail: [CURRENT-RUN.md](../CURRENT-RUN.md) "Handoff status by package".
 
 ## .specify templates (copy source for new packages)
 

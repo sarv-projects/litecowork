@@ -557,7 +557,7 @@
         "conversation_id": {"type": "string", "minLength": 1, "maxLength": 256},
         "turn_id": {"type": "string", "minLength": 1, "maxLength": 256},
         "retry_ordinal": {"type": "integer", "minimum": 0},
-        "sequence": {"type": "integer", "minimum": 1, "maximum": 64},
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 4096},
         "prompt_token": {"type": "string", "minLength": 32, "maxLength": 128},
         "state": {"enum": ["PENDING", "REPLYING", "ANSWERED", "OUTCOME_UNKNOWN", "SESSION_ENDED"]},
         "action": {"type": "string", "minLength": 1, "maxLength": 128},

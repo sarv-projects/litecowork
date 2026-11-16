@@ -89,7 +89,7 @@ Do not edit a candidate path just because it is listed. Only files needed for th
 | Duplicate final message | Idempotent atomic result transaction keyed to turn/session/retry/response identity |
 | Stale or hostile provider frames | Bound, normalize, correlate, order, redact and treat as untrusted |
 | Daemon crash between reservation and activation | STARTING recovery sweep and LOST settlement; no turn falsely RUNNING |
-| Daemon crash after activation | Query/reconcile adapter/host for exact same incarnation; never replay across incarnations |
+| Daemon crash after activation | Settle the prior-incarnation turn FAILED and AgentSession LOST with `RUNTIME_RESTARTED`; never restore its handle or replay the prompt. Reconcile owned host processes by verified process identity/provider observation before replacement work; PID-only references are insufficient (A-104) |
 | Stop/final race | Observe adapter quiescence; persist whichever terminal observation wins |
 | Resource oversize or unsupported attachment | Explicit typed rejection; no silent omission |
 | UI transient gap | Drop transient content and resync durable projection |

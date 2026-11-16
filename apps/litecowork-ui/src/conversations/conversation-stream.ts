@@ -55,6 +55,8 @@ export class ConversationStreamController {
     private readonly onState: (state: PresentationStreamState, frame: unknown) => void,
     private readonly onStatus: (status: ConversationStreamStatus) => void = () => {},
     private readonly delay: (milliseconds: number) => Promise<void> = wait,
+    private readonly onFrame: (frame: unknown) => void = () => {},
+    private readonly onReconnect: () => void = () => {},
   ) {}
 
   get state(): PresentationStreamState { return this.currentState; }
@@ -105,6 +107,7 @@ export class ConversationStreamController {
       });
       this.closeCurrent = close;
       let unlisten: (() => void) | null = null;
+      let reconnectNotified = false;
       try {
         // Install the event listener before invoking Tauri: the native stream can
         // deliver stream.ready immediately after the subscribe command returns.
@@ -124,6 +127,12 @@ export class ConversationStreamController {
                   this.currentState = next;
                   if (next.ready) this.setStatus("LIVE");
                   this.onState(next, value.frame);
+                }
+                try { this.onFrame(value.frame); } catch { /* auxiliary consumers cannot interrupt stream credit */ }
+                const frame = value.frame as Record<string, unknown>;
+                if (retry > 0 && !reconnectNotified && frame.type === "stream.ready") {
+                  reconnectNotified = true;
+                  try { this.onReconnect(); } catch { /* reconnect observers cannot interrupt stream credit */ }
                 }
               }
             } finally {

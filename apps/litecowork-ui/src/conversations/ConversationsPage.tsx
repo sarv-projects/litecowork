@@ -24,6 +24,20 @@ import {
 import { addAttachment, attachmentChipLabel, attachmentRefusalNotice, isAttachable, removeAttachment, toResourceRefs, type AttachmentCandidate, type AttachmentChip } from "./conversation-attachments";
 import { TurnActivityView } from "./TurnActivityView";
 import { mergeActivity, parseActivityPage, type ActivityEntry } from "./turn-activity";
+import { NativePermissionCard } from "../needs-you/NativePermissionCard";
+import {
+  applyNativePermissionReceipt,
+  emptyNativePermissionState,
+  endPendingNativePermissions,
+  markNativePermissionOutcomeUnknown,
+  parseConversationPermissionSnapshot,
+  reconcileConversationPermissionSnapshot,
+  requireNativePermissionSnapshot,
+  reduceNativePermissionFrame,
+  type NativePermissionDecision,
+  type NativePermissionScope,
+  type NativePermissionState,
+} from "../needs-you/native-permission";
 import "./conversations-page.css";
 
 // Keep ambiguous create receipts across keyed Workspace page remounts for this app session.
@@ -230,6 +244,12 @@ export function ConversationsPage({
   const [presentationStream, setPresentationStream] = useState<PresentationStreamState | null>(null);
   const [presentationStreamKey, setPresentationStreamKey] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<"CONNECTING" | "LIVE" | "RECONNECTING" | null>(null);
+  const [nativePermissionRecord, setNativePermissionRecord] = useState<{ key: string; state: NativePermissionState } | null>(null);
+  const [nativePermissionActions, setNativePermissionActions] = useState<Record<string, NativePermissionDecision>>({});
+  const [nativePermissionSnapshotError, setNativePermissionSnapshotError] = useState(false);
+  const nativePermissionScopeRef = useRef<NativePermissionScope | null>(null);
+  const lastPermissionAutoRefreshKey = useRef<string | null>(null);
+  const permissionActionLock = useRef(new Set<string>());
   const requests = useRef(new ConversationRequestEpochs());
   const activeListEpoch = useRef<number | null>(null);
   const activeSnapshotEpoch = useRef<number | null>(null);
@@ -485,7 +505,41 @@ export function ConversationsPage({
       if (live && activeWorkspace.current === workspaceId) {
         setSnapshot(current => mergeConversationStreamSnapshot(current, live, workspaceId, selectedId!));
       }
-    }, setStreamStatus);
+    }, setStreamStatus, undefined, frame => {
+      const scope = nativePermissionScopeRef.current;
+      if (!scope || !frame || typeof frame !== "object" || Array.isArray(frame)) return;
+      const value = frame as Record<string, unknown>;
+      const key = JSON.stringify([scope.workspaceId, scope.conversationId, scope.turnId, scope.retryOrdinal]);
+      if (value.type === "turn.permission") {
+        setNativePermissionRecord(current => {
+          const base = current?.key === key ? current.state : emptyNativePermissionState;
+          const next = reduceNativePermissionFrame(base, frame, scope);
+          return next === base ? current : { key, state: next };
+        });
+      } else if (value.type === "turn.settled"
+        && value.workspace_id === scope.workspaceId
+        && value.conversation_id === scope.conversationId
+        && value.turn_id === scope.turnId
+        && value.retry_ordinal === scope.retryOrdinal) {
+        setNativePermissionRecord(current => {
+          if (current?.key !== key) return current;
+          const next = endPendingNativePermissions(current.state);
+          return next === current.state ? current : { key, state: next };
+        });
+      }
+    }, () => {
+      const scope = nativePermissionScopeRef.current;
+      if (!scope) return;
+      const key = JSON.stringify([scope.workspaceId, scope.conversationId, scope.turnId, scope.retryOrdinal]);
+      // A resumed stream may have missed the final permission-state frame. Keep
+      // the old card visible, but make it non-actionable until the exact attempt
+      // snapshot replaces it.
+      lastPermissionAutoRefreshKey.current = null;
+      setNativePermissionRecord(current => {
+        const base = current?.key === key ? current.state : emptyNativePermissionState;
+        return { key, state: requireNativePermissionSnapshot(base) };
+      });
+    });
     controller.start();
     setStreamStatus(controller.status);
     return () => { void controller.dispose(); };
@@ -730,6 +784,110 @@ export function ConversationsPage({
     && presentationStream?.workspaceId === workspaceId
     ? presentationStream
     : null;
+  // Live native permission state exists only for the currently running attempt.
+  // A retryable FAILED turn is historical and must never recreate an actionable
+  // native prompt or trigger a live-session lookup.
+  const permissionTurn = currentSnapshot?.active_turn?.status === "RUNNING"
+    ? currentSnapshot.active_turn
+    : null;
+  const livePermissionScope: NativePermissionScope | null = permissionTurn && workspaceId && selectedId
+    ? { workspaceId, conversationId: selectedId, turnId: permissionTurn.turn_id, retryOrdinal: permissionTurn.retry_ordinal }
+    : null;
+  const livePermissionKey = livePermissionScope
+    ? JSON.stringify([livePermissionScope.workspaceId, livePermissionScope.conversationId, livePermissionScope.turnId, livePermissionScope.retryOrdinal])
+    : null;
+  nativePermissionScopeRef.current = livePermissionScope;
+  const currentNativePermissionState = livePermissionKey && nativePermissionRecord?.key === livePermissionKey
+    ? nativePermissionRecord.state
+    : emptyNativePermissionState;
+  const refreshNativePermissionSnapshot = useCallback(async (scope: NativePermissionScope, key: string) => {
+    if (!operatorReady) throw new Error("Local Runtime is unavailable");
+    const value = await invoke<unknown>("list_conversation_turn_permissions", {
+      workspaceId: scope.workspaceId,
+      conversationId: scope.conversationId,
+      turnId: scope.turnId,
+    });
+    const parsed = parseConversationPermissionSnapshot(value, scope);
+    if (!parsed) throw new Error("Live permission snapshot did not match the active attempt");
+    const currentScope = nativePermissionScopeRef.current;
+    const currentKey = currentScope ? JSON.stringify([currentScope.workspaceId, currentScope.conversationId, currentScope.turnId, currentScope.retryOrdinal]) : null;
+    if (currentKey === key) {
+      setNativePermissionRecord(current => {
+        const base = current?.key === key ? current.state : emptyNativePermissionState;
+        return { key, state: reconcileConversationPermissionSnapshot(base, parsed) };
+      });
+      setNativePermissionSnapshotError(false);
+    }
+    return parsed;
+  }, [operatorReady]);
+
+  useEffect(() => {
+    if (!livePermissionScope || !livePermissionKey || !operatorReady) return;
+    const scope = livePermissionScope;
+    const key = livePermissionKey;
+    let active = true;
+    lastPermissionAutoRefreshKey.current = null;
+    setNativePermissionSnapshotError(false);
+    setNativePermissionActions({});
+    setNativePermissionRecord(current => current?.key === key ? current : { key, state: emptyNativePermissionState });
+    void refreshNativePermissionSnapshot(scope, key).catch(() => {
+      if (active) setNativePermissionSnapshotError(true);
+    });
+    return () => { active = false; };
+  }, [livePermissionKey, operatorReady, refreshNativePermissionSnapshot]);
+
+  useEffect(() => {
+    if (!livePermissionScope || !livePermissionKey || !currentNativePermissionState.needsRefresh
+      || lastPermissionAutoRefreshKey.current === livePermissionKey) return;
+    lastPermissionAutoRefreshKey.current = livePermissionKey;
+    void refreshNativePermissionSnapshot(livePermissionScope, livePermissionKey).catch(() => setNativePermissionSnapshotError(true));
+  }, [currentNativePermissionState, livePermissionKey, livePermissionScope, refreshNativePermissionSnapshot]);
+
+  const sendNativePermissionDecision = useCallback(async (promptToken: string, decision: NativePermissionDecision) => {
+    const scope = nativePermissionScopeRef.current;
+    const stateKey = scope ? JSON.stringify([scope.workspaceId, scope.conversationId, scope.turnId, scope.retryOrdinal]) : null;
+    const prompt = stateKey && nativePermissionRecord?.key === stateKey
+      ? nativePermissionRecord.state.prompts[promptToken]
+      : null;
+    if (!scope || !stateKey || !operatorReady || prompt?.state !== "PENDING"
+      || nativePermissionActions[promptToken] || permissionActionLock.current.has(promptToken)) return;
+    permissionActionLock.current.add(promptToken);
+    setNativePermissionActions(current => ({ ...current, [promptToken]: decision }));
+    try {
+      const receipt = await invoke<unknown>("reply_conversation_permission", {
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        turnId: scope.turnId,
+        promptToken,
+        decision,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      setNativePermissionRecord(current => current?.key === stateKey
+        ? { key: stateKey, state: applyNativePermissionReceipt(current.state, receipt) }
+        : current);
+    } catch {
+      try {
+        const snapshot = await refreshNativePermissionSnapshot(scope, stateKey);
+        if (!snapshot.items.some(item => item.promptToken === promptToken)) {
+          setNativePermissionRecord(current => current?.key === stateKey
+            ? { key: stateKey, state: markNativePermissionOutcomeUnknown(current.state, promptToken) }
+            : current);
+        }
+      } catch {
+        setNativePermissionRecord(current => current?.key === stateKey
+          ? { key: stateKey, state: markNativePermissionOutcomeUnknown(current.state, promptToken) }
+          : current);
+        setNativePermissionSnapshotError(true);
+      }
+    } finally {
+      permissionActionLock.current.delete(promptToken);
+      setNativePermissionActions(current => {
+        const next = { ...current };
+        delete next[promptToken];
+        return next;
+      });
+    }
+  }, [nativePermissionActions, nativePermissionRecord, operatorReady, refreshNativePermissionSnapshot]);
   const transientTurns = Object.values(currentPresentationStream?.turns ?? {})
     .filter((turn): turn is TransientTurn => turn.conversationId === selectedId)
     .sort((a, b) => a.turnId.localeCompare(b.turnId) || a.retryOrdinal - b.retryOrdinal);
@@ -1067,6 +1225,31 @@ export function ConversationsPage({
                   <div className="message-assistant-wrap"><div className="message-assistant-body"><TurnActivityView entries={activityEntries} /></div></div>
                 </article>
               )}
+
+              {Object.values(currentNativePermissionState.prompts).sort((a, b) => a.sequence - b.sequence).map(prompt => (
+                <article className="message-row agent native-permission-row" key={`native-permission-${prompt.promptToken}`}>
+                  <div className="message-assistant-wrap"><div className="message-assistant-body">
+                    <NativePermissionCard
+                      prompt={prompt}
+                      disabled={!operatorReady || nativePermissionSnapshotError || currentNativePermissionState.needsRefresh || prompt.state !== "PENDING"}
+                      refreshDisabled={!operatorReady}
+                      sendingDecision={nativePermissionActions[prompt.promptToken] ?? null}
+                      onDecision={decision => void sendNativePermissionDecision(prompt.promptToken, decision)}
+                      onRefresh={() => {
+                        if (!livePermissionScope || !livePermissionKey) return;
+                        void refreshNativePermissionSnapshot(livePermissionScope, livePermissionKey)
+                          .catch(() => setNativePermissionSnapshotError(true));
+                      }}
+                    />
+                  </div></div>
+                </article>
+              ))}
+              {nativePermissionSnapshotError && <div className="native-permission-notice native-permission-refresh-error" role="alert">
+                <span>The live agent request could not be checked. Decisions stay disabled until its current state is confirmed.</span>
+                {livePermissionScope && livePermissionKey && <button type="button" className="quiet-button" disabled={!operatorReady}
+                  onClick={() => void refreshNativePermissionSnapshot(livePermissionScope, livePermissionKey)
+                    .catch(() => setNativePermissionSnapshotError(true))}>Check live status</button>}
+              </div>}
 
               {transientTurns.map(turn => (
                 <article

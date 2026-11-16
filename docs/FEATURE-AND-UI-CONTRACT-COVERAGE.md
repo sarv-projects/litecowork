@@ -14,7 +14,7 @@ This document maps V1 product areas to normative domain owners, actual implement
 | Feature design/lifecycle | ../specs/README.md and V1-FEATURE-SDD-REGISTER.md |
 | Release proof | ACCEPTANCE-AND-E2E-PLAN.md, TESTING.md |
 
-The composed Operator has 178 OpenAPI route registrations, four routes served outside OpenAPI (POST /v1/stream and the three Feature 014 Conversation routes) and 53 OpenAPI operations not mounted. These are registration counts, not counts of integrated or qualified product capabilities.
+The composed Operator has 179 OpenAPI route registrations, four routes served outside OpenAPI (POST /v1/stream and the three Feature 014 Conversation routes) and 54 OpenAPI operations not mounted. These are registration counts, not counts of integrated or qualified product capabilities.
 
 ## 2. Ten product areas
 

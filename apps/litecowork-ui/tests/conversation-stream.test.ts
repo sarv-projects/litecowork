@@ -123,6 +123,25 @@ test("stream frames are fenced to the selected Conversation and accepted cursor"
   ]);
 });
 
+test("auxiliary permission frames reach their owner consumer even when presentation state is unchanged", async () => {
+  const driver = new FakeDriver();
+  const frames: unknown[] = [];
+  const controller = new ConversationStreamController(workspaceId, conversationId, driver, () => {}, () => {}, async () => {}, frame => frames.push(frame));
+  controller.start();
+  await new Promise(resolve => setImmediate(resolve));
+  const sessionId = driver.starts[0]!.sessionId;
+  const permissionFrame = {
+    type: "turn.permission", workspace_id: workspaceId, conversation_id: conversationId,
+    turn_id: "turn-1", retry_ordinal: 0, sequence: 1, prompt_token: "a".repeat(64),
+    state: "PENDING", action: "writeFile", explanation: null, resource_count: 0, resources: [], decision: null,
+  };
+  driver.emit({ sessionId, workspaceId, conversationId, kind: "frame", frameId: "permission-1", frame: permissionFrame });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(frames, [permissionFrame]);
+  assert.deepEqual(driver.acknowledgements, [{ sessionId, frameId: "permission-1" }]);
+  await controller.dispose();
+});
+
 test("reconnect resumes only from the last accepted outer cursor", async () => {
   const driver = new FakeDriver();
   const controller = new ConversationStreamController(workspaceId, conversationId, driver, () => {}, () => {}, async () => {});
@@ -137,6 +156,42 @@ test("reconnect resumes only from the last accepted outer cursor", async () => {
   driver.emit({ sessionId: first.sessionId, workspaceId, conversationId, kind: "error", message: "connection closed" });
   for (let attempts = 0; attempts < 20 && driver.starts.length < 2; attempts++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(driver.starts[1]?.resumeCursor, "last-applied");
+  await controller.dispose();
+});
+
+test("a reconnected ready frame triggers one permission-state reconciliation", async () => {
+  const driver = new FakeDriver();
+  const retry = deferred<void>();
+  let reconnectCount = 0;
+  const controller = new ConversationStreamController(
+    workspaceId,
+    conversationId,
+    driver,
+    () => {},
+    () => {},
+    () => retry.promise,
+    undefined,
+    () => { reconnectCount += 1; },
+  );
+  controller.start();
+  await new Promise(resolve => setImmediate(resolve));
+  const first = driver.starts[0]!;
+  driver.emit({
+    sessionId: first.sessionId, workspaceId, conversationId, kind: "frame", frameId: "ready-1",
+    frame: { type: "stream.ready", workspace_id: workspaceId, projection_version: 1, cursor: "base-cursor", max_frame_bytes: 1024 },
+  });
+  assert.equal(reconnectCount, 0, "the initial stream does not need reconnect reconciliation");
+  driver.emit({ sessionId: first.sessionId, workspaceId, conversationId, kind: "error", message: "connection closed" });
+  await new Promise(resolve => setImmediate(resolve));
+  retry.resolve();
+  for (let attempts = 0; attempts < 20 && driver.starts.length < 2; attempts++) await new Promise(resolve => setImmediate(resolve));
+  const second = driver.starts[1]!;
+  driver.emit({
+    sessionId: second.sessionId, workspaceId, conversationId, kind: "frame", frameId: "ready-2",
+    frame: { type: "stream.ready", workspace_id: workspaceId, projection_version: 1, cursor: "base-cursor", max_frame_bytes: 1024 },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reconnectCount, 1, "the resumed stream requires an exact permission snapshot");
   await controller.dispose();
 });
 

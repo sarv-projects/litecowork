@@ -13,18 +13,18 @@ No structural mismatch detected by this audit.
 - Served outside OpenAPI: PATCH /v1/conversations/{conversation_id}
 - Served outside OpenAPI: POST /v1/conversations/{conversation_id}/archive
 - Served outside OpenAPI: POST /v1/conversations/{conversation_id}/unarchive
-- OpenAPI operations: 233
-- Composed Operator OpenAPI registrations: 179
+- OpenAPI operations: 234
+- Composed Operator OpenAPI registrations: 181
 - Authenticated local-only registrations: 4
-- OpenAPI target-only operations: 54
+- OpenAPI target-only operations: 53
 - Route registration is not handler integration or release qualification.
 
 ## Route-state counts
 
 | Class | Count |
 |---|---:|
-| Registered OpenAPI operations | 179 |
+| Registered OpenAPI operations | 181 |
 | Authenticated local-only operations | 4 |
-| OpenAPI target-only operations | 54 |
+| OpenAPI target-only operations | 53 |
 
 See docs/IMPLEMENTATION-STATUS.md and docs/SEMANTIC-SERVED-UI-MAP.md for handler and UI behavior. A mounted route may be read-only, fail-closed, pre-execution or provider-unavailable.

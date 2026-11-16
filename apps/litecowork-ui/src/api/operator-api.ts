@@ -478,8 +478,25 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        /** @description TARGET for 001-T27. Returns only live, Runtime-local native permission prompts for the exact active turn. This is not reconstructed from REPORTED activity and contains no native session/request IDs, raw metadata, absolute paths, or durable permission decision. */
+        /** @description SERVED partial implementation for 001-T27. Returns only live, Runtime-local native permission prompts for the exact authorized turn attempt. Registry bounds are 32 prompts per attempt and 256 across retained Runtime scopes; attempt teardown clears that attempt's records and tokens. This is not reconstructed from REPORTED activity and contains no native session/request IDs, raw metadata, absolute paths, or durable permission decision. The reply operation is also SERVED partial; the Tauri/UI journey remains target-only. */
         get: operations["listLiveConversationTurnPermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/conversation-permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description SERVED partial for 001-T27. Returns a no-store, Runtime-local snapshot of at most 256 unresolved native permission prompts for the selected owner Workspace. Each exact RUNNING turn and ACTIVE AgentSession is revalidated before projection. It is not durable Needs You state and is never reconstructed from historical activity. No native session/request IDs, private paths, raw provider metadata, or credentials are returned. */
+        get: operations["listWorkspaceLiveConversationPermissions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -497,7 +514,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
-        /** @description TARGET for 001-T27. Replies through the exact active native session after owner, Workspace, turn, Runtime-incarnation and pending-prompt checks. Identical idempotent replay is Runtime-local; no provider ID is accepted from the client. REJECT_SESSION_PENDING rejects all requests pending in that provider session at the time OpenCode applies the reply. */
+        /** @description SERVED partial for 001-T27. Revalidates the authenticated owner, selected Workspace, persisted RUNNING turn, ACTIVE AgentSession and Runtime identity, then queues the decision for the active adapter owner. The route has negative-path tests; successful route-to-real-provider behavior is not qualified. Identical idempotent replay is Runtime-local; no provider ID is accepted from the client. REJECT_SESSION_PENDING rejects all requests pending in that provider session at the time OpenCode applies the reply. Provider errors are reconciled through the exact session's pending list and the reply is never automatically retried; confirmed pending state clears the attempted decision. Attempt teardown invalidates that scope's tokens. */
         post: operations["replyConversationPermission"];
         delete?: never;
         options?: never;
@@ -5557,9 +5574,12 @@ export type components = {
             conversation_id: string;
             turn_id: string;
             retry_ordinal: number;
+            /** @description Monotonic per-attempt sequence for all prompt registrations and visible state transitions; zero means no prompt state has been published. */
+            sequence: number;
             items: components["schemas"]["ConversationLivePermissionPrompt"][];
         };
         ConversationLivePermissionPrompt: {
+            sequence: number;
             prompt_token: string;
             /** @enum {string} */
             state: "PENDING" | "REPLYING" | "ANSWERED" | "OUTCOME_UNKNOWN" | "SESSION_ENDED";
@@ -5569,6 +5589,20 @@ export type components = {
             resources: string[];
             /** @enum {string|null} */
             decision?: "ALLOW_ONCE" | "REJECT_SESSION_PENDING" | null;
+        };
+        WorkspaceLiveConversationPermissionSnapshot: {
+            workspace_id: string;
+            /** @description Runtime-local unresolved prompts for active Conversation turns, sorted by attempt sequence. Answered and ended prompts are omitted. */
+            items: components["schemas"]["WorkspaceLiveConversationPermissionItem"][];
+        };
+        WorkspaceLiveConversationPermissionItem: {
+            conversation_id: string;
+            conversation_title: string | null;
+            turn_id: string;
+            retry_ordinal: number;
+            /** @description Current sequence of the exact attempt; permits monotonic refresh checks for the nested prompt. */
+            sequence: number;
+            prompt: components["schemas"]["ConversationLivePermissionPrompt"];
         };
         ConversationPermissionReplyRequest: {
             /** @enum {string} */
@@ -5580,6 +5614,7 @@ export type components = {
             state: "PENDING" | "REPLYING" | "ANSWERED" | "OUTCOME_UNKNOWN" | "SESSION_ENDED";
             /** @enum {string|null} */
             decision: "ALLOW_ONCE" | "REJECT_SESSION_PENDING" | null;
+            sequence: number;
         };
         TimelinePage: {
             items: components["schemas"]["TimelineEntry"][];
@@ -8605,6 +8640,27 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listWorkspaceLiveConversationPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded ephemeral Workspace snapshot of unresolved live Conversation permission prompts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceLiveConversationPermissionSnapshot"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     replyConversationPermission: {
         parameters: {
             query?: never;
@@ -8644,6 +8700,15 @@ export interface operations {
             };
             /** @description Prompt or owning native session has ended; no reply was replayed */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Runtime reply command queue is full or the Supervisor is unavailable; no provider reply was dispatched */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,10 +1,10 @@
 use base64::{
-    engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD},
     Engine as _,
+    engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD},
 };
 use operator_ipc::{
-    BudgetedBody, InFlightBodyBudget, LogicalHeader, RequestFrame, RequestHeader, ResponseFrame,
-    StreamMessage, DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, MAX_BODY_BYTES, PROTOCOL_VERSION,
+    BudgetedBody, DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader,
+    MAX_BODY_BYTES, PROTOCOL_VERSION, RequestFrame, RequestHeader, ResponseFrame, StreamMessage,
 };
 use serde::Serialize;
 use std::{
@@ -17,17 +17,17 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-mod artifact_bridge;
 mod agent_binding_bridge;
 mod agent_control_bridge;
 mod agent_quota_bridge;
 mod agent_registry_bridge;
 mod approval_bridge;
+mod artifact_bridge;
 mod automation_bridge;
+mod context_document_deletion_bridge;
 mod conversation_bridge;
 mod conversation_create_journal;
 mod conversation_stream_bridge;
-mod context_document_deletion_bridge;
 mod coworker_bridge;
 mod delegation_profile_bridge;
 mod delegation_profile_write_bridge;
@@ -35,7 +35,6 @@ mod discover_bridge;
 mod goal_bridge;
 mod needs_you_bridge;
 mod notification_bridge;
-mod user_request_bridge;
 mod presentation_bridge;
 mod resource_location_bridge;
 mod resource_save_bridge;
@@ -44,11 +43,12 @@ mod runtime_lifecycle_bridge;
 mod suggestions_bridge;
 #[cfg(target_os = "linux")]
 mod systemd_user_service;
+mod user_request_bridge;
 #[cfg(all(test, unix))]
 mod workspace_instruction_bridge_tests;
+mod workspace_root_observation_bridge;
 #[cfg(test)]
 mod workspace_root_scan_bridge_tests;
-mod workspace_root_observation_bridge;
 mod zip_intake_bridge;
 
 #[cfg(unix)]
@@ -57,8 +57,8 @@ use operator_ipc::unix::{AuthenticatedUnixConnection, PeerCredentials, UnixEndpo
 use operator_ipc::windows::{AuthenticatedWindowsConnection, WindowsEndpoint};
 #[cfg(any(unix, windows))]
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc, OnceLock,
+    atomic::{AtomicU64, Ordering},
 };
 
 #[cfg(any(unix, windows))]
@@ -1372,7 +1372,9 @@ fn workspace_instruction_revisions_path(
 ) -> Result<String, String> {
     if workspace_id.is_empty()
         || matches!(workspace_id, "." | "..")
-        || workspace_id.bytes().any(|byte| matches!(byte, b'/' | b'\\'))
+        || workspace_id
+            .bytes()
+            .any(|byte| matches!(byte, b'/' | b'\\'))
     {
         return Err("Workspace selection is invalid".to_owned());
     }
@@ -1896,11 +1898,16 @@ async fn add_workspace_root(
                 &replication_policy,
                 selected_path_bytes,
             );
-            (URL_SAFE_NO_PAD.encode(selected_path_bytes), scoped_request_id)
+            (
+                URL_SAFE_NO_PAD.encode(selected_path_bytes),
+                scoped_request_id,
+            )
         };
         #[cfg(windows)]
         let (selected_path_base64, request_id) = {
-            let selected_path_str = selected_path.to_str().ok_or_else(|| "Invalid UTF-8 in folder path".to_owned())?;
+            let selected_path_str = selected_path
+                .to_str()
+                .ok_or_else(|| "Invalid UTF-8 in folder path".to_owned())?;
             let selected_path_bytes = selected_path_str.as_bytes();
             let request_key = workspace_root_request_key()?;
             let scoped_request_id = derive_workspace_root_add_idempotency_key(
@@ -1912,7 +1919,10 @@ async fn add_workspace_root(
                 &replication_policy,
                 selected_path_bytes,
             );
-            (URL_SAFE_NO_PAD.encode(selected_path_bytes), scoped_request_id)
+            (
+                URL_SAFE_NO_PAD.encode(selected_path_bytes),
+                scoped_request_id,
+            )
         };
         let (client, _) = operator_client(&app)?;
         let response = client
@@ -2764,9 +2774,9 @@ async fn enable_agent_binding(
         if workspace_id.trim().is_empty()
             || agent_binding_id.trim().is_empty()
             || !valid_idempotency_key(&request_id)
-            || descriptor_revision.as_deref().is_some_and(|revision| {
-                revision.len() != 71 || !revision.starts_with("sha256:")
-            })
+            || descriptor_revision
+                .as_deref()
+                .is_some_and(|revision| revision.len() != 71 || !revision.starts_with("sha256:"))
         {
             return Err("Agent binding enable request is invalid".to_owned());
         }
@@ -3004,8 +3014,9 @@ async fn archive_workspace(
             .send()
             .map_err(|_| "Workspace archive request did not complete".to_owned())?;
         let body = read_bounded_response(response)?;
-        let response: WorkspaceWire = serde_json::from_slice(&body)
-            .map_err(|_| "Local Operator API returned an unsupported Workspace response".to_owned())?;
+        let response: WorkspaceWire = serde_json::from_slice(&body).map_err(|_| {
+            "Local Operator API returned an unsupported Workspace response".to_owned()
+        })?;
         Ok(WorkspaceView::from(response))
     })
     .await
@@ -4392,9 +4403,8 @@ impl LocalOperatorClient {
     fn from_data_dir(data_dir: impl AsRef<std::path::Path>) -> Result<Self, String> {
         use std::os::unix::fs::MetadataExt;
 
-        let endpoint = UnixEndpoint::derive(data_dir).map_err(|_| {
-            "Local Operator IPC data directory is unavailable or unsafe".to_owned()
-        })?;
+        let endpoint = UnixEndpoint::derive(data_dir)
+            .map_err(|_| "Local Operator IPC data directory is unavailable or unsafe".to_owned())?;
         let metadata = fs::symlink_metadata(endpoint.private_data_dir())
             .map_err(|_| "Local Operator IPC data directory is unavailable".to_owned())?;
         Ok(Self {
@@ -4702,11 +4712,8 @@ where
         CancelledOperation::Completed(result) => result?,
     };
 
-    let subscription = local_presentation_stream_subscription(
-        &workspace_id,
-        &target,
-        resume_cursor.as_deref(),
-    );
+    let subscription =
+        local_presentation_stream_subscription(&workspace_id, &target, resume_cursor.as_deref());
     let body = serde_json::to_vec(&subscription)
         .map_err(|_| "Presentation stream subscription is invalid".to_owned())?;
     if body.len() > MAX_SUBSCRIPTION_BYTES {
@@ -5078,7 +5085,9 @@ fn workspace_archive_blocker_summaries(details: Option<&serde_json::Value>) -> V
                         "ACTIVE_SECRET_LEASES" => "active SecretLeases",
                         "ACTIVE_EXECUTION_LEASES" => "active execution leases",
                         "ACTIVE_CONTROL_LEASES" => "active Environment control leases",
-                        "LIVE_PERSISTENT_ENVIRONMENTS" => "persistent Environments requiring shutdown",
+                        "LIVE_PERSISTENT_ENVIRONMENTS" => {
+                            "persistent Environments requiring shutdown"
+                        }
                         "ACTIVE_WORKSPACE_ROOTS" => "active Workspace roots",
                         "ACTIVE_CHANNEL_HOSTS" => "active channel hosts",
                         "UNRESOLVED_EFFECTS" => "unresolved Effects",
@@ -5515,6 +5524,9 @@ pub fn run() {
             conversation_bridge::retry_conversation_turn,
             conversation_bridge::cancel_conversation_turn,
             conversation_bridge::list_conversation_turn_activity,
+            conversation_bridge::list_conversation_turn_permissions,
+            conversation_bridge::list_workspace_live_conversation_permissions,
+            conversation_bridge::reply_conversation_permission,
             conversation_bridge::get_conversation_presentation,
             conversation_bridge::get_rich_presentation,
             conversation_stream_bridge::subscribe_conversation_stream,
@@ -5694,7 +5706,7 @@ mod workspace_instruction_request_tests {
 
 #[cfg(test)]
 mod workspace_archive_request_tests {
-    use super::{workspace_archive_blocker_summaries, validate_workspace_archive_request};
+    use super::{validate_workspace_archive_request, workspace_archive_blocker_summaries};
     use serde_json::json;
 
     #[test]
@@ -5704,7 +5716,12 @@ mod workspace_archive_request_tests {
 
     #[test]
     fn archive_request_rejects_empty_or_path_injected_values() {
-        for workspace_id in ["", "workspace/other", "workspace?query", "workspace#fragment"] {
+        for workspace_id in [
+            "",
+            "workspace/other",
+            "workspace?query",
+            "workspace#fragment",
+        ] {
             assert!(validate_workspace_archive_request(workspace_id, "request-1").is_err());
         }
         assert!(validate_workspace_archive_request("workspace-1", "").is_err());
@@ -5754,10 +5771,15 @@ mod workspace_policy_request_tests {
     #[test]
     fn operator_error_code_projects_only_a_safe_canonical_code() {
         assert_eq!(
-            operator_error_code("Workspace changed [STALE_WORKSPACE_VERSION; retryable=false; reference=abc]"),
+            operator_error_code(
+                "Workspace changed [STALE_WORKSPACE_VERSION; retryable=false; reference=abc]"
+            ),
             Some("STALE_WORKSPACE_VERSION")
         );
-        assert_eq!(operator_error_code("Workspace changed [bad code; retryable=false]"), None);
+        assert_eq!(
+            operator_error_code("Workspace changed [bad code; retryable=false]"),
+            None
+        );
         assert_eq!(operator_error_code("[STALE_WORKSPACE_VERSION]"), None);
         assert_eq!(operator_error_code("request failed"), None);
     }
@@ -5776,9 +5798,7 @@ mod bounded_json_tests {
 
 #[cfg(all(test, any(unix, windows)))]
 mod presentation_stream_subscription_tests {
-    use super::{
-        LocalPresentationStreamTarget, local_presentation_stream_subscription,
-    };
+    use super::{LocalPresentationStreamTarget, local_presentation_stream_subscription};
     use serde_json::json;
 
     #[test]
@@ -5833,10 +5853,10 @@ mod presentation_stream_subscription_tests {
 
 #[cfg(all(test, any(unix, windows)))]
 mod stream_setup_cancellation_tests {
-    use super::{run_until_cancelled, CancelledOperation};
+    use super::{CancelledOperation, run_until_cancelled};
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     };
     use tokio::sync::oneshot;
 
@@ -5916,8 +5936,8 @@ mod stream_setup_cancellation_tests {
 #[cfg(test)]
 mod resource_search_provenance_tests {
     use super::{
-        map_resource_search_page, ResourceSearchPageWire, ResourceSearchRefWire,
-        ResourceSearchResultWire, ResourceTextMatchWire, MAX_INDEXED_RESOURCE_BYTES,
+        MAX_INDEXED_RESOURCE_BYTES, ResourceSearchPageWire, ResourceSearchRefWire,
+        ResourceSearchResultWire, ResourceTextMatchWire, map_resource_search_page,
     };
 
     fn span(term: &str, start: u64, end: u64) -> ResourceTextMatchWire {
@@ -6031,35 +6051,41 @@ mod resource_search_provenance_tests {
         ] {
             let mut item = result(spans);
             item.match_reasons = vec!["CONTENT_INDEXED".to_owned()];
-            assert!(map_resource_search_page(
-                "workspace-1",
-                "INDEXED_CONTENT",
-                "mutex threads",
-                page("INDEXED_CONTENT", item),
-            )
-            .is_err());
+            assert!(
+                map_resource_search_page(
+                    "workspace-1",
+                    "INDEXED_CONTENT",
+                    "mutex threads",
+                    page("INDEXED_CONTENT", item),
+                )
+                .is_err()
+            );
         }
     }
 
     #[test]
     fn indexed_spans_must_match_the_query_and_mode_must_match_response() {
         let item = result(vec![span("mutex", 8, 13)]);
-        assert!(map_resource_search_page(
-            "workspace-1",
-            "INDEXED_CONTENT",
-            "mutex threads",
-            page("INDEXED_CONTENT", item),
-        )
-        .is_err());
+        assert!(
+            map_resource_search_page(
+                "workspace-1",
+                "INDEXED_CONTENT",
+                "mutex threads",
+                page("INDEXED_CONTENT", item),
+            )
+            .is_err()
+        );
 
         let item = result(vec![span("mutex", 8, 13)]);
-        assert!(map_resource_search_page(
-            "workspace-1",
-            "METADATA",
-            "mutex",
-            page("INDEXED_CONTENT", item),
-        )
-        .is_err());
+        assert!(
+            map_resource_search_page(
+                "workspace-1",
+                "METADATA",
+                "mutex",
+                page("INDEXED_CONTENT", item),
+            )
+            .is_err()
+        );
     }
 }
 
@@ -6087,28 +6113,32 @@ mod resource_preview_provenance_tests {
         assert_eq!(preview.resource_revision_id, "revision-7");
         assert_eq!(preview.content_digest, content_digest);
 
-        assert!(verify_resource_preview_bytes(
-            bytes.clone(),
-            Some("revision-8"),
-            "revision-7",
-            &content_digest,
-        )
-        .is_err());
-        assert!(verify_resource_preview_bytes(
-            bytes,
-            Some("revision-7"),
-            "revision-7",
-            &format!("sha256:{}", "a".repeat(64)),
-        )
-        .is_err());
+        assert!(
+            verify_resource_preview_bytes(
+                bytes.clone(),
+                Some("revision-8"),
+                "revision-7",
+                &content_digest,
+            )
+            .is_err()
+        );
+        assert!(
+            verify_resource_preview_bytes(
+                bytes,
+                Some("revision-7"),
+                "revision-7",
+                &format!("sha256:{}", "a".repeat(64)),
+            )
+            .is_err()
+        );
     }
 }
 
 #[cfg(test)]
 mod task_planning_readiness_tests {
     use super::{
-        validate_task_planning_readiness_identity, TaskPlanningReadinessView,
-        TaskPlanningReadinessWire,
+        TaskPlanningReadinessView, TaskPlanningReadinessWire,
+        validate_task_planning_readiness_identity,
     };
     use serde_json::json;
 

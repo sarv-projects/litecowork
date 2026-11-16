@@ -66,6 +66,7 @@ Do not create a second schema authority. Promote machine contracts in schemas/ a
 - DOCS-REAUDIT-2026.md: assumption-free doc-claim → code-reality → verdict table across the five doc clusters, with the SDD-completeness gap list.
 - SUPERSET-GAP-MATRIX.md: cross-cutting feature × {LiteCowork done? / doc-accuracy / each resolved rival has it?} matrix and the three derived gap lists (real state, doc errors, missing-to-be-a-superset); it links to VIABILITY-VS-COMPETITORS.md (parity authority) and COVERAGE-MATRIX.md rather than duplicating them.
 - REPOSITORY-DOCUMENTATION-AUDIT.md: documentation consistency and validation status.
+- [T3 Code source deep-dive](audit/T3CODE-DEEP-DIVE-2026-11-16.md): pinned comparative source review with exact full/partial/unread coverage; research only, not LiteCowork authority.
 - OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md: pinned comparison of OpenBot's Tasks, model picker, Usage and workflow graph; includes LiteCowork's non-adoption boundary.
 - IMPLEMENTATION-STATUS.md: source-backed implementation status and release blockers.
 - IMPLEMENTATION-MASTER-PLAN.md: dependency-aware delivery sequence.

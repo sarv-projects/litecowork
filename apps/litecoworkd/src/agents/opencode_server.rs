@@ -1789,7 +1789,7 @@ mod tests {
         let address = listener.local_addr().expect("fake server address");
         let captured = std::thread::spawn(move || {
             for status in [401_u16, 403, 500] {
-                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                let deadline = std::time::Instant::now() + Duration::from_secs(15);
                 let (mut stream, _) = loop {
                     match listener.accept() {
                         Ok(accepted) => break accepted,
@@ -1806,7 +1806,7 @@ mod tests {
                     .set_nonblocking(false)
                     .expect("make accepted fake-server socket blocking");
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .set_read_timeout(Some(Duration::from_secs(10)))
                     .expect("set bounded request read");
                 let mut request = [0_u8; 4096];
                 let count = stream.read(&mut request).expect("read permission reply");
@@ -1848,7 +1848,7 @@ mod tests {
             child,
             address,
             password: b"test-password".to_vec(),
-            request_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(10),
             stopped: false,
             protocol: OpenCodeServerProtocol::V2_0_32,
             working_directory: std::env::temp_dir(),

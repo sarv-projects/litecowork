@@ -98,6 +98,244 @@ fn valid_rich_presentation_response(
             .is_some_and(serde_json::Value::is_object)
 }
 
+fn valid_native_permission_prompt(value: &serde_json::Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let allowed_states = [
+        "PENDING",
+        "REPLYING",
+        "ANSWERED",
+        "OUTCOME_UNKNOWN",
+        "SESSION_ENDED",
+    ];
+    let allowed_decisions = ["ALLOW_ONCE", "REJECT_SESSION_PENDING"];
+    object.len() == 8
+        && [
+            "sequence",
+            "prompt_token",
+            "state",
+            "action",
+            "explanation",
+            "resource_count",
+            "resources",
+            "decision",
+        ]
+        .iter()
+        .all(|key| object.contains_key(*key))
+        && value
+            .get("sequence")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|seq| (1..=4096).contains(&seq))
+        && value
+            .get("prompt_token")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|token| {
+                (32..=128).contains(&token.len())
+                    && token
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+            })
+        && value
+            .get("state")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|state| allowed_states.contains(&state))
+        && value
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|text| valid_permission_text(text, 128))
+        && value.get("explanation").is_some_and(|text| {
+            text.is_null()
+                || text
+                    .as_str()
+                    .is_some_and(|value| valid_permission_text(value, 512))
+        })
+        && value
+            .get("resource_count")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|count| count <= 64)
+        && value
+            .get("resources")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|resources| {
+                resources.len() <= 16
+                    && resources.iter().all(|resource| {
+                        resource
+                            .as_str()
+                            .is_some_and(|text| valid_permission_text(text, 128))
+                    })
+            })
+        && value.get("decision").is_some_and(|decision| {
+            decision.is_null()
+                || decision
+                    .as_str()
+                    .is_some_and(|value| allowed_decisions.contains(&value))
+        })
+}
+
+fn valid_permission_text(value: &str, max_length: usize) -> bool {
+    !value.is_empty() && value.len() <= max_length && !value.chars().any(char::is_control)
+}
+
+fn valid_conversation_permission_snapshot(
+    value: &serde_json::Value,
+    workspace_id: &str,
+    conversation_id: &str,
+    turn_id: &str,
+) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.len() == 6
+        && [
+            "workspace_id",
+            "conversation_id",
+            "turn_id",
+            "retry_ordinal",
+            "sequence",
+            "items",
+        ]
+        .iter()
+        .all(|key| object.contains_key(*key))
+        && value
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(workspace_id)
+        && value
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(conversation_id)
+        && value.get("turn_id").and_then(serde_json::Value::as_str) == Some(turn_id)
+        && value
+            .get("retry_ordinal")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|value| value <= u32::MAX as u64)
+        && value
+            .get("sequence")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|value| value <= 4096)
+        && value
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                items.len() <= 32
+                    && items.iter().all(|item| {
+                        valid_native_permission_prompt(item)
+                            && item
+                                .get("sequence")
+                                .and_then(serde_json::Value::as_u64)
+                                .zip(value.get("sequence").and_then(serde_json::Value::as_u64))
+                                .is_some_and(|(item_sequence, snapshot_sequence)| {
+                                    item_sequence <= snapshot_sequence
+                                })
+                    })
+            })
+}
+
+fn valid_workspace_permission_snapshot(value: &serde_json::Value, workspace_id: &str) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.len() == 2
+        && object.contains_key("workspace_id")
+        && object.contains_key("items")
+        && value
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(workspace_id)
+        && value
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                items.len() <= 256
+                    && items.iter().all(|item| {
+                        let Some(item) = item.as_object() else {
+                            return false;
+                        };
+                        item.len() == 6
+                            && [
+                                "conversation_id",
+                                "conversation_title",
+                                "turn_id",
+                                "retry_ordinal",
+                                "sequence",
+                                "prompt",
+                            ]
+                            .iter()
+                            .all(|key| item.contains_key(*key))
+                            && item
+                                .get("conversation_id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(valid_id)
+                            && item.get("conversation_title").is_some_and(|title| {
+                                title.is_null()
+                                    || title
+                                        .as_str()
+                                        .is_some_and(|text| valid_permission_text(text, 160))
+                            })
+                            && item
+                                .get("turn_id")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(valid_id)
+                            && item
+                                .get("retry_ordinal")
+                                .and_then(serde_json::Value::as_u64)
+                                .is_some_and(|value| value <= u32::MAX as u64)
+                            && item
+                                .get("sequence")
+                                .and_then(serde_json::Value::as_u64)
+                                .is_some_and(|value| value <= 4096)
+                            && item
+                                .get("prompt")
+                                .is_some_and(valid_native_permission_prompt)
+                            && item
+                                .get("prompt")
+                                .and_then(|prompt| prompt.get("sequence"))
+                                .and_then(serde_json::Value::as_u64)
+                                .zip(item.get("sequence").and_then(serde_json::Value::as_u64))
+                                .is_some_and(|(prompt_sequence, attempt_sequence)| {
+                                    prompt_sequence <= attempt_sequence
+                                })
+                    })
+            })
+}
+
+fn valid_native_permission_reply_receipt(value: &serde_json::Value, prompt_token: &str) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    let states = [
+        "PENDING",
+        "REPLYING",
+        "ANSWERED",
+        "OUTCOME_UNKNOWN",
+        "SESSION_ENDED",
+    ];
+    let decisions = ["ALLOW_ONCE", "REJECT_SESSION_PENDING"];
+    object.len() == 4
+        && ["prompt_token", "state", "decision", "sequence"]
+            .iter()
+            .all(|key| object.contains_key(*key))
+        && value
+            .get("prompt_token")
+            .and_then(serde_json::Value::as_str)
+            == Some(prompt_token)
+        && value
+            .get("state")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|state| states.contains(&state))
+        && value.get("decision").is_some_and(|decision| {
+            decision.is_null()
+                || decision
+                    .as_str()
+                    .is_some_and(|value| decisions.contains(&value))
+        })
+        && value
+            .get("sequence")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|sequence| (1..=4096).contains(&sequence))
+}
+
 fn read_json(response: LocalOperatorResponse) -> Result<serde_json::Value, String> {
     let status = response.status();
     let mut bytes = Vec::new();
@@ -297,12 +535,18 @@ pub(crate) async fn get_conversation(
                 .send()
                 .map_err(|_| "Local Conversation service is unavailable".to_owned())?,
         )?;
-        if value.get("workspace_id").and_then(serde_json::Value::as_str)
+        if value
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
             != Some(workspace_id.as_str())
-            || value.get("conversation_id").and_then(serde_json::Value::as_str)
+            || value
+                .get("conversation_id")
+                .and_then(serde_json::Value::as_str)
                 != Some(conversation_id.as_str())
         {
-            return Err("Local Runtime returned a Conversation outside the selected Workspace".to_owned());
+            return Err(
+                "Local Runtime returned a Conversation outside the selected Workspace".to_owned(),
+            );
         }
         Ok(value)
     })
@@ -344,17 +588,23 @@ pub(crate) async fn set_conversation_agent_binding(
                 .map_err(|_| "Local Conversation service is unavailable".to_owned())?,
         )?;
         let selected_binding_matches = match agent_binding_id.as_deref() {
-            Some(binding_id) => value
-                .get("active_agent_binding_id")
-                .and_then(serde_json::Value::as_str)
-                == Some(binding_id),
+            Some(binding_id) => {
+                value
+                    .get("active_agent_binding_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(binding_id)
+            }
             None => value
                 .get("active_agent_binding_id")
                 .is_some_and(serde_json::Value::is_null),
         };
-        if value.get("workspace_id").and_then(serde_json::Value::as_str)
+        if value
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
             != Some(workspace_id.as_str())
-            || value.get("conversation_id").and_then(serde_json::Value::as_str)
+            || value
+                .get("conversation_id")
+                .and_then(serde_json::Value::as_str)
                 != Some(conversation_id.as_str())
             || value.get("version").and_then(serde_json::Value::as_u64)
                 != Some(expected_next_version)
@@ -430,7 +680,9 @@ pub(crate) async fn retry_conversation_turn(
         let (client, _) = operator_client(&app)?;
         let value = read_json(
             client
-                .post(format!("/v1/conversations/{conversation_id}/turns/{turn_id}/retry"))
+                .post(format!(
+                    "/v1/conversations/{conversation_id}/turns/{turn_id}/retry"
+                ))
                 .header("X-Workspace-ID", &workspace_id)
                 .header("If-Match", expected_version.to_string())
                 .header("Idempotency-Key", &request_id)
@@ -463,7 +715,9 @@ pub(crate) async fn cancel_conversation_turn(
         let (client, _) = operator_client(&app)?;
         let value = read_json(
             client
-                .post(format!("/v1/conversations/{conversation_id}/turns/{turn_id}/cancel"))
+                .post(format!(
+                    "/v1/conversations/{conversation_id}/turns/{turn_id}/cancel"
+                ))
                 .header("X-Workspace-ID", &workspace_id)
                 .header("If-Match", expected_version.to_string())
                 .header("Idempotency-Key", &request_id)
@@ -491,7 +745,9 @@ pub(crate) async fn list_conversation_turn_activity(
         let (client, _) = operator_client(&app)?;
         let value = read_json(
             client
-                .get(format!("/v1/conversations/{conversation_id}/turns/{turn_id}/activity"))
+                .get(format!(
+                    "/v1/conversations/{conversation_id}/turns/{turn_id}/activity"
+                ))
                 .header("X-Workspace-ID", &workspace_id)
                 .query(&[("retry_ordinal", retry_ordinal.to_string())])
                 .send()
@@ -507,6 +763,109 @@ pub(crate) async fn list_conversation_turn_activity(
     })
     .await
     .map_err(|_| "Turn activity request did not complete".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn list_conversation_turn_permissions(
+    app: AppHandle,
+    workspace_id: String,
+    conversation_id: String,
+    turn_id: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !valid_id(&workspace_id) || !valid_id(&conversation_id) || !valid_id(&turn_id) {
+            return Err("Permission prompt selection is invalid".to_owned());
+        }
+        let (client, _) = operator_client(&app)?;
+        let value = read_json(
+            client
+                .get(format!(
+                    "/v1/conversations/{conversation_id}/turns/{turn_id}/permissions"
+                ))
+                .header("X-Workspace-ID", &workspace_id)
+                .send()
+                .map_err(|_| "Local permission prompts are unavailable".to_owned())?,
+        )?;
+        if !valid_conversation_permission_snapshot(
+            &value,
+            &workspace_id,
+            &conversation_id,
+            &turn_id,
+        ) {
+            return Err(
+                "Local Runtime returned permission prompts outside the selected attempt".to_owned(),
+            );
+        }
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "Permission prompt request did not complete".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn list_workspace_live_conversation_permissions(
+    app: AppHandle,
+    workspace_id: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !valid_id(&workspace_id) {
+            return Err("Workspace selection is invalid".to_owned());
+        }
+        let (client, _) = operator_client(&app)?;
+        let value = read_json(
+            client
+                .get("/v1/conversation-permissions")
+                .header("X-Workspace-ID", &workspace_id)
+                .send()
+                .map_err(|_| "Workspace permission prompts are unavailable".to_owned())?,
+        )?;
+        if !valid_workspace_permission_snapshot(&value, &workspace_id) {
+            return Err("Local Runtime returned invalid Workspace permission prompts".to_owned());
+        }
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "Workspace permission prompt request did not complete".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn reply_conversation_permission(
+    app: AppHandle,
+    workspace_id: String,
+    conversation_id: String,
+    turn_id: String,
+    prompt_token: String,
+    decision: String,
+    idempotency_key: String,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !valid_id(&workspace_id)
+            || !valid_id(&conversation_id)
+            || !valid_id(&turn_id)
+            || !(32..=128).contains(&prompt_token.len())
+            || !prompt_token.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+            || !matches!(decision.as_str(), "ALLOW_ONCE" | "REJECT_SESSION_PENDING")
+            || !valid_id(&idempotency_key)
+        {
+            return Err("Permission reply selection is invalid".to_owned());
+        }
+        let (client, _) = operator_client(&app)?;
+        let value = read_json(
+            client
+                .post(format!("/v1/conversations/{conversation_id}/turns/{turn_id}/permissions/{prompt_token}/reply"))
+                .header("X-Workspace-ID", &workspace_id)
+                .header("Idempotency-Key", &idempotency_key)
+                .json(&serde_json::json!({ "decision": decision }))
+                .send()
+                .map_err(|_| "Permission reply outcome could not be confirmed".to_owned())?,
+        )?;
+        if !valid_native_permission_reply_receipt(&value, &prompt_token) {
+            return Err("Local Runtime returned an invalid permission reply receipt".to_owned());
+        }
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "Permission reply request did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -784,40 +1143,46 @@ mod create_recovery_tests {
 
         let transport_failure: Result<LocalOperatorResponse, String> =
             Err("connection closed after request send".to_owned());
-        assert!(transport_failure
-            .and_then(|response| {
-                read_create_response(
-                    response,
-                    &journal,
-                    &request.workspace_id,
-                    &request.request_id,
-                )
-            })
-            .is_err());
+        assert!(
+            transport_failure
+                .and_then(|response| {
+                    read_create_response(
+                        response,
+                        &journal,
+                        &request.workspace_id,
+                        &request.request_id,
+                    )
+                })
+                .is_err()
+        );
         assert_eq!(
             journal.list().expect("transport failure keeps request"),
             vec![request.clone()]
         );
 
-        assert!(read_create_response(
-            local_response(503, r#"{"error":{"message":"unavailable"}}"#),
-            &journal,
-            &request.workspace_id,
-            &request.request_id,
-        )
-        .is_err());
+        assert!(
+            read_create_response(
+                local_response(503, r#"{"error":{"message":"unavailable"}}"#),
+                &journal,
+                &request.workspace_id,
+                &request.request_id,
+            )
+            .is_err()
+        );
         assert_eq!(
             journal.list().expect("5xx keeps request"),
             vec![request.clone()]
         );
 
-        assert!(read_create_response(
-            local_response(200, "not-json"),
-            &journal,
-            &request.workspace_id,
-            &request.request_id,
-        )
-        .is_err());
+        assert!(
+            read_create_response(
+                local_response(200, "not-json"),
+                &journal,
+                &request.workspace_id,
+                &request.request_id,
+            )
+            .is_err()
+        );
         assert_eq!(
             journal.list().expect("malformed success keeps request"),
             vec![request]
@@ -847,9 +1212,104 @@ mod create_recovery_tests {
             "Local Operator initialization failed"
         );
         assert!(!post_started);
-        assert!(journal
-            .list()
-            .expect("preflight failure clears request")
-            .is_empty());
+        assert!(
+            journal
+                .list()
+                .expect("preflight failure clears request")
+                .is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
+mod native_permission_response_tests {
+    use super::*;
+
+    fn prompt() -> serde_json::Value {
+        serde_json::json!({
+            "sequence": 2,
+            "prompt_token": "a".repeat(64),
+            "state": "PENDING",
+            "action": "writeFile",
+            "explanation": "Update the selected file",
+            "resource_count": 1,
+            "resources": ["Resource 1"],
+            "decision": null
+        })
+    }
+
+    #[test]
+    fn permission_snapshots_are_exact_scoped_bounded_and_private() {
+        let exact = serde_json::json!({
+            "workspace_id": "workspace-1",
+            "conversation_id": "conversation-1",
+            "turn_id": "turn-1",
+            "retry_ordinal": 0,
+            "sequence": 2,
+            "items": [prompt()]
+        });
+        assert!(valid_conversation_permission_snapshot(
+            &exact,
+            "workspace-1",
+            "conversation-1",
+            "turn-1"
+        ));
+        let mut foreign = exact.clone();
+        foreign["workspace_id"] = serde_json::json!("workspace-2");
+        assert!(!valid_conversation_permission_snapshot(
+            &foreign,
+            "workspace-1",
+            "conversation-1",
+            "turn-1"
+        ));
+        let mut leaked = exact;
+        leaked["items"][0]["native_session_id"] = serde_json::json!("private");
+        assert!(!valid_conversation_permission_snapshot(
+            &leaked,
+            "workspace-1",
+            "conversation-1",
+            "turn-1"
+        ));
+    }
+
+    #[test]
+    fn workspace_permission_snapshot_and_reply_receipt_are_closed() {
+        let token = "a".repeat(64);
+        let snapshot = serde_json::json!({
+            "workspace_id": "workspace-1",
+            "items": [{
+                "conversation_id": "conversation-1",
+                "conversation_title": "Research",
+                "turn_id": "turn-1",
+                "retry_ordinal": 0,
+                "sequence": 2,
+                "prompt": prompt()
+            }]
+        });
+        assert!(valid_workspace_permission_snapshot(
+            &snapshot,
+            "workspace-1"
+        ));
+        assert!(!valid_workspace_permission_snapshot(
+            &snapshot,
+            "workspace-2"
+        ));
+        let receipt = serde_json::json!({
+            "prompt_token": token,
+            "state": "ANSWERED",
+            "decision": "ALLOW_ONCE",
+            "sequence": 3
+        });
+        assert!(valid_native_permission_reply_receipt(&receipt, &token));
+        assert!(!valid_native_permission_reply_receipt(
+            &receipt,
+            &"b".repeat(64)
+        ));
+        assert!(!valid_workspace_permission_snapshot(
+            &serde_json::json!({
+                "workspace_id": "workspace-1", "items": [], "native_session_id": "private"
+            }),
+            "workspace-1"
+        ));
     }
 }

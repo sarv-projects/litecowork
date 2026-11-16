@@ -2871,6 +2871,7 @@ async fn live_permission_snapshot_route_is_owner_scoped_and_attempt_bound() {
     assert_eq!(snapshot["conversation_id"], fixture.conversation_id);
     assert_eq!(snapshot["turn_id"], "turn-live-permission");
     assert_eq!(snapshot["retry_ordinal"], 1);
+    assert_eq!(snapshot["sequence"], 0);
     assert!(
         snapshot["items"]
             .as_array()
@@ -2889,6 +2890,391 @@ async fn live_permission_snapshot_route_is_owner_scoped_and_attempt_bound() {
     )
     .await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn workspace_live_permission_snapshot_is_owner_scoped_bounded_and_ephemeral() {
+    let fixture = turn_command_fixture("workspace-live-permission-snapshot");
+    let get = |workspace: &'static str| {
+        let mut request = Request::get("/v1/conversation-permissions")
+            .header("x-workspace-id", workspace)
+            .body(Body::empty())
+            .expect("Workspace permission snapshot request");
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+        let router = fixture.router.clone();
+        async move {
+            router
+                .oneshot(request)
+                .await
+                .expect("Workspace permission route responds")
+        }
+    };
+
+    let response = get(WORKSPACE_A).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    let bytes = to_bytes(response.into_body(), 256 * 1024)
+        .await
+        .expect("Workspace snapshot body");
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("Workspace snapshot JSON");
+    assert_eq!(snapshot["workspace_id"], WORKSPACE_A);
+    assert!(
+        snapshot["items"]
+            .as_array()
+            .is_some_and(|items| items.len() <= 256 && items.is_empty())
+    );
+    assert_eq!(
+        snapshot.as_object().expect("closed response shape").len(),
+        2
+    );
+
+    let foreign = get(WORKSPACE_B).await;
+    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn native_permission_reply_route_is_mounted_and_rejects_settled_turns() {
+    let fixture = turn_command_fixture("native-permission-reply-settled-workspace");
+    fixture.seed_turn("turn-permission-settled", "COMPLETED", 3, 0);
+    let mut request = Request::post(format!(
+        "/v1/conversations/{}/turns/turn-permission-settled/permissions/{}/reply",
+        fixture.conversation_id,
+        "a".repeat(64)
+    ))
+    .header("x-workspace-id", WORKSPACE_A)
+    .header("idempotency-key", "permission-reply-settled-1")
+    .header("content-type", "application/json")
+    .body(Body::from(r#"{"decision":"ALLOW_ONCE"}"#))
+    .expect("permission reply request");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("permission reply route responds");
+    assert_eq!(response.status(), StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn native_permission_reply_requires_a_live_registered_prompt() {
+    let fixture = turn_command_fixture("native-permission-reply-no-prompt-workspace");
+    fixture.seed_turn("turn-permission-running", "RUNNING", 2, 0);
+    let mut request = Request::post(format!(
+        "/v1/conversations/{}/turns/turn-permission-running/permissions/{}/reply",
+        fixture.conversation_id,
+        "b".repeat(64)
+    ))
+    .header("x-workspace-id", WORKSPACE_A)
+    .header("idempotency-key", "permission-reply-no-prompt-1")
+    .header("content-type", "application/json")
+    .body(Body::from(r#"{"decision":"ALLOW_ONCE"}"#))
+    .expect("permission reply request");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("permission reply route responds");
+    assert_eq!(response.status(), StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn native_permission_reply_route_dispatches_once_to_active_worker_and_replays_receipt() {
+    let fixture = turn_command_fixture("native-permission-reply-active-worker-workspace");
+    let turn_id = "turn-permission-active-worker";
+    fixture.seed_turn(turn_id, "RUNNING", 2, 0);
+    let agent_session_id = format!("{turn_id}-session");
+    let runtime_id = "turn-command-binding-runtime";
+    let runtime_incarnation_id = "turn-command-binding-incarnation";
+    let supervisor = Arc::new(crate::agents::AgentSessionSupervisor::new(
+        fixture.store.clone(),
+        runtime_id.to_owned(),
+    ));
+    let router = test_router_with_supervisor(
+        fixture.store.clone(),
+        OWNER.to_owned(),
+        runtime_id.to_owned(),
+        Arc::clone(&supervisor),
+    );
+
+    let token = "d".repeat(64);
+    let native_session_id = "native-session-route-private";
+    let native_request_id = "native-request-route-private";
+    let worker = crate::agents::supervisor::test_support::start_permission_worker(
+        &supervisor,
+        WORKSPACE_A,
+        fixture.conversation_id,
+        turn_id,
+        0,
+        &agent_session_id,
+        runtime_incarnation_id,
+        native_session_id,
+        &token,
+        native_request_id,
+    );
+
+    let mut request = Request::post(format!(
+        "/v1/conversations/{}/turns/{turn_id}/permissions/{token}/reply",
+        fixture.conversation_id,
+    ))
+    .header("x-workspace-id", WORKSPACE_A)
+    .header("idempotency-key", "permission-reply-active-worker-1")
+    .header("content-type", "application/json")
+    .body(Body::from(r#"{"decision":"ALLOW_ONCE"}"#))
+    .expect("permission reply request");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("authenticated permission reply route responds");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let bytes = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("read permission receipt");
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("permission receipt is JSON");
+    assert_eq!(receipt["prompt_token"], token);
+    assert_eq!(receipt["state"], "ANSWERED");
+    assert_eq!(receipt["decision"], "ALLOW_ONCE");
+    assert_eq!(receipt["sequence"], 3);
+    let receipt_text = receipt.to_string();
+    assert!(!receipt_text.contains(native_session_id));
+    assert!(!receipt_text.contains(native_request_id));
+
+    let mut replay = Request::post(format!(
+        "/v1/conversations/{}/turns/{turn_id}/permissions/{token}/reply",
+        fixture.conversation_id,
+    ))
+    .header("x-workspace-id", WORKSPACE_A)
+    .header("idempotency-key", "permission-reply-active-worker-1")
+    .header("content-type", "application/json")
+    .body(Body::from(r#"{"decision":"ALLOW_ONCE"}"#))
+    .expect("permission reply replay request");
+    replay.extensions_mut().insert(AuthenticatedLocalPeer);
+    let replay_response = router
+        .clone()
+        .oneshot(replay)
+        .await
+        .expect("permission reply replay route responds");
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let replay_bytes = to_bytes(replay_response.into_body(), 64 * 1024)
+        .await
+        .expect("read replay receipt");
+    let replay_receipt: serde_json::Value =
+        serde_json::from_slice(&replay_bytes).expect("replay receipt is JSON");
+    assert_eq!(replay_receipt, receipt);
+
+    let provider_replies = worker.finish();
+    assert_eq!(
+        provider_replies,
+        [crate::agents::supervisor::test_support::ProviderReply {
+            session_id: native_session_id.to_owned(),
+            request_id: native_request_id.to_owned(),
+            decision: "once",
+        }],
+        "the HTTP request and its idempotent replay dispatch one exact native reply"
+    );
+}
+
+#[tokio::test]
+async fn native_permission_rejection_route_reaches_agent_once_without_creating_capability_grant() {
+    let fixture = turn_command_fixture("native-permission-reject-route-workspace");
+    let turn_id = "turn-permission-reject-route";
+    fixture.seed_turn(turn_id, "RUNNING", 2, 0);
+    let agent_session_id = format!("{turn_id}-session");
+    let runtime_id = "turn-command-binding-runtime";
+    let runtime_incarnation_id = "turn-command-binding-incarnation";
+    let supervisor = Arc::new(crate::agents::AgentSessionSupervisor::new(
+        fixture.store.clone(),
+        runtime_id.to_owned(),
+    ));
+    let router = test_router_with_supervisor(
+        fixture.store.clone(),
+        OWNER.to_owned(),
+        runtime_id.to_owned(),
+        Arc::clone(&supervisor),
+    );
+
+    let token = "f".repeat(64);
+    let native_session_id = "native-session-reject-route-private";
+    let native_request_id = "native-request-reject-route-private";
+    let worker = crate::agents::supervisor::test_support::start_permission_worker(
+        &supervisor,
+        WORKSPACE_A,
+        fixture.conversation_id,
+        turn_id,
+        0,
+        &agent_session_id,
+        runtime_incarnation_id,
+        native_session_id,
+        &token,
+        native_request_id,
+    );
+    let grants_before: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM capability_grants WHERE conversation_id=?1",
+            [fixture.conversation_id],
+            |row| row.get(0),
+        )
+        .expect("read pre-existing Conversation capability grants");
+
+    let uri = format!(
+        "/v1/conversations/{}/turns/{turn_id}/permissions/{token}/reply",
+        fixture.conversation_id,
+    );
+    let mut request = Request::post(&uri)
+        .header("x-workspace-id", WORKSPACE_A)
+        .header("idempotency-key", "permission-reply-reject-route-1")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"decision":"REJECT_SESSION_PENDING"}"#))
+        .expect("permission rejection request");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("authenticated permission rejection responds");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("read rejection receipt");
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("rejection receipt is JSON");
+    assert_eq!(receipt["prompt_token"], token);
+    assert_eq!(receipt["state"], "ANSWERED");
+    assert_eq!(receipt["decision"], "REJECT_SESSION_PENDING");
+    let receipt_text = receipt.to_string();
+    assert!(!receipt_text.contains(native_session_id));
+    assert!(!receipt_text.contains(native_request_id));
+
+    let mut replay = Request::post(&uri)
+        .header("x-workspace-id", WORKSPACE_A)
+        .header("idempotency-key", "permission-reply-reject-route-1")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"decision":"REJECT_SESSION_PENDING"}"#))
+        .expect("permission rejection replay request");
+    replay.extensions_mut().insert(AuthenticatedLocalPeer);
+    let replay_response = router
+        .clone()
+        .oneshot(replay)
+        .await
+        .expect("permission rejection replay responds");
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let replay_bytes = to_bytes(replay_response.into_body(), 64 * 1024)
+        .await
+        .expect("read rejection replay receipt");
+    let replay_receipt: serde_json::Value =
+        serde_json::from_slice(&replay_bytes).expect("replay receipt is JSON");
+    assert_eq!(replay_receipt, receipt);
+
+    assert_eq!(
+        worker.finish(),
+        [crate::agents::supervisor::test_support::ProviderReply {
+            session_id: native_session_id.to_owned(),
+            request_id: native_request_id.to_owned(),
+            decision: "reject",
+        }],
+        "the authenticated rejection and replay dispatch one exact native reject"
+    );
+    let grants_after: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM capability_grants WHERE conversation_id=?1",
+            [fixture.conversation_id],
+            |row| row.get(0),
+        )
+        .expect("read Conversation capability grants after native rejection");
+    assert_eq!(
+        grants_after, grants_before,
+        "native rejection is not a LiteCowork grant"
+    );
+}
+
+#[tokio::test]
+async fn native_permission_reply_route_reports_session_end_when_mailbox_closes_after_dispatch() {
+    let fixture = turn_command_fixture("native-permission-reply-close-race-workspace");
+    let turn_id = "turn-permission-close-race";
+    fixture.seed_turn(turn_id, "RUNNING", 2, 0);
+    let agent_session_id = format!("{turn_id}-session");
+    let runtime_id = "turn-command-binding-runtime";
+    let runtime_incarnation_id = "turn-command-binding-incarnation";
+    let supervisor = Arc::new(crate::agents::AgentSessionSupervisor::new(
+        fixture.store.clone(),
+        runtime_id.to_owned(),
+    ));
+    let router = test_router_with_supervisor(
+        fixture.store.clone(),
+        OWNER.to_owned(),
+        runtime_id.to_owned(),
+        Arc::clone(&supervisor),
+    );
+
+    let token = "e".repeat(64);
+    let mut worker = crate::agents::supervisor::test_support::start_blocked_permission_worker(
+        &supervisor,
+        WORKSPACE_A,
+        fixture.conversation_id,
+        turn_id,
+        0,
+        &agent_session_id,
+        runtime_incarnation_id,
+        "native-session-close-race-private",
+        &token,
+        "native-request-close-race-private",
+    );
+
+    let mut request = Request::post(format!(
+        "/v1/conversations/{}/turns/{turn_id}/permissions/{token}/reply",
+        fixture.conversation_id,
+    ))
+    .header("x-workspace-id", WORKSPACE_A)
+    .header("idempotency-key", "permission-reply-close-race-1")
+    .header("content-type", "application/json")
+    .body(Body::from(r#"{"decision":"ALLOW_ONCE"}"#))
+    .expect("permission reply request");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let reply_router = router.clone();
+    let response_task = tokio::spawn(async move {
+        reply_router
+            .oneshot(request)
+            .await
+            .expect("authenticated permission route responds")
+    });
+
+    worker.wait_for_provider_reply().await;
+    worker.close_mailbox();
+    worker.release_provider_reply();
+    let response = tokio::time::timeout(Duration::from_secs(5), response_task)
+        .await
+        .expect("route settles after the attempt mailbox closes")
+        .expect("permission route task does not panic");
+    assert_eq!(response.status(), StatusCode::GONE);
+
+    let provider_replies = worker.finish();
+    assert_eq!(provider_replies.len(), 1);
+    assert_eq!(provider_replies[0].decision, "once");
+    assert_eq!(
+        provider_replies[0].session_id,
+        "native-session-close-race-private"
+    );
+    assert_eq!(
+        provider_replies[0].request_id,
+        "native-request-close-race-private"
+    );
 }
 
 #[tokio::test]

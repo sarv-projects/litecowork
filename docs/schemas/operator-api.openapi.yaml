@@ -575,7 +575,7 @@ paths:
     get:
       tags: [conversations]
       operationId: listLiveConversationTurnPermissions
-      description: SERVED partial implementation for 001-T27. Returns only live, Runtime-local native permission prompts for the exact authorized turn attempt. This is not reconstructed from REPORTED activity and contains no native session/request IDs, raw metadata, absolute paths, or durable permission decision. The reply operation and UI journey remain target-only.
+      description: SERVED partial implementation for 001-T27. Returns only live, Runtime-local native permission prompts for the exact authorized turn attempt. Registry bounds are 32 prompts per attempt and 256 across retained Runtime scopes; attempt teardown clears that attempt's records and tokens. This is not reconstructed from REPORTED activity and contains no native session/request IDs, raw metadata, absolute paths, or durable permission decision. The reply operation is also SERVED partial; the Tauri/UI journey remains target-only.
       parameters:
       - {$ref: '#/components/parameters/ConversationId'}
       - name: turnId
@@ -589,11 +589,23 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ConversationLivePermissionSnapshot'}
         default: {$ref: '#/components/responses/Error'}
+  /conversation-permissions:
+    get:
+      tags: [conversations]
+      operationId: listWorkspaceLiveConversationPermissions
+      description: SERVED partial for 001-T27. Returns a no-store, Runtime-local snapshot of at most 256 unresolved native permission prompts for the selected owner Workspace. Each exact RUNNING turn and ACTIVE AgentSession is revalidated before projection. It is not durable Needs You state and is never reconstructed from historical activity. No native session/request IDs, private paths, raw provider metadata, or credentials are returned.
+      responses:
+        '200':
+          description: Bounded ephemeral Workspace snapshot of unresolved live Conversation permission prompts
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkspaceLiveConversationPermissionSnapshot'}
+        default: {$ref: '#/components/responses/Error'}
   /conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply:
     post:
       tags: [conversations]
       operationId: replyConversationPermission
-      description: TARGET for 001-T27. Replies through the exact active native session after owner, Workspace, turn, Runtime-incarnation and pending-prompt checks. Identical idempotent replay is Runtime-local; no provider ID is accepted from the client. REJECT_SESSION_PENDING rejects all requests pending in that provider session at the time OpenCode applies the reply.
+      description: SERVED partial for 001-T27. Revalidates the authenticated owner, selected Workspace, persisted RUNNING turn, ACTIVE AgentSession and Runtime identity, then queues the decision for the active adapter owner. The route has negative-path tests; successful route-to-real-provider behavior is not qualified. Identical idempotent replay is Runtime-local; no provider ID is accepted from the client. REJECT_SESSION_PENDING rejects all requests pending in that provider session at the time OpenCode applies the reply. Provider errors are reconciled through the exact session's pending list and the reply is never automatically retried; confirmed pending state clears the attempted decision. Attempt teardown invalidates that scope's tokens.
       parameters:
       - {$ref: '#/components/parameters/ConversationId'}
       - name: turnId
@@ -623,6 +635,11 @@ paths:
               schema: {$ref: '#/components/schemas/ApiError'}
         '410':
           description: Prompt or owning native session has ended; no reply was replayed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Runtime reply command queue is full or the Supervisor is unavailable; no provider reply was dispatched
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ApiError'}
@@ -7566,12 +7583,13 @@ components:
     ConversationLivePermissionSnapshot:
       type: object
       additionalProperties: false
-      required: [workspace_id, conversation_id, turn_id, retry_ordinal, items]
+      required: [workspace_id, conversation_id, turn_id, retry_ordinal, sequence, items]
       properties:
         workspace_id: {type: string, minLength: 1, maxLength: 256}
         conversation_id: {type: string, minLength: 1, maxLength: 256}
         turn_id: {type: string, minLength: 1, maxLength: 256}
         retry_ordinal: {type: integer, minimum: 0}
+        sequence: {type: integer, minimum: 0, maximum: 4096, description: Monotonic per-attempt sequence for all prompt registrations and visible state transitions; zero means no prompt state has been published.}
         items:
           type: array
           maxItems: 32
@@ -7579,8 +7597,9 @@ components:
     ConversationLivePermissionPrompt:
       type: object
       additionalProperties: false
-      required: [prompt_token, state, action, resource_count, resources]
+      required: [sequence, prompt_token, state, action, resource_count, resources]
       properties:
+        sequence: {type: integer, minimum: 1, maximum: 4096}
         prompt_token: {type: string, minLength: 32, maxLength: 128}
         state: {type: string, enum: [PENDING, REPLYING, ANSWERED, OUTCOME_UNKNOWN, SESSION_ENDED]}
         action: {type: string, minLength: 1, maxLength: 128}
@@ -7591,6 +7610,28 @@ components:
           maxItems: 16
           items: {type: string, minLength: 1, maxLength: 128}
         decision: {type: [string, 'null'], enum: [ALLOW_ONCE, REJECT_SESSION_PENDING, null]}
+    WorkspaceLiveConversationPermissionSnapshot:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, items]
+      properties:
+        workspace_id: {type: string, minLength: 1, maxLength: 256}
+        items:
+          type: array
+          maxItems: 256
+          description: Runtime-local unresolved prompts for active Conversation turns, sorted by attempt sequence. Answered and ended prompts are omitted.
+          items: {$ref: '#/components/schemas/WorkspaceLiveConversationPermissionItem'}
+    WorkspaceLiveConversationPermissionItem:
+      type: object
+      additionalProperties: false
+      required: [conversation_id, conversation_title, turn_id, retry_ordinal, sequence, prompt]
+      properties:
+        conversation_id: {type: string, minLength: 1, maxLength: 256}
+        conversation_title: {type: [string, 'null'], maxLength: 160}
+        turn_id: {type: string, minLength: 1, maxLength: 256}
+        retry_ordinal: {type: integer, minimum: 0}
+        sequence: {type: integer, minimum: 0, maximum: 4096, description: Current sequence of the exact attempt; permits monotonic refresh checks for the nested prompt.}
+        prompt: {$ref: '#/components/schemas/ConversationLivePermissionPrompt'}
     ConversationPermissionReplyRequest:
       type: object
       additionalProperties: false
@@ -7600,11 +7641,12 @@ components:
     ConversationPermissionReplyReceipt:
       type: object
       additionalProperties: false
-      required: [prompt_token, state, decision]
+      required: [prompt_token, state, decision, sequence]
       properties:
         prompt_token: {type: string, minLength: 32, maxLength: 128}
         state: {type: string, enum: [PENDING, REPLYING, ANSWERED, OUTCOME_UNKNOWN, SESSION_ENDED]}
         decision: {type: [string, 'null'], enum: [ALLOW_ONCE, REJECT_SESSION_PENDING, null]}
+        sequence: {type: integer, minimum: 1, maximum: 4096}
     TimelinePage:
       type: object
       required: [items]

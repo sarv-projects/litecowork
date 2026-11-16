@@ -29,10 +29,14 @@ The user experience is one workspace with progressively opened surfaces:
 
 - **Work** is the default work area: ordinary conversations and explicitly created Tasks share a home while retaining separate lifecycles.
 - **Coworkers** are configured native-agent/work profiles and their conversations/context; a profile record is not proof that a process is running.
-- **Library** contains Workspace Resources and, as creation/publishing is implemented, managed Artifacts and saved views.
+- **Library** contains Workspace Resources and managed Artifacts as their owner-backed creation/publishing paths are implemented. The audit's provisional saved-view wording is superseded by the 2026-11-16 A-103 reconciliation below.
 - **Automations** contains schedules, Routines and occurrence history; a schedule may admit a READY Task but does not execute its body.
 - **Needs You** is a compact, actionable attention entry for persisted requests/approvals and real blockers. It is distinct from notification delivery history.
 - **More** holds secondary destinations such as Discover, explicit New Task and other owner-governed surfaces. Settings stays in the footer.
+
+### Saved-answer and reusable-app correction — 2026-11-16
+
+The saved-view wording in the 2026-11-14 product summary was too broad. A rich answer is immutable and message-bound, so it is revisited through its source Conversation. Feature 016's separately proposed device-local input memory is not a Library item. A reusable interactive deliverable may use a committed Feature 007 ArtifactVersion only if that owner accepts its type and the create, provenance, receipt and recovery path exists. Artifact Runtime per-app data is a separate owner and store. No standalone Saved View identity, route, event or lifecycle is accepted; no Save/Open/Update/Delete app controls or permanent Saved Apps destination may be implied while A-103 is open. See [A-103](../CONTRADICTION-AND-ALIGNMENT-REGISTER.md) and the current [Feature 016 package](../../specs/016-rich-presentation-intelligent-ui/README.md).
 
 The central Conversation surface can show semantic prose and registered, validated rich answers. A contextual right Workbench hosts only opened objects—Computer, Browser, Terminal, Files, Changes and Canvas—rather than permanent application-wide tabs for every tool. Inspector/activity details are disclosed within the relevant surface. Native developer traces are on demand.
 

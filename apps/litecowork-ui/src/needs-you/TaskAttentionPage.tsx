@@ -13,6 +13,14 @@ import {
 } from "./task-attention-state";
 import { UserRequestDetail } from "./UserRequestDetail";
 import { ApprovalDetail } from "./ApprovalDetail";
+import { NativePermissionCard } from "./NativePermissionCard";
+import {
+  applyNativePermissionReceipt,
+  parseWorkspacePermissionSnapshot,
+  type NativePermissionDecision,
+  type NativePermissionState,
+  type WorkspacePermissionItem,
+} from "./native-permission";
 import "./task-attention-page.css";
 
 type TaskStatus = "WAITING_USER" | "NEEDS_USER" | "BLOCKED";
@@ -213,10 +221,126 @@ export function TaskAttentionPage({
   const loadingMore = loadState.loadingMore;
   const [refreshToken, setRefreshToken] = useState(0);
   const [failure, setFailure] = useState<"refresh" | "more" | null>(null);
+  const [livePermissionSnapshot, setLivePermissionSnapshot] = useState<{ workspaceId: string; items: WorkspacePermissionItem[] } | null>(null);
+  const [livePermissionLoading, setLivePermissionLoading] = useState(false);
+  const [livePermissionError, setLivePermissionError] = useState(false);
+  const [livePermissionActions, setLivePermissionActions] = useState<Record<string, NativePermissionDecision>>({});
+  const livePermissionWorkspace = useRef(workspaceId);
+  livePermissionWorkspace.current = workspaceId;
+  const livePermissionGeneration = useRef(0);
+  const livePermissionActionLock = useRef(new Set<string>());
   const generation = useRef(0);
   const previousWorkspace = useRef(workspaceId);
   const paginationGate = useRef(new TaskAttentionPaginationGate());
   const visibleItems = loadedWorkspace === workspaceId && loadedStatus === status ? items : [];
+
+  const refreshLivePermissions = useCallback(async (requestedWorkspaceId = workspaceId) => {
+    if (!requestedWorkspaceId || !operatorReady) return null;
+    const generation = ++livePermissionGeneration.current;
+    setLivePermissionLoading(true);
+    setLivePermissionError(false);
+    try {
+      const value = await invoke<unknown>("list_workspace_live_conversation_permissions", { workspaceId: requestedWorkspaceId });
+      const parsed = parseWorkspacePermissionSnapshot(value, requestedWorkspaceId);
+      if (!parsed) throw new Error("Workspace permission snapshot did not match its contract");
+      if (livePermissionGeneration.current === generation && livePermissionWorkspace.current === requestedWorkspaceId) {
+        setLivePermissionSnapshot(parsed);
+        setLivePermissionActions({});
+        setLivePermissionError(false);
+      }
+      return parsed;
+    } catch {
+      if (livePermissionGeneration.current === generation && livePermissionWorkspace.current === requestedWorkspaceId) setLivePermissionError(true);
+      throw new Error("Live agent requests could not be checked");
+    } finally {
+      if (livePermissionGeneration.current === generation && livePermissionWorkspace.current === requestedWorkspaceId) setLivePermissionLoading(false);
+    }
+  }, [operatorReady, workspaceId]);
+
+  useEffect(() => {
+    if (!workspaceId || !operatorReady) {
+      setLivePermissionSnapshot(null);
+      setLivePermissionLoading(false);
+      setLivePermissionError(false);
+      return;
+    }
+    void refreshLivePermissions(workspaceId).catch(() => {});
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void refreshLivePermissions(workspaceId).catch(() => {});
+    };
+    window.addEventListener("focus", refreshIfVisible);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      livePermissionGeneration.current += 1;
+      window.removeEventListener("focus", refreshIfVisible);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [operatorReady, refreshLivePermissions, workspaceId]);
+
+  const replyToLivePermission = useCallback(async (item: WorkspacePermissionItem, decision: NativePermissionDecision) => {
+    const token = item.promptToken;
+    if (!operatorReady || livePermissionError || livePermissionLoading || livePermissionActionLock.current.has(token)
+      || item.state !== "PENDING" || livePermissionWorkspace.current !== workspaceId) return;
+    livePermissionActionLock.current.add(token);
+    setLivePermissionActions(current => ({ ...current, [token]: decision }));
+    try {
+      const receipt = await invoke<unknown>("reply_conversation_permission", {
+        workspaceId,
+        conversationId: item.conversationId,
+        turnId: item.turnId,
+        promptToken: token,
+        decision,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      const prior: NativePermissionState = {
+        lastSequence: item.attemptSequence,
+        needsRefresh: false,
+        prompts: { [token]: item },
+      };
+      const reconciled = applyNativePermissionReceipt(prior, receipt);
+      if (reconciled.needsRefresh || reconciled === prior) {
+        await refreshLivePermissions(workspaceId);
+      } else {
+        const updated = reconciled.prompts[token];
+        if (!updated || updated.state === "ANSWERED" || updated.state === "SESSION_ENDED") {
+          await refreshLivePermissions(workspaceId);
+        } else {
+          setLivePermissionSnapshot(current => current?.workspaceId !== workspaceId ? current : {
+            ...current,
+            items: current.items.map(candidate => candidate.promptToken === token
+              ? { ...candidate, ...updated, attemptSequence: reconciled.lastSequence }
+              : candidate),
+          });
+        }
+      }
+    } catch {
+      try {
+        const refreshed = await refreshLivePermissions(workspaceId);
+        if (refreshed && !refreshed.items.some(candidate => candidate.promptToken === token)) {
+          setLivePermissionSnapshot(current => current?.workspaceId !== workspaceId ? current : {
+            ...current,
+            items: current.items.map(candidate => candidate.promptToken === token
+              ? { ...candidate, state: "OUTCOME_UNKNOWN", decision }
+              : candidate),
+          });
+        }
+      } catch {
+        setLivePermissionSnapshot(current => current?.workspaceId !== workspaceId ? current : {
+          ...current,
+          items: current.items.map(candidate => candidate.promptToken === token
+            ? { ...candidate, state: "OUTCOME_UNKNOWN", decision }
+            : candidate),
+        });
+      }
+    } finally {
+      livePermissionActionLock.current.delete(token);
+      setLivePermissionActions(current => {
+        const next = { ...current };
+        delete next[token];
+        return next;
+      });
+    }
+  }, [livePermissionError, livePermissionLoading, operatorReady, refreshLivePermissions, workspaceId]);
 
   useLayoutEffect(() => {
     if (previousWorkspace.current !== workspaceId) {
@@ -374,6 +498,37 @@ export function TaskAttentionPage({
       }}
     />}
     <NeedsYouFilter status={status} onChange={setStatus} />
+    <section className="needs-you-live-permissions" aria-labelledby="needs-you-live-permissions-title">
+      <div className="needs-you-live-permissions-heading">
+        <div>
+          <h2 id="needs-you-live-permissions-title">Live agent requests</h2>
+          <p>These requests exist only while their native agent session is active.</p>
+        </div>
+        <button type="button" className="quiet-button" onClick={() => void refreshLivePermissions().catch(() => {})}
+          disabled={!workspaceId || !operatorReady || livePermissionLoading} aria-busy={livePermissionLoading}>
+          {livePermissionLoading ? "Checking…" : "Refresh live requests"}
+        </button>
+      </div>
+      {!workspaceId ? <p className="needs-you-live-permissions-state">Select a Workspace to check for live agent requests.</p>
+        : livePermissionLoading && livePermissionSnapshot?.workspaceId !== workspaceId
+          ? <p className="needs-you-live-permissions-state" role="status">Checking live agent requests…</p>
+          : livePermissionError
+            ? <p className="needs-you-live-permissions-state" role="alert">Live agent requests could not be checked. The last list is not actionable until refreshed.</p>
+            : (livePermissionSnapshot?.workspaceId !== workspaceId || livePermissionSnapshot.items.length === 0)
+              ? <p className="needs-you-live-permissions-state">No live agent requests.</p>
+              : <div className="needs-you-live-permissions-list">{livePermissionSnapshot.items.map(item => (
+                <NativePermissionCard
+                  key={item.promptToken}
+                  prompt={item}
+                  conversationTitle={item.conversationTitle}
+                  disabled={!operatorReady || livePermissionError || livePermissionLoading || item.state !== "PENDING"}
+                  refreshDisabled={!operatorReady || livePermissionLoading}
+                  sendingDecision={livePermissionActions[item.promptToken] ?? null}
+                  onDecision={decision => void replyToLivePermission(item, decision)}
+                  onRefresh={() => void refreshLivePermissions().catch(() => {})}
+                />
+              ))}</div>}
+    </section>
     {failure && <p className="task-attention-notice" role="status">{failureText}</p>}
     {refreshingSavedItems && <p className="task-attention-notice" role="status">Checking the latest Needs You items. Showing the last saved {status === "OPEN" ? "open" : "resolved"} items for this Workspace until refresh completes.</p>}
     {!workspaceId ? <section className="task-attention-empty"><h2>Select a Workspace</h2><p>Choose or create a Workspace before reviewing Needs You items.</p></section>

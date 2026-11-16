@@ -6,6 +6,9 @@ nodes:
   - id: "ui"
     owner: Desktop UI
     kind: component
+  - id: "settings-ui"
+    owner: Desktop Settings shell (target Browser & Computer category; revision 1.1 TARGET, not currently mounted)
+    kind: component
   - id: "operator"
     owner: authenticated Operator
     kind: service
@@ -18,6 +21,15 @@ nodes:
   - id: "browser"
     owner: browser provider
     kind: external
+  - id: "browser-profile-owner"
+    owner: Browser profile/session domain owner
+    kind: service
+  - id: "browser-access-owner"
+    owner: Trust grant, Workspace request-policy, BrowserLeaseArbiter and effective-access projection owner
+    kind: service
+  - id: "agent-session-capability-owner"
+    owner: Feature 001/002 provider-specific AgentSession and mediated-tool capability owner
+    kind: service
   - id: "pty"
     owner: PTY host
     kind: external
@@ -44,6 +56,74 @@ edges:
     from: "ui"
     to: "operator"
     kind: command
+  - id: "e-settings-op"
+    from: "settings-ui"
+    to: "operator"
+    kind: authenticated-browser-settings-query-or-command-target-only
+  - id: "e-op-profile-settings-read"
+    from: "operator"
+    to: "browser-profile-owner"
+    kind: workspace-profile-settings-read-target-only
+  - id: "e-op-access-settings-read"
+    from: "operator"
+    to: "browser-access-owner"
+    kind: effective-origin-and-workspace-policy-read-target-only
+  - id: "e-op-agent-capability-read"
+    from: "operator"
+    to: "agent-session-capability-owner"
+    kind: provider-specific-mediated-browser-tool-capability-read-target-only
+  - id: "e-op-profile-settings"
+    from: "operator"
+    to: "browser-profile-owner"
+    kind: profile-status-import-cleanup-target-only
+  - id: "e-op-browser-access-settings"
+    from: "operator"
+    to: "browser-access-owner"
+    kind: workspace-request-policy-and-exact-origin-grant-target-only
+  - id: "e-access-owner-agent-capability-gate"
+    from: "browser-access-owner"
+    to: "agent-session-capability-owner"
+    kind: verify-provider-tool-provisioning-before-policy-mutation-or-new-session-target-only
+  - id: "e-profile-settings-storage"
+    from: "browser-profile-owner"
+    to: "storage"
+    kind: versioned-profile-data-target-only
+  - id: "e-browser-access-settings-storage"
+    from: "browser-access-owner"
+    to: "storage"
+    kind: scoped-policy-and-grant-target-only
+  - id: "e-storage-profile-owner-read"
+    from: "storage"
+    to: "browser-profile-owner"
+    kind: authorized-versioned-profile-projection-read-target-only
+  - id: "e-storage-access-owner-read"
+    from: "storage"
+    to: "browser-access-owner"
+    kind: authorized-workspace-origin-and-grant-projection-read-target-only
+  - id: "e-agent-capability-owner-op-response"
+    from: "agent-session-capability-owner"
+    to: "operator"
+    kind: provider-capability-observation-target-only
+  - id: "e-profile-owner-op-projection"
+    from: "browser-profile-owner"
+    to: "operator"
+    kind: authorized-profile-settings-projection-target-only
+  - id: "e-access-owner-op-projection"
+    from: "browser-access-owner"
+    to: "operator"
+    kind: effective-permission-and-source-reason-projection-target-only
+  - id: "e-op-settings-projection"
+    from: "operator"
+    to: "settings-ui"
+    kind: authenticated-typed-settings-response-target-only
+  - id: "e-profile-owner-browser-effect"
+    from: "browser-profile-owner"
+    to: "browser"
+    kind: staged-import-or-profile-cleanup-after-durable-intent-target-only
+  - id: "e-browser-profile-owner-result"
+    from: "browser"
+    to: "browser-profile-owner"
+    kind: untrusted-provider-result-for-reconciliation-target-only
   - id: "e-op-owner"
     from: "operator"
     to: "owner"
@@ -122,6 +202,11 @@ transactions:
     atomic_records: ["control_lease_epoch", "transfer_intent", "action_receipt", "audit", "outbox", "idempotency_receipt"]
     external_calls_inside: false
 external_boundaries:
+  - id: "browser-profile-provider-effect"
+    owner: Browser profile owner
+    input_trust: untrusted
+    timeout: bounded
+    retry: reconcile-before-retry
   - id: "outside-sqlite"
     owner: domain owner
     input_trust: untrusted
@@ -176,3 +261,9 @@ recovery:
 # already-dispatched input reconciles without replay. Frames never enter events.
 # Hidden preview unsubscribes, explicit Stop sharing revokes and purges. Restart
 # loses private targets/streams; no automatic capture/input/command revival.
+# Browser Settings screenshot research (2026-11-17) refines this target graph only:
+# Settings UI -> authenticated Operator -> existing Browser profile/session and Trust
+# owners -> Storage -> Settings projection. These nodes/edges allocate no route,
+# schema, migration or new authority owner; none is served. Keep Browser and Computer
+# sections distinct, and expose no interactive settings until the owner operations
+# and their receipts/recovery paths exist.

@@ -8,7 +8,7 @@ The tables below are the plan and carry no per-row status. Per-task status lives
 
 | Group | State | Detail |
 |---|---|---|
-| BT-00 | Partly done | Route inventory matches (178 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 53 target-only); CURRENT-RUN.md and IMPLEMENTATION-STATUS.md refreshed 2026-11-13 |
+| BT-00 | Partly done | Route inventory matches (179 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 54 target-only); CURRENT-RUN.md and IMPLEMENTATION-STATUS.md refreshed 2026-11-16 |
 | BT-01 | CODE and SERVED for BT-01.1, 01.2, 01.4; BT-01.3 CODE (ACP client, OpenCode HTTP adapter kept); BT-01.5 and 01.6 partial | 001 DONE/PARTIAL list in CURRENT-RUN.md; live OpenCode run (001-T09) NOT STARTED |
 | BT-02 | 003-T01 BLOCKED on A-69 provenance owner decision; T02 Linux storage tests PARTIAL; T03-T06 Windows work DEFERRED to owner's Windows laptop; T09/T10 BLOCKED on A-65/A-69 | See Feature 003 TASKS and current cross-check |
 | BT-03 | Registry/descriptors and limited discovery CODE/SERVED; Claude Code module BLOCKED; relay (004) PARTIAL CODE (producer attribution/context builder only), no qualified second dispatch path | 002 and 004 TASKS; see `docs/audit/FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md` |

@@ -1,6 +1,6 @@
 # Tasks - Rich Presentation, Intelligent UI and Generated Media
 
-**Feature:** 016 | **Status:** IN_REVIEW - baseline owner acceptance (AC-001..AC-019) is pending at T01; revision 0.2 extension AC-020..AC-027 is separately gated at T25. No implementation is authorized by either task's existence.
+**Feature:** 016 | **Status:** IN_REVIEW - baseline owner acceptance (AC-001..AC-019) is pending at T01; revision 0.2 extension AC-020..AC-028 is separately gated at T25. No implementation is authorized by either task's existence.
 **Spec revision:** 0.2 (proposed) | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 **Owners:** Presentation Runtime, Conversation, Artifacts, Storage, Operator/API, Desktop UI, Security, Accessibility, Product.
 
@@ -17,20 +17,20 @@ Baseline source cross-check: `main` at `8432397befc69bafd3335a0c30b2f1e9e82bef5e
 - **Tests:** `apps/litecowork-ui/tests/presentation-runtime-fallback.test.mjs`, `rich-presentation.test.ts`, `rich-response-view-policy.test.ts`; Rust `crates/storage-sqlite/src/rich_presentation_tests.rs`.
 - **Absent:** a shared corpus, a Rust presentation crate, CalcAst, chart and calculator components, a production binder, media ingestion, `PRESENTATION_*` error codes, an Intelligent UI schema in `docs/schemas`, an Artifact create route (Feature 007 B-30), any Interactive Artifact Runtime code. CSP in `apps/litecowork-ui/src-tauri/tauri.conf.json` is `script-src 'self'` with `img-src 'self' asset: http://asset.localhost data:`.
 
-Gaps to V1: baseline AC-001..AC-019 owner acceptance is pending at T01; revision 0.2 AC-020..AC-027 requires the separate extension decision at T25. The validator parity fix is present, but shared validation authority, a production publisher, chart/SAFE_CALCULATOR renderer, media provenance, disable preference and E2E-11 evidence on either row remain open.
+Gaps to V1: baseline AC-001..AC-019 owner acceptance is pending at T01; revision 0.2 AC-020..AC-028 requires the separate extension decision at T25. The validator parity fix is present, but shared validation authority, a production publisher, chart/SAFE_CALCULATOR renderer, media provenance, disable preference and E2E-11 evidence on either row remain open. A-103/AC-028 is a TARGET saved-view boundary, not a save implementation.
 
 ## 016-T01 - Owner acceptance of the V1 baseline only
 
 - **Status:** BLOCKED - B-40 accepted as proposed (2026-11-10); pending owner acceptance of the V1 baseline only (AC-001..AC-019; repository owner, sarv-projects; Presentation Runtime, Product and Security prepare the decision). A-84 separates this decision from the unaccepted revision 0.2 annex.
-- **DEFERRED/BLOCKED note:** Why: baseline acceptance is pending; section 19 / AC-020..AC-027 are a separate unaccepted proposal. Unblocks when: the owner records acceptance of the V1 baseline and its explicit exclusions. Test later at: decision only.
+- **DEFERRED/BLOCKED note:** Why: baseline acceptance is pending; section 19 / AC-020..AC-028 are a separate unaccepted proposal. Unblocks when: the owner records acceptance of the V1 baseline and its explicit exclusions. Test later at: decision only.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE
 - **Owner:** Product, Presentation Runtime, Security; decision by the repository owner.
 - **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/` (status flip to ACCEPTED/LOCKED per the authoring brief section 2).
 - **Contract:** SPEC sections 1..18 and AC-001..AC-019 only; B-40; SPECIFICATION-STANDARD section 7; A-84.
-- **Change intent:** record the owner decision on the V1 baseline and B-40 (SAFE_CALCULATOR as the first component, CHART as static block, renderer contract version 2, Interactive Artifact Runtime PREVIEW_ONLY on both rows); if accepted, lock the baseline at revision 1.0. Explicitly exclude SPEC section 19 and AC-020..AC-027 from this decision; leave them TARGET/IN_REVIEW until the separate extension gate T25 is resolved.
+- **Change intent:** record the owner decision on the V1 baseline and B-40 (SAFE_CALCULATOR as the first component, CHART as static block, renderer contract version 2, Interactive Artifact Runtime PREVIEW_ONLY on both rows); if accepted, lock the baseline at revision 1.0. Explicitly exclude SPEC section 19 and AC-020..AC-028 from this decision; leave them TARGET/IN_REVIEW until the separate extension gate T25 is resolved.
 - **Acceptance:**
-  - [ ] Owner decision on baseline AC-001..AC-019 and B-40 recorded with date and any rider; the decision explicitly does not accept section 19 / AC-020..AC-027.
+  - [ ] Owner decision on baseline AC-001..AC-019 and B-40 recorded with date and any rider; the decision explicitly does not accept section 19 / AC-020..AC-028.
   - [ ] Baseline package banners updated together; validator PASS; extension tasks remain blocked unless T25 separately accepts that scope.
   - [ ] Negative: no implementation task starts while this task is BLOCKED.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
@@ -322,7 +322,7 @@ Gaps to V1: baseline AC-001..AC-019 owner acceptance is pending at T01; revision
 - **Cross-package prerequisites:** Feature 019 release evidence bundle accepted.
 - **Owner:** Product, repository owner.
 - **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/`.
-- **Contract:** SPECIFICATION-STANDARD lifecycle; AC-001 to AC-019 for the baseline. AC-020 to AC-027 belong to the separately gated revision 0.2 extension tasks and do not close under this baseline task.
+- **Contract:** SPECIFICATION-STANDARD lifecycle; AC-001 to AC-019 for the baseline. AC-020 to AC-028 belong to the separately gated revision 0.2 extension tasks and do not close under this baseline task.
 - **Change intent:** assemble the evidence bundle; move ACCEPTED/LOCKED to IMPLEMENTING when T02 starts and to VERIFIED when all tasks close and the owner signs off.
 - **Acceptance:**
   - [ ] Every AC has a passing test reference on both rows.
@@ -431,7 +431,7 @@ For each task append a row when it closes: task, code revision (SHA), exact comm
 - **Cross-package prerequisites:** Feature 001 qualified provider route and Feature 019 release evidence; existing Windows/release deferrals resolved.
 - **Owner:** Security, Accessibility, Release, Product, repository owner.
 - **Allowed paths:** presentation/AgentModule/storage test fixtures; release evidence bundle; CURRENT-RUN.md; implementation status and Feature 016 contracts.
-- **Contract:** SPEC section 19; pipeline LLD; AC-020 through AC-027.
+- **Contract:** SPEC section 19; pipeline LLD; AC-020 through AC-028.
 - **Change intent:** Exercise source-to-render, scope fencing, misleading metrics, unknown kernel, controller identity, consent, quotas, receipts, timeout/crash/restart, forget/save race, revocation, stale revision and explicit new-message modification on exact packaged provider route.
 - **Acceptance:**
   - [ ] Record build/OS/WebView/provider/model/version/auth/ingress, fixture counts, SYSTEM captures and owner USER review; no extension VERIFIED until every AC has evidence.
@@ -444,15 +444,16 @@ For each task append a row when it closes: task, code revision (SHA), exact comm
 
 - **Status:** BLOCKED - explicit owner decision required; this is a review gate, not implementation authorization.
 - **Depends on:** T01
-- **Cross-package prerequisites:** NONE
+- **Cross-package prerequisites:** Feature 007 Artifact owner review is required only if T25 includes a reusable Saved View/interactive Artifact deliverable; an explicit defer leaves Feature 007 unchanged.
 - **Owner:** Product, Presentation Runtime, Security, Storage, Conversation; decision by the repository owner.
 - **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/`, `docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`.
-- **Contract:** SPEC section 19 and AC-020..AC-027; SPECIFICATION-STANDARD section 7; A-84/A-85.
-- **Change intent:** obtain an explicit accept / revise / defer decision on the complete extension scope (qualified intent ingress, shared Canvas controller, separately consented state persistence, explicit new-turn modification, and extension recovery/qualification). Record exact inclusions, exclusions, owners and riders. If accepted, promote it as the next revision without altering baseline B-40 semantics; if rejected/deferred, keep T20-T24 BLOCKED. Resolve A-85's schema/sequence questions before the MCP proposal tool can be exposed.
+- **Contract:** SPEC section 19 and AC-020..AC-028; SPECIFICATION-STANDARD section 7; A-84/A-85/A-103.
+- **Change intent:** obtain an explicit accept / revise / defer decision on the complete extension scope (qualified intent ingress, shared Canvas controller, separately consented state persistence, explicit new-turn modification, extension recovery/qualification, and the boundary between reopening a Conversation answer, remembering local inputs and publishing a reusable Artifact). Keep Feature 016 answer-input memory distinct from the separate Artifact Runtime app-data proposal. Decide explicitly whether a standalone Saved View is deferred or needs a separate cross-owner Feature 016/007 revision; T22 input persistence alone cannot authorize a Saved Apps UI. Record exact inclusions, exclusions, owners and riders. If accepted, promote it as the next revision without altering baseline B-40 semantics; if rejected/deferred, keep T20-T24 BLOCKED. Resolve A-85's schema/sequence questions before the MCP proposal tool can be exposed.
 - **Acceptance:**
   - [ ] A dated owner decision and exact scope are recorded in the acceptance packet and Feature 016.
   - [ ] Any accepted amendment receives a new revision and renewed owner acceptance; a decision to defer leaves T20-T24 blocked.
+  - [ ] The decision explicitly addresses A-103; if standalone Saved View is included, the cross-owner Artifact owner, canonical identity/lifecycle/receipt contracts and allowed implementation tasks are recorded before any UI promise.
   - [ ] No code, route, tool or persistent state behavior is enabled by closing this decision task alone.
 - **Command:** `python .specify/scripts/validate_feature_package.py`
 - **Evidence:** owner decision record and validator output.
-- **Stop:** the decision refers only to B-40 or fails to say whether AC-020..AC-027 are accepted.
+- **Stop:** the decision refers only to B-40 or fails to say whether AC-020..AC-028 and the A-103 Saved View boundary are accepted, revised or deferred.

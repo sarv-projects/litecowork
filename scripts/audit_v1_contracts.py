@@ -69,10 +69,12 @@ def main() -> int:
     # 4 since Feature 014 added PATCH /v1/conversations/{id}, POST .../archive and
     # POST .../unarchive (apps/litecoworkd/src/conversation_operator.rs) beside the
     # pre-existing POST /v1/stream; those four are recorded served-but-not-yet-in-OpenAPI
-    # debt, and the inventory is generated from source by scripts/audit_served_routes.py.
+    # debt. Feature 001 T27's native permission reply POST is now mounted and moves one
+    # operation from target-only to served. The inventory is generated from source by
+    # scripts/audit_served_routes.py.
     counts = (len(inventory.get("served", [])), len(outside), len(inventory.get("target_only", [])))
-    if counts != (179, 4, 54):
-        errors.append(f"Route inventory count drift: {counts}; expected (179, 4, 54)")
+    if counts != (181, 4, 53):
+        errors.append(f"Route inventory count drift: {counts}; expected (181, 4, 53)")
     if inventory.get("version") != 3:
         errors.append(f"Unexpected route inventory version: {inventory.get('version')}")
 

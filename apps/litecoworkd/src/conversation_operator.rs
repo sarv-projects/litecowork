@@ -14,9 +14,10 @@ use storage_core::conversation::{
     SetConversationArchived, TurnCommand, request_payload_value,
 };
 use storage_core::{
-    CommittedConversation, ConversationHistoryStore, ConversationMessageRecord, ConversationRecord,
-    ConversationStore, ConversationTurnReceipt, ConversationTurnStore, CreateConversationCommit,
-    CreateConversationTurnCommit, EventDraft, SetConversationAgentBinding, WorkspaceCreateRequest,
+    AgentSessionRecord, AgentSessionStore, CommittedConversation, ConversationHistoryStore,
+    ConversationMessageRecord, ConversationRecord, ConversationStore, ConversationTurnReceipt,
+    ConversationTurnStore, CreateConversationCommit, CreateConversationTurnCommit, EventDraft,
+    SetConversationAgentBinding, WorkspaceCreateRequest,
 };
 use storage_sqlite::SqliteConversationStore;
 
@@ -145,6 +146,14 @@ where
         .route(
             "/v1/conversations/{conversation_id}/turns/{turn_id}/permissions",
             get(list_live_conversation_turn_permissions),
+        )
+        .route(
+            "/v1/conversation-permissions",
+            get(list_workspace_live_conversation_permissions),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/turns/{turn_id}/permissions/{prompt_token}/reply",
+            post(reply_live_conversation_turn_permission),
         )
         .route(
             "/v1/conversations/{conversation_id}/turns/{turn_id}/retry",
@@ -617,7 +626,24 @@ struct LiveConversationPermissionSnapshot {
     conversation_id: String,
     turn_id: String,
     retry_ordinal: u32,
+    sequence: u32,
     items: Vec<crate::agents::supervisor::NativePermissionPromptView>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceLiveConversationPermissionSnapshot {
+    workspace_id: String,
+    items: Vec<WorkspaceLiveConversationPermissionItem>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceLiveConversationPermissionItem {
+    conversation_id: String,
+    conversation_title: Option<String>,
+    turn_id: String,
+    retry_ordinal: u32,
+    sequence: u32,
+    prompt: crate::agents::supervisor::NativePermissionPromptView,
 }
 
 /// Read only the exact attempt's ephemeral permission prompts. Historical REPORTED
@@ -651,28 +677,236 @@ async fn list_live_conversation_turn_permissions(
     .map_err(|_| internal())?
     .map_err(map_store_error)?
     .ok_or_else(not_found)?;
-    let items = state
-        .supervisor
-        .as_ref()
-        .map(|supervisor| {
-            supervisor.list_live_native_permissions(
-                &workspace_id,
-                &conversation_id,
-                &turn_id,
-                turn.retry_ordinal,
-            )
-        })
-        .unwrap_or_default();
+    let active_session =
+        load_live_permission_session(&state, &workspace_id, &conversation_id, &turn).await?;
+    let snapshot = match (state.supervisor.as_ref(), active_session.as_ref()) {
+        (Some(supervisor), Some(session)) => supervisor.list_live_native_permissions(
+            &workspace_id,
+            &conversation_id,
+            &turn_id,
+            turn.retry_ordinal,
+            &session.agent_session_id,
+            &session.runtime_incarnation_id,
+        ),
+        _ => crate::agents::supervisor::NativePermissionAttemptSnapshot {
+            sequence: 0,
+            items: Vec::new(),
+        },
+    };
     Ok(no_store(
         Json(LiveConversationPermissionSnapshot {
             workspace_id,
             conversation_id,
             turn_id,
             retry_ordinal: turn.retry_ordinal,
+            sequence: snapshot.sequence,
+            items: snapshot.items,
+        })
+        .into_response(),
+    ))
+}
+
+/// Rebuild only the ephemeral, currently unresolved native permission list for one
+/// authenticated Workspace. Every registry scope is rechecked against the persisted
+/// live turn and AgentSession before it is returned.
+async fn list_workspace_live_conversation_permissions(
+    State(state): State<ConversationApiState>,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
+    let live = state
+        .supervisor
+        .as_ref()
+        .map(|supervisor| supervisor.list_workspace_live_native_permissions(&workspace_id))
+        .unwrap_or_default();
+    let mut items = Vec::with_capacity(live.len().min(256));
+    for candidate in live.into_iter().take(256) {
+        let conversation =
+            load_authorized_conversation(&state, &workspace_id, &candidate.conversation_id).await?;
+        let store = state.store.clone();
+        let turn_workspace = workspace_id.clone();
+        let turn_conversation = candidate.conversation_id.clone();
+        let turn_lookup = candidate.turn_id.clone();
+        let turn = tokio::task::spawn_blocking(move || {
+            SqliteConversationStore::new(store).get_conversation_turn(
+                &turn_workspace,
+                &turn_conversation,
+                &turn_lookup,
+            )
+        })
+        .await
+        .map_err(|_| internal())?
+        .map_err(map_store_error)?;
+        let Some(turn) = turn.filter(|turn| {
+            turn.status == ConversationTurnStatus::Running
+                && turn.retry_ordinal == candidate.retry_ordinal
+        }) else {
+            continue;
+        };
+        let Some(session) =
+            load_live_permission_session(&state, &workspace_id, &candidate.conversation_id, &turn)
+                .await?
+        else {
+            continue;
+        };
+        if session.agent_session_id != candidate.agent_session_id
+            || session.runtime_incarnation_id != candidate.runtime_incarnation_id
+        {
+            continue;
+        }
+        items.push(WorkspaceLiveConversationPermissionItem {
+            conversation_id: candidate.conversation_id,
+            conversation_title: conversation.title,
+            turn_id: candidate.turn_id,
+            retry_ordinal: candidate.retry_ordinal,
+            sequence: candidate.sequence,
+            prompt: candidate.prompt,
+        });
+    }
+    Ok(no_store(
+        Json(WorkspaceLiveConversationPermissionSnapshot {
+            workspace_id,
             items,
         })
         .into_response(),
     ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativePermissionReplyRequest {
+    decision: crate::agents::supervisor::NativePermissionDecision,
+}
+
+#[derive(Serialize)]
+struct NativePermissionReplyReceipt {
+    prompt_token: String,
+    state: String,
+    decision: Option<String>,
+    sequence: u32,
+}
+
+async fn reply_live_conversation_turn_permission(
+    State(state): State<ConversationApiState>,
+    Path((conversation_id, turn_id, prompt_token)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<NativePermissionReplyRequest>,
+) -> Result<Response, Response> {
+    let request_id = idempotency_key(&headers)?;
+    let workspace_id = selected_workspace(&headers)?;
+    if !valid_task_query_id(&turn_id)
+        || !(32..=128).contains(&prompt_token.len())
+        || !prompt_token.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Permission prompt token or turn ID is invalid",
+        ));
+    }
+    load_authorized_conversation(&state, &workspace_id, &conversation_id).await?;
+    let store = state.store.clone();
+    let turn_workspace = workspace_id.clone();
+    let turn_conversation = conversation_id.clone();
+    let turn_lookup = turn_id.clone();
+    let turn = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).get_conversation_turn(
+            &turn_workspace,
+            &turn_conversation,
+            &turn_lookup,
+        )
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?
+    .ok_or_else(not_found)?;
+    let active_session =
+        load_live_permission_session(&state, &workspace_id, &conversation_id, &turn)
+            .await?
+            .ok_or_else(|| {
+                error(
+                    StatusCode::GONE,
+                    "NOT_FOUND",
+                    "Permission prompt is no longer active",
+                )
+            })?;
+    let supervisor = state.supervisor.as_ref().ok_or_else(|| {
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "UNAVAILABLE",
+            "The active Runtime cannot receive permission replies",
+        )
+    })?;
+    let view = supervisor
+        .reply_live_native_permission(
+            &workspace_id,
+            &conversation_id,
+            &turn_id,
+            turn.retry_ordinal,
+            &state.principal_id,
+            &active_session.agent_session_id,
+            &active_session.runtime_incarnation_id,
+            &prompt_token,
+            &request_id,
+            body.decision,
+        )
+        .await
+        .map_err(|failure| match failure {
+            crate::agents::supervisor::NativePermissionReplyError::SessionEnded => error(
+                StatusCode::GONE,
+                "NOT_FOUND",
+                "Permission prompt is no longer active",
+            ),
+            crate::agents::supervisor::NativePermissionReplyError::Conflict => error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Permission prompt already has a different or unresolved decision",
+            ),
+            crate::agents::supervisor::NativePermissionReplyError::Unavailable => error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "UNAVAILABLE",
+                "The active Runtime could not accept the permission reply",
+            ),
+        })?;
+    let receipt = NativePermissionReplyReceipt {
+        prompt_token: view.prompt_token().to_owned(),
+        state: view.state_name().to_owned(),
+        decision: view.decision().map(str::to_owned),
+        sequence: view.sequence(),
+    };
+    Ok(no_store(Json(receipt).into_response()))
+}
+
+async fn load_live_permission_session(
+    state: &ConversationApiState,
+    workspace_id: &str,
+    conversation_id: &str,
+    turn: &ConversationTurn,
+) -> Result<Option<AgentSessionRecord>, Response> {
+    if turn.status != ConversationTurnStatus::Running {
+        return Ok(None);
+    }
+    let Some(agent_session_id) = turn.agent_session_id.as_deref() else {
+        return Ok(None);
+    };
+    let store = state.store.clone();
+    let workspace = workspace_id.to_owned();
+    let session_id = agent_session_id.to_owned();
+    let session = tokio::task::spawn_blocking(move || {
+        AgentSessionStore::get_agent_session(&store, &workspace, &session_id)
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?;
+    Ok(session.filter(|session| {
+        session.workspace_id == workspace_id
+            && session.scope_kind == "CONVERSATION"
+            && session.conversation_id.as_deref() == Some(conversation_id)
+            && session.conversation_turn_id.as_deref() == Some(turn.turn_id.as_str())
+            && session.runtime_id == state.runtime_id
+            && session.status == "ACTIVE"
+    }))
 }
 
 /// Read-only, bounded, ordered REPORTED activity observations for one turn attempt

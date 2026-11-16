@@ -1,7 +1,9 @@
 {
   "documents_read": 374,
-  "lines_read": 78288,
-  "sha256_document_index": "6933f9e27ef1b2e13cf7ed0c517bbdea988be7d2f554d5411745914466d5772c",
+  "lines_read": 78538,
+  "sha256_document_index": "d62ee958873aabe79ce1637709c131d1e6355ef084e4d6097d94482757083259",
   "contract_assertions": 36,
-  "issues": []
+  "issues": [
+    "SERVED INVENTORY count drift: (181, 4, 53), expected (179, 4, 54)"
+  ]
 }

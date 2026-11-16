@@ -523,6 +523,7 @@ pub(crate) struct OpenCodeAdapter {
     last_counters: NormalizerCounters,
     cancel: Option<CancelSignal>,
     observer: Option<Box<dyn TurnObserver>>,
+    control_service: Option<Box<dyn FnMut(&mut OpenCodeServer) -> Result<(), TurnFailure> + Send>>,
 }
 
 impl OpenCodeAdapter {
@@ -532,6 +533,7 @@ impl OpenCodeAdapter {
             last_counters: NormalizerCounters::default(),
             cancel: None,
             observer: None,
+            control_service: None,
         }
     }
 
@@ -544,6 +546,17 @@ impl OpenCodeAdapter {
     /// Attach the per-turn observer that sees every normalized event.
     pub(crate) fn with_observer(mut self, observer: Box<dyn TurnObserver>) -> Self {
         self.observer = Some(observer);
+        self
+    }
+
+    /// Attach the Runtime-owned command service. It runs only on this active
+    /// adapter owner, before each native event poll, so HTTP handlers never call
+    /// the provider server directly.
+    pub(crate) fn with_control_service(
+        mut self,
+        service: Box<dyn FnMut(&mut OpenCodeServer) -> Result<(), TurnFailure> + Send>,
+    ) -> Self {
+        self.control_service = Some(service);
         self
     }
 
@@ -617,19 +630,30 @@ impl AgentAdapter for OpenCodeAdapter {
             .map_err(Self::map_transport_error)?;
         let mut normalizer = OpenCodeEventNormalizer::new(native_session_id);
         let cancel = self.cancel.clone();
-        let server = &mut self.server;
-        let observation = drive_opencode_stream_observed(
+        let server = std::cell::RefCell::new(&mut self.server);
+        let control_service = &mut self.control_service;
+        let observer = &mut self.observer;
+        let mut service_control = || match control_service.as_mut() {
+            Some(service) => service(&mut server.borrow_mut()),
+            None => Ok(()),
+        };
+        let mut interrupt = || {
+            server
+                .borrow_mut()
+                .abort_session(native_session_id)
+                .unwrap_or(false)
+        };
+        let observation = drive_opencode_stream_observed_with_control(
             &mut stream,
             &mut normalizer,
             budget,
             Instant::now(),
             cancel.as_ref(),
-            &mut || server.abort_session(native_session_id).unwrap_or(false),
-            self.observer
-                .as_deref_mut()
-                .map(|o| o as &mut dyn TurnObserver),
+            &mut interrupt,
+            observer.as_deref_mut().map(|o| o as &mut dyn TurnObserver),
+            &mut service_control,
         );
-        if let Some(observer) = self.observer.as_deref_mut() {
+        if let Some(observer) = observer.as_deref_mut() {
             observer.finish();
         }
         self.last_counters = normalizer.counters();
@@ -723,7 +747,32 @@ fn drive_opencode_stream_observed<S: RawEventSource>(
     started_at: Instant,
     cancel: Option<&CancelSignal>,
     interrupt: &mut dyn FnMut() -> bool,
+    observer: Option<&mut dyn TurnObserver>,
+) -> Result<TurnObservation, TurnFailure> {
+    drive_opencode_stream_observed_with_control(
+        stream,
+        normalizer,
+        budget,
+        started_at,
+        cancel,
+        interrupt,
+        observer,
+        &mut || Ok(()),
+    )
+}
+
+/// Drives the provider stream while giving the Runtime owner one bounded chance to
+/// service attempt-scoped controls before each provider poll. The callback must not
+/// wait for new commands; it may only drain already-queued work and return its result.
+fn drive_opencode_stream_observed_with_control<S: RawEventSource>(
+    stream: &mut S,
+    normalizer: &mut OpenCodeEventNormalizer,
+    budget: StreamBudget,
+    started_at: Instant,
+    cancel: Option<&CancelSignal>,
+    interrupt: &mut dyn FnMut() -> bool,
     mut observer: Option<&mut dyn TurnObserver>,
+    service_control: &mut dyn FnMut() -> Result<(), TurnFailure>,
 ) -> Result<TurnObservation, TurnFailure> {
     let hard_deadline = started_at + budget.hard_ceiling;
     let mut idle_deadline = started_at + budget.idle_timeout;
@@ -756,6 +805,8 @@ fn drive_opencode_stream_observed<S: RawEventSource>(
             return Err(TurnFailure::Timeout);
         }
         let stopping = quiescence_deadline.is_some();
+
+        service_control()?;
 
         match stream.next_raw(budget.poll_interval) {
             Ok(Some(event)) => {
@@ -927,10 +978,7 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
 
         struct ControlObservedSource(Arc<AtomicUsize>);
         impl RawEventSource for ControlObservedSource {
-            fn next_raw(
-                &mut self,
-                _timeout: Duration,
-            ) -> Result<Option<RawEvent>, OpenCodeError> {
+            fn next_raw(&mut self, _timeout: Duration) -> Result<Option<RawEvent>, OpenCodeError> {
                 assert!(
                     self.0.load(Ordering::SeqCst) > 0,
                     "Runtime control must be drained before waiting on provider events"
@@ -945,6 +993,7 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
         let control = Arc::clone(&serviced);
         let mut service_control = move || {
             control.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         };
 
         let result = drive_opencode_stream_observed_with_control(

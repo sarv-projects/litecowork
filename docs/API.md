@@ -2381,26 +2381,46 @@ turn settlement or Task completion. Frame shapes are defined in
 `GET /v1/conversations/{conversationId}/turns/{turnId}/permissions` is SERVED as a
 bounded, authenticated snapshot from the current Runtime's in-memory registry, scoped to
 the authorized Workspace, Conversation and exact persisted retry ordinal. It does not reconstruct
-actionable prompts from persisted `PERMISSION/ASKED` activity. The target
+actionable prompts from persisted `PERMISSION/ASKED` activity. The exact-turn snapshot includes
+the attempt's bounded monotonic sequence; the reply receipt includes the resulting prompt
+sequence. The
 `POST /v1/conversations/{conversationId}/turns/{turnId}/permissions/{promptToken}/reply`
-accepts only `ALLOW_ONCE` or `REJECT_SESSION_PENDING` and a principal-scoped
-`Idempotency-Key`. The Runtime binds the opaque prompt token to the exact Workspace,
-Conversation, turn, retry ordinal, Runtime incarnation, native session and native request;
-the client cannot supply provider identifiers or URLs.
+is SERVED partial. It accepts only `ALLOW_ONCE` or `REJECT_SESSION_PENDING` and a
+principal-scoped `Idempotency-Key`. The Runtime binds the opaque prompt token to the exact
+Workspace, Conversation, turn, retry ordinal, Runtime incarnation, AgentSession, native
+session and native request; the client cannot supply provider identifiers or URLs. The
+route queues a bounded command for the active turn owner. Its provider call is not verified
+against a live OpenCode process.
+
+`GET /v1/conversation-permissions` is SERVED partial for Needs You. It returns at most 256
+unresolved prompts from the current Runtime for the selected owner Workspace. Before
+projection, the route rechecks each candidate's Workspace-owned Conversation, exact RUNNING
+turn/retry ordinal and ACTIVE AgentSession/Runtime incarnation. The response is `no-store`
+and transient: it is not a durable Needs You record and is never reconstructed from activity.
+The desktop loads it on Needs You entry, refreshes when the window returns to the foreground,
+and provides an explicit refresh control. Each card can submit the same reply command directly;
+the server revalidates the complete scope before dispatch. These UI paths have CODE coverage
+but no successful live OpenCode decision or packaged-provider journey.
 
 `REJECT_SESSION_PENDING` reflects OpenCode v2.0.32 semantics: it rejects the selected
 permission and every permission pending in that same session when the provider applies the
 reply. The UI must disclose this before dispatch. Persistent `always` is excluded. The
 Runtime-local registry is not a durable permission store or LiteCowork grant. Identical
 replay within the same Runtime returns the current state; a conflicting replay conflicts.
-After an ambiguous provider reply, reconcile through the exact session's pending list/get
-route. If the request remains pending, restore the action; if its state cannot be proved,
-return `OUTCOME_UNKNOWN` without replaying the answer. Runtime restart invalidates tokens
-and never replays a decision. `turn.permission` is a bounded transient stream frame; it
-contains no native session/request ID, raw metadata or absolute resource path. The
-POST operation remains TARGET until its authenticated handler is integrated. The GET route
-being SERVED does not imply a UI caller, live native event, provider answer path or
-qualification; the full T27 journey remains incomplete.
+After an ambiguous provider reply, the active owner reconciles once through the exact
+session's pending list. If a known request remains pending, it stays PENDING and the attempted
+decision is cleared; if its state cannot be proved, it becomes `OUTCOME_UNKNOWN` without
+replaying the answer. The registry allows 32 prompt records per attempt and 256 across
+retained Runtime scopes; exact-scope mailbox teardown publishes `SESSION_ENDED` updates before
+removing that attempt's records and tokens so sequential turns do not exhaust the Runtime cap.
+Runtime restart invalidates tokens and never replays a decision. `turn.permission` is a bounded
+transient stream frame; it contains no native session/request ID, raw metadata or absolute
+resource path. A single monotonically increasing sequence covers prompt registration and
+visible state changes for one attempt. Clients ignore duplicate/old frames, fetch the exact
+attempt snapshot on a gap, and do not treat an uncertain receipt as a reason to resend. The
+Tauri bridge and Conversation/Needs You controls have CODE coverage, including stale,
+malformed and bounded projections. No successful real-provider decision, packaged journey,
+or qualification exists; T27 remains PARTIAL.
 
 Workspace errors include WORKSPACE_ARCHIVED for writes to an archived Workspace and WORKSPACE_NOT_QUIESCENT when archive is requested while durable work, authority, or provider state remains unsettled. Its safe `details.blockers` list identifies blocker kinds and counts. A stale policy update returns STALE_WORKSPACE_VERSION. SELECTED_FOLDERS without one or more active same-Workspace root IDs returns INVALID_ARGUMENT; a missing, revoked, or unavailable selected root returns the corresponding typed resource error.
 
