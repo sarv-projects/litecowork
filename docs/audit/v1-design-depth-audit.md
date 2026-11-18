@@ -84,7 +84,7 @@ a durable owner operation. See docs/IMPLEMENTATION-STATUS.md and docs/SEMANTIC-S
 | capabilities/zip_intake/README.md | 133 | 4 | 1f783a3eb9cd |
 | CONTRIBUTING.md | 81 | 7 | 2fc07511243a |
 | crates/domain-responsibility/README.md | 137 | 5 | fb9f8d2eaaab |
-| CURRENT-RUN.md | 1284 | 140 | bff0c1039057 |
+| CURRENT-RUN.md | 1284 | 140 | 94a5d3e8d222 |
 | docs/ACCEPTANCE-AND-E2E-PLAN.md | 152 | 11 | 62af75ec7d4a |
 | docs/ACP-PRESENTATION-PIPELINE-LLD.md | 134 | 12 | 6994da4bf79b |
 | docs/adr/0001-durable-task-core.md | 23 | 4 | be124ace88b6 |
