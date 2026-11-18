@@ -297,6 +297,29 @@ mod linux {
             &self.unit
         }
 
+        /// Wait for a trusted in-scope runner to announce that the exact Bubblewrap
+        /// Environment is live and idle. Any malformed, missing, or timed-out marker
+        /// aborts the owned scope and retains cleanup ownership if quiescence is unknown.
+        pub(crate) fn wait_for_held_environment_ready(
+            mut self,
+            timeout: Duration,
+        ) -> Result<Self, ScopeError> {
+            let Some(stdout) = self.child.stdout.take() else {
+                return Err(fail_scope(
+                    self,
+                    ScopeError::Control("held Environment stdout was not piped".into()),
+                    timeout,
+                ));
+            };
+            match wait_for_marker(stdout, super::admission_protocol::READY, timeout) {
+                Ok(stdout) => {
+                    self.child.stdout = Some(stdout);
+                    Ok(self)
+                }
+                Err(error) => Err(fail_scope(self, error, timeout)),
+            }
+        }
+
         /// Pipe handles are the worker's inherited descriptors after systemd-run execs it.
         /// Callers must drain stdout and stderr concurrently or the worker can block when
         /// either pipe fills.
@@ -1751,32 +1774,48 @@ mod linux {
             assert!(matches!(*pending, PendingCleanup::AttemptSlice { .. }));
             fs::remove_file(&slice_events).expect("make quiescence proof unavailable");
             assert!(matches!(
-                pending.retry_stop(Duration::from_millis(20)),
-                Err(ScopeError::QuiescenceTimeout)
+                pending.retry_stop(Duration::from_millis(250)),
+                Err(ScopeError::QuiescenceTimeout | ScopeError::QuiescenceUnobservable)
             ));
             assert!(matches!(
-                pending.retry_stop(Duration::from_millis(20)),
-                Err(ScopeError::QuiescenceTimeout)
+                pending.retry_stop(Duration::from_millis(250)),
+                Err(ScopeError::QuiescenceTimeout | ScopeError::QuiescenceUnobservable)
             ));
             fs::write(&slice_events, "populated 0\n").expect("restore positive empty proof");
             pending
                 .retry_stop(Duration::from_secs(1))
                 .expect("later retry settles after positive proof returns");
             assert_eq!(launch_calls.get(), 1, "retry never launches a worker");
+            let calls = fs::read_to_string(log)
+                .expect("stop attempts and quiescence checks were logged")
+                .lines()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let stop_indexes = calls
+                .iter()
+                .enumerate()
+                .filter_map(|(index, call)| call.starts_with("stop ").then_some(index))
+                .collect::<Vec<_>>();
             assert_eq!(
-                fs::read_to_string(log)
-                    .expect("both stop attempts were logged")
-                    .lines()
-                    .collect::<Vec<_>>(),
-                [
-                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
-                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
-                    "show --value",
-                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
-                    "show --value",
-                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
-                    "show --value",
-                ]
+                stop_indexes.len(),
+                4,
+                "initial cleanup and all three exact-slice retries must issue stop"
+            );
+            // The first retry follows the original failed stop immediately; each
+            // subsequent retry must follow the prior retry's quiescence attempt.
+            for pair in stop_indexes.windows(2).skip(1) {
+                assert!(
+                    calls[pair[0] + 1..pair[1]]
+                        .iter()
+                        .any(|call| call == "show --value"),
+                    "a retry must attempt a quiescence observation before the next stop: {calls:?}"
+                );
+            }
+            assert!(
+                calls[stop_indexes[3] + 1..]
+                    .iter()
+                    .any(|call| call == "show --value"),
+                "the final stop must be followed by a positive quiescence observation"
             );
         }
 
@@ -2175,6 +2214,60 @@ mod bubblewrap;
 
 mod provider_probe;
 
+pub mod output_channel;
+
+/// One-shot protocol for keeping a fully placed Bubblewrap scope idle until the
+/// admission transaction has committed. This protocol transports no credentials or
+/// authority; the caller must separately prove the exact durable admission receipt.
+pub mod admission_protocol {
+    use std::io::{self, Read, Write};
+
+    pub const READY: &[u8] = b"LITECOWORK_HELD_ENVIRONMENT_READY_V1\n";
+    pub const START_AFTER_RECEIPT: &[u8] = b"LITECOWORK_START_AFTER_RECEIPT_V1\n";
+
+    /// Announce that the trusted runner is live in its requested scope, then block until
+    /// the Runtime sends the one exact post-receipt launch signal.
+    pub fn wait_for_admission(input: &mut impl Read, output: &mut impl Write) -> io::Result<()> {
+        output.write_all(READY)?;
+        output.flush()?;
+
+        let mut signal = vec![0; START_AFTER_RECEIPT.len()];
+        input.read_exact(&mut signal)?;
+        if signal != START_AFTER_RECEIPT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "held Environment admission signal is invalid",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod admission_protocol_tests {
+    use std::io::Cursor;
+
+    #[test]
+    fn held_runner_announces_readiness_and_requires_exact_admission_signal() {
+        let mut input = Cursor::new(super::admission_protocol::START_AFTER_RECEIPT);
+        let mut output = Vec::new();
+
+        super::admission_protocol::wait_for_admission(&mut input, &mut output)
+            .expect("exact admission signal is accepted");
+
+        assert_eq!(output, super::admission_protocol::READY);
+    }
+
+    #[test]
+    fn held_runner_refuses_any_other_admission_signal() {
+        let mut input = Cursor::new(b"START\n".as_slice());
+        let mut output = Vec::new();
+
+        assert!(super::admission_protocol::wait_for_admission(&mut input, &mut output).is_err());
+        assert_eq!(output, super::admission_protocol::READY);
+    }
+}
+
 pub use provider_probe::{
     BubblewrapCandidate, LocalProviderProbe, bubblewrap_binary_is_trusted, cgroup_v2_available,
     current_cgroup_path, operating_system_build, probe_local_provider, systemd_available,
@@ -2183,8 +2276,9 @@ pub use provider_probe::{
 
 #[cfg(target_os = "linux")]
 pub use bubblewrap::{
-    BubblewrapLaunchSpec, PreparedBubblewrapCommand, ReadOnlyRuntimeMount,
-    prepare_bubblewrap_command, spawn_bubblewrapped,
+    BubblewrapLaunchSpec, CandidateCaptureSpec, HeldEnvironmentScope, MAX_SCRATCH_BYTES,
+    PreparedBubblewrapCommand, ReadOnlyRuntimeMount, prepare_bubblewrap_capture_command,
+    prepare_bubblewrap_command, spawn_bubblewrapped, spawn_bubblewrapped_held,
 };
 
 #[cfg(not(target_os = "linux"))]

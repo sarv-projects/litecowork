@@ -342,6 +342,20 @@ ArtifactVersion records.
 
 Library is a projection over durable resources. Saving/promoting is explicit. Linked external resources may appear in Library without copying bytes, but their external revision must be shown.
 
+### Saved Views — Feature 007 revision 1.1 TARGET amendment
+
+On 2026-11-17 the product owner directed that Saved Views remain in V1 and Feature 007 B-21 be amended. The base revision 1.0 contract remains locked; this narrow amendment is IN_REVIEW pending Artifact, Storage, Conversation, Privacy, Backup and Product review, plus Feature 016 T01/T02 promotion.
+
+A Saved View is a distinct Artifact kind (`SAVED_VIEW`) with the single media type `application/vnd.litecowork.saved-view+json`. It is a bounded, canonical data snapshot of one eligible committed RichPresentation, its exact Conversation/message/presentation lineage and digest, and the exact semantic text fallback. It uses the [Saved View envelope schema](schemas/saved-view-artifact.schema.json), embeds the one canonical RichPresentation schema, caps the complete envelope at 2 MiB, RichPresentation at 512 KiB and semantic text at 1 MiB UTF-8. It is not a Markdown document, arbitrary JSON Artifact, executable app, or new presentation schema.
+
+This representation preserves accepted Feature 016 B-40: a Saved View stores the values declared by the immutable RichPresentation, but never calculator values changed during an open session. Those changes remain transient, reset to the declared defaults on reopen, and are not automatically sent to a native agent. Any future changed-state persistence or input sharing requires a separate B-40/B-46 owner decision.
+
+The user selects **Save to Library** for a committed exact message/presentation. The daemon re-reads both owner records, checks Workspace and source-deletion fencing, validates the single canonical RichPresentation profile and self-contained-data rules, constructs canonical bytes, then uses the existing ArtifactStore create transaction to commit Artifact, backing ARTIFACT Resource, ResourceRevision 1, ArtifactVersion 1, provenance, snapshot, existing Artifact/Resource creation events and the principal-scoped idempotency receipt. This explicit source kind alone may create directly in SAVED status; other create status semantics do not change. No separate SavedView table, event, ID, receipt store or live dependency edge is added.
+
+Open reauthorizes and reads an exact immutable version; it never follows a newer head or invokes the source agent. Update requires a new committed eligible presentation in the same Conversation, explicit review and a version append under both Artifact and Resource expected heads. A new Conversation creates a new Saved View. Archive reuses the existing Artifact lifecycle; V1 has no hard Delete, native Save As or export of the internal JSON. Conversation deletion does not delete the self-contained Saved View; Feature 014 masks/marks its source link. Events and receipts contain bounded IDs, versions and digests, never answer text, presentation bytes, or user-entered component state.
+
+Target API operations are owned by Feature 007: `POST /v1/artifacts` with exact Saved View source references and no client-supplied content; the existing exact-version read routes; a Library kind filter; a Saved View version append referencing a newly committed same-Conversation presentation; and the existing archive operation. They are not in OpenAPI or source today and must be promoted with validators, generated types, task scopes and UI trace before implementation.
+
 ## Retention and integrity
 
 ArtifactVersion content is content-addressed. A blob is eligible for garbage collection

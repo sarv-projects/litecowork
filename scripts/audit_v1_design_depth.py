@@ -22,6 +22,7 @@ SKIP = {
     ".git", "node_modules", "target", ".venv", ".pytest_cache", "dist", "build",
     "coverage", ".cache", ".next", ".zwork", ".worktrees", ".agent-worktrees",
     ".agents", "archives", "archive", "repo_take", "reading", "staging_tar", "audit",
+    "audit-output",
 }
 OWNER = {
     "Product and release": ("docs/PRODUCT.md", "docs/V1-PRODUCT-RELEASE-CONTRACT.md", "docs/PRODUCT-STRATEGY.md"),

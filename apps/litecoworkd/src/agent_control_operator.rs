@@ -14,7 +14,7 @@ use crate::agents::descriptor_service::{AgentDescriptorService, RefreshError};
 use crate::agents::module_registry::AgentModuleManifest;
 use axum::response::IntoResponse;
 use axum::{
-    Router,
+    Json, Router,
     body::Body,
     extract::{FromRef, Path, State},
     http::{HeaderMap, Request, StatusCode, header},
@@ -23,7 +23,7 @@ use axum::{
     routing::{get, post},
 };
 use std::sync::Arc;
-use storage_core::AgentCatalogStore;
+use storage_core::{AgentBindingRecord, AgentCatalogStore, AgentProfileViewRecord};
 
 #[derive(Clone)]
 pub(super) struct AgentControlApiState {
@@ -75,6 +75,14 @@ where
     AgentControlApiState: FromRef<S>,
 {
     Router::new()
+        .route(
+            "/v1/agent-bindings/{agent_binding_id}/session-options",
+            get(get_agent_session_options),
+        )
+        .route(
+            "/v1/agent-bindings/{agent_binding_id}/harness-capabilities",
+            get(get_agent_harness_capabilities),
+        )
         .route(
             "/v1/agent-profiles/{agent_profile_id}/control-descriptor",
             get(get_control_descriptor),
@@ -181,6 +189,274 @@ async fn refresh_control_descriptor(
         ),
         Err(_) => unavailable(),
     }
+}
+
+async fn get_agent_session_options(
+    State(state): State<AgentControlApiState>,
+    headers: HeaderMap,
+    Path(agent_binding_id): Path<String>,
+) -> Response {
+    let (binding, _profile) = match binding_profile(&state, &headers, &agent_binding_id).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    let descriptor = match fresh_descriptor(&state, &headers, &binding.agent_profile_id).await {
+        Ok(descriptor) => descriptor,
+        Err(response) => return response,
+    };
+    if binding
+        .runtime_id
+        .as_deref()
+        .is_some_and(|runtime_id| runtime_id != state.runtime_id)
+    {
+        return unavailable();
+    }
+    // An absent session-options descriptor is a valid empty projection, but only
+    // after the same fresh, module-owned descriptor has been loaded and validated.
+    let options = descriptor
+        .session_options
+        .map(|projection| projection.options)
+        .unwrap_or_default();
+    Json(serde_json::json!({
+        "agent_binding_id": binding.agent_binding_id,
+        "descriptor_digest": descriptor.descriptor_digest,
+        "observed_at": descriptor.observed_at,
+        "expires_at": descriptor.expires_at,
+        "options": options,
+    }))
+    .into_response()
+}
+
+async fn get_agent_harness_capabilities(
+    State(state): State<AgentControlApiState>,
+    headers: HeaderMap,
+    Path(agent_binding_id): Path<String>,
+) -> Response {
+    let (binding, profile) = match binding_profile(&state, &headers, &agent_binding_id).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    if binding
+        .runtime_id
+        .as_deref()
+        .is_some_and(|runtime_id| runtime_id != state.runtime_id)
+    {
+        return unavailable_capabilities();
+    }
+    let descriptor = match fresh_descriptor(&state, &headers, &binding.agent_profile_id).await {
+        Ok(descriptor) => descriptor,
+        Err(response) => return response,
+    };
+    if descriptor.installation.runtime_id != state.runtime_id
+        || descriptor.installation.runtime_incarnation_id != state.local_incarnation_id
+    {
+        return unavailable_capabilities();
+    }
+    let Some((endpoint_id, offer_expires_at)) = matching_current_endpoint(
+        &binding,
+        &profile,
+        &descriptor,
+        &state.runtime_id,
+        &state.local_incarnation_id,
+    ) else {
+        return unavailable_capabilities();
+    };
+    let Some(expires_at) = earlier_timestamp(&descriptor.expires_at, &offer_expires_at) else {
+        return unavailable_capabilities();
+    };
+    let Ok(features) = serde_json::to_value(&descriptor.capabilities) else {
+        return unavailable_capabilities();
+    };
+    // The exact adapter descriptor and the Runtime offer are both needed for this
+    // projection. The shorter expiry fences the combined observation. Binding
+    // configuration has no qualified effective-config adapter yet, so it is null.
+    Json(serde_json::json!({
+        "agent_binding_id": binding.agent_binding_id,
+        "endpoint_id": endpoint_id,
+        "harness_version": descriptor.harness_version,
+        "protocol_version": descriptor.protocol_version,
+        "descriptor_digest": descriptor.descriptor_digest,
+        "effective_config_digest": null,
+        "features": features,
+        "observed_at": descriptor.observed_at,
+        "expires_at": expires_at,
+    }))
+    .into_response()
+}
+
+/// Loads only an owner-scoped Workspace binding and the profile projection it names.
+/// Neither lookup manufactures a descriptor or grants use of a disabled binding.
+async fn binding_profile(
+    state: &AgentControlApiState,
+    headers: &HeaderMap,
+    agent_binding_id: &str,
+) -> Result<(AgentBindingRecord, AgentProfileViewRecord), Response> {
+    if agent_binding_id.trim().is_empty()
+        || agent_binding_id.len() > 256
+        || agent_binding_id.chars().any(char::is_control)
+        || agent_binding_id.contains('/')
+        || agent_binding_id.contains('\\')
+    {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Agent binding ID is invalid",
+        ));
+    }
+    let workspace_id = selected_workspace(headers)?;
+    let now = super::operator_now()?;
+    let store = state.store.clone();
+    let principal = state.principal_id.clone();
+    let binding_id = agent_binding_id.to_owned();
+    let now_for_lookup = now.clone();
+    tokio::task::spawn_blocking(move || {
+        ensure_workspace_owner_for(&store, &principal, &workspace_id)?;
+        let binding = store
+            .get_agent_binding(&principal, &workspace_id, &binding_id)
+            .map_err(|error| {
+                map_agent_store_error(error, "Workspace agent binding is unavailable")
+            })?
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Workspace agent binding is unavailable",
+                )
+            })?;
+        let profile = store
+            .list_agent_profiles(&principal, &workspace_id, &now_for_lookup)
+            .map_err(|error| map_agent_store_error(error, "Agent profiles are unavailable"))?
+            .into_iter()
+            .find(|view| view.profile.agent_profile_id == binding.agent_profile_id)
+            .ok_or_else(unavailable_profile)?;
+        Ok((binding, profile))
+    })
+    .await
+    .map_err(|_| unavailable())?
+}
+
+/// Capabilities are returned only when the profile has one unambiguous current
+/// endpoint under this binding's endpoint policy, and the endpoint's public
+/// capability projection exactly matches the fresh AgentModule descriptor.
+fn matching_current_endpoint(
+    binding: &AgentBindingRecord,
+    profile: &AgentProfileViewRecord,
+    descriptor: &crate::agents::control_descriptor::AgentControlDescriptor,
+    runtime_id: &str,
+    incarnation_id: &str,
+) -> Option<(String, String)> {
+    let policy = binding.endpoint_selection_policy.as_object()?;
+    // Older persisted rows can omit mode and use AUTO_COMPATIBLE, matching the
+    // dispatch contract's legacy default. A present but malformed mode is corrupt
+    // policy and must not widen the candidate set.
+    let mode = match policy.get("mode") {
+        None => "AUTO_COMPATIBLE",
+        Some(value) => value.as_str()?,
+    };
+    let pinned_endpoint = match mode {
+        "AUTO_COMPATIBLE" => None,
+        "PINNED_ENDPOINT" => Some(policy.get("endpoint_id")?.as_str()?),
+        _ => return None,
+    };
+    let required_features = match policy.get("required_features") {
+        Some(value) => value.as_array()?.as_slice(),
+        None => &[],
+    };
+    let descriptor_capabilities = serde_json::to_value(&descriptor.capabilities).ok()?;
+    let mut match_value = None;
+    for endpoint_view in &profile.endpoints {
+        let endpoint = &endpoint_view.endpoint;
+        if endpoint.agent_profile_id != binding.agent_profile_id
+            || pinned_endpoint.is_some_and(|pinned| pinned != endpoint.endpoint_id)
+            || endpoint.protocol_version != descriptor.protocol_version
+            || !capability_projection_matches(&endpoint.capabilities, &descriptor_capabilities, "")
+            || !capability_enabled(&endpoint.capabilities, "input.text")
+            || !required_features.iter().all(|feature| {
+                feature
+                    .as_str()
+                    .is_some_and(|feature| capability_enabled(&endpoint.capabilities, feature))
+            })
+        {
+            continue;
+        }
+        for offer in &endpoint_view.offers {
+            if offer.runtime_id != runtime_id
+                || offer.runtime_incarnation_id != incarnation_id
+                || offer.offer_ref != endpoint.endpoint_id
+                || !offer.compatible
+                || !matches!(offer.readiness.as_str(), "READY" | "STARTABLE")
+            {
+                continue;
+            }
+            if match_value.is_some() {
+                // Route selection belongs to the owning admission service. A
+                // presentation projection must not guess among multiple routes.
+                return None;
+            }
+            match_value = Some((endpoint.endpoint_id.clone(), offer.expires_at.clone()));
+        }
+    }
+    match_value
+}
+
+/// Endpoint readiness and descriptor capabilities use related, but non-identical,
+/// public projections. Require every descriptor field that the endpoint contract
+/// also defines to match; `session.model_switch` is descriptor-only and therefore
+/// cannot be used to reject an otherwise matching endpoint. Extra endpoint fields
+/// are not promoted into this response.
+fn capability_projection_matches(
+    endpoint: &serde_json::Value,
+    descriptor: &serde_json::Value,
+    parent: &str,
+) -> bool {
+    let (Some(endpoint_object), Some(descriptor_object)) =
+        (endpoint.as_object(), descriptor.as_object())
+    else {
+        return endpoint == descriptor;
+    };
+    descriptor_object.iter().all(|(key, expected)| {
+        let path = if parent.is_empty() {
+            key.clone()
+        } else {
+            format!("{parent}.{key}")
+        };
+        if path == "session.model_switch" {
+            return true;
+        }
+        endpoint_object
+            .get(key)
+            .is_some_and(|actual| capability_projection_matches(actual, expected, &path))
+    })
+}
+
+fn capability_enabled(capabilities: &serde_json::Value, feature: &str) -> bool {
+    let mut current = capabilities;
+    for segment in feature.split('.') {
+        let Some(next) = current.get(segment) else {
+            return false;
+        };
+        current = next;
+    }
+    current.as_bool() == Some(true)
+}
+
+fn earlier_timestamp(first: &str, second: &str) -> Option<String> {
+    let format = &time::format_description::well_known::Rfc3339;
+    let first = time::OffsetDateTime::parse(first, format).ok()?;
+    let second = time::OffsetDateTime::parse(second, format).ok()?;
+    Some(
+        if first <= second { first } else { second }
+            .format(format)
+            .ok()?,
+    )
+}
+
+fn unavailable_capabilities() -> Response {
+    operator_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "DEPENDENCY_UNAVAILABLE",
+        "Current harness capabilities are unavailable for this binding",
+    )
 }
 
 /// Validates the path, authorizes the Workspace owner, and resolves the profile's
@@ -307,6 +583,7 @@ mod tests {
     use super::*;
     use axum::{body::to_bytes, http::Request};
     use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
+    use rusqlite::Connection;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::{fs, sync::Arc, time::Duration};
@@ -529,10 +806,21 @@ mod tests {
                     protocol: "API".to_owned(),
                     topology: "PROCESS_ADAPTER".to_owned(),
                     protocol_version: Some("2.0.32".to_owned()),
-                    capabilities: serde_json::json!({"input.text":true}),
+                    capabilities: super::super::opencode_endpoint_capabilities(Some("2.0.32")),
                 }],
             )
             .expect("OpenCode profile persists");
+    }
+
+    fn seed_binding(directory: &tempfile::TempDir, binding_id: &str, policy: &str) {
+        let connection = Connection::open(directory.path().join("state.sqlite3"))
+            .expect("binding fixture connection opens");
+        connection
+            .execute(
+                "INSERT INTO agent_bindings(agent_binding_id,workspace_id,agent_profile_id,runtime_id,endpoint_selection_policy_json,auth_ref,configuration_json,enabled,lead_eligible,created_at,version) VALUES(?1,?2,'profile-opencode',?3,?4,NULL,'{}',0,1,?5,1)",
+                rusqlite::params![binding_id, WORKSPACE, RUNTIME, policy, NOW],
+            )
+            .expect("test AgentBinding persists");
     }
 
     fn opencode_router(
@@ -737,5 +1025,223 @@ mod tests {
         )
         .await;
         assert_eq!(served.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn session_options_are_projected_only_from_a_fresh_descriptor_for_the_workspace_binding()
+    {
+        let (directory, store) = fixture();
+        seed_runtime(&store);
+        seed_opencode_profile(&store);
+        seed_binding(
+            &directory,
+            "binding-opencode-options",
+            r#"{"mode":"AUTO_COMPATIBLE","required_features":[],"preferred_topologies":[]}"#,
+        );
+        let router = opencode_router(store, Some("2.0.32"));
+        let path = "/v1/agent-bindings/binding-opencode-options/session-options";
+
+        let missing = request(&router, path).await;
+        assert_eq!(missing.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(missing.headers()[header::CACHE_CONTROL], "no-store");
+
+        refresh_opencode(&router).await;
+        let response = request(&router, path).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 32 * 1024)
+                .await
+                .expect("bounded projection body"),
+        )
+        .expect("session options JSON");
+        assert_eq!(body["agent_binding_id"], "binding-opencode-options");
+        assert!(
+            body["descriptor_digest"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert!(body["observed_at"].is_string());
+        assert!(body["expires_at"].is_string());
+        assert_eq!(body["options"], serde_json::json!([]));
+
+        let absent = request(
+            &router,
+            "/v1/agent-bindings/foreign-binding/session-options",
+        )
+        .await;
+        assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+        assert_eq!(absent.headers()[header::CACHE_CONTROL], "no-store");
+    }
+
+    #[tokio::test]
+    async fn credential_descriptor_source_reads_the_same_fresh_stored_module_descriptor() {
+        use super::super::agent_credentials_routes::{
+            CurrentAgentDescriptorSource, StoredAgentDescriptorSource,
+        };
+
+        let (_directory, store) = fixture();
+        seed_runtime(&store);
+        seed_opencode_profile(&store);
+        let service = opencode_service();
+        let router = test_router_with(store.clone(), OWNER.to_owned(), service.clone());
+        refresh_opencode(&router).await;
+        let source = StoredAgentDescriptorSource::new(
+            store,
+            OWNER.to_owned(),
+            RUNTIME.to_owned(),
+            "agent-control-incarnation".to_owned(),
+            service,
+        );
+        let descriptor = source
+            .current_descriptor(WORKSPACE, "profile-opencode", std::time::SystemTime::now())
+            .expect("source read succeeds")
+            .expect("fresh stored OpenCode descriptor is returned");
+        assert_eq!(descriptor.module_id, "opencode");
+        assert_eq!(
+            descriptor.auth.state,
+            crate::agents::control_descriptor::AgentAuthState::Unknown
+        );
+        assert_eq!(descriptor.installation.runtime_id, RUNTIME);
+        assert_eq!(
+            descriptor.installation.runtime_incarnation_id,
+            "agent-control-incarnation"
+        );
+    }
+
+    #[tokio::test]
+    async fn harness_capabilities_require_one_current_binding_endpoint_matching_the_descriptor() {
+        use storage_core::{
+            AgentCatalogStore as _, LocalAgentEndpointBindingInput, RuntimeIncarnationStateUpdate,
+            RuntimeLifecycleStore, RuntimeOfferRecord, RuntimeWorkspaceBindingStore, StateStore,
+            WorkspaceCreateRequest,
+        };
+
+        let (directory, store) = fixture();
+        seed_runtime(&store);
+        seed_opencode_profile(&store);
+        seed_binding(
+            &directory,
+            "binding-opencode-capabilities",
+            r#"{"mode":"AUTO_COMPATIBLE","required_features":[],"preferred_topologies":[]}"#,
+        );
+        seed_binding(
+            &directory,
+            "binding-opencode-malformed-policy",
+            r#"{"mode":"AUTO_COMPATIBLE","required_features":"input.text","preferred_topologies":[]}"#,
+        );
+        store
+            .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: "agent-control-incarnation".to_owned(),
+                expected_version: 1,
+                recovery_state: "DEGRADED".to_owned(),
+                availability: "DEGRADED".to_owned(),
+                observed_at: NOW.to_owned(),
+                stopped_at: None,
+            })
+            .expect("Runtime becomes control-plane available");
+        let workspace_version = store
+            .get_workspace(WORKSPACE)
+            .expect("Workspace reads")
+            .expect("Workspace exists")
+            .version;
+        store
+            .enroll_local_runtime(storage_core::LocalRuntimeWorkspaceEnrollmentRequest {
+                request: WorkspaceCreateRequest {
+                    principal_id: OWNER.to_owned(),
+                    request_id: "agent-control-enroll-runtime".to_owned(),
+                    request_payload: serde_json::json!({"workspace_id": WORKSPACE}),
+                },
+                expected_workspace_version: workspace_version,
+                runtime_workspace_binding_id: "agent-control-runtime-binding".to_owned(),
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: "agent-control-incarnation".to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                now: NOW.to_owned(),
+                correlation_id: "agent-control-runtime-enrollment".to_owned(),
+            })
+            .expect("Runtime is enrolled in Workspace");
+        let observed_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("current timestamp formats");
+        store
+            .register_local_endpoint_binding(LocalAgentEndpointBindingInput {
+                endpoint_id: "endpoint-opencode".to_owned(),
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: "agent-control-incarnation".to_owned(),
+                endpoint_ref: "private-test-locator".to_owned(),
+                observed_at: observed_at.clone(),
+                expires_at: Some("2099-01-01T00:00:00Z".to_owned()),
+            })
+            .expect("private endpoint binding registers");
+        store
+            .publish_runtime_offer(RuntimeOfferRecord {
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: "agent-control-incarnation".to_owned(),
+                offer_kind: "AGENT_ENDPOINT".to_owned(),
+                offer_ref: "endpoint-opencode".to_owned(),
+                compatible: true,
+                readiness: "STARTABLE".to_owned(),
+                constraints: serde_json::json!({}),
+                observed_at: observed_at.clone(),
+                expires_at: "2099-01-01T00:00:00Z".to_owned(),
+            })
+            .expect("current endpoint offer publishes");
+
+        let router = opencode_router(store.clone(), Some("2.0.32"));
+        refresh_opencode(&router).await;
+        let response = request(
+            &router,
+            "/v1/agent-bindings/binding-opencode-capabilities/harness-capabilities",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(response.into_body(), 32 * 1024)
+                .await
+                .expect("bounded projection body"),
+        )
+        .expect("harness capabilities JSON");
+        assert_eq!(body["agent_binding_id"], "binding-opencode-capabilities");
+        assert_eq!(body["endpoint_id"], "endpoint-opencode");
+        assert_eq!(body["features"]["protocol"], "OPENCODE_SERVER");
+        assert_eq!(body["features"]["input"]["text"], true);
+        assert_eq!(body["effective_config_digest"], serde_json::Value::Null);
+        assert!(body["observed_at"].is_string());
+        assert!(body["expires_at"].is_string());
+        let text = body.to_string();
+        assert!(!text.contains("private-test-locator"));
+
+        let malformed_policy = request(
+            &router,
+            "/v1/agent-bindings/binding-opencode-malformed-policy/harness-capabilities",
+        )
+        .await;
+        assert_eq!(malformed_policy.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let no_offer_router = opencode_router(store.clone(), Some("2.0.32"));
+        store
+            .publish_runtime_offer(RuntimeOfferRecord {
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: "agent-control-incarnation".to_owned(),
+                offer_kind: "AGENT_ENDPOINT".to_owned(),
+                offer_ref: "endpoint-opencode".to_owned(),
+                compatible: false,
+                readiness: "UNAVAILABLE".to_owned(),
+                constraints: serde_json::json!({}),
+                observed_at,
+                expires_at: "2099-01-01T00:00:00Z".to_owned(),
+            })
+            .expect("offer withdrawal state persists");
+        let unavailable = request(
+            &no_offer_router,
+            "/v1/agent-bindings/binding-opencode-capabilities/harness-capabilities",
+        )
+        .await;
+        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(unavailable.headers()[header::CACHE_CONTROL], "no-store");
     }
 }

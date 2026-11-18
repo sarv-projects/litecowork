@@ -1,8 +1,9 @@
 //! Authenticated Operator boundary for descriptor-scoped credential submission.
 //!
-//! This endpoint intentionally fails closed until a production AgentModule
-//! descriptor source is registered. Catalog observations and client-supplied
-//! descriptor digests cannot authorize writes to the local OS SecretStore.
+//! This endpoint reads only a fresh stored AgentModule descriptor and still
+//! fails closed until durable cross-store replay receipts are available. Catalog
+//! observations and client-supplied descriptor digests cannot authorize writes
+//! to the local OS SecretStore.
 
 #![allow(clippy::result_large_err)]
 
@@ -11,6 +12,7 @@ use crate::agent_credentials_operator::{
     validate_agent_credential_request,
 };
 use crate::agents::control_descriptor::AgentControlDescriptor;
+use crate::agents::descriptor_service::AgentDescriptorService;
 use axum::{
     Json, Router,
     body::Body,
@@ -27,8 +29,8 @@ const MAX_PROFILE_ID_BYTES: usize = 512;
 const MAX_SLOT_ID_BYTES: usize = 128;
 
 /// A descriptor is accepted only from this Runtime-owned module boundary. The
-/// production source returns unavailable until a trusted AgentModule registry is
-/// wired; request data is never used to construct the descriptor.
+/// production source reads the exact fresh descriptor stored for the current
+/// Runtime incarnation; request data is never used to construct it.
 pub(crate) trait CurrentAgentDescriptorSource: Send + Sync {
     fn current_descriptor(
         &self,
@@ -52,21 +54,79 @@ impl FromRef<crate::operator::ApiState> for CredentialSubmissionApiState {
             store: state.store.clone(),
             principal_id: state.principal_id.clone(),
             secret_store: Arc::new(storage_sqlite::OsSecretStore),
-            descriptor_source: Arc::new(NoAgentDescriptorSource),
+            descriptor_source: Arc::new(StoredAgentDescriptorSource::new(
+                state.store.clone(),
+                state.principal_id.clone(),
+                state.runtime_id.clone(),
+                state.local_incarnation_id.clone(),
+                AgentDescriptorService::shared(),
+            )),
         }
     }
 }
 
-struct NoAgentDescriptorSource;
+/// Reads only the latest fresh descriptor persisted for the trusted module and this
+/// Runtime incarnation. Request data can select a profile but cannot author a descriptor.
+pub(crate) struct StoredAgentDescriptorSource {
+    store: crate::operator::SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+    local_incarnation_id: String,
+    service: Arc<AgentDescriptorService>,
+}
 
-impl CurrentAgentDescriptorSource for NoAgentDescriptorSource {
+impl StoredAgentDescriptorSource {
+    pub(crate) fn new(
+        store: crate::operator::SqliteWorkspaceStore,
+        principal_id: String,
+        runtime_id: String,
+        local_incarnation_id: String,
+        service: Arc<AgentDescriptorService>,
+    ) -> Self {
+        Self {
+            store,
+            principal_id,
+            runtime_id,
+            local_incarnation_id,
+            service,
+        }
+    }
+}
+
+impl CurrentAgentDescriptorSource for StoredAgentDescriptorSource {
     fn current_descriptor(
         &self,
-        _workspace_id: &str,
-        _agent_profile_id: &str,
-        _now: SystemTime,
+        workspace_id: &str,
+        agent_profile_id: &str,
+        now: SystemTime,
     ) -> Result<Option<AgentControlDescriptor>, ()> {
-        Ok(None)
+        let now: time::OffsetDateTime = now.into();
+        let now = now
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|_| ())?;
+        crate::operator::ensure_workspace_owner_for(&self.store, &self.principal_id, workspace_id)
+            .map_err(|_| ())?;
+        let profile = self
+            .store
+            .list_agent_profiles(&self.principal_id, workspace_id, &now)
+            .map_err(|_| ())?
+            .into_iter()
+            .find(|view| view.profile.agent_profile_id == agent_profile_id)
+            .ok_or(())?;
+        let module = self
+            .service
+            .module_for_provider(&profile.profile.provider_key)
+            .cloned()
+            .ok_or(())?;
+        self.service
+            .current(
+                &self.store,
+                &module,
+                &self.runtime_id,
+                &self.local_incarnation_id,
+                &now,
+            )
+            .map_err(|_| ())
     }
 }
 

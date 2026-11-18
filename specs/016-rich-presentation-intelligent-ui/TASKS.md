@@ -1,55 +1,55 @@
-# Tasks - Rich Presentation, Intelligent UI and Generated Media
+# Tasks - Intelligent Workspace Presentation Runtime
 
-**Feature:** 016 | **Status:** IN_REVIEW - baseline owner acceptance (AC-001..AC-019) is pending at T01; revision 0.2 extension AC-020..AC-028 is separately gated at T25. No implementation is authorized by either task's existence.
-**Spec revision:** 0.2 (proposed) | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+**Feature:** 016 | **Status:** IN_REVIEW - revision 0.4 V1 proposal (AC-001..AC-041). The owner directed Saved Views to remain in V1 and Feature 007 B-21 to be amended; T25 has a drafted cross-owner contract but review remains open before T01/T02. No implementation is authorized by either task's existence.
+**Spec revision:** 0.3 (proposed) | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 **Owners:** Presentation Runtime, Conversation, Artifacts, Storage, Operator/API, Desktop UI, Security, Accessibility, Product.
 
 Cross-package task references inside task fields are written as "Feature NNN Txx" so that each hyphenated cross-package ID appears once in this file (the structural validator rejects a repeated task ID); the hyphenated IDs are listed once in "Cross-package dependencies" below.
 
 ## Current baseline
 
-Baseline source cross-check: `main` at `8432397befc69bafd3335a0c30b2f1e9e82bef5e`, 2026-11-12. The reviewed presentation/storage/bridge source paths are unchanged from `64c435149a82ba952c6c3bf3049e26cf2d9344b1`; the intervening source diff was checked. Original B-40 scope has no new migration; T22 persistence is separately gated on allocation and review.
+Source cross-check: active source at `main` HEAD `f146bb3a187449d5348c5bf2e380c122c6d290c0` was rechecked on 2026-11-17. The validator/store/read route and Markdown/RichResponseView are partial CODE/SERVED evidence only. This design review adds no Feature 016 code. The revised proposal includes a Library Saved View only through the Feature 007 contract; it preserves B-40 transient-only changed inputs. Separate Remember/Forget persistence remains gated by B-46/T22; neither behavior exists today.
 
 - **Desktop validator:** `apps/litecowork-ui/src/presentation/rich-presentation.ts` with `MAX_DOCUMENT_BYTES = 512 * 1024`, `MAX_BLOCKS = 200`, `MAX_DEPTH = 8`, `MAX_JSON_VALUES = 30_000`, `MAX_JSON_DEPTH = 32`; accepts TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE; `renderer_contract_version` must be 1; `parseRichPresentationResponse`, `resolveRichResponseContent`.
 - **Rust validator:** `validate_metadata`, `validate_document`, `validate_block` in `crates/storage-sqlite/src/rich_presentations.rs` accept the same five V1 kinds as the desktop validator (TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE) with the same closed keys, and hold CARD titles, CALLOUT summaries and TABLE headers and cells to the committed semantic text; `MAX_RICH_PRESENTATION_BYTES = 524_288` in `crates/storage-core/src/rich_presentation.rs` matches the desktop cap and `document_size_bytes.maximum` in `docs/schemas/operator-stream.schema.json` (the doc comment no longer names a DIVIDER kind neither side accepts). `publish_rich_presentation` is called only from tests in `apps/litecoworkd/src/presentation_operator.rs`.
 - **Served reads:** `GET /v1/rich-presentations/{presentation_id}` (`get_rich_presentation`), `GET /v1/conversations/{conversation_id}/presentation`, `POST /v1/stream`; Tauri `get_rich_presentation` in `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs`.
-- **Renderer:** `apps/litecowork-ui/src/presentation/RichResponseView.tsx` (used by `ConversationsPage.tsx`) with the "Read the original response" disclosure; no chart, media or Intelligent UI. `PresentationRuntime.tsx` shows MCP_APP as unavailable.
+- **Renderer:** `apps/litecowork-ui/src/presentation/RichResponseView.tsx` (used by `ConversationsPage.tsx`) with the "Read the original response" disclosure; no chart, media or Intelligent UI. Semantic fallback uses the bounded `apps/litecowork-ui/src/artifacts/StructuredTextPreview.tsx` Markdown subset; it still has whole-message fallback for unsupported syntax, lacks GFM tables/horizontal rules/nested lists and code label/copy/highlighting, and TEXT_SLICE remains plain text. `PresentationRuntime.tsx` shows MCP_APP as unavailable.
 - **Tests:** `apps/litecowork-ui/tests/presentation-runtime-fallback.test.mjs`, `rich-presentation.test.ts`, `rich-response-view-policy.test.ts`; Rust `crates/storage-sqlite/src/rich_presentation_tests.rs`.
 - **Absent:** a shared corpus, a Rust presentation crate, CalcAst, chart and calculator components, a production binder, media ingestion, `PRESENTATION_*` error codes, an Intelligent UI schema in `docs/schemas`, an Artifact create route (Feature 007 B-30), any Interactive Artifact Runtime code. CSP in `apps/litecowork-ui/src-tauri/tauri.conf.json` is `script-src 'self'` with `img-src 'self' asset: http://asset.localhost data:`.
 
-Gaps to V1: baseline AC-001..AC-019 owner acceptance is pending at T01; revision 0.2 AC-020..AC-028 requires the separate extension decision at T25. The validator parity fix is present, but shared validation authority, a production publisher, chart/SAFE_CALCULATOR renderer, media provenance, disable preference and E2E-11 evidence on either row remain open. A-103/AC-028 is a TARGET saved-view boundary, not a save implementation.
+Gaps to proposed V1: revised-scope owner review is pending at T25/T01. The validator parity fix is present, but shared validation authority, production publisher, chart/calculator and local-control renderers, media provenance, preference wiring, Canvas controller, Saved View lifecycle and packaged evidence remain open. The product owner has selected Saved Views; Feature 007 revision 1.1 technical review and API/schema promotion remain open; no save route exists. All AC-001..AC-041 remain TARGET until accepted.
 
-## 016-T01 - Owner acceptance of the V1 baseline only
+## 016-T01 - Owner acceptance of the revised V1 scope
 
-- **Status:** BLOCKED - B-40 accepted as proposed (2026-11-10); pending owner acceptance of the V1 baseline only (AC-001..AC-019; repository owner, sarv-projects; Presentation Runtime, Product and Security prepare the decision). A-84 separates this decision from the unaccepted revision 0.2 annex.
-- **DEFERRED/BLOCKED note:** Why: baseline acceptance is pending; section 19 / AC-020..AC-028 are a separate unaccepted proposal. Unblocks when: the owner records acceptance of the V1 baseline and its explicit exclusions. Test later at: decision only.
-- **Depends on:** NONE
-- **Cross-package prerequisites:** NONE
+- **Status:** BLOCKED - owner requested a scope revision; B-40 remains the accepted calculator/state boundary and does not accept revision 0.4. Saved View product direction is now decided, but T25 cross-owner review must close before the repository owner accepts/revises the complete V1 AC set at T01.
+- **DEFERRED/BLOCKED note:** Why: no whole-feature V1 scope is accepted. Unblocks when: T25 records the Feature 007 Saved View decision; SPEC/TASKS/related contracts reflect any exclusion; then the owner records a dated decision on every included AC and rider at T01. Test later at: decision only.
+- **Depends on:** T25
+- **Cross-package prerequisites:** Feature 007 Artifact/Library owner review through T25 if Saved View remains in proposed V1.
 - **Owner:** Product, Presentation Runtime, Security; decision by the repository owner.
-- **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/` (status flip to ACCEPTED/LOCKED per the authoring brief section 2).
-- **Contract:** SPEC sections 1..18 and AC-001..AC-019 only; B-40; SPECIFICATION-STANDARD section 7; A-84.
-- **Change intent:** record the owner decision on the V1 baseline and B-40 (SAFE_CALCULATOR as the first component, CHART as static block, renderer contract version 2, Interactive Artifact Runtime PREVIEW_ONLY on both rows); if accepted, lock the baseline at revision 1.0. Explicitly exclude SPEC section 19 and AC-020..AC-028 from this decision; leave them TARGET/IN_REVIEW until the separate extension gate T25 is resolved.
+- **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/`, `docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`.
+- **Contract:** SPEC §20 and AC-001..AC-041 as revised after T25; B-40; SPECIFICATION-STANDARD §7; A-84/A-103.
+- **Change intent:** record an explicit accept/revise/defer decision for every proposed V1 capability and rider, including B-46's component-versus-host Remember/Send boundary: semantic-first presentation, canonical registered components, safe calculations/metrics, optional qualified ingress, contextual Canvas, local remembered-input state, Feature 007 Saved View lifecycle if approved, explicit conversational modification, media, preview-only executable Artifacts and exact platform qualification. If any capability is deferred, update its AC/task/UI promise before marking the package ACCEPTED/LOCKED. B-40 alone is not acceptance of this package.
 - **Acceptance:**
-  - [ ] Owner decision on baseline AC-001..AC-019 and B-40 recorded with date and any rider; the decision explicitly does not accept section 19 / AC-020..AC-028.
-  - [ ] Baseline package banners updated together; validator PASS; extension tasks remain blocked unless T25 separately accepts that scope.
+  - [ ] Dated owner decision records the exact accepted ACs, explicit exclusions, cross-owner riders and release rows for revision 0.4; no unreviewed item is implied accepted.
+  - [ ] Package banners, plan, UI/API/error contracts, wiring and acceptance packet agree with the decision; validator PASS.
   - [ ] Negative: no implementation task starts while this task is BLOCKED.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
-- **Evidence:** owner decision reference in SPEC section 5; register row for B-40 closed by the orchestrator.
-- **Stop:** owner picks a different first component; revise SPEC sections 5, 7 and 14 before any other task.
+- **Evidence:** dated owner decision in OWNER-ACCEPTANCE-REVIEW-PACKET Part 6, A-84/A-103 updates, and the exact included/excluded AC set in SPEC/TASKS.
+- **Stop:** T25 lacks an Artifact owner decision, B-46 is unaddressed, any included item lacks its owner/rider, or a deferred item remains in the V1 promise.
 
 ## 016-T02 - Promote accepted interfaces into owner docs and machine schemas
 
 - **Status:** NOT STARTED
-- **Depends on:** T01
-- **Cross-package prerequisites:** NONE
+- **Depends on:** T01, T25
+- **Cross-package prerequisites:** Feature 007/008/011/001 and Privacy/Storage owners resolve all included Saved View, Canvas, state, deletion, send and preference contracts.
 - **Owner:** Presentation Runtime, API, Events, Schemas owners.
-- **Allowed paths:** `docs/RICH-RESPONSE.md`, `docs/PRESENTATION-RUNTIME.md`, `docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md`, `docs/INTERACTIVE-ARTIFACT-RUNTIME.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/rich-presentation.schema.json`, `docs/schemas/calc-ast.schema.json` (new), `docs/schemas/presentation-intent.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, this package.
-- **Contract:** SPEC sections 5 (B-40), 7.2; AC-001, AC-002, AC-006.
-- **Change intent:** add renderer contract version 2 with `SAFE_CALCULATOR` and a V1 allowlist profile listing exactly TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE, CHART, SAFE_CALCULATOR; CHART binding restricted to `semantic_table_slice` in V1; new `calc-ast.schema.json` with node and depth limits; errors `PRESENTATION_REJECTED`, `MEDIA_TYPE_UNSUPPORTED`, `MEDIA_TOO_LARGE`; event `rich.presentation.rejected.v1`; record 512 KiB as the single document cap. Reconcile RICH-RESPONSE ("generated images or interactive controls" exclusion) with the accepted SAFE_CALCULATOR by owner prose, not by a parallel definition.
+- **Allowed paths:** `docs/RICH-RESPONSE.md`, `docs/PRESENTATION-RUNTIME.md`, `docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md`, `docs/INTERACTIVE-ARTIFACT-RUNTIME.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/ACCEPTANCE-AND-E2E-PLAN.md`, `docs/V1-UI-SCREEN-CONTRACT.md`, `docs/V1-UI-ACTION-STATE-LEDGER.md`, `docs/SEMANTIC-SERVED-UI-MAP.md`, `docs/schemas/rich-presentation.schema.json`, `docs/schemas/calc-ast.schema.json` (new), `docs/schemas/presentation-intent.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, `specs/007-professional-artifacts/`, `specs/008-workbench-browser-terminal-computer/`, `specs/011-desktop-shell-ipc-settings-runtime/`, this package.
+- **Contract:** SPEC §20 and accepted ACs; canonical Rich Response, Artifact, Workbench, state, event, API and UI owners.
+- **Change intent:** promote the accepted revision's one closed RichPresentation profile, metric semantics and source bindings, B-40 calculation AST, any B-46 local input types, policy/fallback, producer provenance, Saved View representation if T25/T01 include it, Canvas ownership, Remember/Forget contracts if included, owner errors/events and UI trace. Reconcile global Rich Response, Artifact, Workbench, privacy/retention and release contracts in the same change; do not create a parallel schema or route.
 - **Acceptance:**
-  - [ ] Every promoted name exists once in its owner doc and schema.
-  - [ ] Negative: the schema rejects a SAFE_CALCULATOR with 65 nodes and a CHART bound to an invocation result in V1 profile.
-  - [ ] No migration is needed (existing `rich_presentations` table); state so in the PR.
+  - [ ] Each accepted interface has one normative owner and canonical machine schema; dependent UI/API/event/error/wiring and coverage maps match.
+  - [ ] Negative corpus rejects unknown fields, unbound metrics, unregistered kernels and out-of-profile components; valid fallback remains semantic text.
+  - [ ] Migration needs, receipt, retention, deletion, backup and rollback are explicit; do not claim no migration if T22 is included.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py` and `python3 scripts/validate_architecture.py`
 - **Evidence:** PR link and output in Completion evidence.
 - **Stop:** an owner doc conflicts with the B-40 decision; resolve at the owner.
@@ -300,11 +300,11 @@ Gaps to V1: baseline AC-001..AC-019 owner acceptance is pending at T01; revision
 
 ## 016-T18 - Per-block Markdown degradation with code and TEXT_SLICE rendering (P-03)
 
-- **Status:** NOT STARTED - added under this package's IN_REVIEW status. Folds proposed task P-03 from docs/UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md section 9 (findings R-05, R-06) into this package.
+- **Status:** NOT STARTED - task remains gated by the package's IN_REVIEW status and T01. Adjacent Artifact Markdown preview code exists, but does not satisfy AC-019: it uses whole-message fallback for unsupported syntax, lacks GFM tables/horizontal rules/nested lists and code label/copy/highlighting, and RichResponseView renders TEXT_SLICE as plain text. Folds proposed task P-03 from docs/UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md section 9 (findings R-05, R-06) into this package.
 - **Depends on:** T06
 - **Cross-package prerequisites:** Feature 001 committed AGENT message text is the input the renderer consumes.
 - **Owner:** Presentation, Desktop UI.
-- **Allowed paths:** `apps/litecowork-ui/src/conversations/StructuredTextPreview.tsx`, `apps/litecowork-ui/src/conversations/RichResponseView.tsx`, `apps/litecowork-ui/tests/`, adjacent tests.
+- **Allowed paths:** `apps/litecowork-ui/src/artifacts/StructuredTextPreview.tsx`, `apps/litecowork-ui/src/artifacts/structured-text-preview.css`, `apps/litecowork-ui/src/presentation/RichResponseView.tsx`, `apps/litecowork-ui/src/presentation/rich-response.css`, `apps/litecowork-ui/tests/`, adjacent tests. The earlier `src/conversations/` paths did not match the active source tree; the canonical UI paths are corrected here for future authorized work.
 - **Contract:** SPEC §14; AC-019; INTELLIGENT-UI-AND-IMAGE-CONTENT; AGENTS.md section 8.
 - **Change intent:** replace the all-or-nothing Markdown parse with per-block degradation so GFM tables, horizontal rules and nested lists render without a whole-message raw fallback; give each code block a language label, a copy button and lazy highlighting that returns React nodes (never HTML strings); render TEXT_SLICE through the same Markdown renderer; and keep the no-executable-content posture (no `dangerouslySetInnerHTML`, https-only links). Add a golden corpus of real agent answers.
 - **Acceptance:**
@@ -315,25 +315,25 @@ Gaps to V1: baseline AC-001..AC-019 owner acceptance is pending at T01; revision
 - **Evidence:** golden-corpus render test output in Completion evidence.
 - **Stop:** a block cannot degrade safely; render that block as plain text, never the whole message raw.
 
-## 016-T19 - Package VERIFIED for V1
+## 016-T19 - Package VERIFIED for the accepted V1 scope
 
 - **Status:** NOT STARTED
-- **Depends on:** T01-T18
+- **Depends on:** T01-T18, T20-T25
 - **Cross-package prerequisites:** Feature 019 release evidence bundle accepted.
 - **Owner:** Product, repository owner.
 - **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/`.
-- **Contract:** SPECIFICATION-STANDARD lifecycle; AC-001 to AC-019 for the baseline. AC-020 to AC-028 belong to the separately gated revision 0.2 extension tasks and do not close under this baseline task.
-- **Change intent:** assemble the evidence bundle; move ACCEPTED/LOCKED to IMPLEMENTING when T02 starts and to VERIFIED when all tasks close and the owner signs off.
+- **Contract:** SPECIFICATION-STANDARD lifecycle; every AC included in the dated T01 V1 acceptance, currently proposed as AC-001..AC-041.
+- **Change intent:** assemble evidence for every accepted V1 AC and cross-owner journey; move ACCEPTED/LOCKED to IMPLEMENTING only when T02 starts, and to VERIFIED only after each implementation/qualification task closes and the owner signs off. Deferred ACs must be removed from release promise and traceability before this task closes.
 - **Acceptance:**
-  - [ ] Every AC has a passing test reference on both rows.
-  - [ ] Owner sign-off recorded.
+  - [ ] Every accepted AC has exact test, SYSTEM and USER evidence required by its row on each release platform; a unit test or route alone is insufficient.
+  - [ ] Owner sign-off and release matrix evidence recorded; no deferred AC is described as delivered.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
 - **Evidence:** Completion evidence table below.
 - **Stop:** any AC lacks evidence.
 
 ## Dependency order
 
-Baseline: T01 -> T02 -> T03 -> (T04, T05 in parallel). T04 -> T06; T05 + T06 -> T07; T03 + T05 -> T08; T04 -> T09; T02 -> T10; T01 -> T11 (independent of the validator work). T06 + T07 -> T12; T08 + T10 -> T13; T03 + T04 + T06 + T07 -> T14. T06-T13 -> T15 -> T16 -> T17. T06 -> T18 (per-block Markdown, P-03). (T17, T18) -> T19 (baseline VERIFIED). Extension: T01 -> T25 -> T20 (also needs T02); T20 -> T21; (T20, T21) -> T22 and T23; (T22, T23) -> T24. T23 does not depend on remembered-state persistence. T25 is appended to preserve existing task IDs but is a gate before T20-T24.
+T25 cross-owner Saved View decision -> T01 revised whole-scope acceptance -> T02 canonical contract promotion -> T03 validator -> T04/T05 parity and calculation -> T06 chart -> T07 calculator -> T08 publisher -> T09 preference. T10 media and T11 inert Artifact preview follow the exact Feature 007 owner gates. T12-T14 security/recovery/performance -> T15 traces -> T16 base E2E-11 -> T17 documentation; T06 -> T18 Markdown degradation. In parallel after T02/T20 provider input is either exactly qualified and promoted or deliberately left text-only; T20 -> T21 shared Canvas controller -> T22 optional remembered inputs and T23 Saved View/ordinary-turn modification. T16 plus T20-T23 -> T24 revised journeys and packaged qualification. T17/T18/T24 -> T19 VERIFIED. T23 does not depend on T22, but does require Feature 007 to accept the Saved View representation. If Saved View is deferred, revise T01, T23, AC-028/033-036 and the release plan before implementation.
 
 ## Cross-package dependencies
 
@@ -360,100 +360,100 @@ For each task append a row when it closes: task, code revision (SHA), exact comm
 |---|---|---|---|---|---|---|---|
 | (none yet) | | | | | | | |
 
-## 016-T20 - Native ingress and canonical declarative contract promotion
+## 016-T20 - Provider ingress and canonical declarative contract
 
-- **Status:** BLOCKED - revision 0.2 TARGET proposal; explicit extension owner approval under T25 and relevant contract promotion required; no implementation authorized.
+- **Status:** BLOCKED - revision 0.4 TARGET proposal; requires T25/T01 acceptance and T02 canonical contract promotion; no implementation authorized.
 - **Depends on:** T01, T02, T25
 - **Cross-package prerequisites:** Feature 001 native provider adapter/turn correlation; Feature 002 current AgentControlDescriptor.
 - **Owner:** AgentModule, Presentation Runtime, Security, Product.
 - **Allowed paths:** docs/ACP-PRESENTATION-PIPELINE-LLD.md; docs/RICH-RESPONSE.md; docs/HOST-GUIDANCE.md; docs/schemas/presentation-intent.schema.json; docs/schemas/rich-presentation.schema.json; owning schemas/events/OpenAPI and AgentModule conformance fixtures.
-- **Contract:** SPEC section 19; pipeline LLD; AC-020, AC-021, AC-023, AC-024.
-- **Change intent:** Pin official research versions/SHAs/licenses; prove exact native structured ingress or optional scoped MCP injection, otherwise text fallback; resolve A-85's model-visible MCP input, trusted sequence/replay identity, typed acknowledgement and canonical schema mapping; promote bounded calculation intent in the existing schema; define metrics/unit/time/aggregation and reject unknown kernels. A tool observation cannot execute.
+- **Contract:** SPEC §20; pipeline LLD; AC-020/021/023/024/029-031/038/039.
+- **Change intent:** Pin exact supported provider/version/auth route and prove whether it can carry a correlated presentation proposal. If not, complete deterministic host composition and text fallback without requiring provider support. If yes, resolve A-85's model-visible input, trusted sequence/replay identity, typed acknowledgement and canonical mapping; never assume ACP capability. Promote metric semantics and registered local controls only in the canonical schema. A tool observation cannot execute.
 - **Acceptance:**
-  - [ ] Provider ignores guidance, lacks injection, emits foreign/replayed intent or unknown sipFutureValue: safe semantic answer; metric example latest/total/change are distinct.
+  - [ ] Provider ignores guidance, lacks injection, emits foreign/replayed intent or unknown calculation: safe semantic answer; metric latest/total/change are distinct and provenance-bound.
   - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
 - **Command:** `python .specify/scripts/validate_feature_package.py; future AgentModule fixture command recorded when implemented`
 - **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
 - **Stop:** Missing exact provider evidence, canonical contract promotion or owner acceptance.
 
-## 016-T21 - One controller for inline and expanded Workbench Canvas
+## 016-T21 - One controller for inline and contextual Workbench Canvas
 
-- **Status:** BLOCKED - revision 0.2 TARGET proposal; explicit extension owner approval under T25 and relevant contract promotion required; no implementation authorized.
-- **Depends on:** T01, T04, T05, T07, T08, T20, T25
+- **Status:** BLOCKED - revision 0.4 TARGET proposal; T25/T01/T02 gates must close; no implementation authorized.
+- **Depends on:** T01, T02, T04, T05, T07, T08, T20
 - **Cross-package prerequisites:** Feature 011 Workbench shell and keyboard/focus owner.
 - **Owner:** Presentation Runtime, Desktop UI, Accessibility.
 - **Allowed paths:** apps/litecowork-ui/src/presentation/; existing Workbench shell; adjacent UI tests; UI ledgers.
-- **Contract:** SPEC section 19; pipeline LLD; AC-022.
-- **Change intent:** Register host Expand/Collapse controls and one digest-bound controller; preserve B-40 transient data without calling an agent or invoking app runtime.
+- **Contract:** SPEC §20; pipeline LLD; Feature 008 Canvas/UI contract; AC-022/041.
+- **Change intent:** Register host Open in Canvas/Return controls and one digest-bound controller in the existing contextual right Workbench; preserve inline input revision, focus, Conversation scroll and composer state without calling an agent or invoking app runtime. Do not add a permanent sidebar destination or start computer capture/processes.
 - **Acceptance:**
-  - [ ] Repeated expand/collapse preserves exact inputs/result/revision; keyboard focus returns; Workspace switch and revocation clear protected content.
+  - [ ] Repeated expand/collapse preserves exact message/document/input revision and controller; focus, scroll and composer restore; Workspace switch/revocation clears protected content.
   - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
 - **Command:** `pnpm --dir apps/litecowork-ui test`
 - **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
 - **Stop:** A second controller, hidden agent call, persistent write or unqualified component is required.
 
-## 016-T22 - Separately review and implement opt-in local interaction persistence
+## 016-T22 - Review and implement optional remembered answer inputs
 
-- **Status:** BLOCKED - revision 0.2 TARGET proposal; explicit extension owner approval under T25 and relevant contract promotion required; no implementation authorized.
-- **Depends on:** T01, T20, T21, T25
+- **Status:** BLOCKED - revision 0.4 TARGET proposal; requires T25/T01 acceptance and a separately approved T02 storage/privacy contract; no implementation authorized.
+- **Depends on:** T01, T02, T20, T21
 - **Cross-package prerequisites:** Workspace/Conversation retention and deletion owners; Storage migration allocation; Feature 011 authenticated IPC.
 - **Owner:** Storage, Presentation Runtime, Security, Privacy, Product.
 - **Allowed paths:** owning storage core/sqlite; authenticated presentation Operator and Tauri bridge; presentation UI; canonical OpenAPI/event/state schemas; migration allocation; retention/backup docs and tests.
-- **Contract:** SPEC section 19; pipeline LLD; AC-025, AC-026.
-- **Change intent:** First obtain explicit revised owner approval for consent, 32 KiB/5 MiB quota proposal, backup/encryption/deletion/receipt lifetime. Promote exact record/API/events and migration before code. Implement host-only expected-revision writes, receipts, forget fences and exact namespace; never browser storage.
+- **Contract:** SPEC §20; pipeline LLD; Feature 014/017 retention and backup; AC-025/026/040.
+- **Change intent:** Obtain explicit owner approval for consent, quota, backup/encryption/deletion/receipt lifetime and migration allocation. Promote exact record/API/events before code. Implement host-only expected-revision writes, receipts, forget fences and exact namespace; never browser storage. Keep this state separate from Saved View ArtifactVersion and executable app data.
 - **Acceptance:**
-  - [ ] Off by default; no agent exposure; replay/body-conflict, two-window revision conflict, timeout-after-commit, quota, forget/save race, restart/backup/deletion and revocation fail safely.
+  - [ ] Off by default; no agent exposure; replay/body-conflict, two-window conflict, timeout-after-commit, quota, forget/save/deletion race, restart/backup and revocation fail safely.
   - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
 - **Command:** `future focused storage/Operator/UI test commands recorded before implementation; python .specify/scripts/validate_feature_package.py`
 - **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
 - **Stop:** B-40 is used as persistence authorization, migration unallocated, or privacy/deletion/backup decision unresolved.
 
-## 016-T23 - Explicit conversational modification and immutable lineage
+## 016-T23 - Saved View lifecycle and explicit conversational modification
 
-- **Status:** BLOCKED - revision 0.2 TARGET proposal; explicit extension owner approval under T25 and relevant contract promotion required; no implementation authorized. It is independent of T22 persistence: the explicit snapshot may come from the active in-memory controller and is sent only after review.
-- **Depends on:** T01, T20, T21, T25
-- **Cross-package prerequisites:** Feature 001 authorized new-turn dispatch and persisted context/provenance contracts.
+- **Status:** BLOCKED - revision 0.4 TARGET proposal; the product direction is decided, while Feature 007 cross-owner review and T01/T02 contract promotion remain open; no implementation authorized. Conversation modification remains independent of T22 persistence.
+- **Depends on:** T01, T02, T20, T21, T25
+- **Cross-package prerequisites:** Feature 007 Artifact/Library create, immutable version/update, source-deletion and receipt contracts; Feature 001 ordinary new-turn dispatch and persisted lineage contracts.
 - **Owner:** Conversation, Presentation Runtime, Desktop UI, Security.
-- **Allowed paths:** Conversation typed commands/context and provenance owner paths; presentation host chrome; canonical context/intent schemas and UI ledgers; adjacent tests.
-- **Contract:** SPEC section 19; pipeline LLD; AC-027.
-- **Change intent:** Add Ask to change this view with previewed identity/input snapshot and explicit Send; this must work with remembered-state persistence off or unavailable. The selected snapshot is disclosed only in the reviewed ordinary new turn; it produces a new semantic message and immutable presentation linked by parent/base revision. Review compatible carryover and preserve stale local drafts.
+- **Allowed paths:** Feature 007 Artifact/Library owner paths included in the accepted task, Feature 001 context/provenance paths, presentation host chrome, canonical API/event/state schemas, UI ledgers and adjacent tests.
+- **Contract:** SPEC §20, Feature 007 owner contract, Feature 001 send contract, AC-028/033-036/040/041.
+- **Change intent:** Add capability-gated Save/Open/Update/Archive via Feature 007 using exact immutable ArtifactVersion, source lineage and durable receipts; create/update append a version and Archive is the only removal action. Saved View preserves declared RichPresentation defaults; session-modified inputs remain transient under B-40 and are not automatically sent. Update requires a new committed eligible presentation and explicit review. Conversational modification uses ordinary Conversation Send with user-authored text, without silently attaching local calculator values or mutating the source message/version.
 - **Acceptance:**
-  - [ ] No send on input change; cancel/retry does not mutate original; stale base prompts review; new message identity and host-assigned lineage; unsupported ingress remains text.
+  - [ ] Saved View create/open/update/archive follows Feature 007 receipt/version/recovery contract; no control appears without capability. No send on input change; cancel/retry does not mutate original; stale base prompts review; new message identity and host-assigned lineage.
   - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
 - **Command:** `future focused Conversation/desktop fixture commands recorded before implementation`
 - **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
-- **Stop:** Automatic input transmission, original-message rewrite or inferred approval.
+- **Stop:** Feature 007 cannot represent this without violating Artifact invariants, owner receipt is missing, automatic input transmission, original message/version rewrite or inferred approval.
 
-## 016-T24 - Extension negative/recovery/accessibility and packaged evidence
+## 016-T24 - Revised V1 negative/recovery/accessibility and packaged evidence
 
-- **Status:** BLOCKED - revision 0.2 TARGET proposal; explicit extension owner approval under T25 and relevant contract promotion required; no implementation authorized.
-- **Depends on:** T01, T20, T21, T22, T23, T25
+- **Status:** BLOCKED - revision 0.4 TARGET proposal; requires accepted scope, implemented owner contracts and completed prerequisite journeys; no implementation authorized.
+- **Depends on:** T01, T16, T20, T21, T22, T23
 - **Cross-package prerequisites:** Feature 001 qualified provider route and Feature 019 release evidence; existing Windows/release deferrals resolved.
 - **Owner:** Security, Accessibility, Release, Product, repository owner.
 - **Allowed paths:** presentation/AgentModule/storage test fixtures; release evidence bundle; CURRENT-RUN.md; implementation status and Feature 016 contracts.
-- **Contract:** SPEC section 19; pipeline LLD; AC-020 through AC-028.
-- **Change intent:** Exercise source-to-render, scope fencing, misleading metrics, unknown kernel, controller identity, consent, quotas, receipts, timeout/crash/restart, forget/save race, revocation, stale revision and explicit new-message modification on exact packaged provider route.
+- **Contract:** SPEC §20; pipeline LLD; all accepted AC-001..AC-041, especially denial, Saved View, state and Canvas behavior; canonical E2E ID and steps assigned by T02.
+- **Change intent:** Exercise E2E-11 fallback plus the rich-answer-to-Canvas continuity journey proposed in SPEC §20.11 (candidate E2E-18; T02 verifies/assigns the global ID). Exercise semantic source-to-render, provider fallback/ingress, scope fencing, misleading metrics, unknown component/kernel, controller identity, consent, quotas, receipts, timeout/crash/restart, forget/save/archive race, revocation, stale version, scroll/focus recovery and explicit new-message modification on exact packaged release rows. Include the Saved View create/open/update/archive path only after T25 cross-owner review and T01/T02 promotion; include remembered-state steps only if their separate B-46/T22 behavior is accepted.
 - **Acceptance:**
-  - [ ] Record build/OS/WebView/provider/model/version/auth/ingress, fixture counts, SYSTEM captures and owner USER review; no extension VERIFIED until every AC has evidence.
+  - [ ] Record build/OS/WebView/provider/model/version/auth/ingress, fixture counts, SYSTEM captures and owner USER review; no V1 qualification claim until every accepted AC has exact evidence.
   - [ ] Canonical owners, machine contracts and UI trace updated together; evidence class limited to actual checks.
 - **Command:** `python .specify/scripts/validate_feature_package.py; exact future packaged E2E command supplied by release owner`
 - **Evidence:** exact commands/results, revision and boundary in Completion evidence; design-only checks do not close implementation tasks.
 - **Stop:** Any authority leak, content resurrection, stale overwrite, hidden native/model dispatch or missing owner evidence.
 
-## 016-T25 - Separate owner decision for the revision 0.2 extension
+## 016-T25 - Resolve Saved View cross-owner design boundary
 
-- **Status:** BLOCKED - explicit owner decision required; this is a review gate, not implementation authorization.
-- **Depends on:** T01
-- **Cross-package prerequisites:** Feature 007 Artifact owner review is required only if T25 includes a reusable Saved View/interactive Artifact deliverable; an explicit defer leaves Feature 007 unchanged.
-- **Owner:** Product, Presentation Runtime, Security, Storage, Conversation; decision by the repository owner.
-- **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/`, `docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`.
-- **Contract:** SPEC section 19 and AC-020..AC-028; SPECIFICATION-STANDARD section 7; A-84/A-85/A-103.
-- **Change intent:** obtain an explicit accept / revise / defer decision on the complete extension scope (qualified intent ingress, shared Canvas controller, separately consented state persistence, explicit new-turn modification, extension recovery/qualification, and the boundary between reopening a Conversation answer, remembering local inputs and publishing a reusable Artifact). Keep Feature 016 answer-input memory distinct from the separate Artifact Runtime app-data proposal. Decide explicitly whether a standalone Saved View is deferred or needs a separate cross-owner Feature 016/007 revision; T22 input persistence alone cannot authorize a Saved Apps UI. Record exact inclusions, exclusions, owners and riders. If accepted, promote it as the next revision without altering baseline B-40 semantics; if rejected/deferred, keep T20-T24 BLOCKED. Resolve A-85's schema/sequence questions before the MCP proposal tool can be exposed.
+- **Status:** PARTIAL - product owner direction recorded 2026-11-17 to keep Saved Views in V1 and amend Feature 007 B-21; the bounded Artifact contract is drafted in `specs/007-professional-artifacts/contracts/saved-view.md`. Cross-owner review and canonical API/schema promotion remain open. This is a design gate, not implementation authorization.
+- **Depends on:** NONE
+- **Cross-package prerequisites:** Feature 007 Artifact/Library owner review; Storage, Conversation, Workspace deletion, Backup, Privacy and Product review of provenance, exact-version reopen/update, source deletion, declared-default snapshot, receipts, retention and recovery.
+- **Owner:** Artifact, Product, Presentation Runtime, Security, Storage, Privacy and Conversation; decision by the repository owner.
+  - **Allowed paths:** `specs/016-rich-presentation-intelligent-ui/`, `specs/007-professional-artifacts/`, `docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`, `docs/ACP-PRESENTATION-PIPELINE-LLD.md`, `docs/ARTIFACTS-EVIDENCE.md`, `docs/SCHEMAS.md`, `docs/schemas/saved-view-artifact.schema.json`, `docs/PRESENTATION-RUNTIME.md`, `docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md`, `docs/V1-PRODUCT-RELEASE-CONTRACT.md`, `docs/V1-UI-SCREEN-CONTRACT.md`, `docs/V1-UI-ACTION-STATE-LEDGER.md`, `docs/IMPLEMENTATION-MASTER-PLAN.md`, `docs/IMPLEMENTATION-STATUS.md`, `docs/SPEC-TASK-TRACEABILITY.md`, `docs/V1-FEATURE-SDD-REGISTER.md`, `docs/V1-PRODUCT-FEATURE-COVERAGE.md`, `docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md`, `CURRENT-RUN.md`.
+- **Contract:** SPEC §20.6/§20.9 and AC-028/033-036; Feature 007 Artifact/Library contract; SPECIFICATION-STANDARD §7; A-84/A-85/A-103.
+  - **Change intent:** record the product owner's selection to keep Saved Views in V1 and amend B-21, then specify a bounded, non-executable Artifact snapshot without weakening other Artifact format rules. Feature 007 revision 1.1 remains in review: Markdown remains the first professional document format; one exact Saved View media type is proposed as a separate Artifact kind, backed by the canonical RichPresentation plus semantic fallback and exact Conversation/message/presentation lineage. Only the RichPresentation's declared defaults are retained; session-modified calculator values are excluded under B-40. The proposed contract uses ArtifactVersion/ResourceRevision and existing create/version receipts/events; it adds no SavedView table, event, side store, hard-delete route, arbitrary executable content or permanent navigation destination. Archive is the V1 removal action. Source deletion, replay, version conflict, Workspace fencing, backup, retention and restart recovery are specified in `specs/007-professional-artifacts/contracts/saved-view.md`. Do not disguise structured JSON as Markdown or treat it as `INTERACTIVE_APP`. This direction does not accept Feature 016 as a whole, promote or serve routes, or authorize code. T01 remains the separate whole-scope owner acceptance; T02 remains contract promotion before implementation. T22 remembered-input persistence and T20 provider ingress remain separate; A-85 is not implied by T25.
 - **Acceptance:**
-  - [ ] A dated owner decision and exact scope are recorded in the acceptance packet and Feature 016.
-  - [ ] Any accepted amendment receives a new revision and renewed owner acceptance; a decision to defer leaves T20-T24 blocked.
-  - [ ] The decision explicitly addresses A-103; if standalone Saved View is included, the cross-owner Artifact owner, canonical identity/lifecycle/receipt contracts and allowed implementation tasks are recorded before any UI promise.
-  - [ ] No code, route, tool or persistent state behavior is enabled by closing this decision task alone.
+    - [x] A dated product-owner direction records “Keep Saved Views in V1; amend Feature 007 B-21” in the acceptance packet and both feature packages; this records the scope choice, not approval of unreviewed technical riders.
+    - [ ] Artifact, Storage, Conversation, Privacy, Backup and Product owners review the Saved View contract; promoted API/schema, dependency map and implementation task scopes are consistent before Feature 016 T01 review.
+    - [ ] A-103 and all V1/UI traceability records state the decision and its remaining gates; no permanent navigation destination is added.
+    - [x] No code, route, tool or persistent state behavior is enabled by this decision task alone.
 - **Command:** `python .specify/scripts/validate_feature_package.py`
 - **Evidence:** owner decision record and validator output.
-- **Stop:** the decision refers only to B-40 or fails to say whether AC-020..AC-028 and the A-103 Saved View boundary are accepted, revised or deferred.
+  - **Stop:** cross-owner review or canonical contract promotion is absent, source/deletion/receipt/version behavior drifts from the Saved View contract, or this decision is mistaken for T01 whole-feature acceptance.

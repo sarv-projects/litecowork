@@ -91,49 +91,52 @@ pub(crate) fn recover_conversation_sessions(
 
     // STARTING reservations that no intent explains (for example a legacy turn from
     // before the dispatch outbox) are released through the same settle path.
-    if let Ok(workspaces) = store.list_workspaces() {
-        for workspace in workspaces {
-            let mut after: Option<String> = None;
-            loop {
-                let sessions = match store.list_starting_conversation_agent_sessions(
-                    &workspace.workspace_id,
-                    after.as_deref(),
-                    PAGE_SIZE,
-                ) {
-                    Ok(sessions) => sessions,
-                    Err(_) => {
-                        report.failures += 1;
-                        break;
-                    }
-                };
-                let Some(last) = sessions.last() else { break };
-                after = Some(last.agent_session_id.clone());
-                for session in sessions {
-                    let (Some(conversation_id), Some(turn_id)) = (
-                        session.conversation_id.as_deref(),
-                        session.conversation_turn_id.as_deref(),
-                    ) else {
-                        report.failures += 1;
-                        continue;
-                    };
-                    match settle_attempt_failed(
-                        store,
-                        runtime_id,
-                        principal_id,
+    match store.list_workspaces() {
+        Ok(workspaces) => {
+            for workspace in workspaces {
+                let mut after: Option<String> = None;
+                loop {
+                    let sessions = match store.list_starting_conversation_agent_sessions(
                         &workspace.workspace_id,
-                        conversation_id,
-                        turn_id,
-                        Some(&session.agent_session_id),
-                        RECOVERY_REASON_CODE,
-                        &correlation_id,
-                        None,
+                        after.as_deref(),
+                        PAGE_SIZE,
                     ) {
-                        Ok(()) => report.starting_sessions_released += 1,
-                        Err(_) => report.failures += 1,
+                        Ok(sessions) => sessions,
+                        Err(_) => {
+                            report.failures += 1;
+                            break;
+                        }
+                    };
+                    let Some(last) = sessions.last() else { break };
+                    after = Some(last.agent_session_id.clone());
+                    for session in sessions {
+                        let (Some(conversation_id), Some(turn_id)) = (
+                            session.conversation_id.as_deref(),
+                            session.conversation_turn_id.as_deref(),
+                        ) else {
+                            report.failures += 1;
+                            continue;
+                        };
+                        match settle_attempt_failed(
+                            store,
+                            runtime_id,
+                            principal_id,
+                            &workspace.workspace_id,
+                            conversation_id,
+                            turn_id,
+                            Some(&session.agent_session_id),
+                            RECOVERY_REASON_CODE,
+                            &correlation_id,
+                            None,
+                        ) {
+                            Ok(()) => report.starting_sessions_released += 1,
+                            Err(_) => report.failures += 1,
+                        }
                     }
                 }
             }
         }
+        Err(_) => report.failures += 1,
     }
     report
 }

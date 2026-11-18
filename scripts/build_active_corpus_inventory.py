@@ -21,6 +21,7 @@ SKIP = {
     ".agent-worktrees", ".worktrees", ".zwork", ".superpowers", ".agents",
     "archives", "archive", "repo_take", "reading", "staging_tar", "dist", "build",
     "coverage", ".next", ".cache", "vendor", "out", ".turbo", "audit",
+    "audit-output",
 }
 EXCLUDED = {
     "docs/COMPLETE-ACTIVE-CORPUS-INVENTORY.md",

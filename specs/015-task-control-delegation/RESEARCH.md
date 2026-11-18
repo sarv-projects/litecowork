@@ -54,7 +54,7 @@ No upstream code is imported. Upstream repositories are not cloned into `repo_ta
 
 ## 4. Optimization notes (language and module placement)
 
-- Some policy decisions already live in Rust (`delegation_admission.rs`, `lead_failover.rs`), but provider-session admission, quiescence, result fencing, verification, dispatch and recovery are not mere composition. Keep pure decisions at the domain layer and obtain an owner decision for the generic execution/session seam (SPEC O-06) before wiring provider work.
+- Some policy decisions already live in Rust (`delegation_admission.rs`, `lead_failover.rs`), but provider-session admission, quiescence, result fencing, verification, dispatch and recovery are not mere composition. Feature 005 revision 1.1 records an owner-directed Task Runtime seam; keep pure decisions at the domain layer and complete cross-owner review of its concrete interface and lifecycle before wiring provider work.
 - Replace string Task statuses with a Rust `TaskStatus` enum in `storage-core` (T03); this removes duplicated string matches in `lead_failover_service.rs` and storage guards.
 - Map `ChildAdmissionDenial` to wire codes in one exhaustive Rust function so a new variant cannot silently map to a generic error.
 - Keep new Work-screen state logic in pure TypeScript modules (`task-control-state.ts`, `task-activity.ts`) instead of expanding `App.tsx`; the UI package's current test command is Node's built-in `--test` runner through `pnpm test`.
@@ -68,6 +68,6 @@ No upstream code is imported. Upstream repositories are not cloned into `repo_ta
 | R-02 | OpenCode bridge path for issuing a delegate request without native config edits | Open |
 | R-03 | Reference hardware for AC-020 | Open, Feature 019 |
 | B-39 | First pair, Environment sharing rule, V1 bounds, A-37 default | ACCEPTED as proposed 2026-11-10; whole SPEC still IN_REVIEW |
-| O-06 | Generic Attempt/session admission seam for child, verifier and control paths | OPEN/BLOCKED: Feature 005's file-write admission contract is not a generic provider-session contract |
+| O-06 | Generic Attempt/session admission seam for child, verifier and control paths | Owner-directed target recorded in Feature 005 revision 1.1 (IN_REVIEW): Task Runtime owns the generic Environment-first admission and provider-session seam; Feature 005 remains bounded to B-18 writes. Cross-owner review remains pending, so Feature 015 implementation stays blocked. |
 | O-07 | Lead binding change versus execution replacement operation | OPEN/BLOCKED: canonical Task Runtime requires distinct operations; served route performs binding CAS only |
 | O-08 | A-37 exhaustion producer ownership and persisted location | OPEN/BLOCKED: keep owner-accepted TARGET-not-yet-wired field until Feature 004/005 dispatcher owner implements it |

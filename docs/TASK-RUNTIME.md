@@ -301,7 +301,7 @@ admission authority.
 
 ## Initial planning session
 
-TaskService creates a transient PlanningAssignment for the current lead binding and TaskSpecRevision. PlanningCoordinator asks AgentSessionSupervisor to reserve a durable `STARTING` TASK_PLANNING AgentSession in a short storage transaction. Storage rechecks Task version/status/spec/lead, Workspace ownership, binding eligibility, endpoint binding, and current READY Runtime incarnation while claiming the unique planner slot. The coordinator then starts the native adapter outside the transaction. Only observed adapter readiness permits a serialized activation that transitions the session to `ACTIVE` and a first-planning Task from `READY` to `RUNNING` atomically. A `STARTING` session grants no planning tools or invocation authority. After daemon restart, stranded prior-incarnation `STARTING` sessions are reconciled before another planner is admitted.
+TaskService creates a transient PlanningAssignment for the current lead binding and TaskSpecRevision. Before storage admission, the Runtime durably journals a private Environment-preparation intent, then prepares and attests a Task-owned, read-only `TASK_SHARED` / `TASK_RETAINED` Environment pinned to that TaskSpec revision, Workspace and exact Resource set. The provider holds a trusted idle supervisor in the same live scope used by its enforcement probes; no native planner, tool server, credential or user code starts before reservation. PlanningCoordinator asks AgentSessionSupervisor to reserve a durable `STARTING` TASK_PLANNING AgentSession with the public `environment_id` in a short storage transaction. Storage rechecks Task version/status/spec/lead, Workspace ownership, binding eligibility, endpoint binding, and current READY Runtime incarnation while claiming the unique planner slot. The private attestation, preparation journal and provider handle remain Runtime-owned; none enters the request, event, backup or projection. Only after the reservation receipt is committed and resolved does the coordinator hand off a one-time command to start the native adapter inside that same held scope. Only observed adapter readiness permits a serialized activation that transitions the session to `ACTIVE` and a first-planning Task from `READY` to `RUNNING` atomically. A `STARTING` session grants no planning tools or invocation authority. After daemon restart, preparation journal entries and stranded prior-incarnation `STARTING` sessions are reconciled before another planner is admitted; a replacement planner gets a freshly built assignment and attested Environment.
 
 The committed `STARTING` reservation is the admission boundary. A later AgentBinding
 disable or lead-eligibility change affects future reservations; it does not invalidate
@@ -327,7 +327,7 @@ Runtime-owned, current-incarnation
 lease, and session-settlement checks are produced and transactionally revalidated at
 admission; no caller-supplied Boolean or request field can satisfy the gate.
 
-The session has Task read, plan proposal, and user-clarification tools only; it has no Attempt, lease, Environment write access, consequential capability invocation, or artifact publication. Plan acceptance creates/promotes a PlanRevision and materializes Steps; only then can an execution Attempt be admitted. A planning session may be replaced without changing Task identity or fabricating an Attempt. User clarification closes the current planning session; after a valid response, the coordinator builds a new envelope against the current TaskSpec revision and starts a fresh session.
+The session has Task read, plan proposal, and user-clarification tools only; it has no Attempt, lease, Environment write access, consequential capability invocation, or artifact publication. Its Environment is read-only and never reused by an execution Attempt. Plan acceptance creates/promotes a PlanRevision and materializes Steps; only then can an execution Attempt be admitted. Attempt admission durably journals a fresh Attempt-private Environment preparation, starts a trusted idle supervisor and observes enforcement in that same held scope, then uses one storage transaction to bind Environment, Attempt, Step, lease and `STARTING` session. A resolved receipt is followed by a one-time private launch handoff for the native provider; provider probes alone do not start the agent. Preparation recovery reconciles the exact provider identity against the admission receipt; unknown cleanup remains a blocker. A planning session may be replaced without changing Task identity or fabricating an Attempt. User clarification closes the current planning session; after a valid response, the coordinator builds a new envelope against the current TaskSpec revision and starts a fresh session.
 
 The current Codex transport includes typed read-only thread and plan-turn constructors
 with a structured initial-plan output schema. The current official App Server documentation
@@ -390,6 +390,13 @@ unavailable: current Operator authentication has no trusted producer-scoped sess
 assertion, and a body-supplied AgentSession ID is not authority. This is not yet
 end-to-end planning; no native adapter invokes the service.
 
+At the current SQLite boundary, a stale Task aggregate version returns the existing
+`StoreError::Conflict`; a stale TaskSpec head returns the existing internal
+`StoreError::Invalid("STALE_SPEC_REVISION")` discriminator used by the Task lead-handoff
+path. This preserves the canonical distinction without adding another wire error. The
+submit route is not served, so its required HTTP 409 `STALE_TASK_VERSION` /
+`STALE_SPEC_REVISION` mapping and producer-denial response remain TARGET until T10.
+
 ## Lead-agent change
 
 `change_lead_agent` validates that the AgentBinding belongs to the same Workspace, is enabled,
@@ -418,8 +425,8 @@ Attempt creation requires:
 - Step is READY or explicitly retried from recoverable failure
 - selected AgentBinding compatible
 - selected Runtime online/eligible
-- Environment available or provisionable
-- required grants resolved or known pending approval
+- fresh `ATTEMPT_PRIVATE` Environment prepared and attested for this exact Attempt and current Runtime incarnation, with a trusted idle supervisor holding the same scope until post-receipt harness handoff; planner and prior Attempt Environments are not reusable
+- grants needed to start the Attempt resolved or known pending approval; the bounded file-replacement grant is issued separately by Trust only after an admitted worker submits a request that matches the accepted Step
 - no conflicting ACTIVE lease for same Step
 
 The Attempt references its ExecutionLease, while the lease references the Attempt. They
@@ -428,21 +435,75 @@ observable writes:
 
 1. validate the current PlanRevision, Step readiness, TaskSpec revision, policy, and
    worker constraints; recompute/confirm the current ExecutionDependencyPlan digest.
-2. choose a specific eligible Runtime incarnation and create/attach a suitable
-   Environment on that Runtime. Failed provisioning produces no active lease.
+2. choose a specific eligible Runtime incarnation, durably journal the exact provider
+   preparation identity in Runtime-private storage, then prepare/attest a fresh private
+   Environment on that Runtime. The provider runs only a trusted idle supervisor and
+   bounded enforcement probes before admission; it launches no native harness, tools or
+   user code. Provider calls happen outside SQLite. Failed preparation creates no Attempt.
 3. allocate Attempt and lease IDs.
-4. inside one StateStore transaction, recheck Step exclusivity; append Attempt(CREATED),
-   pin its Runtime and incarnation, acquire the next lease epoch for that exact
-   incarnation, bind the lease to the Attempt, set the Step's current Attempt, and append
-   the corresponding events.
+4. inside one StateStore transaction, recheck Step exclusivity; commit Environment metadata;
+   append Attempt(CREATED), pin its Runtime/incarnation/Environment, acquire the next lease
+   epoch for that exact incarnation, bind the lease to the Attempt, set the Step's current
+   Attempt, reserve the `STARTING` AgentSession with the same Environment ID, and append
+   the corresponding events/receipt.
 5. commit; only then expose the Attempt as authoritative.
-6. start the AgentSession; transition Attempt through PREPARING to RUNNING only when the
-   adapter confirms readiness.
+6. resolve the durable admission receipt, then send a one-time private launch handoff to
+   start the native provider/harness inside the same held scope. Transition Attempt through
+   PREPARING to RUNNING only when the adapter confirms readiness. If storage outcome is
+   ambiguous, query the original idempotency receipt before launch or cleanup. If startup
+   recovery finds an unbound preparation, destroy it only after exact provider identity and
+   quiescence are observed; unknown evidence keeps a blocker.
 
-If the transaction conflicts, no authoritative Attempt or lease is committed. The
-provisioned Environment is released or retained only under its cleanup policy.
+Attempt admission does not issue the Feature 005 file-replacement grant. After the worker
+process tree is observed QUIESCENT, a Runtime-private provider channel returns only the
+accepted Step's bounded output bytes. Task Runtime computes the digest and creates an
+immutable managed ResourceRevision through the existing Resource lifecycle with
+`provenance.created_by_attempt`; this captures data only. Runtime then composes the
+untrusted `FileWriteScopeRequest` and supplies it to Trust. Its
+Attempt and Step IDs are selectors, not authority: Trust/Storage derives the Task and
+current plan from the admitted Attempt, then rechecks the accepted PlanRevision, active
+Attempt/session/current Runtime incarnation and unexpired lease, exact active WorkspaceRoot,
+declared Step scope, and pinned locally managed ResourceRevision whose provenance names the
+same Attempt before recording the exact
+short-lived `CORE_BUILTIN` grant, whose expiry is no later than the live lease expiry. The
+requested positive byte bound may narrow the accepted Step maximum but cannot exceed it.
+Grant issue has a separate durable `capability.grant.created.v1`
+receipt and does not consume an ApprovalUse. A pending user Approval is still required for
+the proposed Effect and is consumed only at the later atomic dispatch transaction. Grant
+issue, Effect proposal, Approval resolution, Attempt admission, and Invocation dispatch
+therefore have distinct receipts and replay identities.
+
+If the transaction conflicts, no authoritative Attempt, lease or AgentSession is committed.
+The held supervisor is aborted and its exact Environment is destroyed only after provider
+identity and quiescence are observed; ambiguous storage outcomes are resolved from the
+original receipt before cleanup. Unknown cleanup retains the private journal entry and a
+typed startup blocker before retry.
 LeaseCoordinator is the only lease writer; the transaction boundary coordinates it with
 AttemptRunner and TaskService without exposing a partially bound pair.
+
+For the owner-initiated first Attempt, the TARGET Operator contract is
+`POST /v1/tasks/{task_id}/attempts` with authenticated Workspace context, `If-Match` Task
+version and `Idempotency-Key`; the closed body contains only `{ plan_revision, step_id }`.
+Task Runtime resolves the current lead AgentBinding, Runtime and current incarnation from
+owner records. The caller cannot choose or assert those identities, an Environment,
+IsolationAttestation, provider handle, grant, approval or lease. Idempotency binds the
+authenticated Workspace/Task, expected Task version and exact request digest; an exact
+replay returns the original Attempt admission receipt, while changed input under the same
+key conflicts. Preparation failure leaves no Attempt; a reservation failure after provider
+preparation requires reconciling the storage receipt and destroying or quarantining the
+unbound supervisor scope before retry. The trusted idle supervisor may exist before the
+transaction, but the native provider/harness launch remains after the admission receipt
+commits and resolves. This operation is
+TARGET-only and has no served Operator route today. Child and verifier admissions use the
+same Task Runtime owner seam internally, but their authorization/producer scope is not a
+desktop version of this request.
+
+The authenticated service command is `AdmitTaskAttemptCommand { principal,
+workspace_id, task_id, expected_task_version, plan_revision, step_id, idempotency_key }`.
+The command is assembled from authenticated Operator context, the route, headers and the
+closed request body; it never accepts an Environment, attestation, Runtime, AgentBinding,
+grant, Approval, lease or provider handle from the caller. Admission failures return the
+canonical `ApiError` contract and never a partial Attempt receipt.
 
 Attempt Runtime/incarnation and Environment Runtime are immutable and must match. The
 AgentSession and ExecutionLease must also match that same Runtime incarnation. The lease
@@ -458,6 +519,62 @@ with a higher lease epoch. Replacing only the AgentSession may reuse an Attempt 
 the same Runtime incarnation and lease remain current. The current SQLite startup recovery
 slice supports only SQLite-clock expiry and leaves the Task blocked; it does not yet
 implement explicit revocation fencing, process proof, Effect reconciliation, or continuation.
+
+## Bounded file replacement (Feature 005 revision 1.1 target)
+
+`FileWriteScopeRequest` is the untrusted Task-tool request defined in [TRUST](TRUST.md).
+Task Runtime checks it against the accepted PlanRevision, active Attempt/session and
+current WorkspaceRoot. The request does not carry authority. Trust alone may issue the
+exact, expiring Attempt-bound grant; the owner's separate Approval binds the closed
+`FileReplacementTarget` and exact content/action digests.
+
+`FileReplacementTarget` pins one root-relative target, base digest, managed immutable
+ResourceRevision, verified content digest/size and accepted plan-action digest. The
+managed ResourceRevision is the only durable source for the bounded preview and recovery;
+no content bytes or host path enters Effect/Approval records, events, requests or ordinary
+logs. `ApprovedFileReplacement` is an internal transient value materialized from that
+exact pinned revision only after mediated dispatch commits. Before the provider call, the
+materializer rechecks the managed revision, digest and size against the target. It carries
+the bytes only in process memory and is never serialized or returned by Operator.
+
+The Runtime resolves the canonical root-relative path from the private WorkspaceRoot
+binding, opens the root without following links, compares the native directory identity
+with the saved binding, and passes only that retained handle to the file primitive. It
+rejects absolute, drive/UNC/device, empty, `.` or `..` path segments and all
+symlink/reparse escapes; lexical validation alone is not confinement. The primitive rejects
+non-regular and hard-linked targets and verifies the pinned base digest before staging and
+again immediately before replacement. Linux uses handle-relative `openat2` with
+`BENEATH | NO_SYMLINKS | NO_MAGICLINKS | NO_XDEV`, copies UID/GID, mode,
+`system.posix_acl_access` and `user.*` xattrs, rejects unknown/security xattr namespaces,
+flushes the staged file, replaces with `renameat`, and fsyncs the parent. Mode/UID/GID and
+user-xattr preservation are tested; the ACL path is implemented but not verified because
+the available WSL ext4, tmpfs and disposable ext4 loop filesystems all returned `ENOTSUP`
+for POSIX ACL xattrs.
+
+Windows uses handle-relative no-reparse opens and a narrowly scoped optional replacement
+handle. Replacement is enabled only on NTFS: the temp is created with `FILE_WRITE_THROUGH`,
+flushed, and renamed through `NtSetInformationFile(FileRenameInformationEx)` from the
+verified parent handle. The implementation copies owner/group/DACL, DACL protection state
+and only NORMAL, ARCHIVE, HIDDEN, SYSTEM and NOT_CONTENT_INDEXED attributes; unsupported
+metadata fails closed and timestamps describe the new file. The native Windows test
+verifies owner/group/DACL and HIDDEN/ARCHIVE preservation. A provider result or exit code
+is not success. The final digest recheck is not filesystem compare-and-swap: external
+editors are not covered by LiteCowork's lease fence and can race the rename. A process
+crash before rename leaves the target unchanged and the Effect-keyed temp available to T09
+recovery; a rename or durability uncertainty is ambiguous and must be reconciled before
+retry. The primitive creates no LiteCowork receipt or Effect state and is not called until
+T08 commits mediated dispatch.
+
+`FileWriteVerifier` uses a fresh confined read handle independent of the writer's handle
+and process. It recomputes the target digest and returns only a typed observation; the
+Task Runtime commits the canonical VerificationRun and Evidence. A digest matching the
+approved content first yields Effect `OBSERVED`, then `VERIFIED` only after independent
+verification. An unchanged base is a `NOT_APPLIED` reconciliation outcome, not an Effect
+state: it remains `RECONCILING` until the owner authorizes a retry through
+`authorize_retry` (which returns it to `STARTED` with a new dispatch ordinal) or settles
+failure. Any other digest or unavailable observation remains `AMBIGUOUS` until
+reconciled. Only `VERIFIED` plus a passing required VerificationRun can support Task
+success.
 
 ## Steering
 
@@ -718,6 +835,10 @@ TASK_TERMINAL
 INVALID_TRANSITION
 STALE_FENCE
 INVALID_RESOURCE_REF
+FORBIDDEN
+INTEGRITY_FAILURE
+LIMIT_EXCEEDED
+EFFECT_AMBIGUOUS
 CONFLICT
 ```
 
@@ -725,6 +846,23 @@ CONFLICT
 `STALE_VERSION` is the existing generic stale-snapshot error used for the separately
 computed recovery placement-plan digest. Do not introduce a third alias or treat the two
 conditions as interchangeable.
+
+Feature 005's internal typed failures do not create new wire codes:
+
+| Internal failure | Canonical API code | Meaning |
+|---|---|---|
+| `AttestationNotEnforced` | `ENVIRONMENT_UNAVAILABLE` | Required current-incarnation enforcement was not observed; no Attempt is admitted. |
+| `StalePlanVersion` | `CONFLICT` | The Task If-Match is current but the requested PlanRevision is not the current accepted plan. A stale Task version remains `STALE_TASK_VERSION`. |
+| `StaleFence` | `STALE_FENCE` | The current Attempt/lease fence changed before dispatch; no file call occurs. |
+| `LeaseConflict` | `LEASE_CONFLICT` | Another active Attempt owns the Step's writer lease. |
+| `IntegrityFailure` | `INTEGRITY_FAILURE` | Candidate, base or observed bytes fail digest/size validation. |
+| `PathEscape` | `FORBIDDEN` | The target cannot be proven inside the selected WorkspaceRoot. Do not return the host path. |
+| `OverBound` | `LIMIT_EXCEEDED` | The candidate exceeds the fixed 1 MiB V1 bound. |
+| `AmbiguousResult` | `EFFECT_AMBIGUOUS` | Dispatch may have occurred; reconcile the durable Effect before retry. |
+
+A verifier read failure is recorded through the existing VerificationRun failure contract;
+it does not turn an Effect into `VERIFIED` or infer write success. The canonical wire-code
+set remains in `docs/schemas/error-codes.schema.json`.
 
 ## Host delegation admission
 

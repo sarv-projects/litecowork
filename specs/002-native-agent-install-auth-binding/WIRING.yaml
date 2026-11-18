@@ -123,12 +123,14 @@ recovery:
 #   2.0.32/complete-probe/observed-host-stop tuple (002-T01); no packaged native bind/send journey is qualified.
 # - Descriptor GET/refresh is served for the OpenCode module through `agent_control_operator.rs` and
 #   `AgentDescriptorService`; persistence reuses the migration-16 `agent_control_descriptors` table (002-T04/T05).
-#   Probe throttling is in-memory; `getAgentSessionOptions` and `getAgentHarnessCapabilities` remain target-only.
+#   Probe throttling is in-memory; `getAgentSessionOptions` and `getAgentHarnessCapabilities` are served
+#   projections of the same fresh descriptor. Neither route mounts a model picker or proves dispatchability.
 # - Enable uses a fresh descriptor-revision CAS for descriptor-backed profiles; legacy module-less profiles do
 #   not enforce that check yet (002-T06).
 # - Auth-begin/native-config routes and ID-only bridges exist, but the production launcher/opener fail closed;
 #   OpenCode declares no method/target. Auth observations are in-memory and restart to UNKNOWN (002-T07/T10).
-# - Credential submit still uses `NoAgentDescriptorSource` and returns 503 before SecretStore mutation; durable
-#   replay/reconciliation is not implemented (002-T08).
+# - Credential submit uses `StoredAgentDescriptorSource` but still returns 503 before SecretStore mutation;
+#   durable replay/reconciliation is not implemented (002-T08).
 # - The ACP client and Matchmaker are code-level components but are not wired to a qualified provider flow
-#   (002-T17/T18). Install/update and model-option projection routes remain target-only.
+#   (002-T17/T18). Install/update remain target-only; model-option and harness-capability projections are served,
+#   but the Tauri picker bridge and Conversation admission consumer remain absent.

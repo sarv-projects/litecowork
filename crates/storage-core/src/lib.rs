@@ -128,12 +128,14 @@ pub use verification_run::{
 mod trust;
 pub use trust::{
     ApprovalActor, ApprovalCursor, ApprovalDecision, ApprovalPage, ApprovalPageRequest,
-    ApprovalRecord, ApprovalStore, CapabilityGrantRecord, CapabilityGrantRevocationCommit,
-    CapabilityGrantScope, CapabilityGrantStatus, CapabilityGrantStore, CommittedApproval,
-    CommittedCapabilityGrant, CommittedCapabilityGrantRevocation, CommittedSecretLease,
-    IssueCapabilityGrantCommit, IssueSecretLeaseCommit, RequestApprovalCommit,
-    ResolveApprovalCommit, RevokeSecretLeaseCommit, SecretKind, SecretLeaseRecord,
-    SecretLeaseStore, SecretPlacement, SecretRef, SecretStore,
+    ApprovalRecord, ApprovalStore, CORE_FILE_REPLACE_CAPABILITY_DIGEST,
+    CORE_FILE_REPLACE_CAPABILITY_ID, CORE_FILE_REPLACE_CAPABILITY_SOURCE, CapabilityGrantRecord,
+    CapabilityGrantRevocationCommit, CapabilityGrantScope, CapabilityGrantStatus,
+    CapabilityGrantStore, CommittedApproval, CommittedCapabilityGrant,
+    CommittedCapabilityGrantRevocation, CommittedSecretLease, FileWriteScopeRequest,
+    IssueAttemptFileWriteGrantCommit, IssueCapabilityGrantCommit, IssueSecretLeaseCommit,
+    RequestApprovalCommit, ResolveApprovalCommit, RevokeSecretLeaseCommit, SecretKind,
+    SecretLeaseRecord, SecretLeaseStore, SecretPlacement, SecretRef, SecretStore,
 };
 mod user_request_resolutions;
 pub use user_request_resolutions::{

@@ -54,7 +54,7 @@ reuse it. Admission enforces these owner bindings:
 | Sharing scope | Required owner | Reuse boundary |
 |---|---|---|
 | `ATTEMPT_PRIVATE` | Task + exact Attempt | That Attempt only; never reused by replacement Attempt |
-| `TASK_SHARED` | Task | Attempts within that Task, subject to write/control fencing |
+| `TASK_SHARED` | Task | Read-only Task-planning Environment pinned to one TaskSpec revision and Resource set; execution sharing is not permitted in V1 |
 | `COWORKER_PRIVATE` | Same-Workspace Coworker | Tasks pinned to that Coworker; workspace-persistent retention only |
 | `WORKSPACE_SHARED` | Workspace | Eligible Tasks in that Workspace |
 | `USER_SHARED` | Principal | Reserved for a user-level owner/attachment contract; provision and cross-Workspace mounting are unavailable in v1 |
@@ -66,6 +66,45 @@ owner acts at a time. Parallel code writers default to private worktrees/overlay
 shared writable base requires an explicit provider write lease or deterministic merge
 workflow. A stale/missing provider handle, Runtime incarnation, auth state, or freshness
 observation prevents reuse until revalidated.
+
+Task planning and execution use distinct Environment identities. A planning session uses
+a Task-owned `TASK_SHARED` / `TASK_RETAINED` Environment with read-only filesystem access,
+bound to the current TaskSpec revision, Workspace, pinned Resources and Runtime
+incarnation. Its public Environment ID may be stored on the AgentSession; attestation
+details and provider handles remain in Runtime-private incarnation-scoped storage. An
+execution, delegated-child or verifier Attempt is admitted only with a newly prepared
+`ATTEMPT_PRIVATE` Environment owned by that exact Attempt. Planning and prior Attempt
+Environments are never reused.
+
+The provider/Attempt boundary has two distinct launches. Before the short admission
+transaction, Runtime first persists a private, owner-only preparation-journal record, then
+starts a trusted fixed-identity idle supervisor inside the requested OS scope. The
+supervisor applies the exact mounts, namespaces, limits and network policy and runs only
+bounded built-in enforcement probes. It does not start the native harness, agent tools,
+credentials, session or user code. Runtime derives the attestation from the live held scope,
+rechecks its process-start identity and policy/input digests immediately before admission,
+then commits Environment metadata and the appropriate Session/Attempt/lease reservation.
+Only a resolved durable receipt permits a one-time private handoff that starts the native
+provider/harness inside that same held scope. If the provider cannot preserve that exact
+scope across the commit boundary, admission fails closed; a detached capability probe or
+a short-lived test scope cannot attest the later worker's Environment.
+
+The preparation journal is a Runtime recovery aid, not an Environment aggregate, public
+event, Operator projection, backup item, credential store or authority source. It records
+the proposed owner identities, current/predecessor Runtime incarnation, normalized config
+and input digests, and an exact provider-scope reconciliation identity; it contains no
+native credentials. The journal is durably written before provider creation and is removed
+only after a confirmed handoff or observed cleanup. On startup, Runtime reconciles each
+entry against the idempotency receipt and exact provider/process identity. A committed
+entry follows ordinary prior-incarnation Attempt recovery; an uncommitted entry is cleaned
+only after exact provider identity and quiescence are observed. Unknown identity,
+quiescence or journal integrity retains a typed blocker and prevents replacement admission.
+Never clean up by PID or process name alone. If admission storage may have committed, query
+the original receipt before launching or destroying the scope.
+
+Storage's nullable AgentSession `environment_id` supports historical and Conversation rows;
+the Task admission owner must require a valid non-null binding for every new Task-scoped
+session before native provider/harness start.
 
 Creation requires a provider request ID and explicit Workspace authorization. ATTEMPT
 and TASK_RETAINED require an owner Task in the same Workspace; WORKSPACE_PERSISTENT has
@@ -147,8 +186,79 @@ pin. It verifies bytes against the pinned digest before exposure, rejects missin
 foreign, duplicate, traversal, and symlinked inputs, and presents source inputs read-only
 under the enforcing OS boundary. Outputs and generated files go to a distinct bounded
 writable root. The provider must not mount a home directory or ambient Workspace path.
+For the Linux Bubblewrap provider, these writes live on one size-capped sandbox-private
+`/workspace` tmpfs that also backs the worker's `/tmp`; the exact staged input tree is
+mounted read-only below it. The cap comes from the admitted `EnvironmentConfig` storage
+limit and is enforced by tmpfs, not inferred from a post-run scan. The host staging/output
+directory is used only as a trusted launcher working directory and is never bind-mounted
+into the worker. A positive cap that cannot be applied or observed fails closed. Any
+candidate intended to become a durable proposal must enter through the managed Resource
+revision lifecycle; the transient scratch tree is not itself a committed Artifact or
+Effect payload. For Feature 005, the current revision 1.1 implementation proposal starts a
+trusted inner runner as the Bubblewrap command. The native harness writes one candidate to
+the fixed `/workspace/outputs/proposal` path on the same bounded tmpfs. The runner becomes
+a child subreaper, prevents the untrusted child from reading the runner's own `/proc`
+descriptors, waits for the harness and reparented descendants, opens only that regular file
+without following symlinks, enforces the accepted Step byte limit, and emits one
+versioned, length-framed payload over the existing scope stderr pipe. The harness retains
+its native stdin/stdout protocol; harness stderr is separately framed as logs. The Runtime
+may parse the candidate frame into a bounded transient buffer, but it returns bytes to
+Task Runtime only after the exact process scope reports recursive cgroup-v2
+`populated 0` and the direct launcher is reaped. No host output/staging directory or
+candidate socket is exposed. The candidate frame contains no host path, target path,
+ResourceRef, digest or authority. Runtime computes the content digest and persists the
+bytes as an immutable Resource revision with `created_by_attempt` provenance. This capture
+is data only and does not issue Trust authority or create an Effect. As of 2026-11-18,
+lower-level CODE exists for the Bubblewrap `--cap-drop ALL` launch plan, the trusted
+scope-gate runner, fixed-path bounded file reading and the versioned stderr frame format.
+The daemon also has CODE for mapping a ready current-incarnation Attempt-private
+Environment and exact staged Resource pins into the supported Bubblewrap launch spec,
+including fail-closed resource-limit conversion. Five mapper and three capture-session
+tests pass on WSL Ubuntu 24.04, and the staging crate passes 38 tests. The private capture
+session starts a mapped Bubblewrap scope, retains native harness stdin/stdout, drains the
+separate bounded candidate channel concurrently, and releases bytes only after recursive
+cgroup quiescence and direct-launcher reap. Timeout before a known exit result retains the same session for retry; a nonzero exit drains/discards its frame and remains terminal on retry. Cancellation discards output after bounded kill-and-wait. These are CODE tests using a
+fake process scope, not a real provider run. A separate opt-in WSL Bubblewrap integration
+test launches the locally built scope-gate runner as PID 1, blocks the child from forging
+a candidate frame, and waits for a delayed reparented descendant before collection. It
+bypasses `ManagedScope` and systemd/cgroup supervision, so it does not exercise the daemon
+capture helper or establish provider quiescence. A second opt-in WSL Bubblewrap test runs
+the production `prepare_bubblewrap_command` output directly, reads back its fixed 1 MiB
+`/workspace` tmpfs cap, writes through both `/workspace/outputs` and the in-sandbox `/tmp`
+symlink, and observes `ENOSPC` when both paths consume the shared quota. This exposed and
+fixed a prior invalid host-side `--bind /workspace/tmp /tmp`; it still does not test mapping
+an admitted Environment's configured storage limit, `ManagedScope`, systemd/cgroup, or the
+managed provider. The helper has no production Task Runtime caller and creates no attestation
+or Resource. Attestation and candidate-to-Resource flow remain TARGET; capture is not
+integrated and file dispatch is unavailable until provider integration and native Linux
+evidence are complete. The 2026-11-19 T01 cross-check found that this capture helper cannot
+attest before Attempt admission because it launches the candidate-producing harness. Source
+now has a CODE-level `--held-attempt-runner` protocol that announces readiness inside the
+requested Bubblewrap namespace and blocks before native harness creation until a one-shot
+signal; its builder, protocol and no-retry helper tests pass. It does not yet run same-scope
+enforcement probes, resolve a SQLite admission receipt or have a Task Runtime caller. A
+separate `RuntimeLocalPreparationJournal` now has CODE for private durable intent/phase/receipt
+records and fail-closed recovery classification; the focused daemon test filter passed 22/22
+on native Windows. This primitive is not wired before provider creation or into startup
+recovery. Before a caller, pending-entry enumeration still needs no-follow/regular-file/
+owner/mode/canonical-key validation, and phase updates need serialization across shared or
+cross-process users. The revised target still requires the trusted idle supervisor, probes,
+exact receipt lookup, attestation, admission and restart reconciliation; the contract remains
+IN_REVIEW, and no current attestation or qualification claim is made.
 Import limits apply before extraction or copying; an unsupported format is rejected or
 exposed as opaque bytes, never silently treated as parsed content.
+
+For the first mediated file replacement (Feature 005 B-18), a host path string is not an
+Environment capability. Runtime resolves the WorkspaceRoot's private local identity
+binding and opens the root before constructing an opaque, process-local handle plus a
+validated relative path. The code uses Linux descriptor-relative `openat2` resolution and
+Windows handle-relative no-reparse operations; the Windows replacement path requires an
+optional narrowly scoped root handle and NTFS, and fails closed if either is unavailable.
+Neither implementation turns a Task-supplied path into a new host root. The file primitive
+has focused CODE tests, but it is not wired into a Task Environment/provider or mediated
+dispatch. It does not attest Environment isolation and does not grant write authority.
+Trust and the committed dispatch transaction remain required, and Windows Task execution
+remains unavailable until B-35 qualifies.
 
 Runtime-local evidence is represented as bounded typed values, stored only in the private
 incarnation-scoped binding store and never in domain events, aggregate snapshots, backups,

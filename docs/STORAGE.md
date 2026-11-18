@@ -289,6 +289,24 @@ Resource, Task, or Artifact aggregates.
 
 The adapter performs no provider, filesystem-encryption-key, or network call while a SQL
 transaction is open.
+
+The B-18 file replacement is a separate external filesystem effect after the canonical
+CapabilityInvocation/Effect/ApprovalUse dispatch transaction commits. Its Effect target
+stores only the WorkspaceRoot ID, root-relative path, base/content digests, exact managed
+ResourceRevision reference and plan-action digest; it never stores the host locator or
+file bytes. The temporary file is outside SQLite and is deterministically discoverable
+from the Effect ID and target path. Linux flushes staged file data, performs the same-volume
+rename, then fsyncs the containing directory. Windows permits this operation only on NTFS,
+opens the temp with `FILE_WRITE_THROUGH`, flushes its content, and performs a
+handle-relative NTFS rename; it does not claim a portable directory-handle fsync sequence.
+A crash before rename leaves the original target unchanged and the Task reconciler owns
+inspecting and removing the temp after comparing the target with the pinned base and
+approved digests. After a rename error or uncertain durability observation, the primitive
+reports an ambiguous result for reconciliation and must not be retried blindly. The final
+base-digest check is not an atomic filesystem compare-and-swap, so native/external writers
+can race outside LiteCowork's lease fence. SQLite must not claim that the file write
+committed merely because dispatch admission committed; the primitive itself writes no
+Effect receipt or state.
 Blob bytes are committed and verified before a transaction can reference them; a failed
 transaction may leave an unreferenced blob for delayed garbage collection. Deletion is
 idempotent for a missing object, must reject unsafe object types, and must durably remove
@@ -917,7 +935,8 @@ Atomic boundaries:
 - Workspace replication-policy update + selected-root set + Workspace aggregate version/event
 - Task + initial TaskSpecRevision + event
 - PlanRevision append + current-revision promotion + Step materialization + related events in one transaction
-- lease acquisition + Attempt authoritative ownership
+- Attempt/Step/lease admission + Environment metadata + STARTING AgentSession reservation
+  after provider preparation and attestation; no SQLite transaction spans the provider call
 - Effect PROPOSED before external mutation
 - Effect row + immutable aggregate snapshot + `effect.proposed.v1` + idempotency receipt
   before any later dispatch; proposal rechecks the active Attempt/Invocation/grant and the
@@ -934,10 +953,20 @@ Atomic boundaries:
 - AutomationRevision append + current-revision pointer + event
 - AutomationOccurrence claim + pinned revision + Task creation reference
 - ApprovalUse insertion + one-time approval consumption + associated Effect/grant binding
+- Trust-issued Feature 005 file-write CapabilityGrant + immutable grant snapshot/event/audit/idempotency receipt, only after rechecking the active Attempt, current accepted PlanRevision Step, WorkspaceRoot, managed candidate ResourceRevision with matching `provenance.created_by_attempt`, and live lease; no ApprovalUse is consumed by this grant issue
 - capability lock insertion + canonical CapabilityRef key digest; a Task cannot replace the selected package/Skill revision after locking
-- CapabilityInvocation status transition + immutable aggregate snapshot + status event +
-  request-deduplication receipt. Invocation creation and provider dispatch remain unavailable
-  until Trust, Effect, ApprovalUse, and lease admission share one transaction.
+- CapabilityInvocation creation and provider dispatch remain unavailable until the mediated
+  dispatch transaction atomically commits Invocation DISPATCHED, Effect STARTED, Trust
+  decision, ApprovalUse, event/snapshot/audit records, and a dispatch receipt while
+  rechecking the *already admitted* Attempt's current live lease/fence, Session, grant,
+  activation, action digest and exact Approval. Attempt/lease admission is a prior separate
+  transaction; it does not by itself authorize a later write. No provider or file call runs
+  inside either transaction.
+- The Feature 005 file-write grant is a prior Trust-owned transaction after Attempt
+  admission and before exact Effect approval. It pins one root-relative target, base digest,
+  same-Attempt candidate ResourceRevision/digest/size, plan-action digest, operation and lease-bounded
+  expiry. It is not issued by the generic owner grant endpoint. It authorizes only the
+  subsequent mediated proposal/dispatch path; it does not permit filesystem mutation.
 - Resource revision/location observation + downstream invalidation records
 - ArtifactVersion/VerificationRun immutable input refs (including paired ResourceInput digests) + DependencyEdge reverse-index rows
 - ResourceRevision append + parent-edge rows + current-head recomputation + location observation + event + dependent invalidations
@@ -948,6 +977,16 @@ Atomic boundaries:
 - EnvironmentProvisionPreview single-use consumption + Workspace budget reservation + PROVISIONING Environment + creation event
 - authenticated replication receipt insertion + Workspace receipt-cursor advancement
 - aggregate state application + per-aggregate applied revision + pending-event settlement
+
+For the owner-directed B-18 file Effect target, the exact managed ResourceRevision is a
+durable recovery and preview input. Resource revoke, purge and blob collection must
+recheck references to that exact revision in the same authoritative storage boundary and
+must not remove bytes while an Effect is unresolved or a required VerificationRun is
+pending. The source reference is the closed typed target in `Effect.target_json`; a
+best-effort lookup outside the deletion transaction is not sufficient. This is TARGET
+only: no current storage writer admits this typed target, and no current deletion/GC path
+has this hold wired for Task Effects. Do not add a parallel proposal table or event for
+this purpose.
 
 Do not keep DB transaction open across network/provider calls.
 
@@ -1131,12 +1170,19 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   (append-only `OWNER_TOOK_CONTROL`/`OWNER_RELEASED_CONTROL` provenance, unique per turn and kind) and
   `conversation_owner_side_notes` (bounded owner notes correlated to a turn, never message rows, so they
   cannot enter a native prompt).
+- migration 33 (`schemas/sqlite-v33.sql`, Feature 005 T01; owner-directed revision 1.1 remains
+  IN_REVIEW) adds a nullable `agent_sessions.environment_id` foreign key, lookup index, immutable
+  session-identity binding, and scope guards for newly reserved Task sessions. Planner sessions must
+  match a READY Task-shared Environment; Attempt sessions must match a READY Attempt-private Environment
+  and the same Attempt/session/runtime identities. Conversation sessions remain unbound. The migration
+  creates no Environment, Attempt, lease, Effect, grant or ApprovalUse, and the Task admission/provider
+  path remains fail-closed.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
   the schema-object fingerprint at that migration boundary. Reopening verifies every
   recorded migration name/source checksum and compares the active schema version's
   fingerprint with the current non-internal `sqlite_master` objects; historical
   fingerprints are retained because later migrations intentionally add schema objects.
-  The current wired schema version is 32, so the v32 fingerprint is checked against the full
+  The current wired schema version is 33, so the v33 fingerprint is checked against the full
   current schema. Missing migration records, changed
   source checksums, or changed current schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances

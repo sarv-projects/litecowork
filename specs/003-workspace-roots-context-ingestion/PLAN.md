@@ -25,7 +25,7 @@ Owners: Resource, Conversation, Storage, Security/Trust, Desktop UI. Allowed imp
 
 ## Migration, rollout, rollback
 
-T01 adds the `context_attachments` and `retrieval_receipts` tables (accepted target interface, not yet in source) in the immutable `docs/schemas/sqlite-v35.sql` (allocation in docs/LITECOWORK-BUILD-TASKS.md Migration allocation; the latest wired file today is `sqlite-v32.sql`; if another package merges first, take the next free number and update that table in the same change). The migration is additive; no existing table is rewritten. Rollback is revert to the previous committed revision and refuse new admission that needs the new tables; committed receipts are retained and are never reinterpreted.
+T01 adds the `context_attachments` and `retrieval_receipts` tables (accepted target interface, not yet in source) in the immutable `docs/schemas/sqlite-v36.sql` (allocation in docs/LITECOWORK-BUILD-TASKS.md Migration allocation; v33 is assigned to 005-T01 and v32 remains the latest wired migration; if another package merges first, take the next free number and update that table in the same change). The migration is additive; no existing table is rewritten. Rollback is revert to the previous committed revision and refuse new admission that needs the new tables; committed receipts are retained and are never reinterpreted.
 
 Rollout order: Linux row behavior is already compiled for add/scan, so Windows add/scan ships behind the platform-availability signal and is enabled only after T06 passes on the Windows row.
 

@@ -1,8 +1,8 @@
 feature_id: "016"
-name: "Rich Presentation, Intelligent UI and Generated Media"
+name: "Intelligent Workspace Presentation Runtime"
 status: "IN_REVIEW"
-spec_revision: "0.2-proposed"
-notes: "Edges are TARGET unless marked existing. Served today: rich presentation and Conversation presentation reads, stream. No production publisher, no media ingestion, no Interactive Artifact Runtime."
+spec_revision: "0.4-proposed"
+notes: "Revision 0.4 is a TARGET proposal. The product owner directed Saved Views to remain in V1 and Feature 007 B-21 to be amended; its cross-owner review, T01 whole-scope acceptance and T02 contract promotion remain open. Existing reads/stream are SERVED; validators are partial CODE. No production publisher, media ingestion, interactive renderer, Canvas controller, remembered-state route or Saved View route exists. Saved Views preserve declared defaults only; B-40 changed-input state remains transient."
 nodes:
   - id: "session-supervisor"
     owner: "AgentSessionSupervisor (Feature 001)"
@@ -148,11 +148,12 @@ external_boundaries:
     timeout: "render budget 100 ms per main-thread task"
     retry: "fallback to semantic text"
 
-# Revision 0.2 extension graph. Separate proposal scope; not existing edges.
-extension_review:
+# Revision 0.4 revised V1 graph. Every node and edge below is TARGET unless an owner route above is explicitly marked existing.
+revision_0_3_review:
   status: "TARGET_PROPOSAL_BLOCKED"
-  authority: "docs/ACP-PRESENTATION-PIPELINE-LLD.md and SPEC section 19; canonical schemas only"
-  baseline: "B-40 view-local state and PREVIEW_ONLY remain unchanged"
+  authority: "Feature 016 SPEC section 20; docs/ACP-PRESENTATION-PIPELINE-LLD.md; canonical owner schemas only"
+  acceptance_gate: ["T25 completes cross-owner review of the selected Feature 007 Saved View direction", "T01 accepts/revises complete V1 AC set", "T02 promotes canonical contracts before implementation"]
+  baseline: "B-40 SAFE_CALCULATOR posture remains; executable Interactive Artifact Runtime stays PREVIEW_ONLY"
   nodes:
     - id: "qualified-intent-ingress"
       owner: "AgentModule and Conversation"
@@ -171,19 +172,35 @@ extension_review:
       owner: "Conversation and host UI"
       inputs: ["explicitly previewed selected snapshot", "parent presentation and base revision"]
       outputs: ["ordinary new Conversation turn", "new-message presentation lineage"]
+    - id: "saved-view-artifact"
+      owner: "ArtifactStore and Library (Feature 007), after T25/T01/T02 acceptance and route promotion"
+      inputs: ["exact RichPresentation digest", "source Conversation/message ids", "canonical presentation declared defaults only", "owner-authorized request identity"]
+      outputs: ["immutable ArtifactVersion", "Library projection", "durable owner receipt"]
+      authority: "proposal only; Feature 007 decides whether its Artifact model can represent this without weakening Artifact invariants"
+    - id: "contextual-canvas"
+      owner: "Workbench (Feature 008)"
+      inputs: ["authorized current view or exact Saved View version", "source object identity", "declared RichPresentation defaults only"]
+      outputs: ["contextual right-side Canvas tab", "focus/scroll return point"]
+      authority: "proposal only; no new permanent sidebar destination or provider start"
   edges:
     - from: "qualified-intent-ingress"
       to: "presentation-binder"
       kind: "candidate staging; semantic commit must precede independent publish"
     - from: "rich-view"
       to: "surface-controller"
-      kind: "host navigation Expand/Collapse; one controller, no agent dispatch"
+      kind: "host navigation Open in Canvas/Return; one controller, no agent dispatch"
+    - from: "contextual-canvas"
+      to: "surface-controller"
+      kind: "reuse the exact message/document/controller identity"
     - from: "surface-controller"
       to: "interaction-state-service"
       kind: "host-only Remember/Forget commands after separate consent; unavailable until T22"
     - from: "surface-controller"
       to: "modification-review"
       kind: "Ask to change this view; explicit snapshot review and Send only"
+    - from: "surface-controller"
+      to: "saved-view-artifact"
+      kind: "explicit capability-gated Save/Open/Update/Archive through Feature 007 owner command and receipt"
     - from: "modification-review"
       to: "session-supervisor"
       kind: "Feature 001 admitted new turn, never original-message mutation"
@@ -196,10 +213,15 @@ extension_review:
       owner: "Storage and retention owners"
       atomic_records: ["delete protected input content", "advance deletion fence", "minimal allowed receipt"]
       external_calls_inside: false
+    - id: "tx-saved-view-artifact-owner-proposed"
+      owner: "Feature 007 ArtifactStore"
+      atomic_records: ["create or append exact immutable ArtifactVersion", "source lineage", "idempotency receipt", "Artifact/Library projection event"]
+      external_calls_inside: false
   recovery:
     - "Wrong session/retry/incarnation or unsupported ingress: refuse proposal, preserve semantic turn"
     - "State timeout: reconcile same RequestId; two-window revision conflict preserves local draft"
-    - "Forget/delete/revocation fences late saves and acknowledgements; backup cannot resurrect content"
+    - "Remember/Forget and Conversation deletion/revocation fence late state writes; backup cannot resurrect forgotten content"
+    - "Saved View timeout/conflict: reconcile exact Feature 007 receipt/version; preserve draft and never substitute latest version"
     - "Changed document namespace starts fresh; migration needs explicit preview and consent"
     - "Late agent modification creates no overwrite; compare base revision and require review"
-  gates: ["T01 baseline AC-001..AC-019 acceptance only", "T25 separate extension owner decision under A-84; explicitly defer/include A-103 Saved View scope", "T20 native ingress and canonical intent/pins; resolve A-85 sequence and MCP input contract", "T21 Canvas controller", "T22 persistence/privacy/migration review; remembered inputs are not a Library Artifact", "T23 explicit new-turn modification, independent of T22 persistence", "T24 exact packaged SYSTEM and USER evidence including AC-028"]
+  gates: ["T25 cross-owner review of the selected Feature 007 Saved View direction", "T01 whole revised V1 scope acceptance after T25", "T02 canonical contract promotion", "T20 provider-specific ingress evidence or deliberate semantic-only fallback; resolve A-85 before exposing a tool", "T21 shared inline/Canvas controller under Feature 008", "T22 separate remembered-input state consent/privacy/migration review", "T23 Feature 007 Saved View operations plus explicit Feature 001 new-turn modification", "T24 exact packaged SYSTEM and USER evidence for all accepted ACs"]

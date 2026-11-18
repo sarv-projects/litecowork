@@ -1454,6 +1454,7 @@ fn downgrade_resource_content_schema_to_v16(connection: &Connection) {
 }
 
 fn downgrade_resource_index_schema_to_v18(connection: &Connection) {
+    super::downgrade_v33_to_v32_for_test(connection);
     connection
         .execute_batch(super::DOWNGRADE_V29_TO_V27_SQL)
         .expect("restore the v27 migration boundary");

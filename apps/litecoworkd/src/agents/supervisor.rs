@@ -960,9 +960,9 @@ fn settle_dispatch_failure(
     }
 }
 
-/// An admitted turn whose pinned host is unavailable has a known, non-provider outcome.
+/// A claimed turn whose pinned host is unavailable has a known, non-provider outcome.
 /// Retry transient local settlement failures so the current daemon can persist that outcome
-/// without waiting for restart; if settlement still cannot be confirmed, the unclaimed
+/// without waiting for restart; if settlement still cannot be confirmed, the claimed
 /// durable intent remains available to startup recovery.
 fn settle_unavailable_host_attempt(
     settle: impl FnMut() -> Result<(), storage_core::StoreError>,
@@ -1297,6 +1297,7 @@ impl AgentSessionSupervisor {
     /// Dispatches a submitted ConversationTurn through the full native agent lifecycle.
     pub async fn dispatch_turn(
         &self,
+        local_incarnation_id: &str,
         principal_id: &str,
         workspace_id: &str,
         conversation_id: &str,
@@ -1320,9 +1321,12 @@ impl AgentSessionSupervisor {
         let workspace = workspace_id.to_owned();
         let conversation = conversation_id.to_owned();
         let turn_id = turn.turn_id.clone();
+        let local_incarnation_id = local_incarnation_id.to_owned();
         let correlation = correlation_id.to_owned();
         let join_recovery_session_id = Arc::new(std::sync::OnceLock::<String>::new());
         let worker_recovery_session_id = Arc::clone(&join_recovery_session_id);
+        let join_recovery_claimed = Arc::new(std::sync::OnceLock::<()>::new());
+        let worker_recovery_claimed = Arc::clone(&join_recovery_claimed);
         let recovery_store = store.clone();
         let recovery_runtime_id = runtime_id.clone();
         let recovery_principal = principal.clone();
@@ -1334,8 +1338,29 @@ impl AgentSessionSupervisor {
         let dispatch_task = tokio::task::spawn_blocking(move || {
             let _dispatch_registration = dispatch_registration;
             let mut session_id_for_failure: Option<String> = None;
+            let mut owns_dispatch_intent = false;
             let dispatch_result = (|| -> Result<(), DispatchFailureClass> {
                 let conv_store = SqliteConversationStore::new(store.clone());
+
+                // The durable intent is the cross-Runtime ownership fence. Claim it
+                // before any preflight lookup can fail and settle the attempt. A losing
+                // dispatcher must leave the winning Runtime's live turn untouched.
+                let now = now_utc_rfc3339();
+                let claimed = conv_store
+                    .claim_conversation_dispatch_intent(
+                        &turn_id,
+                        turn.retry_ordinal,
+                        &local_incarnation_id,
+                        &now,
+                    )
+                    .map_err(|_| DispatchFailureClass::DispatchIntentClaim)?;
+                if !claimed {
+                    return Ok(());
+                }
+                owns_dispatch_intent = true;
+                let _ = worker_recovery_claimed.set(());
+                let (cancel, _cancel_registration) =
+                    supervisor.register_cancel(&turn_id, turn.retry_ordinal);
 
                 // 1. Resolve host for turn
                 let host_opt = conv_store
@@ -1367,7 +1392,6 @@ impl AgentSessionSupervisor {
                 };
 
                 // 2. Query provider key and profile via published AgentCatalogStore trait
-                let now = now_utc_rfc3339();
                 let binding = store
                     .get_agent_binding(&principal, &workspace, &host.agent_binding_id)
                     .map_err(|_| DispatchFailureClass::BindingLookup)?
@@ -1382,22 +1406,6 @@ impl AgentSessionSupervisor {
                     .find(|p| p.profile.agent_profile_id == binding.agent_profile_id)
                     .map(|p| p.profile.provider_key.clone())
                     .ok_or(DispatchFailureClass::ProfileLookup)?;
-
-                // 3. Claim the durable dispatch intent (compare-and-swap) before the STARTING
-                // reservation. A losing dispatcher owns nothing and must not reserve a session.
-                let claimed = conv_store
-                    .claim_conversation_dispatch_intent(
-                        &turn_id,
-                        turn.retry_ordinal,
-                        &host.runtime_incarnation_id,
-                        &now,
-                    )
-                    .map_err(|_| DispatchFailureClass::DispatchIntentClaim)?;
-                if !claimed {
-                    return Ok(());
-                }
-                let (cancel, _cancel_registration) =
-                    supervisor.register_cancel(&turn_id, turn.retry_ordinal);
 
                 // 4. Reserve STARTING session
                 let session_id = generate_id("ses");
@@ -1535,6 +1543,11 @@ impl AgentSessionSupervisor {
             })();
 
             if let Err(failure) = dispatch_result {
+                if !owns_dispatch_intent {
+                    // A failed/ambiguous CAS does not prove ownership. Keep the durable
+                    // intent for reconciliation; this dispatcher may not settle it.
+                    return Err(failure);
+                }
                 // Every post-admission setup/dispatch error attempts to settle the exact
                 // attempt. If storage is unavailable, the durable intent remains fenced
                 // for the existing startup recovery sweep; report only a typed class.
@@ -1557,6 +1570,11 @@ impl AgentSessionSupervisor {
         });
 
         join_dispatch_or_recover(dispatch_task.await, move || {
+            if join_recovery_claimed.get().is_none() {
+                // A panic before a confirmed claim is not authority to settle another
+                // Runtime's attempt. The durable startup sweep owns reconciliation.
+                return DispatchFailureClass::BlockingTask;
+            }
             let session_id = join_recovery_session_id.get().cloned();
             recover_blocking_dispatch_failure(
                 &recovery_store,

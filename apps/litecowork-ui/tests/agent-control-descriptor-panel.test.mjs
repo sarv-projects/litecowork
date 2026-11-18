@@ -14,7 +14,7 @@ const vite = await createServer({
   optimizeDeps: { noDiscovery: true, include: [] },
   appType: "custom",
 });
-const { AgentControlDescriptorPanel, UnavailableControlsNotice, DescriptorSummary } = await vite.ssrLoadModule("/src/agents/AgentControlDescriptorPanel.tsx");
+const { AgentControlDescriptorPanel, UnavailableControlsNotice, DescriptorSummary, isAgentControlDescriptorExpired } = await vite.ssrLoadModule("/src/agents/AgentControlDescriptorPanel.tsx");
 const {
   parseAgentControlDescriptor,
   parseAgentControlReadError,
@@ -138,6 +138,26 @@ test("typed unavailable state is visible without exposing daemon details", () =>
   assert.match(html, /LiteCowork has not verified this agent’s commands and input options/);
   assert.match(html, /safe-ref-123/);
   assert.doesNotMatch(html, /secret|native config|\/home\//i);
+});
+
+test("stale descriptors pause declared controls and tell the user to refresh", () => {
+  const declared = descriptor();
+  declared.auth = { state: "NEEDS_AUTH", account_label: null, credential_slots: [], methods: [
+    { auth_method_id: "native-login", display_name: "Native login", kind: "NATIVE_FLOW", requires_restart: false },
+  ] };
+  declared.configuration.native_config_targets = [{ target_id: "settings", display_name: "Settings", kind: "FILE" }];
+  const html = renderToStaticMarkup(createElement(DescriptorSummary, { descriptor: declared, stale: true, actions: { onBeginAuth() {}, onOpenNativeConfig() {} } }));
+  assert.match(html, /These controls are stale\. Refresh controls to check them again/);
+  assert.match(html, /<button[^>]*disabled[^>]*>Sign in: Native login/);
+  assert.match(html, /<button[^>]*disabled[^>]*>Open native config: Settings/);
+});
+
+test("descriptor freshness expires exactly at its declared deadline", () => {
+  const expiresAt = "2026-10-18T11:00:00Z";
+  const deadline = Date.parse(expiresAt);
+  assert.equal(isAgentControlDescriptorExpired(expiresAt, deadline - 1), false);
+  assert.equal(isAgentControlDescriptorExpired(expiresAt, deadline), true);
+  assert.equal(isAgentControlDescriptorExpired("invalid", deadline - 1), true);
 });
 
 test("sign-in and native config controls render only when the descriptor declares them", () => {

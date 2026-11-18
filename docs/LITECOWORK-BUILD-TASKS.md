@@ -2,19 +2,19 @@
 
 This is the working delivery checklist for the active source tree. It is not a Git commit plan. Feature-specific work items belong in specs/NNN-*/TASKS.md. Product semantics remain in owner contracts; current evidence is in IMPLEMENTATION-STATUS.md.
 
-## Status snapshot (refreshed 2026-11-13, active source checkpoint 6adadab)
+## Status snapshot (refreshed 2026-11-18; source HEAD f146bb3 with a shared dirty worktree)
 
 The tables below are the plan and carry no per-row status. Per-task status lives in specs/NNN-*/TASKS.md; this snapshot only indexes it. Nothing is INTEGRATED with a live agent or QUALIFIED.
 
 | Group | State | Detail |
 |---|---|---|
-| BT-00 | Partly done | Route inventory matches (179 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 54 target-only); CURRENT-RUN.md and IMPLEMENTATION-STATUS.md refreshed 2026-11-16 |
+| BT-00 | Partly done | Source-regenerated inventory is 183 OpenAPI-served / 4 served outside OpenAPI / 0 local-only / 52 target-only across 235 OpenAPI operations; CURRENT-RUN.md and IMPLEMENTATION-STATUS.md refreshed 2026-11-18. Documentation guards still expect 179/4/54 or 181/4/53. |
 | BT-01 | CODE and SERVED for BT-01.1, 01.2, 01.4; BT-01.3 CODE (ACP client, OpenCode HTTP adapter kept); BT-01.5 and 01.6 partial | 001 DONE/PARTIAL list in CURRENT-RUN.md; live OpenCode run (001-T09) NOT STARTED |
 | BT-02 | 003-T01 BLOCKED on A-69 provenance owner decision; T02 Linux storage tests PARTIAL; T03-T06 Windows work DEFERRED to owner's Windows laptop; T09/T10 BLOCKED on A-65/A-69 | See Feature 003 TASKS and current cross-check |
 | BT-03 | Registry/descriptors and limited discovery CODE/SERVED; Claude Code module BLOCKED; relay (004) PARTIAL CODE (producer attribution/context builder only), no qualified second dispatch path | 002 and 004 TASKS; see `docs/audit/FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md` |
-| BT-04 | Not started | 005; T02 has partial CODE ahead of its T01 dependency; A-70 planner/Attempt Environment lifecycle and A-87/A-88/A-90 require owner resolution before execution/write-path implementation; B-35 remains PROPOSED |
+| BT-04 | In progress: 005-T01 owner-directed contracts and v33 Environment binding | 005; T02 has partial CODE ahead of its T01 dependency; A-70/A-87/A-88/A-90 direction is recorded in revision 1.1 (IN_REVIEW); cross-owner review, attestation provider, Task admission, mediated write path and Linux qualification remain open; B-35 remains PROPOSED |
 | BT-05 | 013 part: whole package DEFERRED by the owner (A-62). 006 part: BLOCKED on B-19/A-82 owner decisions; E2E-05 Task-write row order remains OPEN under A-80 | See the DEFERRED note in specs/013-litespm-package-lifecycle-bridge/TASKS.md and A-80/A-82 in the contradiction register |
-| BT-06 to BT-09 | Existing foundations only; 010-T19 deferred out of V1. Feature 016 baseline acceptance is pending; A-84 separates its revision 0.2 extension decision and A-85 blocks MCP proposal exposure pending a canonical tool-input/sequence contract. | 007, 016, 008, 009, 010 |
+| BT-06 to BT-09 | Existing foundations only; 010-T19 deferred out of V1. Feature 016 revision 0.3 proposes one expanded V1 scope across AC-001..AC-041; it remains TARGET/IN_REVIEW. A-84 requires Feature 007's Saved View fit decision at T25, then whole-scope owner decision at T01, then contract promotion at T02. B-46's closed component profile and explicit host-action boundary are proposed, not accepted. A-85 still blocks model-visible MCP proposal exposure until the canonical input/sequence/replay contract is resolved. No new presentation route or UI control is authorized yet. | 007, 016, 008, 009, 010 |
 | BT-10 | Partly done for Linux; Windows and packaged rows DEFERRED | 011 DONE T01, T04, T05, T07, T08, T09, T10, T21 |
 | BT-11 | Storage layer only (014-T03 partial, migration v31) | Routes, search, purge, UI NOT STARTED |
 | BT-12 to BT-14 | Not started; B-39, B-40, B-41, D-01, B-45 accepted as proposed; B-42 open | 015 to 018, 020 |
@@ -67,7 +67,7 @@ Feature 004's full 11-file package read and bounded source cross-check are recor
 
 ## BT-04 — Safe Task execution (Feature 005)
 
-Implementation gate: complete 005-T01 first. Resolve A-70's planner and Attempt Environment identity/lifecycle with Feature 015. T05 may not treat unmediated native tools as a disclosed-only limitation (A-89). Before 005-T08, Task Runtime, Trust and Storage must resolve the durable exact file-content input (A-87), Attempt/Effect/ApprovalUse transaction map (A-88), and request-versus-authority semantics for FileWriteGrant (A-90). Preserve Linux-first qualification and the Windows UNAVAILABLE posture until B-35 qualifies.
+Implementation gate: finish 005-T01 source/schema promotion and obtain cross-owner review of its revision 1.1 target with Feature 015, Task Runtime, Trust and Storage. T05 may not treat unmediated native tools as a disclosed-only limitation (A-89). Before 005-T08, implement the Environment-first Attempt reservation, durable exact ResourceRevision target, atomic mediated Invocation/Effect/ApprovalUse dispatch and Trust-owned grant path under their named tasks. Preserve Linux-first qualification and the Windows UNAVAILABLE posture until B-35 qualifies.
 
 | ID | Task | Exit evidence |
 |---|---|---|
@@ -99,7 +99,7 @@ BT-06.1 and BT-06.2 are owned by Feature 007; BT-06.3..BT-06.5 are owned by Feat
 | BT-06.1 | Qualify one professional Artifact format | Create/edit/save/export/reopen/compare round trip |
 | BT-06.2 | Verify exact source/version and Artifact provenance | Hash and revision consistency |
 | BT-06.3 | Validate typed RichPresentation document | Size/depth/node/schema/digest bounds and semantic fallback |
-| BT-06.4 | Add the accepted first accessible Intelligent UI component, SAFE_CALCULATOR | Restricted state reducer, table fallback, malicious-input tests; exact feature acceptance still pending at 016-T01 |
+| BT-06.4 | Add the accepted first accessible Intelligent UI component, SAFE_CALCULATOR | Restricted state reducer, table fallback, malicious-input tests; B-40 accepts this component boundary, but revision 0.3's whole-scope T01 and contract promotion T02 remain pending before implementation |
 | BT-06.5 | Keep Interactive Artifact in isolated runtime | Separate process, authority and OS qualification |
 
 ## BT-07 — Workbench providers (Feature 008)
@@ -213,7 +213,7 @@ Folded tasks (owner-accepted 2026-11-09, register A-55) land in the wave of thei
 
 ## Migration allocation (provisional)
 
-The wired schema is v32 (v30 adds REPORTED turn activity records, 001-T25 storage layer; v31 adds Conversation history lifecycle state, 014-T03; v32 adds Conversation control events and owner side notes, 012-T05): v28 (register A-40) and v29 (Feature 001 durable turn) are applied by `crates/storage-sqlite/src/lib.rs`. Many packages wrote "sqlite-v29.sql or the next free number" and Feature 012 named v30, so the numbers collide. This table assigns numbers in wave merge order. Rules: the first package to bump `SCHEMA_VERSION` also wires v28, because migrations apply in order; a package that merges out of order takes the next free number and updates this table in the same change; a merged migration is never renumbered or edited.
+The wired schema is now v33 (v28 delegation settings; v29 dispatch outbox and usage records; v30 REPORTED Conversation turn activity; v31 Conversation history lifecycle; v32 Conversation control events and owner side notes; v33 Task AgentSession Environment binding). Migrations apply in one contiguous, forward-only chain; the first unmerged change takes the next number, reservations shift only before implementation, and a wired migration is never renumbered or edited. v33 was assigned to owner-directed 005-T01 after source confirmed no v33+ migration existed; unmerged 002 and 003 reservations shifted to v34-v36. v33 has focused and full storage-suite CODE evidence; it does not mean Task admission is implemented.
 
 | Migration | Package and task | Content (from the package DATA-MODEL) |
 |---|---|---|
@@ -222,10 +222,10 @@ The wired schema is v32 (v30 adds REPORTED turn activity records, 001-T25 storag
 | v30 (wired) | 001-T25 (done) | REPORTED Conversation turn activity records |
 | v31 (wired) | 014-T03 (partial: storage only) | `conversation_history_state` side table (status, archived_at, deleted_at); search index and purge manifest are NOT in v31 and take a later number |
 | v32 (wired) | 012-T05 (partial: storage only) | `conversation_control_events`, `conversation_owner_side_notes` (replaces the v30 named in 012) |
-| v33 | 002-T07 (W1) | Runtime-local durable auth observations. The descriptor store already exists in migration 16; no descriptor DDL is needed. |
-| v34 | 002-T08 (W1) | Runtime-local credential-submission replay receipts only if the reviewed SecretStore crash-reconciliation contract requires durable DDL; otherwise release the reservation before implementation. Never store secret bytes. |
-| v35 | 003-T09 (W1) | `context_attachments`, `retrieval_receipts` (renumbered from v32) |
-| v36 | 005-T01 (W2) | Plan acceptance, Attempt admission and Effect records |
+| v33 (wired; focused schema/scope, legacy-row and rollback tests pass; full storage suite passed before final test-fixture refinement) | 005-T01 (W2, assigned 2026-11-17) | Nullable `agent_sessions.environment_id` binding, foreign key/index and scope/identity guards. Attempt, lease, Effect and ApprovalUse records already exist in the base schema; the migration creates none of them. |
+| v34 | 002-T07 (W1; shifted before implementation) | Runtime-local durable auth observations. The descriptor store already exists in migration 16; no descriptor DDL is needed. |
+| v35 | 002-T08 (W1; shifted before implementation) | Runtime-local credential-submission replay receipts only if the reviewed SecretStore crash-reconciliation contract requires durable DDL; otherwise release the reservation before implementation. Never store secret bytes. |
+| v36 | 003-T09 (W1; shifted before implementation) | `context_attachments`, `retrieval_receipts` (renumbered from v32) |
 | v37 | 007-T01 (W2) | `artifact_export_receipts`, source Conversation columns |
 | v38 | 009 (W2) | Reserved for Conversation Coworker origin and manual-memory fields; no migration is written, and A-91 blocks finalizing those fields until the Memory/Coworker owners resolve provenance and status |
 | v39 | 013 (W2/W3) | Package approvals and operation receipts |

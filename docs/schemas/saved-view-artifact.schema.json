@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://litecowork.dev/schemas/saved-view-artifact-v1.schema.json",
+  "title": "LiteCowork Saved View Artifact v1",
+  "$comment": "TARGET contract, 2026-11-17. The product owner selected Saved Views for V1 and authorized the Feature 007 B-21 amendment direction. The envelope intentionally contains no session-modified calculator values, preserving Feature 016 B-40's transient-only state boundary. Feature 016 T01/T02 and Feature 007 cross-owner review must promote the profile and its Rust/TypeScript validators before this schema is treated as executable or implementation-authoritative. Cross-field checks listed in Feature 007 contracts/saved-view.md are required in addition to JSON Schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source",
+    "semantic_snapshot",
+    "rich_presentation"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "semantic_snapshot": {
+      "type": "string",
+      "description": "Exact committed semantic answer text used for safe fallback. JSON Schema maxLength counts characters; the owner validator must additionally enforce a strict 1 MiB UTF-8 byte limit.",
+      "maxLength": 1048576
+    },
+    "rich_presentation": {
+      "$ref": "https://litecowork.dev/schemas/rich-presentation-v1.schema.json"
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace_id",
+        "conversation_id",
+        "message_id",
+        "presentation_id",
+        "semantic_content_digest",
+        "presentation_document_digest"
+      ],
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "presentation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "semantic_content_digest": {
+          "$ref": "#/$defs/sha256_digest"
+        },
+        "presentation_document_digest": {
+          "$ref": "#/$defs/sha256_digest"
+        }
+      }
+    },
+    "sha256_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

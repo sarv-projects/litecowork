@@ -27,6 +27,7 @@ use std::fs::File;
 use std::{
     collections::BTreeMap,
     fs,
+    fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -226,6 +227,8 @@ pub enum IsolationStoreError {
     AlreadyStored,
     StaleAttestation,
     IncarnationMismatch,
+    JournalConflict,
+    JournalTransition(&'static str),
 }
 
 impl From<std::io::Error> for IsolationStoreError {
@@ -258,6 +261,12 @@ impl std::fmt::Display for IsolationStoreError {
                 f,
                 "the isolation attestation belongs to a different runtime incarnation"
             ),
+            Self::JournalConflict => {
+                f.write_str("preparation journal identity conflicts with the existing record")
+            }
+            Self::JournalTransition(detail) => {
+                write!(f, "invalid preparation journal transition: {detail}")
+            }
         }
     }
 }
@@ -414,6 +423,107 @@ pub struct RuntimeLocalIsolationStore {
     runtime_incarnation_id: String,
 }
 
+const PREPARATION_JOURNAL_VERSION: u8 = 1;
+
+/// Exact non-secret identity committed to the Runtime-private write-ahead journal before
+/// a provider may create any external scope or filesystem state. The idempotency key is a
+/// server-generated request identity, not an authorization credential.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparationJournalIntent {
+    pub attempt_id: String,
+    pub environment_id: String,
+    pub workspace_id: String,
+    pub task_id: String,
+    pub step_id: String,
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
+    /// Deterministic provider scope token, known before the external scope is created.
+    pub provider_scope_id: String,
+    pub admission_idempotency_key: String,
+    pub request_digest: String,
+    pub normalized_policy_digest: String,
+    pub pinned_input_set_digest: String,
+    pub readable_root_set_digest: String,
+    pub writable_root_set_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeldProviderScopeIdentity {
+    pub unit_name: String,
+    pub leader_pid: u32,
+    pub leader_start_time_ticks: u64,
+    pub process_scope_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparationAdmissionReceipt {
+    pub receipt_id: String,
+    pub idempotency_key: String,
+    pub request_digest: String,
+    pub workspace_id: String,
+    pub task_id: String,
+    pub attempt_id: String,
+    pub environment_id: String,
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PreparationJournalPhase {
+    IntentWritten,
+    ScopeHeld,
+    AdmissionCommitted,
+    LaunchHandoffAttempted,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparationJournalEntry {
+    pub schema_version: u8,
+    pub intent: PreparationJournalIntent,
+    pub phase: PreparationJournalPhase,
+    pub held_scope: Option<HeldProviderScopeIdentity>,
+    pub admission_receipt: Option<PreparationAdmissionReceipt>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreparationReceiptLookup {
+    /// The storage owner could not establish whether the admission transaction committed.
+    Unknown,
+    /// The storage owner read by the exact journaled idempotency key and found no receipt.
+    DefinitelyAbsent,
+    /// The storage owner read by the exact key and returned this committed receipt.
+    ExactCommit(PreparationAdmissionReceipt),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreparationRecoveryAction {
+    BlockUnknown,
+    InspectExactProviderScope {
+        provider_scope_id: String,
+        held_scope: Option<HeldProviderScopeIdentity>,
+    },
+    RecoverCommittedAttempt {
+        receipt: PreparationAdmissionReceipt,
+        provider_scope_id: String,
+        held_scope: HeldProviderScopeIdentity,
+        launch_may_have_been_sent: bool,
+    },
+}
+
+/// Durable Runtime-private recovery journal. Its directory is stable across Runtime
+/// incarnations so startup can reconcile the previous incarnation's exact provider scope
+/// and admission receipt. Entries contain no host paths, credentials or public authority.
+#[derive(Clone, Debug)]
+pub struct RuntimeLocalPreparationJournal {
+    directory: PathBuf,
+    runtime_id: String,
+}
+
 impl RuntimeLocalIsolationStore {
     /// Open (or create) the private store for one Runtime incarnation.
     pub fn open(
@@ -541,6 +651,467 @@ impl RuntimeLocalIsolationStore {
             Err(error) => Err(IsolationStoreError::Io(error)),
         }
     }
+}
+
+impl RuntimeLocalPreparationJournal {
+    pub fn open(root: &Path, runtime_id: &str) -> Result<Self, IsolationStoreError> {
+        validate_identifier(runtime_id)?;
+        let directory = root.join("isolation").join(runtime_id).join("preparations");
+        fs::create_dir_all(&directory)?;
+        let metadata = fs::symlink_metadata(&directory)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal directory is not a real directory".into(),
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            if metadata.uid() != rustix::process::geteuid().as_raw() {
+                return Err(IsolationStoreError::InvalidRecord(
+                    "preparation journal directory owner mismatch".into(),
+                ));
+            }
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        }
+        Ok(Self {
+            directory,
+            runtime_id: runtime_id.to_owned(),
+        })
+    }
+
+    fn record_path(&self, attempt_id: &str) -> Result<PathBuf, IsolationStoreError> {
+        validate_identifier(attempt_id)?;
+        Ok(self
+            .directory
+            .join(format!("{}.json", sha256_hex(attempt_id.as_bytes()))))
+    }
+
+    /// Persist the intent before creating a provider scope. Repeating the exact same
+    /// begin request is idempotent; reusing an Attempt ID for different input conflicts.
+    pub fn begin(
+        &self,
+        intent: PreparationJournalIntent,
+    ) -> Result<PreparationJournalEntry, IsolationStoreError> {
+        validate_preparation_intent(&intent)?;
+        if intent.runtime_id != self.runtime_id {
+            return Err(IsolationStoreError::IncarnationMismatch);
+        }
+        let entry = PreparationJournalEntry {
+            schema_version: PREPARATION_JOURNAL_VERSION,
+            intent,
+            phase: PreparationJournalPhase::IntentWritten,
+            held_scope: None,
+            admission_receipt: None,
+        };
+        let path = self.record_path(&entry.intent.attempt_id)?;
+        if path.exists() {
+            let existing = self.load(&entry.intent.attempt_id)?.ok_or_else(|| {
+                IsolationStoreError::InvalidRecord("journal disappeared during begin".into())
+            })?;
+            return if existing == entry {
+                Ok(existing)
+            } else {
+                Err(IsolationStoreError::JournalConflict)
+            };
+        }
+
+        let bytes = serialize_preparation_entry(&entry)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        sync_private_directory(&self.directory)?;
+        Ok(entry)
+    }
+
+    pub fn load(
+        &self,
+        attempt_id: &str,
+    ) -> Result<Option<PreparationJournalEntry>, IsolationStoreError> {
+        let path = self.record_path(attempt_id)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(IsolationStoreError::Io(error)),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal entry is not a regular file".into(),
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0
+            {
+                return Err(IsolationStoreError::InvalidRecord(
+                    "preparation journal entry permissions or owner are unsafe".into(),
+                ));
+            }
+        }
+        let bytes = fs::read(&path)?;
+        let entry: PreparationJournalEntry = serde_json::from_slice(&bytes).map_err(|_| {
+            IsolationStoreError::InvalidRecord("preparation journal entry is unreadable".into())
+        })?;
+        validate_preparation_entry(&entry)?;
+        if entry.intent.attempt_id != attempt_id || entry.intent.runtime_id != self.runtime_id {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal identity does not match its key".into(),
+            ));
+        }
+        Ok(Some(entry))
+    }
+
+    /// Enumerate durable intents left by any Runtime incarnation. Corrupt entries fail
+    /// the whole scan so startup cannot silently overlook an unknown external scope.
+    pub fn list_pending(&self) -> Result<Vec<PreparationJournalEntry>, IsolationStoreError> {
+        let mut entries = Vec::new();
+        for item in fs::read_dir(&self.directory)? {
+            let item = item?;
+            if item.path().extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = fs::read(item.path())?;
+            let entry: PreparationJournalEntry = serde_json::from_slice(&bytes).map_err(|_| {
+                IsolationStoreError::InvalidRecord(
+                    "preparation journal contains an unreadable entry".into(),
+                )
+            })?;
+            validate_preparation_entry(&entry)?;
+            if entry.intent.runtime_id != self.runtime_id {
+                return Err(IsolationStoreError::IncarnationMismatch);
+            }
+            entries.push(entry);
+        }
+        entries.sort_by(|left, right| left.intent.attempt_id.cmp(&right.intent.attempt_id));
+        Ok(entries)
+    }
+
+    pub fn record_scope_held(
+        &self,
+        attempt_id: &str,
+        held_scope: HeldProviderScopeIdentity,
+    ) -> Result<PreparationJournalEntry, IsolationStoreError> {
+        validate_held_scope(&held_scope)?;
+        let mut entry = self.required_entry(attempt_id)?;
+        let expected_unit = scope_unit_name(&entry.intent.provider_scope_id);
+        if held_scope.unit_name != expected_unit {
+            return Err(IsolationStoreError::JournalConflict);
+        }
+        match entry.phase {
+            PreparationJournalPhase::IntentWritten => {
+                entry.held_scope = Some(held_scope);
+                entry.phase = PreparationJournalPhase::ScopeHeld;
+                self.persist_entry(&entry)?;
+                Ok(entry)
+            }
+            PreparationJournalPhase::ScopeHeld
+                if entry.held_scope.as_ref() == Some(&held_scope) =>
+            {
+                Ok(entry)
+            }
+            _ => Err(IsolationStoreError::JournalTransition(
+                "scope identity is not new or an exact replay",
+            )),
+        }
+    }
+
+    /// Persist the exact committed receipt after the SQLite transaction. A lost journal
+    /// write is repaired on restart by looking up the original idempotency key.
+    pub fn record_admission_receipt(
+        &self,
+        attempt_id: &str,
+        receipt: PreparationAdmissionReceipt,
+    ) -> Result<PreparationJournalEntry, IsolationStoreError> {
+        let mut entry = self.required_entry(attempt_id)?;
+        validate_receipt_matches(&entry.intent, &receipt)?;
+        match entry.phase {
+            PreparationJournalPhase::ScopeHeld => {
+                if entry.held_scope.is_none() {
+                    return Err(IsolationStoreError::JournalConflict);
+                }
+                entry.admission_receipt = Some(receipt);
+                entry.phase = PreparationJournalPhase::AdmissionCommitted;
+                self.persist_entry(&entry)?;
+                Ok(entry)
+            }
+            PreparationJournalPhase::AdmissionCommitted
+            | PreparationJournalPhase::LaunchHandoffAttempted
+                if entry.admission_receipt.as_ref() == Some(&receipt) =>
+            {
+                Ok(entry)
+            }
+            _ => Err(IsolationStoreError::JournalTransition(
+                "admission receipt requires a held scope and exact replay",
+            )),
+        }
+    }
+
+    /// Write this marker before sending the one-shot launch signal. After a crash, an
+    /// attempted signal is treated as ambiguous and is never replayed in the old scope.
+    pub fn mark_launch_handoff_attempted(
+        &self,
+        attempt_id: &str,
+    ) -> Result<PreparationJournalEntry, IsolationStoreError> {
+        let mut entry = self.required_entry(attempt_id)?;
+        if entry.phase != PreparationJournalPhase::AdmissionCommitted
+            || entry.admission_receipt.is_none()
+            || entry.held_scope.is_none()
+        {
+            return Err(IsolationStoreError::JournalTransition(
+                "launch handoff requires an exact committed receipt and held scope",
+            ));
+        }
+        entry.phase = PreparationJournalPhase::LaunchHandoffAttempted;
+        self.persist_entry(&entry)?;
+        Ok(entry)
+    }
+
+    /// Reconcile one entry using a storage-owner lookup by its exact original idempotency
+    /// key. Unknown is a blocker; a committed Attempt is recovered/settled, never relaunched.
+    pub fn recovery_action(
+        &self,
+        attempt_id: &str,
+        lookup: PreparationReceiptLookup,
+    ) -> Result<PreparationRecoveryAction, IsolationStoreError> {
+        let mut entry = self.required_entry(attempt_id)?;
+        match lookup {
+            PreparationReceiptLookup::Unknown => Ok(PreparationRecoveryAction::BlockUnknown),
+            PreparationReceiptLookup::DefinitelyAbsent => {
+                if entry.admission_receipt.is_some()
+                    || matches!(
+                        entry.phase,
+                        PreparationJournalPhase::AdmissionCommitted
+                            | PreparationJournalPhase::LaunchHandoffAttempted
+                    )
+                {
+                    return Err(IsolationStoreError::JournalConflict);
+                }
+                Ok(PreparationRecoveryAction::InspectExactProviderScope {
+                    provider_scope_id: entry.intent.provider_scope_id,
+                    held_scope: entry.held_scope,
+                })
+            }
+            PreparationReceiptLookup::ExactCommit(receipt) => {
+                validate_receipt_matches(&entry.intent, &receipt)?;
+                let held_scope = entry
+                    .held_scope
+                    .clone()
+                    .ok_or(IsolationStoreError::JournalConflict)?;
+                if let Some(existing) = &entry.admission_receipt {
+                    if existing != &receipt {
+                        return Err(IsolationStoreError::JournalConflict);
+                    }
+                } else {
+                    if entry.phase != PreparationJournalPhase::ScopeHeld {
+                        return Err(IsolationStoreError::JournalConflict);
+                    }
+                    entry.admission_receipt = Some(receipt.clone());
+                    entry.phase = PreparationJournalPhase::AdmissionCommitted;
+                    self.persist_entry(&entry)?;
+                }
+                Ok(PreparationRecoveryAction::RecoverCommittedAttempt {
+                    receipt,
+                    provider_scope_id: entry.intent.provider_scope_id,
+                    held_scope,
+                    launch_may_have_been_sent: entry.phase
+                        == PreparationJournalPhase::LaunchHandoffAttempted,
+                })
+            }
+        }
+    }
+
+    fn required_entry(
+        &self,
+        attempt_id: &str,
+    ) -> Result<PreparationJournalEntry, IsolationStoreError> {
+        self.load(attempt_id)?.ok_or_else(|| {
+            IsolationStoreError::InvalidRecord("preparation journal entry is missing".into())
+        })
+    }
+
+    fn persist_entry(&self, entry: &PreparationJournalEntry) -> Result<(), IsolationStoreError> {
+        validate_preparation_entry(entry)?;
+        let path = self.record_path(&entry.intent.attempt_id)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&self.directory)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            temporary
+                .as_file()
+                .set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+        temporary.write_all(&serialize_preparation_entry(entry)?)?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist(&path)
+            .map_err(|error| IsolationStoreError::Io(error.error))?;
+        sync_private_directory(&self.directory)?;
+        Ok(())
+    }
+}
+
+fn serialize_preparation_entry(
+    entry: &PreparationJournalEntry,
+) -> Result<Vec<u8>, IsolationStoreError> {
+    let mut bytes = serde_json::to_vec(entry).map_err(|_| {
+        IsolationStoreError::InvalidRecord("preparation journal serialization failed".into())
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn validate_preparation_intent(
+    intent: &PreparationJournalIntent,
+) -> Result<(), IsolationStoreError> {
+    for value in [
+        &intent.attempt_id,
+        &intent.environment_id,
+        &intent.workspace_id,
+        &intent.task_id,
+        &intent.step_id,
+        &intent.runtime_id,
+        &intent.runtime_incarnation_id,
+    ] {
+        validate_identifier(value)?;
+    }
+    if intent.provider_scope_id.len() != 32
+        || !intent
+            .provider_scope_id
+            .bytes()
+            .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
+    {
+        return Err(IsolationStoreError::InvalidRecord(
+            "provider scope identity is not a lowercase 128-bit token".into(),
+        ));
+    }
+    if intent.admission_idempotency_key.is_empty()
+        || intent.admission_idempotency_key.len() > 200
+        || !intent.admission_idempotency_key.bytes().all(|value| {
+            value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_' | b'.' | b':')
+        })
+    {
+        return Err(IsolationStoreError::InvalidRecord(
+            "admission idempotency key is malformed".into(),
+        ));
+    }
+    for digest in [
+        &intent.request_digest,
+        &intent.normalized_policy_digest,
+        &intent.pinned_input_set_digest,
+        &intent.readable_root_set_digest,
+        &intent.writable_root_set_digest,
+    ] {
+        if !valid_sha256_digest(digest) {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal contains a malformed digest".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_held_scope(scope: &HeldProviderScopeIdentity) -> Result<(), IsolationStoreError> {
+    if scope.leader_pid == 0
+        || scope.leader_start_time_ticks == 0
+        || !valid_sha256_digest(&scope.process_scope_digest)
+    {
+        return Err(IsolationStoreError::InvalidRecord(
+            "held provider scope identity is incomplete".into(),
+        ));
+    }
+    if !scope.unit_name.starts_with("litecowork-attempt-") || !scope.unit_name.ends_with(".scope") {
+        return Err(IsolationStoreError::InvalidRecord(
+            "held provider scope unit name is malformed".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_receipt_matches(
+    intent: &PreparationJournalIntent,
+    receipt: &PreparationAdmissionReceipt,
+) -> Result<(), IsolationStoreError> {
+    if receipt.receipt_id.is_empty()
+        || receipt.receipt_id.len() > 128
+        || !receipt
+            .receipt_id
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_' | b'.'))
+        || receipt.idempotency_key != intent.admission_idempotency_key
+        || receipt.request_digest != intent.request_digest
+        || receipt.workspace_id != intent.workspace_id
+        || receipt.task_id != intent.task_id
+        || receipt.attempt_id != intent.attempt_id
+        || receipt.environment_id != intent.environment_id
+        || receipt.runtime_id != intent.runtime_id
+        || receipt.runtime_incarnation_id != intent.runtime_incarnation_id
+    {
+        return Err(IsolationStoreError::JournalConflict);
+    }
+    Ok(())
+}
+
+fn validate_preparation_entry(entry: &PreparationJournalEntry) -> Result<(), IsolationStoreError> {
+    if entry.schema_version != PREPARATION_JOURNAL_VERSION {
+        return Err(IsolationStoreError::InvalidRecord(
+            "unsupported preparation journal version".into(),
+        ));
+    }
+    validate_preparation_intent(&entry.intent)?;
+    match (entry.phase, &entry.held_scope, &entry.admission_receipt) {
+        (PreparationJournalPhase::IntentWritten, None, None) => {}
+        (PreparationJournalPhase::ScopeHeld, Some(scope), None) => {
+            validate_held_scope(scope)?;
+            if scope.unit_name != scope_unit_name(&entry.intent.provider_scope_id) {
+                return Err(IsolationStoreError::JournalConflict);
+            }
+        }
+        (
+            PreparationJournalPhase::AdmissionCommitted
+            | PreparationJournalPhase::LaunchHandoffAttempted,
+            Some(scope),
+            Some(receipt),
+        ) => {
+            validate_held_scope(scope)?;
+            if scope.unit_name != scope_unit_name(&entry.intent.provider_scope_id) {
+                return Err(IsolationStoreError::JournalConflict);
+            }
+            validate_receipt_matches(&entry.intent, receipt)?;
+        }
+        _ => {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal phase has inconsistent evidence".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn valid_sha256_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
+}
+
+fn scope_unit_name(provider_scope_id: &str) -> String {
+    format!("litecowork-attempt-{provider_scope_id}.scope")
+}
+
+fn sync_private_directory(path: &Path) -> Result<(), IsolationStoreError> {
+    #[cfg(unix)]
+    File::open(path)?.sync_all()?;
+    Ok(())
 }
 
 fn validate_identifier(value: &str) -> Result<(), IsolationStoreError> {
@@ -1037,6 +1608,139 @@ mod tests {
         assert!(matches!(
             RuntimeLocalIsolationStore::open(temp.path(), "runtime-1", "incarnation/1"),
             Err(IsolationStoreError::InvalidIdentifier(_))
+        ));
+    }
+
+    fn preparation_intent() -> PreparationJournalIntent {
+        PreparationJournalIntent {
+            attempt_id: "attempt-1".to_owned(),
+            environment_id: "env-1".to_owned(),
+            workspace_id: "workspace-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            step_id: "step-1".to_owned(),
+            runtime_id: "runtime-1".to_owned(),
+            runtime_incarnation_id: "incarnation-1".to_owned(),
+            provider_scope_id: "0123456789abcdef0123456789abcdef".to_owned(),
+            admission_idempotency_key: "attempt-admission-1".to_owned(),
+            request_digest: digest(b"admission request"),
+            normalized_policy_digest: digest(b"policy"),
+            pinned_input_set_digest: digest(b"inputs"),
+            readable_root_set_digest: digest(b"readable roots"),
+            writable_root_set_digest: digest(b"writable roots"),
+        }
+    }
+
+    fn held_provider_scope() -> HeldProviderScopeIdentity {
+        HeldProviderScopeIdentity {
+            unit_name: "litecowork-attempt-0123456789abcdef0123456789abcdef.scope".to_owned(),
+            leader_pid: 456,
+            leader_start_time_ticks: 789,
+            process_scope_digest: digest(b"exact cgroup scope"),
+        }
+    }
+
+    fn preparation_receipt() -> PreparationAdmissionReceipt {
+        PreparationAdmissionReceipt {
+            receipt_id: "receipt-1".to_owned(),
+            idempotency_key: "attempt-admission-1".to_owned(),
+            request_digest: digest(b"admission request"),
+            workspace_id: "workspace-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            attempt_id: "attempt-1".to_owned(),
+            environment_id: "env-1".to_owned(),
+            runtime_id: "runtime-1".to_owned(),
+            runtime_incarnation_id: "incarnation-1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn preparation_journal_is_durable_private_and_visible_to_a_new_incarnation() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1")
+            .expect("private preparation journal");
+        let intent = preparation_intent();
+        journal
+            .begin(intent.clone())
+            .expect("write ahead of provider creation");
+
+        let restarted = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1")
+            .expect("same Runtime journal after restart");
+        let loaded = restarted
+            .load(&intent.attempt_id)
+            .expect("read journal")
+            .expect("durable intent remains visible");
+        assert_eq!(loaded.intent, intent);
+        assert_eq!(loaded.phase, PreparationJournalPhase::IntentWritten);
+        let rendered =
+            fs::read_to_string(restarted.record_path(&loaded.intent.attempt_id).unwrap())
+                .expect("journal file");
+        assert!(!rendered.contains(temp.path().to_string_lossy().as_ref()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(restarted.record_path(&loaded.intent.attempt_id).unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn preparation_journal_requires_exact_scope_receipt_and_one_shot_handoff_order() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1")
+            .expect("private preparation journal");
+        let intent = preparation_intent();
+        journal.begin(intent.clone()).expect("begin");
+        assert!(matches!(
+            journal.mark_launch_handoff_attempted(&intent.attempt_id),
+            Err(IsolationStoreError::JournalTransition(_))
+        ));
+        journal
+            .record_scope_held(&intent.attempt_id, held_provider_scope())
+            .expect("bind exact held scope");
+
+        let mut mismatched = preparation_receipt();
+        mismatched.request_digest = digest(b"different request");
+        assert!(matches!(
+            journal.record_admission_receipt(&intent.attempt_id, mismatched),
+            Err(IsolationStoreError::JournalConflict)
+        ));
+        journal
+            .record_admission_receipt(&intent.attempt_id, preparation_receipt())
+            .expect("record exact committed receipt");
+        journal
+            .mark_launch_handoff_attempted(&intent.attempt_id)
+            .expect("persist one-shot intent before signaling runner");
+        assert!(matches!(
+            journal.mark_launch_handoff_attempted(&intent.attempt_id),
+            Err(IsolationStoreError::JournalTransition(_))
+        ));
+    }
+
+    #[test]
+    fn preparation_recovery_never_guesses_when_receipt_lookup_is_unknown() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1")
+            .expect("private preparation journal");
+        let intent = preparation_intent();
+        journal.begin(intent.clone()).expect("begin");
+        assert_eq!(
+            journal
+                .recovery_action(&intent.attempt_id, PreparationReceiptLookup::Unknown)
+                .expect("recovery decision"),
+            PreparationRecoveryAction::BlockUnknown
+        );
+        assert!(matches!(
+            journal.recovery_action(
+                &intent.attempt_id,
+                PreparationReceiptLookup::DefinitelyAbsent
+            ),
+            Ok(PreparationRecoveryAction::InspectExactProviderScope { .. })
         ));
     }
 

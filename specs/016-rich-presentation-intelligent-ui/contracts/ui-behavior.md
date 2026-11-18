@@ -1,86 +1,92 @@
-# UI behavior - Rich answers, chart, calculator, media and interactive preview (Feature 016)
+# UI behavior - Intelligent workspace presentations (Feature 016)
 
-**Status:** IN_REVIEW - authored for owner review; binds UI to owner contracts; not pixels.
+**Status:** IN_REVIEW, revision 0.4 TARGET proposal. The owner directed Saved Views to remain in V1 on 2026-11-17; the Feature 007 amendment is drafted but cross-owner review and whole-scope T01/T02 remain open. No implementation or route is authorized here.
 **Normative UI indexes:** [V1-UI-SCREEN-CONTRACT.md](../../../docs/V1-UI-SCREEN-CONTRACT.md), [V1-UI-ACTION-STATE-LEDGER.md](../../../docs/V1-UI-ACTION-STATE-LEDGER.md), [DESKTOP-SHELL-LLD.md](../../../docs/DESKTOP-SHELL-LLD.md).
-**Wire:** [LOCAL-OPERATOR-IPC.md](../../../docs/LOCAL-OPERATOR-IPC.md) and [operator-api.openapi.yaml](../../../docs/schemas/operator-api.openapi.yaml).
+**Wire owners:** [LOCAL-OPERATOR-IPC.md](../../../docs/LOCAL-OPERATOR-IPC.md), [operator-api.openapi.yaml](../../../docs/schemas/operator-api.openapi.yaml), and the Feature 007/008/011/001 owner contracts.
 
-The UI renders validated documents and semantic text. Model-authored presentation elements never call host commands. Separately gated revision 0.2 host-owned chrome uses typed navigation, state-only commands and explicit ordinary Conversation Send.
+The semantic Conversation answer remains readable and authoritative. A valid, immutable RichPresentation may add registered visual structure. The same presentation can open in the contextual Workbench Canvas; it does not create a new conversation, Task, process or agent run. Save, remember, modify and navigation actions are host-owned controls routed to their existing domain owners. A renderer block cannot invoke host commands.
 
-## 1. User flow and transitions
+## 1. User journey and transitions (TARGET)
 
-| Step | Screen / surface | Transition |
+| Step | Screen / exact control | Expected transition |
 |---|---|---|
-| Read answer | Conversation message (`RichResponseView` in `ConversationsPage.tsx`) | Semantic text first; rich view replaces it when a valid document loads |
-| Read original | "Read the original response" disclosure | Expands the full semantic text |
-| See data | Chart > "Show data table" toggle | Toggles the equivalent table under the chart |
-| What-if | Calculator inputs | Result updates live; "Reset to original values" restores |
-| Turn off rich view | Settings > display preferences > "Show formatted answers" switch | All messages render semantic text |
-| Open image | Message Artifact chip or Library item > Artifact view | Image with alt text, zoom and download (Feature 007 controls) |
-| Open interactive app | Library or Workbench item | Inert preview with "Running interactive apps is not available in this version." |
+| Read answer | Conversation message | Show semantic answer while optional presentation loads; replace no semantic record. Render only after committed message and accepted document validate. |
+| Inspect sources and meaning | Host-owned `Details` / provenance disclosure beside an eligible metric or chart | Show bound semantic source, measure, units/currency, scale, interval and aggregation. Hide or fall back when any required meaning is ambiguous. |
+| Explore a bounded view | Registered NUMBER, RANGE or SELECT control | Update declared local state and deterministic derived display. No model/provider call, IPC or domain write occurs. `Reset` restores the initial values. |
+| Expand | Host-owned `Open in Canvas` control on the view | Open that object in Feature 008's right-side Workbench Canvas. Preserve message ID, document digest, selected inputs and controller revision; do not add a permanent sidebar destination. |
+| Return to conversation | Canvas `Close` / `Return to answer` control | Close Canvas, restore focus to the originating control and preserve the current transient input revision. Preserve Conversation scroll and composer state. |
+| Remember inputs | Optional host-owned `Remember on this device` control | Show consent and scope before the first write. Only exact-message primitive inputs persist. This stays unavailable until T22 and all storage/privacy/backup contracts are accepted and served. |
+| Forget inputs | Host-owned `Forget remembered inputs` control | Remove exact namespace and advance the deletion fence. Show completion only after the owner's durable receipt; reconcile ambiguous timeouts before retry. |
+| Save view | Host-owned `Save to Library` control in Canvas | Show only when Feature 007 authorizes the Saved View type and provides its create capability. Preview the exact source and disclose that the semantic answer and declared defaults become durable Library content; show Saved only after the durable receipt. Do not capture session-modified calculator values. |
+| Reopen saved view | Library item selected by the user | Reauthorize and load the exact immutable ArtifactVersion. Never follow a moving head silently and never execute app code. |
+| Update saved view | Host-owned `Update from answer` after selecting a new committed eligible presentation in the same Conversation | Append a new immutable ArtifactVersion using Feature 007 expected-version/idempotency behavior. Conflict preserves the review draft and requires confirmation. Cross-Conversation content creates a new Saved View. |
+| Change answer conversationally | Ordinary Conversation composer/send | Sends only user-authored message text and normal Conversation context. Current calculator values are not automatically included; only explicit Update from answer changes the Library Artifact. |
+
+The product owner has selected Saved Views for V1 and directed a narrow Feature 007 B-21 amendment. Its technical contract remains IN_REVIEW pending Feature 007/Storage/Conversation/Privacy/Backup/Product review and Feature 016 T01/T02. Until serving handlers and receipts exist, Save/Open/Update/Archive controls remain absent. Remember/Forget is a separate decision and cannot create a Library item. The live computer preview, takeover, browser, terminal, files, changes and activity panels remain Feature 008-owned contextual objects; this document does not claim those providers are implemented.
 
 ## 2. UI states
 
-| Surface | States | Meaning |
+| Surface | States | Meaning and recovery |
 |---|---|---|
-| Message | semantic-only, loading-rich (semantic shown), rich, fallback (semantic shown, no error banner), disabled | The answer is always readable |
-| Chart | chart, table-open, fallback-table | Fallback when binding or values fail |
-| Calculator | initial, edited, cannot-calculate | Fallback text always visible |
-| Image Artifact | loading, shown, rejected-at-ingest (no Artifact exists), error | Error offers retry of the read only |
-| Interactive Artifact | preview-only | No Run control |
+| Conversation message | semantic-streaming, semantic-committed, presentation-loading, rich, semantic-fallback, disabled | Never flash a partial component tree. A read/presentation failure leaves the full semantic answer available; retry reads the projection and never resends the agent turn. |
+| Structured block | valid, locally-degraded, rejected | Degrade the individual supported block when safe; otherwise retain semantic text. Do not render unknown HTML, JavaScript, CSS, URL actions or handler fields. |
+| Metric / chart | bound, data-table, ambiguous/fallback | Provide an equivalent accessible table. Missing or conflicting source semantics produce no guessed figure. |
+| Local controls | original, edited, invalid, reset | Invalid values show a bounded explanation. Result recalculates deterministically; reset returns to declared original inputs. |
+| Canvas | opening, open, closing, unavailable | Same object and controller as inline. Restore keyboard focus and Conversation scroll/composer. Opening does not start computer capture or a process. |
+| Remembered inputs | off, consent-review, saving, saved, conflict, unavailable, forgetting, forgotten, unknown | No value appears saved/forgotten until a durable receipt resolves. On conflict keep the user's draft; on denial show current values and a plain reason. |
+| Saved View | not-saved, save-review, saving, saved-version, opening, updating-from-answer, conflict, archived, denied, unknown | Owner receipt defines durable success. Open the requested exact version or show unavailable; never substitute a newer version or stale protected content. No hard Delete control; Archive uses Feature 007. |
+| Conversational change | idle, preview, sending, cancelled, submitted, unresolved | Cancel leaves source answer and Library version unchanged. An unresolved send uses Feature 001's exact request identity/reconciliation. |
 
 ## 3. Validation and failure presentation
 
-| Validation | Rule | UI state |
+| Failure | UI result |
+|---|---|
+| Desktop validator rejects a document or sees an unknown renderer version | Show semantic answer; no raw object or error-looking replacement. |
+| A component is malformed but sibling blocks remain valid | Render only blocks accepted by the canonical degradation rule; keep the complete semantic answer reachable. |
+| Metric unit, interval, aggregation or source binding is missing | Show the data table or ask for clarification; do not guess. |
+| Calculation is invalid/non-finite or kernel is unknown | Show the declared fallback and a bounded message; no host call. |
+| Feature 007 or persistence owner denies / is unavailable | Keep view usable in memory where possible; label save/remember unavailable and preserve unsaved draft. |
+| Save/update response times out after possible commit | Keep `Saving`/`Unknown`; reconcile the same RequestId and digest before offering retry. |
+| Two windows update one version or remembered-state revision | Preserve the local draft and show the latest owner version for explicit comparison. |
+| Forget, deletion, revocation or Workspace switch races a write | Clear protected live values immediately, fence late writes, and do not restore from stale acknowledgement or backup. |
+| Exact Saved View version is missing, corrupt or unauthorized | Show unavailable; never silently use the latest version. |
+| Stream reconnect/gap occurs | Resync the Conversation projection and load only committed message-bound presentation records. |
+
+## 4. Commands and ownership (TARGET unless explicitly marked SERVED)
+
+| User control | UI-local behavior | Owner command/evidence |
 |---|---|---|
-| Document invalid on the desktop | `parseRichPresentationResponse` returns null | semantic-only, no error banner |
-| Unknown renderer contract version | not 1 or 2 | semantic-only |
-| Calculator input | finite number, else the field shows "Enter a number" | cannot-calculate until fixed |
+| Read rich answer | Validate and render projection | Existing `get_rich_presentation` Tauri/Operator read is CODE/SERVED; no production publisher is wired. |
+| Details / data table / calculator input / Reset | Local view/controller only | No IPC, event or record. |
+| Open/close Canvas | Host navigation and controller transfer | Feature 008 Workbench owner; no standalone Feature 016 route. |
+| Remember / Forget | Consent and local state display | Candidate Feature 016 authenticated command, storage transaction, receipt and event; no route exists. T22 must promote canonical contracts first. |
+| Save / Reopen / Update / Archive Saved View | Host-owned capability-gated Library controls | Feature 007 Artifact/Library command and durable receipt. Exact type and operation contract is drafted in Feature 007 `contracts/saved-view.md`; API promotion is pending T01/T02 and no route is served. |
+| Ask to change / Send | Preview selected bounded snapshot; normal composer send | Feature 001 ordinary Conversation command, idempotency, turn admission, lineage and recovery; no Feature 016 send route. |
+| Display preference | Render policy preference | Feature 011 preference owner; current control is not served unless its owner contract says otherwise. |
 
-## 4. Commands (UI to core)
+## 5. Stream and projection behavior
 
-| UI control | Local action | Command |
-|---|---|---|
-| Message render | fetch presentation if enabled | `get_rich_presentation` (existing) |
-| Show formatted answers switch | set preference | Feature 011 display preference command |
-| Chart table toggle | view-local | none |
-| Calculator inputs and Reset | view-local reducer | none |
-| Open image | navigate | Feature 007 Artifact read |
+The Conversation stream remains the turn authority. RichPresentation is a separate immutable projection bound to a committed semantic message. A presentation reference can prompt an exact read, but stream delta, provider tool observation or candidate intent cannot make an uncommitted component visible. On a sequence gap, discard transient presentation candidates and rehydrate the committed Conversation/presentation projections. Provider identity and source bindings remain visible to host validation; native subagents are not LiteCowork Task workers.
 
-## 5. Events and stream (core to UI)
+## 6. Accessibility and interaction quality
 
-| Source | Type | UI use |
-|---|---|---|
-| Operator stream | `projection` frames for the Conversation | New presentation reference for a message; resync on `stream.resync_required` |
-| Read APIs | Conversation presentation, rich presentation envelope | Hydrate on open |
+Use semantic headings and landmarks. Tables expose scoped headers and keyboard-accessible horizontal scrolling. A chart has a text summary and a data-table alternative. Inputs have visible labels, units, bounds and keyboard behavior; live calculation output uses a polite announcement. Canvas movement returns focus to the initiating control, retains Conversation scroll/composer state and supports keyboard, screen reader, high zoom/reflow and reduced motion. Color is not the only chart signal. No permanent row of specialist tabs is added for this presentation capability; the view appears inline and expands into the existing contextual Workbench.
 
-## 6. Accessibility
+## 7. Required UI tests and acceptance mapping
 
-Rich view keeps the existing `<section aria-label="Assistant response">`. Tables use `<th scope="col">` and a focusable scroll region. Chart is `role="img"` with the accessible summary as its name; the data table toggle is a `<button aria-expanded>`. Calculator inputs have visible labels; the result sits in `aria-live="polite"`. Contrast at least 4.5:1; no animation when `prefers-reduced-motion` is set; colour is never the only signal in charts (pattern or direct labels). Target: no serious or critical axe violations.
+The future implementation must cover semantic-first loading and malformed-block fallback; exact message/digest/controller identity across expansion; source/metric visibility; safe input bounds/reset/keyboard use; policy preferences; Save/Open/Update/Archive capability hiding and receipt states; optional state consent/quota/replay/conflict/forget races only if T22 is accepted; Conversation source-deletion races; explicit modification through ordinary Send without hidden value sharing; scroll/composer preservation; and reconnect/restart recovery. See SPEC §20.10 and TASKS T15/T16/T20-T25. No route-presence or component-unit test alone qualifies the user journey.
 
-## 7. Tests
+## 8. Cross-layer trace (TARGET; sources remain owner-controlled)
 
-AC-002, AC-004, AC-005, AC-006, AC-008, AC-009, AC-010, AC-013, AC-018 through `apps/litecowork-ui/tests/` (`rich-presentation-corpus.test.ts`, `chart-block.test.ts`, `safe-calculator-block.test.ts`, `interactive-artifact-preview.test.ts`, `presentation-no-exec-gate.test.mjs`, `rich-response-view-policy.test.ts`), run by `pnpm --dir apps/litecowork-ui test`.
+| Operation | Control | Command | Owner | Durable record / evidence | Recovery |
+|---|---|---|---|---|---|
+| Read answer presentation | Conversation message | `get_rich_presentation` | Feature 016 read projection | Existing `rich_presentations` row/blob; CODE/SERVED read, no production publisher | Semantic fallback and exact reread |
+| Change bounded input | Registered field | local reducer | Desktop presentation controller | none | Reset / semantic fallback |
+| Expand answer | Open in Canvas | local Workbench navigation | Feature 008 | none | restore focus and original inline location |
+| Remember / Forget | explicit host controls | future authenticated typed commands | Feature 016 + Storage + 011/014/017 | proposed exact-namespace state + owner receipt; not served | same-receipt reconciliation and deletion fence |
+| Save / open / update | Library host controls | future Feature 007 Artifact commands | Feature 007 | immutable ArtifactVersion and receipt, if approved | exact-version reauthorization; preserve draft on conflict |
+| Ask to change | preview then ordinary Send | Feature 001 send command | Feature 001 | new semantic message/turn with parent presentation lineage | request reconciliation; original remains immutable |
 
-## 8. Cross-layer trace (filled by TASKS T15)
+## 9. Scope trace to owner review
 
-| Operation | Control | Command | Route | Owner | Record | Recovery | Evidence |
-|---|---|---|---|---|---|---|---|
-| View rich answer | message | `get_rich_presentation` | `GET /v1/rich-presentations/{presentation_id}` | RichPresentationStore | `rich_presentations` | stream resync | to be recorded |
-| Disable rich view | Settings switch | Feature 011 preference | Feature 011 | Feature 011 preference store | local preference | persisted across restart | to be recorded |
-| Calculator | inputs | none (view-local) | none | view | none | none | to be recorded |
-
-## 9. Revision 0.2 TARGET controls and trace
-
-These controls do not exist yet. B-40 baseline calculator inputs remain view-local. [Pipeline LLD](../../../docs/ACP-PRESENTATION-PIPELINE-LLD.md) owns the design decomposition; canonical machine contracts must be promoted before routes ship.
-
-| Exact host control | Screen and state transition | Typed command/route and authorization | Owner/transaction/projection/recovery | Evidence target |
-|---|---|---|---|---|
-| Expand / Collapse | Conversation rich answer <-> Workbench Canvas; same digest/input revision; focus moves to heading and returns to Expand | Local navigation; no IPC or agent dispatch | One shared controller; no domain record/event; clear on Workspace switch/revocation | T21, AC-022; keyboard/high zoom/identity spy |
-| Remember this view on this device | Canvas host toolbar: off -> consent review -> saving -> saved/conflict/unavailable | Proposed typed update interaction state through authenticated Operator; principal/Workspace/exact presentation authorization and expected revision | T22 storage transaction state + receipt + content-free event; same-receipt timeout reconciliation | T22/T24, AC-025; quota/replay/two-window/crash |
-| Forget remembered data | Canvas host toolbar -> forgetting -> forgotten, or unknown until receipt resolves | Proposed typed forget through authenticated DELETE state route; exact namespace/deletion fence | T22 content deletion + fence/receipt; late saves/acks cannot resurrect | T22/T24, AC-026; save/forget/revoke/restart |
-| Ask to change this view > Send | Conversation/Canvas host chrome -> selected snapshot preview -> explicit new turn -> review proposal | Feature 001 normal authenticated new-turn command, optional explicitly selected bounded context; no input-change autosend | New semantic message/presentation with parent/base revision; stale local input conflict preserves draft | T23/T24, AC-027; cancel/retry/no implicit send |
-| Reopen a prior rich answer | Recents > source Conversation > committed answer; where a presentation exists, render that exact message-bound projection | Existing Conversation history read; no save command | B-40 starts with original inputs; remembered values are read only if T22 is separately accepted, authorized and available. Current code has no production publisher | Existing history read path; AC-028 exact-message and reset checks; no presentation journey is integrated |
-| Save/open/update a reusable app | No control in the current UI. Keep unavailable until Feature 007 serves a create/publish/reopen path for the exact interactive Artifact type and recovery receipt | Must use the Feature 007 authenticated owner command and capability matrix; T22 and Artifact Runtime app-data storage are separate and neither is a save command | Library contains only committed ArtifactVersions with exact provenance; update appends a version and never mutates the source Conversation answer. Preview remains inert until the separate runtime gate qualifies; app data is isolated per the Artifact Runtime contract | A-103, AC-028; later authorized cross-owner task and Artifact receipt/restart evidence |
-| Read original / Show data table / Reset | Always accessible in inline and expanded view | Local view actions only | Semantic fallback/formula/table remains readable; reset pinned original input values | Existing ACs plus T21 accessibility |
-
-Empty remembered state means original inputs, never zero guesses. Loading/read failures retain original semantic answer and label remembered data unavailable. Save/forget timeout must not show saved/forgotten until reconciled. There is no standalone Saved View record in this proposal: do not label device-only remembered inputs or isolated runtime app data as a saved app, add a permanent Saved Apps navigation item, or expose Save/Open/Update/Delete controls before their owner-backed paths exist. Any later Saved View decision must define its Artifact or new-record identity, source lineage, version/update, deletion, retention, authorization, receipt and recovery contracts before UI design is promoted. Controls remain hidden/unavailable with a plain reason until the exact extension is accepted, implemented and qualified. Rendered rich document cannot mimic host confirmation or attach its own command.
+The previous revision 0.2 controls are superseded by revision 0.4. The product owner selected Saved Views for V1; T25 records the selected direction and detailed Feature 007 contract, while cross-owner review remains open. T01 still accepts or revises the complete V1 Feature 016 scope. Nothing in this proposal upgrades the current read-only/fallback UI into a supported rich-answer journey.

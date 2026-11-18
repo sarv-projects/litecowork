@@ -8,9 +8,14 @@
 //! staging applies a protected current-user/SYSTEM DACL but remains unqualified as an
 //! isolation provider. Other non-Unix targets fail closed.
 
+mod file_replace;
 mod isolation_digest;
 mod output_budget;
 
+pub use file_replace::{
+    BOUNDED_FILE_REPLACEMENT_MAX_BYTES, BoundedBlob, ContentDigest, FileWriteError, ReplaceOutcome,
+    WorkspaceConfinedPath, WorkspaceRootHandle, replace_approved_file,
+};
 pub use isolation_digest::{
     digest_of_canonical_json, digest_of_labels, digest_pinned_inputs, digest_root_set,
 };
@@ -39,6 +44,17 @@ static ROOT_NONCE: AtomicU64 = AtomicU64::new(1);
 pub enum PreparationStatus {
     /// Inputs were copied and checked. No isolation or dispatch proof was produced.
     PreparedOnly,
+}
+
+/// Non-secret identity of one immutable source revision materialized into a prepared
+/// input tree. This lets a provider compare staged bytes with the Environment's exact
+/// pinned source set without retaining Resource contents or host paths in a projection.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PreparedResourcePin {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub revision_id: String,
+    pub content_digest: String,
 }
 
 #[derive(Clone, Debug)]
@@ -256,6 +272,10 @@ impl std::error::Error for StagingError {}
 
 #[derive(Debug)]
 pub struct PreparedEnvironment {
+    /// Workspace identity used to resolve and stage the exact pinned inputs.
+    pub workspace_id: String,
+    /// Exact immutable Resource revisions whose bytes were staged, in stable order.
+    pub source_resources: Vec<PreparedResourcePin>,
     pub root: PathBuf,
     pub input_root: PathBuf,
     pub output_root: PathBuf,
@@ -422,8 +442,21 @@ pub fn stage_inputs(
     #[cfg(not(windows))]
     make_tree_read_only(&input_root)?;
 
+    let mut source_resources = inputs
+        .iter()
+        .map(|input| PreparedResourcePin {
+            workspace_id: input.workspace_id.clone(),
+            resource_id: input.resource_id.clone(),
+            revision_id: input.revision_id.clone(),
+            content_digest: input.content_digest.clone(),
+        })
+        .collect::<Vec<_>>();
+    source_resources.sort();
+
     guard.disarm();
     Ok(PreparedEnvironment {
+        workspace_id: expected_workspace_id.to_owned(),
+        source_resources,
         root,
         input_root,
         output_root,

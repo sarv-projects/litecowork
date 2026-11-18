@@ -27,6 +27,13 @@ Closed local Runtime wire formats are defined separately from Core domain values
 [interactive app package manifest](schemas/interactive-artifact-package.schema.json) and
 [interactive Artifact Runtime IPC](schemas/interactive-artifact-runtime.schema.json). These schemas describe untrusted package metadata and volatile host/renderer messages; they do not add a persisted RuntimeRun entity or DomainEvent.
 
+The [Saved View Artifact envelope](schemas/saved-view-artifact.schema.json) is a TARGET
+contract for Feature 007 revision 1.1, not a served or source-validated write format. It
+reuses the canonical RichPresentation schema and carries no session-modified calculator
+state, preserving Feature 016 B-40. Feature 007/016 cross-owner review and T01/T02
+promotion must align the schema, API, generated types and both validators before code can
+accept it.
+
 ## Identifiers
 
 ```text
@@ -578,6 +585,49 @@ ResourceRef {
 ```text
 PinnedResourceRef = ResourceRef with revision_id required
 
+WorkspaceRelativePath = UTF-8 path relative to one WorkspaceRoot, with `/` separators,
+  no leading/trailing slash, empty, `.` or `..` component, backslash, drive/UNC/device
+  prefix, NUL, or control character. Preserve component bytes; never Unicode-normalize
+  into a different filesystem name. The provider must still resolve beneath an opened
+  root handle and reject symlink/reparse escapes; this lexical type is not confinement.
+
+FileWriteScopeRequest = {
+  attempt_id: AttemptId, # untrusted scope selector; storage verifies it is live
+  step_id: StepId, # untrusted scope selector; storage loads the accepted Step
+  workspace_root_id: WorkspaceRootId,
+  target_relative_path: WorkspaceRelativePath,
+  base_revision_digest: Sha256Digest,
+  requested_max_bytes: u64, # 1..=1 MiB; request only, not authority
+  candidate_resource: PinnedResourceRef # exact managed immutable ResourceRevision
+}
+# No Task/plan revision, grant, Approval, Trust decision, attestation, lease, fence,
+# native handle, host path, or content bytes are accepted from the worker.
+
+FileReplacementTarget = {
+  kind: "FILE_REPLACEMENT",
+  workspace_root_id: WorkspaceRootId,
+  target_relative_path: WorkspaceRelativePath,
+  base_revision_digest: Sha256Digest,
+  content: PinnedResourceRef, # exact managed immutable ResourceRevision only
+  content_digest: Sha256Digest,
+  content_bytes: u32, # 0..=1 MiB
+  plan_action_digest: Sha256Digest
+}
+# CODE: the canonical Effect validator and SQLite proposal boundary accept this closed
+# shape. The atomic dispatch store reloads/validates the Effect and requires the exact Core
+# file-write grant's candidate ResourceRef and root/path/base/candidate digest/size/
+# plan-action/max-byte scope to match this target before committing. This is an internal
+# target value: no Task proposal producer, production Attempt/dispatch caller, filesystem
+# call or user request route is integrated, and validation grants no authority.
+
+ApprovedFileReplacement = {
+  effect_id: EffectId,
+  target: FileReplacementTarget,
+  content: BoundedBlob # exact bytes reloaded from the pinned ResourceRevision
+}
+# Internal transient value only; bounded to 1 MiB, never serialized, returned from
+# Operator, or written to events/logs. Bytes are reloaded and revalidated after dispatch.
+
 ResourceSearchResult {
   resource_ref: PinnedResourceRef
   source_content_digest: Sha256Digest
@@ -635,7 +685,7 @@ Neither case permits current-head substitution or external provider fetching.
 ```text
 CapabilityRef {
   capability_id: CapabilityId
-  identity_kind: PACKAGE_COMPONENT | MCP_SKILL
+  identity_kind: PACKAGE_COMPONENT | MCP_SKILL | CORE_BUILTIN
   source: string
   package_version?: string
   digest: Sha256Digest
@@ -651,6 +701,23 @@ MCP Skills require `component` to be the exact advertised `SKILL.md` URI, omit
 `package_version`, and use the pinned manifest digest as `digest`. Their stable identity
 is server identity plus exact URI; display names are never identity. This is LiteCowork's
 internal normalized shape and does not define LiteSPM's package/API contract.
+`CORE_BUILTIN` identifies an operation implemented and mediated by LiteCowork Core; it is
+not a LiteSPM package, MCP server, install, connection, or native-agent tool. For Feature
+005 file replacement it is exactly
+`{capability_id:"workspace.file.replace", identity_kind:"CORE_BUILTIN",
+source:"litecowork.core", component:"workspace.file.replace",
+digest:"sha256:5600e4897d63fffee5edfcd3c82f0da99e58f3fa3bfad37d07a50b11b37dda99"}`
+and omits `package_version`. Its digest is SHA-256 over RFC 8785 canonical JSON for
+`{capability_id:"workspace.file.replace", contract:"litecowork.file-replacement.v1",
+source:"litecowork.core"}`. This owner-directed addition is IN_REVIEW; package-backed
+and MCP Skill identity rules remain unchanged.
+The public owner `create_read_grant` endpoint accepts only package-component or MCP Skill
+identities and remains limited to `workspace.resource.read`. The Attempt-scoped file grant
+is issued by a separate internal Trust storage operation after Attempt admission; its
+request digest binds only the untrusted request and Workspace, while its durable scope
+also pins the accepted plan-action digest and exact candidate Resource revision. Issuing
+the grant does not consume an ApprovalUse; only the later atomic mediated dispatch may do
+that.
 `capability_ref_key_digest` is SHA-256 over RFC 8785 canonical JSON of this complete
 normalized value; storage uses it only as a deterministic key, never as a replacement for
 the referenced content digest.

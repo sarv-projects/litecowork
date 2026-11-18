@@ -1,7 +1,10 @@
 feature_id: "007"
 status: "ACCEPTED/LOCKED"
-# ACCEPTED/LOCKED (owner-accepted 2026-11-09) authorizes implementation of this graph.
-# Edges are the accepted target wiring, not a claim that they are served.
+# Base revision 1.0 was owner-accepted 2026-11-09. On 2026-11-17 the product owner
+# directed Saved Views to remain in V1 and Feature 007 B-21 to be amended. This graph
+# records that TARGET path; Feature 007/Storage/Conversation/Privacy/Backup review and
+# Feature 016 T01/T02 promotion are still required before Saved View implementation.
+# Edges are target wiring, not a claim that they are served.
 nodes:
   - id: "ui"
     owner: Desktop UI
@@ -73,6 +76,9 @@ transactions:
     owner: ArtifactStore
     atomic_records: ["artifact","artifact_resource","resource_revision","artifact_version","provenance","dependency_edges","conversation_origin","aggregate_snapshot","event","idempotency_receipt"]
     external_calls_inside: false
+    # RICH_PRESENTATION_SAVED_VIEW is the only explicit create source permitted to
+    # initialize library_status=SAVED; daemon rebuilds canonical bytes from committed
+    # message/presentation records. No client JSON or transient calculator state.
   - id: "tx-version"
     owner: ArtifactStore
     atomic_records: ["resource_revision","resource_head_pointer","artifact_version","artifact_current_version_pointer","provenance","resource.revision.observed.v1","artifact.version.created.v1","idempotency_receipt"]
@@ -110,3 +116,7 @@ recovery:
 # Conversation association (ArtifactRecord has task_id only); Task-produced artifact
 # integration (blocked by Feature 005 Task dispatch). Do not label owner/editor/export
 # edges INTEGRATED or QUALIFIED based on the existing text editor or Office probe.
+# Saved View target path is also absent: committed Conversation/RichPresentation source
+# -> exact-source Artifact create -> SAVED ArtifactVersion/ResourceRevision/receipt ->
+# Library filter and exact-version open. Session-modified calculator values remain
+# transient under Feature 016 B-40; update comes from a new committed presentation.

@@ -25,6 +25,7 @@ const OWNER: &str = "a06-pagination-owner";
 const RUNTIME: &str = "a06-pagination-runtime";
 const WORKSPACE_A: &str = "a06-pagination-workspace-a";
 const WORKSPACE_B: &str = "a06-pagination-workspace-b";
+const DISPATCHER_INCARNATION: &str = "turn-command-dispatcher-incarnation";
 
 #[derive(Clone)]
 struct PaginationTestKeys;
@@ -1548,6 +1549,7 @@ async fn conversation_turn_submit_returns_accepted_receipt_with_active_session_s
         store.clone(),
         OWNER.to_owned(),
         RUNTIME.to_owned(),
+        "turn-supervisor-local-incarnation".to_owned(),
         supervisor,
     );
 
@@ -1714,6 +1716,7 @@ fn turn_command_fixture(suffix: &str) -> TurnCommandFixture {
         store.clone(),
         OWNER.to_owned(),
         RUNTIME.to_owned(),
+        "turn-command-binding-incarnation".to_owned(),
         Arc::clone(&supervisor),
     );
     TurnCommandFixture {
@@ -1999,6 +2002,7 @@ async fn conversation_dispatch_host_resolution_error_settles_the_admitted_attemp
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2052,6 +2056,7 @@ async fn conversation_dispatch_host_unavailable_after_admission_settles_attempt(
     let result = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2085,6 +2090,65 @@ async fn conversation_dispatch_host_unavailable_after_admission_settles_attempt(
 }
 
 #[tokio::test]
+async fn conversation_dispatch_losing_no_host_preflight_preserves_the_claimed_attempt() {
+    let fixture = turn_command_fixture("turn-no-host-losing-dispatch");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-no-host-losing-dispatch").await;
+    let winner_incarnation = "turn-command-winner-incarnation";
+    let claimed = SqliteConversationStore::new(fixture.store.clone())
+        .claim_conversation_dispatch_intent(
+            &turn_id,
+            turn.retry_ordinal,
+            winner_incarnation,
+            "2026-10-15T12:00:02Z",
+        )
+        .expect("another dispatcher claims the durable intent first");
+    assert!(claimed);
+
+    let changed = fixture
+        .connection()
+        .execute(
+            "UPDATE runtime_offers SET readiness='NEEDS_AUTH' WHERE runtime_id=?1 AND runtime_incarnation_id=?2 AND offer_kind='AGENT_ENDPOINT' AND offer_ref=?3",
+            rusqlite::params![
+                "turn-command-binding-runtime",
+                "turn-command-binding-incarnation",
+                "turn-command-binding-endpoint",
+            ],
+        )
+        .expect("make a later dispatcher's host preflight unavailable");
+    assert_eq!(changed, 1);
+
+    let result = fixture
+        .supervisor
+        .dispatch_turn(
+            DISPATCHER_INCARNATION,
+            OWNER,
+            WORKSPACE_A,
+            fixture.conversation_id,
+            turn,
+            "turn-no-host-losing-dispatch-correlation",
+        )
+        .await;
+
+    assert_eq!(result, Ok(()), "a losing dispatcher performs no settlement");
+    assert_eq!(
+        fixture.turn_row(&turn_id).0,
+        "OPEN",
+        "a preflight failure cannot settle another dispatcher's turn"
+    );
+    let (intent_state, claimed_by): (String, Option<String>) = fixture
+        .connection()
+        .query_row(
+            "SELECT state, claimed_by_runtime_incarnation FROM conversation_dispatch_intents WHERE turn_id=?1 AND retry_ordinal=0",
+            [&turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read durable claimant after losing preflight");
+    assert_eq!(intent_state, "CLAIMED");
+    assert_eq!(claimed_by.as_deref(), Some(winner_incarnation));
+}
+
+#[tokio::test]
 async fn conversation_dispatch_profile_lookup_error_settles_claimed_attempt() {
     let fixture = turn_command_fixture("turn-profile-lookup-error");
     let (turn, turn_id) =
@@ -2100,6 +2164,7 @@ async fn conversation_dispatch_profile_lookup_error_settles_claimed_attempt() {
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2168,6 +2233,7 @@ async fn conversation_dispatch_missing_profile_settles_claimed_attempt() {
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2213,6 +2279,7 @@ async fn conversation_dispatch_binding_lookup_error_settles_admitted_attempt() {
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2267,6 +2334,7 @@ async fn conversation_dispatch_session_reservation_error_settles_claimed_attempt
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2313,6 +2381,7 @@ async fn conversation_dispatch_does_not_admit_a_fabricated_ready_host() {
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2354,14 +2423,14 @@ async fn conversation_dispatch_does_not_admit_a_fabricated_ready_host() {
 }
 
 #[tokio::test]
-async fn conversation_dispatch_intent_claim_error_settles_unclaimed_attempt() {
+async fn conversation_dispatch_intent_claim_error_leaves_attempt_for_reconciliation() {
     let fixture = turn_command_fixture("turn-dispatch-intent-claim-error");
     let (turn, turn_id) =
         admitted_turn_for_dispatch_fixture(&fixture, "turn-dispatch-intent-claim-error").await;
 
-    // Fail the durable compare-and-swap before any AgentSession reservation. The
-    // admitted OPEN turn must still reach a durable terminal state, and no native
-    // session may be created for an intent the dispatcher did not claim.
+    // Fail the durable compare-and-swap before any AgentSession reservation. A
+    // failed/ambiguous claim does not prove this dispatcher owns the turn, so it
+    // must leave the durable intent and OPEN turn for reconciliation.
     fixture
         .connection()
         .execute_batch(
@@ -2372,6 +2441,7 @@ async fn conversation_dispatch_intent_claim_error_settles_unclaimed_attempt() {
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -2384,8 +2454,17 @@ async fn conversation_dispatch_intent_claim_error_settles_unclaimed_attempt() {
         failure,
         Err(crate::agents::supervisor::DispatchFailureClass::DispatchIntentClaim)
     );
-    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
-    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    assert_eq!(fixture.turn_row(&turn_id).0, "OPEN");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "UNCLAIMED".to_owned())]);
+    let claimed_by: Option<String> = fixture
+        .connection()
+        .query_row(
+            "SELECT claimed_by_runtime_incarnation FROM conversation_dispatch_intents WHERE turn_id=?1 AND retry_ordinal=0",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("read unclaimed intent owner");
+    assert_eq!(claimed_by, None, "failed claim has no proven owner");
     let session_count: i64 = fixture
         .connection()
         .query_row(
@@ -2395,6 +2474,18 @@ async fn conversation_dispatch_intent_claim_error_settles_unclaimed_attempt() {
         )
         .expect("count sessions for an unclaimed dispatch");
     assert_eq!(session_count, 0, "unclaimed intent owns no AgentSession");
+
+    // The failed dispatcher has no settlement authority. Once the owning recovery
+    // sweep runs, it resolves this durable UNCLAIMED intent to a typed terminal state.
+    let recovered = crate::agents::conversation_recovery::recover_conversation_sessions(
+        &fixture.store,
+        RUNTIME,
+        OWNER,
+    );
+    assert_eq!(recovered.intents_settled, 1);
+    assert_eq!(recovered.failures, 0);
+    assert_eq!(fixture.turn_row(&turn_id).0, "FAILED");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
 }
 
 #[tokio::test]
@@ -2421,6 +2512,7 @@ async fn conversation_dispatch_settlement_failure_stays_fenced_until_startup_rec
     let failure = fixture
         .supervisor
         .dispatch_turn(
+            DISPATCHER_INCARNATION,
             OWNER,
             WORKSPACE_A,
             fixture.conversation_id,
@@ -3005,6 +3097,7 @@ async fn native_permission_reply_route_dispatches_once_to_active_worker_and_repl
         fixture.store.clone(),
         OWNER.to_owned(),
         runtime_id.to_owned(),
+        runtime_incarnation_id.to_owned(),
         Arc::clone(&supervisor),
     );
 
@@ -3105,6 +3198,7 @@ async fn native_permission_rejection_route_reaches_agent_once_without_creating_c
         fixture.store.clone(),
         OWNER.to_owned(),
         runtime_id.to_owned(),
+        runtime_incarnation_id.to_owned(),
         Arc::clone(&supervisor),
     );
 
@@ -3220,6 +3314,7 @@ async fn native_permission_reply_route_reports_session_end_when_mailbox_closes_a
         fixture.store.clone(),
         OWNER.to_owned(),
         runtime_id.to_owned(),
+        runtime_incarnation_id.to_owned(),
         Arc::clone(&supervisor),
     );
 

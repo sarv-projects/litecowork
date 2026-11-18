@@ -1654,3 +1654,83 @@ fn conversation_session_recovery_preserves_final_response_and_receipt() {
     assert_eq!(replayed.turn.status, ConversationTurnStatus::Completed);
     assert_eq!(replayed.session.status, "CLOSED");
 }
+
+#[test]
+fn conversation_session_recovery_reports_workspace_enumeration_failure() {
+    let directory = tempfile::tempdir().expect("temporary Runtime data directory");
+    let store = store(directory.path());
+    let database = directory.path().join("litecowork.sqlite3");
+    let connection = Connection::open(&database).expect("open recovery fixture database");
+    connection
+        .execute(
+            "ALTER TABLE workspaces RENAME COLUMN workspace_id TO unavailable_workspace_id",
+            [],
+        )
+        .expect("make Workspace catalog enumeration fail without damaging recovery tables");
+    drop(connection);
+
+    assert!(
+        store.list_workspaces().is_err(),
+        "fixture must exercise the failed Workspace enumeration"
+    );
+
+    let report = crate::agents::conversation_recovery::recover_conversation_sessions(
+        &store,
+        RUNTIME_ID,
+        "principal-integrated-recovery-test",
+    );
+
+    assert_eq!(report.failures, 1);
+}
+
+#[test]
+fn startup_workspace_enumeration_failure_persists_recovery_blockers() {
+    let directory = tempfile::tempdir().expect("temporary Runtime data directory");
+    ensure_private_state_directory(directory.path()).expect("restrict Runtime data directory");
+    let store = store(directory.path());
+    let database = directory.path().join("litecowork.sqlite3");
+    let connection = Connection::open(&database).expect("open recovery fixture database");
+    connection
+        .execute(
+            "ALTER TABLE workspaces RENAME COLUMN workspace_id TO unavailable_workspace_id",
+            [],
+        )
+        .expect("make Workspace catalog enumeration fail without damaging recovery tables");
+    drop(connection);
+
+    assert!(
+        store.list_workspaces().is_err(),
+        "fixture must exercise the failed Workspace enumeration"
+    );
+
+    let mut state = local_state("startup-workspace-enumeration-failure", false);
+    persist_state(directory.path(), &state).expect("persist starting Runtime state");
+    let blockers = super::recover_and_persist_startup_blockers(
+        directory.path(),
+        &store,
+        "principal-integrated-recovery-test",
+        &mut state,
+        Vec::new(),
+    )
+    .expect("recovery failures are durably projected before Operator admission");
+
+    let blocker_codes = blockers
+        .iter()
+        .map(|blocker| blocker.code.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        blocker_codes,
+        [
+            "EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED",
+            "CONVERSATION_SESSION_RECOVERY_FAILED"
+        ]
+    );
+    assert_eq!(state.recovery_state, RuntimeState::Degraded);
+    assert_eq!(state.blockers, blocker_codes);
+
+    let persisted = super::read_state(&directory.path().join("runtime-state.json"))
+        .expect("read private Runtime state")
+        .expect("startup recovery state is persisted");
+    assert_eq!(persisted.recovery_state, RuntimeState::Degraded);
+    assert_eq!(persisted.blockers, blocker_codes);
+}

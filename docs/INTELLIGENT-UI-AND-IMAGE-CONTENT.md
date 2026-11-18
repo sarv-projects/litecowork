@@ -1,6 +1,6 @@
 # Intelligent UI, declarative presentation and image content
 
-**Authority:** Subordinate to [Architecture](../ARCHITECTURE.md), [Rich Response](RICH-RESPONSE.md), [Presentation Runtime](PRESENTATION-RUNTIME.md), [State Machines](STATE-MACHINES.md) and [Artifacts and Evidence](ARTIFACTS-EVIDENCE.md). Existing invariants remain normative; revision 0.2 extensions below are TARGET proposals in [Feature 016](../specs/016-rich-presentation-intelligent-ui/README.md), IN_REVIEW. The owner requested design integration, not implementation authorization or qualification.
+**Authority:** Subordinate to [Architecture](../ARCHITECTURE.md), [Rich Response](RICH-RESPONSE.md), [Presentation Runtime](PRESENTATION-RUNTIME.md), [State Machines](STATE-MACHINES.md) and [Artifacts and Evidence](ARTIFACTS-EVIDENCE.md). Existing owner contracts remain normative; Feature 016 revision 0.4 is a TARGET proposal, IN_REVIEW. The owner selected Saved Views for V1 and directed a Feature 007 B-21 amendment; its bounded Artifact contract is drafted for cross-owner review. This product direction does not accept the full Feature 016 scope or authorize implementation or qualification.
 
 ## 1. Output boundaries
 
@@ -26,17 +26,17 @@ Current intent schema does not express a calculator. B-40 calculation intent mus
 
 ## 3. Registered deterministic interaction
 
-The implementation baseline accepts TEXT_SLICE, LAYOUT, CARD, CALLOUT and TABLE under 512 KiB/200-block/depth-8 limits. B-40 adds CHART and SAFE_CALCULATOR in renderer contract v2 through owner-reviewed contract promotion. Tabs, generic forms, metric cards, arbitrary operations, maps, remote assets and plugin renderers are not admitted merely because another library offers them.
+The current implemented profile accepts TEXT_SLICE, LAYOUT, CARD, CALLOUT and TABLE under 512 KiB/200-block/depth-8 limits. Accepted B-40 defines CHART and SAFE_CALCULATOR as the first renderer-v2 target, pending its owner-reviewed contract promotion. Revision 0.4 proposes METRIC plus bounded NUMBER/RANGE/SELECT controls only after B-46/T01/T02 accept and promote them. Tabs, generic forms, arbitrary operations, maps, remote assets and plugin renderers are not admitted merely because another library offers them.
 
 SAFE_CALCULATOR has at most eight labeled numeric inputs bound to original semantic table cells, a restricted arithmetic AST of at most 64 nodes/depth 12, a formula explanation and original-value fallback. Allowed arithmetic is B-40's LITERAL/VARIABLE, `+ - * / %`, unary minus, MIN/MAX/ROUND/ABS/CLAMP; non-finite or divide-by-zero results show a bounded error and fallback. No eval, function loading or universal string operation dispatcher. Derived outputs recompute locally and never become Evidence or verified financial results.
 
 Metric bindings must declare measure, units/currency/scale, time interval and aggregation. Latest and total are distinct. The proposal's monthly revenue example totals INR 12.08 lakh; INR 3.15 lakh is June revenue; 162.5% is January-to-June change. Missing semantics yields a table or clarification. New SIP numerical kernels and INR locale formatting require reviewed rate conversion, contribution timing, compounding, zero-rate/domain/stability/rounding semantics and fixtures; they are not existing approved arithmetic.
 
-## 4. Inline and Workbench Canvas
+## 4. Inline, Workbench Canvas and Saved Views
 
 Canvas is an expanded presentation in the existing right Workbench. A host-owned Expand/Collapse control keeps the same validated document, controller, inputs and revision; it does not invoke an agent or run an Artifact. Return focus to the originating control; support keyboard, screen reader, high zoom/reflow, reduced motion, labeled inputs, polite result announcements and equivalent data tables. Registry failures preserve the complete original answer.
 
-B-40 inputs remain transient, never persisted or sent to an agent. Revision 0.2 proposes separate explicit **Remember this view on this device** and **Ask to change this view** controls; these are not covered by B-40 acceptance. Remember is off by default and uses a quota-limited owner/device/Workspace/message/document-digest partition through authenticated host commands with expected revision, receipts, deletion fences and consent. No browser storage or background model synchronization. Conversational modification explicitly previews and sends a selected snapshot as a new normal turn; a result creates a new message/presentation and never rewrites original semantic text. Schema, API, events, migration/retention, conflict/deletion and owner review gates are specified in the pipeline LLD and Feature 016 T20-T24.
+B-40 keeps calculator input transient and prevents the component from submitting or persisting it. Proposed B-46 separately asks whether the closed profile may add metrics and bounded input controls, and whether host controls can **Remember on this device** or **Ask to change this view** after explicit consent/review; none of that behavior is accepted yet. Remember would use a quota-limited exact Workspace/Conversation/message/presentation-digest partition through authenticated host commands, expected revision, durable receipts and deletion fences. No browser storage or background model synchronization. Conversational modification would preview and send only user-authored text and any separately approved context as a new normal turn; under current B-40, changed calculator values are excluded. A result creates a new message/presentation and never rewrites original semantic text. The owner selected Saved Views for V1 and directed Feature 007 B-21 to be amended. The drafted Artifact contract stores the immutable RichPresentation and its declared defaults, not session-modified values; cross-owner review and T01/T02 promotion remain pending. See Feature 016 SPEC §20 and its T20-T25 gates.
 
 ## 5. Generated media
 
@@ -46,7 +46,7 @@ Artifact bytes load only through an exact authorized read. A new `litecowork-res
 
 ## 6. Evidence and gates
 
-Partial CODE/SERVED validator/read/fallback foundations exist. No production proposal publisher, calculation/chart renderer, expanded state controller, persistent state or image ingestion is claimed. Existing stream ready/projection/resync producers are distinct from absent turn-delta/settled/rich-draft producers. [Implementation status](IMPLEMENTATION-STATUS.md) and Feature 016 TASKS record exact evidence.
+Partial CODE/SERVED validator/read/fallback foundations exist. No production proposal publisher, calculation/chart renderer, expanded state controller, persistent input store, Saved View lifecycle or image ingestion is claimed. The right-side Canvas and Save/Remember controls are design proposals, not current UI. Saved Views are selected product direction with a TARGET owner contract, not a served feature. Existing stream ready/projection/resync producers are distinct from absent turn-delta/settled/rich-draft producers. [Implementation status](IMPLEMENTATION-STATUS.md) and Feature 016 TASKS record exact evidence.
 
 Required checks include shared Rust/TypeScript hostile and boundary corpus, no executable content/CSP, wrong-scope/retry/proposal rejection, truthful units/aggregation, pure numerical fixtures, controller expansion identity, persistence consent/quota/revocation, duplicate/changed-body receipts, timeout-after-commit reconciliation, conflicting windows, forget/save race, new-message modification lineage, restart/reconnect and accessible semantic fallback. Packaged SYSTEM and owner USER evidence are required per exact OS/WebView/provider/version/auth route; schema or renderer success alone is not QUALIFIED.
 
@@ -59,7 +59,7 @@ These details retain the useful behavior of the earlier architecture while remov
 | Layout | Vertical ordered stack | Existing LAYOUT; bounded columns/gap tokens only |
 | Tabs/accordion | Labeled sequential sections/headings | Future registry/schema review, no current component promise |
 | Data explorer | Accessible table with bounded scroll region | Existing TABLE is read-only; sorting/filter/pagination/export need registered host behavior |
-| Metrics | Label, value, unit, interval and aggregation text | Future kind; cannot infer success or verification from color/badge |
+| Metrics | Label, value, unit, interval and aggregation text | Proposed only under B-46; require canonical schema/renderer promotion and cannot infer success or verification from color/badge |
 | Chart | Equivalent data table and textual accessible summary | B-40 BAR/LINE/AREA target; original numbers retained |
 | Inputs/calculator | Original values, formula and original result; error reason for invalid inputs | B-40 labeled numeric inputs only; required deterministic fallback |
 | Image | Alt text or explicit missing-description label, exact authorized Artifact open/save controls | Feature 007; no model-generated direct download URL |

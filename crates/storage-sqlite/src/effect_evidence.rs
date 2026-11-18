@@ -1696,6 +1696,48 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_proposal_validation_accepts_closed_file_replacement_target() {
+        let mut proposal = effect();
+        proposal.target = json!({
+            "kind": "FILE_REPLACEMENT",
+            "workspace_root_id": "root-1",
+            "target_relative_path": "src/main.rs",
+            "base_revision_digest": format!("sha256:{}", "b".repeat(64)),
+            "content": {
+                "workspace_id": "workspace-1",
+                "resource_id": "resource-1",
+                "revision_id": "revision-1"
+            },
+            "content_digest": format!("sha256:{}", "c".repeat(64)),
+            "content_bytes": 0,
+            "plan_action_digest": format!("sha256:{}", "d".repeat(64))
+        });
+        let command = ProposeEffectCommit {
+            workspace_id: "workspace-1".to_owned(),
+            runtime_id: "runtime-1".to_owned(),
+            runtime_incarnation_id: "incarnation-1".to_owned(),
+            request_id: "request-1".to_owned(),
+            fence: EffectFenceBinding {
+                lease_id: "lease-1".to_owned(),
+                epoch: 1,
+                fencing_token_digest: format!("sha256:{}", "e".repeat(64)),
+            },
+            effect: proposal,
+            event: EffectEvidenceEventContext {
+                event_id: "event-1".to_owned(),
+                origin_runtime_id: "runtime-1".to_owned(),
+                origin_runtime_incarnation_id: "incarnation-1".to_owned(),
+                hlc_timestamp: "2026-10-08T00:00:00Z".to_owned(),
+                correlation_id: "correlation-1".to_owned(),
+                causation_id: None,
+                recorded_at: "2026-10-08T00:00:00Z".to_owned(),
+            },
+        };
+
+        assert!(validate_proposal(&command).is_ok());
+    }
+
+    #[test]
     fn invocation_match_rejects_missing_effect_capability_identity() {
         let connection = Connection::open_in_memory().unwrap();
         connection

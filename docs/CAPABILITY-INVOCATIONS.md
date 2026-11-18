@@ -20,6 +20,16 @@ provider adapter enforces the equivalent authorization, idempotency, fencing, Ef
 Evidence contract. An arbitrary native tool call that bypasses that boundary is not
 represented as a Core-mediated Invocation or Effect.
 
+`CapabilityRef.identity_kind = CORE_BUILTIN` is reserved for a first-party operation whose
+implementation and authorization boundary are owned by LiteCowork Core. It carries no
+LiteSPM package version or MCP server identity and never implies installation, connection,
+authentication, or permission in a native harness. Core built-ins still require a live
+Workspace/Task scope, exact CapabilityGrant, active scoped Activation, Trust evaluation,
+and the ordinary Invocation/Effect/ApprovalUse dispatch boundary. They are versioned by a
+contract digest. The Feature 005 `workspace.file.replace` identity is owner-directed and
+IN_REVIEW; its user-visible file write remains unavailable until a production Runtime
+caller, activation path and filesystem provider journey are integrated and qualified.
+
 ## Canonical record
 
 ```text
@@ -126,18 +136,21 @@ ActionBatch aggregate or synthetic all-or-nothing Effect exists.
 
 ### Dispatch readiness gate
 
-The schema and state machine define `CREATED -> DISPATCHED`. Current local storage can
-persist status observations and local pre-dispatch cancellation for an existing Invocation,
-but exposes no Invocation creation or dispatch operation and no Trust-issued exact-action
-dispatch decision. For Attempt-scoped consequential operations it also has no atomic
-`ApprovalUse` consumer. Until one authoritative transaction rechecks the live
-owner/lease, grant, activation, Trust decision and any exact Approval; transitions the
-Invocation; links and starts its Effect; and writes the related state snapshots, events,
-audit and idempotency receipt, external provider dispatch is unavailable. The current
-Effect store returns typed missing-prerequisite blockers before any write when asked to
-enter `STARTED`. A `PROPOSED` Effect is not a dispatch permit, and retrying an Effect does
-not bypass the gate. No provider call may be made based only on these existing SQLite
-tables or the state-machine definition.
+The schema and state machine define `CREATED -> DISPATCHED`. A SQLite
+`CapabilityDispatchStore` transaction now has CODE coverage for atomically rechecking the
+live owner/lease, grant, activation, Trust decision and exact Approval; transitioning the
+Invocation; linking and starting its Effect; and writing ApprovalUse, state snapshots,
+events, audit and the idempotency receipt. For the Core `workspace.file.replace`
+capability, this boundary also revalidates the closed Effect target and requires the
+persisted Trust grant's exact ResourceRef and root/path/base/candidate digest/size/plan
+action/max-byte constraints to match it. Any mismatch is rejected before those durable
+dispatch writes. The store has no production Runtime/Operator caller, Attempt admission
+journey, or post-commit filesystem call; this is CODE only and external dispatch remains
+unavailable. The current Effect store returns typed missing-prerequisite blockers before
+any write when asked to enter `STARTED` outside this atomic transaction. A `PROPOSED`
+Effect is not a dispatch permit, and retrying an Effect does not bypass the gate. No
+provider call may be made based only on these existing SQLite tables or the state-machine
+definition.
 
 ```text
 CREATED -> DISPATCHED | CANCELLED

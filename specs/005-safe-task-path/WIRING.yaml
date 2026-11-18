@@ -1,5 +1,5 @@
 feature_id: "005"
-status: "ACCEPTED/LOCKED"
+status: "IN_REVIEW"
 nodes:
   - id: "ui"
     owner: Desktop UI
@@ -19,11 +19,23 @@ nodes:
   - id: "runtime-private"
     owner: Runtime-private incarnation-scoped Environment state
     kind: service
+  - id: "preparation-journal"
+    owner: Runtime-private durable pre-admission provider-recovery journal
+    kind: store
+  - id: "proposal-capture"
+    owner: Task Runtime bounded post-quiescence output capture
+    kind: adapter
+  - id: "attempt-runner"
+    owner: trusted Linux scope runner
+    kind: adapter
   - id: "trust"
     owner: Trust / Approval owner
     kind: service
   - id: "effect-owner"
     owner: Effect / CapabilityInvocation owner
+    kind: service
+  - id: "resource-owner"
+    owner: Resource / managed BlobStore owner
     kind: service
   - id: "evidence-owner"
     owner: Evidence owner
@@ -40,6 +52,9 @@ nodes:
   - id: "verifier"
     owner: independent Verification owner
     kind: service
+  - id: "file-replacement"
+    owner: local-environment-staging and platform filesystem handle adapter
+    kind: adapter
 edges:
   - id: "e-ui-op"
     from: "ui"
@@ -57,6 +72,10 @@ edges:
     from: "task-runtime"
     to: "planner"
     kind: request
+  - id: "e-task-runtime-file-replacement"
+    from: "task-runtime"
+    to: "file-replacement"
+    kind: effect
   - id: "e-planner-taskservice"
     from: "planner"
     to: "owner"
@@ -81,18 +100,78 @@ edges:
     from: "task-runtime"
     to: "env"
     kind: request
+  - id: "e-runtime-preparation-intent"
+    from: "task-runtime"
+    to: "preparation-journal"
+    kind: durable_private_write
+  - id: "e-preparation-env"
+    from: "preparation-journal"
+    to: "env"
+    kind: exact_scope_request
   - id: "e-env-runtime-private"
     from: "env"
     to: "runtime-private"
-    kind: result
+    kind: observed_attestation_and_held_supervisor
+  - id: "e-env-admission"
+    from: "env"
+    to: "task-runtime"
+    kind: trusted_idle_scope_ready
+  - id: "e-storage-admission-receipt"
+    from: "storage"
+    to: "task-runtime"
+    kind: committed_receipt
+  - id: "e-runtime-launch-handoff"
+    from: "task-runtime"
+    to: "env"
+    kind: one_time_post_commit_launch
+  - id: "e-runtime-preparation-recovery"
+    from: "preparation-journal"
+    to: "task-runtime"
+    kind: exact_receipt_and_scope_reconciliation
   - id: "e-runtime-private-read"
     from: "task-runtime"
     to: "runtime-private"
+    kind: request
+  - id: "e-env-proposal-capture"
+    from: "env"
+    to: "proposal-capture"
+    kind: bounded_result
+  - id: "e-env-attempt-runner"
+    from: "env"
+    to: "attempt-runner"
+    kind: process
+  - id: "e-attempt-runner-proposal-capture"
+    from: "attempt-runner"
+    to: "proposal-capture"
+    kind: bounded_frame
+  - id: "e-proposal-resource"
+    from: "proposal-capture"
+    to: "resource-owner"
+    kind: transaction
+  - id: "e-proposal-runtime"
+    from: "proposal-capture"
+    to: "task-runtime"
+    kind: receipt
+  - id: "e-proposal-trust"
+    from: "proposal-capture"
+    to: "trust"
     kind: request
   - id: "e-runtime-private-proof"
     from: "runtime-private"
     to: "task-runtime"
     kind: result
+  - id: "e-runtime-resource"
+    from: "task-runtime"
+    to: "resource-owner"
+    kind: request
+  - id: "e-resource-storage"
+    from: "resource-owner"
+    to: "storage"
+    kind: transaction
+  - id: "e-resource-ui"
+    from: "resource-owner"
+    to: "ui"
+    kind: projection
   - id: "e-runtime-env-write"
     from: "task-runtime"
     to: "env"
@@ -145,10 +224,12 @@ edges:
     from: "verifier"
     to: "storage"
     kind: transaction
-# tx-attempt records Attempt/lease lifecycle. It does not, by itself, authorize an
-# external Effect or the B-18 file mutation. The dispatch boundary must atomically
-# satisfy the canonical Invocation/Trust/Effect/ApprovalUse/lease admission rule;
-# A-88 leaves the direct writer's exact mapping open for T01.
+# Environment provisioning/attestation occurs outside SQLite. Planning reservation
+# binds a Task-scoped read-only Environment to TASK_PLANNING. Attempt reservation binds
+# a fresh ATTEMPT_PRIVATE Environment, Attempt, lease and ATTEMPT_EXECUTION session.
+# Attempt admission does not authorize an Effect. File dispatch is a later transaction
+# that revalidates the live lease/fence while atomically committing Invocation, Trust,
+# Effect STARTED and ApprovalUse.
 transactions:
   - id: "tx-task"
     owner: TaskService
@@ -156,7 +237,31 @@ transactions:
     external_calls_inside: false
   - id: "tx-attempt"
     owner: Task Runtime
-    atomic_records: ["attempt","execution_lease","step_current_attempt","attempt.created.v1","lease.acquired.v1","idempotency_receipt"]
+    atomic_records: ["environment_metadata","attempt","step_current_attempt","execution_lease","agent_session_starting","attempt.created.v1","lease.acquired.v1","agent.session.starting.v1","idempotency_receipt"]
+    preconditions: ["provider preparation and current-incarnation attestation completed outside SQLite","ATTEMPT_PRIVATE Environment matches Task/Attempt/Runtime/incarnation"]
+    recovery: "If this transaction fails after provider preparation, Runtime destroys or quarantines the unbound Environment before retry. Provider launch is after commit."
+    external_calls_inside: false
+  - id: "tx-file-write-grant"
+    owner: Trust + Storage
+    atomic_records: ["capability_grant","capability_grant_aggregate_state","capability.grant.created.v1","audit_record","idempotency_receipt"]
+    preconditions: ["Attempt is already admitted and RUNNING","current accepted PlanRevision and exact RUNNING Step match the request","active Attempt AgentSession and current Runtime incarnation","live unexpired lease/fence","active WorkspaceRoot","exact locally managed immutable candidate ResourceRevision is AVAILABLE, within the accepted/requested byte bound, and Resource.provenance.created_by_attempt equals this Attempt"]
+    scope: "one CORE_BUILTIN workspace.file.replace operation bound to one Attempt, Step, WorkspaceRoot, normalized relative path, base digest, candidate ResourceRef/content digest/size, accepted plan-action digest and short expiry"
+    approval_use: "none; the owner Approval is resolved separately and consumed only by tx-mediated-invocation-dispatch"
+    recovery: "Exact retry replays the durable receipt before mutable Resource/lease revalidation; changed request payload conflicts. Lease/plan/root/resource races fail before any write."
+    external_calls_inside: false
+  - id: "tx-planner-session-reservation"
+    owner: Task Runtime
+    atomic_records: ["environment_metadata","agent_session_starting","agent.session.starting.v1","idempotency_receipt"]
+    preconditions: ["read-only TASK_SHARED Environment is attested for exact TaskSpec revision and Resource set","current Runtime incarnation"]
+    recovery: "If reservation fails after provider preparation, Runtime destroys or quarantines the unbound Environment before retry. Start planner only after commit."
+    external_calls_inside: false
+  - id: "tx-task-file-proposal"
+    owner: Task Runtime + ResourceStore
+    atomic_records: ["resource","immutable_resource_revision","resource.created.v1","resource aggregate snapshot","managed encrypted blob location","idempotency_receipt"]
+    preconditions: ["Attempt/Step/Environment/current incarnation are owner-resolved","trusted runner frame is bounded and identity-correlated","provider observed recursive process-scope populated=0 and reaped the direct launcher","output channel returns only accepted Step's bounded bytes","Resource provenance.created_by_attempt equals the Attempt"]
+    scope: "one output candidate per Attempt + Step; Runtime computes digest and uses the existing Resource lifecycle"
+    authority_effect: "none; proposal capture does not issue Trust grant, Approval, CapabilityInvocation or Effect"
+    replay: "exact same Attempt/Step/digest replays the Resource receipt; changed digest conflicts and requires a new Attempt"
     external_calls_inside: false
   - id: "tx-plan-accept"
     owner: TaskService
@@ -164,8 +269,9 @@ transactions:
     event_contract: "one step.created.v1 event for each committed Step; see docs/EVENTS.md"
     external_calls_inside: false
   - id: "tx-effect-propose"
-    owner: Effect owner
-    atomic_records: ["effect","effect_aggregate_state","effect.proposed.v1","idempotency_receipt"]
+    owner: Effect / CapabilityInvocation owner
+    atomic_records: ["capability_invocation_created","effect","effect_aggregate_state","effect.proposed.v1","idempotency_receipt"]
+    preconditions: ["exact ResourceRevision exists in same Workspace","target digest and size verified","Attempt and plan action are current"]
     external_calls_inside: false
   - id: "tx-effect-transition"
     owner: Effect owner
@@ -174,9 +280,10 @@ transactions:
     external_calls_inside: false
   - id: "tx-mediated-invocation-dispatch"
     owner: Invocation + Trust + Effect + ApprovalUse + lease owners
-    atomic_records: ["capability_invocation","effect","approval_use_consumption","execution_lease_admission_and_fence","aggregate_state_snapshots","idempotency_receipt"]
-    required_atomic_gates: ["Trust authorization decision","Effect transition to STARTED","ApprovalUse consumption","ExecutionLease admission and fence"]
+    atomic_records: ["capability_invocation_dispatched","effect_started","approval_use_consumption","aggregate_state_snapshots","domain_events","audit_record","idempotency_receipt"]
+    required_atomic_gates: ["Trust authorization decision","exact Approval/action digest","active Attempt/session","current ExecutionLease fence and epoch","grant","activation","Effect transition to STARTED","closed Effect target revalidation","exact Core file-write grant target/scope match"]
     event_contract: "canonical Invocation status and effect.started.v1 events; see docs/EVENTS.md"
+    external_effect: "Provider file replacement starts only after this transaction commits. This transaction revalidates an earlier Attempt/lease; it does not create or acquire the lease."
     external_calls_inside: false
   - id: "tx-evidence-append"
     owner: Evidence owner
@@ -197,12 +304,22 @@ external_boundaries:
     input_trust: untrusted
     timeout: bounded
     retry: reconcile-before-retry
+  - id: "b18-file-replacement"
+    owner: Environments file-replacement primitive
+    input_trust: "typed approved target and exact bounded ResourceRevision bytes after committed mediated dispatch"
+    timeout: bounded
+    retry: "never reissue an ambiguous replacement; reconcile target and Effect-keyed temp first"
+  - id: "attempt-output-frame"
+    owner: trusted Linux scope runner + Task Runtime
+    input_trust: "untrusted candidate bytes from one fixed file on the Attempt-private capped tmpfs"
+    timeout: "bounded by the Attempt and process-scope deadline"
+    retry: "discard partial frame; no Resource is created until exact scope quiescence and full frame validation"
 recovery:
   owner: domain owner
   source_of_truth: durable-owner-records
   restart_action: reload-last-commit-and-reconcile
 
-# Current source boundary cross-checked 2026-11-12
+# Current source boundary cross-checked 2026-11-18
 # The graph above is the target sequence, not currently integrated execution wiring.
 # In the active checkout, Task create/spec edit and read-only planning readiness are served.
 # The readiness path returns dispatch_available=false; LocalPlanningPreflight::require_dispatch
@@ -213,9 +330,9 @@ recovery:
 # code. Plan submission, Attempt admission, Effect dispatch, reconciliation and Environment
 # provision/control routes are target-only. Do not mark execution edges INTEGRATED or QUALIFIED
 # until the real provider and packaged write/recovery journey exist.
-# The planner readiness gate also requires private current-incarnation Environment evidence. A-70
-# leaves open whether this gate's Environment is reused for the execution Attempt or provisioned
-# separately; the native lead receives no Environment handle or attestation.
+# Planner admission requires a Task-scoped read-only Environment attested to the exact TaskSpec
+# and Resource set. Every execution/child/verifier Attempt receives a fresh ATTEMPT_PRIVATE
+# Environment. Native agents never receive the attestation body or provider handle.
 
 # Owner acceptance 2026-11-09 (docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md): status ACCEPTED/LOCKED
 # authorizes implementation of this target wiring. It does not make any edge SERVED, INTEGRATED
@@ -224,17 +341,41 @@ recovery:
 # B-35 (PROPOSED, pending owner) is accepted and qualified. Plan/Attempt/effect/reconcile/verify
 # nodes and transactions are TARGET and not yet integrated in source.
 #
-# A-88/A-90: docs/STORAGE.md and docs/TRUST.md define Task Attempt/lease, Effect,
-# Evidence, VerificationRun, grant, and ApprovalUse owner boundaries. STORAGE also
-# requires mediated invocation dispatch to bind Trust, Effect, ApprovalUse and lease
-# admission atomically. T01 must resolve whether the direct B-18 writer uses that path or
-# another owner-approved atomic composition; do not infer a sequential post-admission
-# lease check is sufficient. Its exact action, durable payload and Attempt-bound grant
-# remain open. A request-supplied grant-shaped object is not authority. Environment
-# attestation remains in Runtime-private incarnation-scoped state and must not enter a
-# public request, event, aggregate snapshot, or Agent packet. VerificationRun start uses
-# the canonical verification.started.v1 event; terminal settlement uses the applicable
-# canonical verification.completed event.
-# The Effect transition transaction above excludes STARTED; Storage currently rejects
-# that transition until the canonical atomic mediated-dispatch transaction is available.
-# Its direct use by the B-18 file writer remains unresolved at A-88.
+# A-87/A-88/A-90 owner direction: exact write bytes are a managed ResourceRevision pinned
+# by a typed Effect.target_json; Attempt admission precedes a separate mediated dispatch
+# that atomically revalidates the live lease and commits Trust, Effect STARTED and
+# ApprovalUse. FileWriteScopeRequest is untrusted; Trust alone issues the grant. The
+# revision remains IN_REVIEW pending cross-owner review. Environment attestation remains
+# in Runtime-private incarnation-scoped state and never enters a public request, event,
+# aggregate snapshot, backup or Agent packet. VerificationRun start uses the canonical
+# verification.started.v1 event; terminal settlement uses the applicable event.
+# The database gate still prevents any production Task flow: this CODE-level store
+# transaction is covered by direct admission tests, but there is no Task Runtime caller,
+# proposal producer or file provider call. Keep the user-facing path unavailable until
+# the T08 caller and its full denial/replay/recovery coverage are implemented. This
+# target wiring alone does not make dispatch SERVED, INTEGRATED or QUALIFIED.
+#
+# The ACP Client fs/write_text_file callback is not the Task candidate capture path. The
+# Runtime collects the accepted-Step output over a bounded provider-private channel after
+# quiescence; Trust verifies Resource.provenance.created_by_attempt against the live
+# Attempt before grant issue. Capture stores data only and confers no write authority.
+# Source check 2026-11-19: lower-level scope-gate runner, fixed-path reader, Bubblewrap
+# --cap-drop ALL argument, bounded LCOW frame writer/parser, and a separate held-runner
+# readiness/one-shot post-receipt signal protocol have CODE coverage. The held runner does
+# not itself attest policy or resolve the receipt. A daemon-private
+# mapper validates a ready Attempt-private Environment against current Task/Attempt/Runtime
+# identity and exact prepared Resource pins, then builds the supported Bubblewrap launch
+# request. Its five focused tests pass on WSL. A Runtime-private capture session can start
+# that mapped scope, preserve native agent stdin/stdout, drain the separate frame channel,
+# retain the same scope after a quiescence timeout, and return bytes only after positive
+# recursive quiescence plus launcher reap. Its three tests use a fake scope. The helper has
+# no production Task Runtime caller and creates no attestation, admission or Resource; no
+# TARGET wiring edge is upgraded to SERVED, INTEGRATED or QUALIFIED by this code.
+# A separate RuntimeLocalPreparationJournal storage primitive now has CODE tests, but there
+# is no provider/startup caller. Its pending-entry scan and concurrent phase transitions
+# need further validation/serialization before integration. Same-scope probes and exact
+# receipt lookup are still absent; the held protocol remains a lower-level launch-order
+# primitive and no TARGET wiring edge is promoted by this evidence.
+# A WSL-only Bubblewrap probe runs the production command builder directly, reads back its fixed 1 MiB cap, and observes
+# ENOSPC across output and `/tmp` writes sharing one scratch tmpfs; this does not exercise EnvironmentConfig mapping, ManagedScope,
+# systemd/cgroup supervision, or any attestation/admission edge.

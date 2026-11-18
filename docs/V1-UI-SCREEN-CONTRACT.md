@@ -171,6 +171,10 @@ The current Discover screen reads Workspace-local skill records and bounded Runt
 
 ## 8. Library and Artifacts
 
+### Saved Views (TARGET, owner direction 2026-11-17)
+
+Saved Views live as a filter/group in the existing Library. They do not add a sidebar tab or separate store. The owner selected them for V1 and directed a Feature 007 B-21 amendment; Feature 007 revision 1.1 is IN_REVIEW and Feature 016 T01/T02 remain open. The target object is a bounded, non-executable Artifact snapshot with exact source Conversation/message/presentation lineage and semantic fallback. It reopens the exact committed version and original declared defaults. Session-modified calculator values remain transient under B-40; V1 has no Save changes for those values and no automatic agent sharing. Update is a separate confirmed append from a new committed eligible presentation; removal uses Archive. No control is available until the matching Feature 007 command, receipt, and projection are served.
+
 The Library includes Workspace resources and committed Artifacts. Each item records source, exact revision, owner, Workspace, origin Conversation/Task, MIME/format, content hash, timestamps and provenance.
 
 Each format declares its actual capabilities: read-only preview, edit, save, export, compare, render or unsupported. A preview is not an editor; a text extraction is not faithful layout rendering; PDF display is not Word editing; and a generated file is not an accepted deliverable until its required checks pass.

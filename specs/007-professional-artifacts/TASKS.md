@@ -1,7 +1,7 @@
 # Tasks - Professional Artifacts One Format
 
-**Feature:** 007 | **Status:** ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
-**Spec revision:** 1.0 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+**Feature:** 007 | **Status:** Base revision 1.0 ACCEPTED/LOCKED; revision 1.1 Saved View amendment IN_REVIEW. Existing tasks are authorized only within their accepted 1.0 contracts; Saved View work requires T01/T02 promotion and renewed owner review.
+**Spec revision:** Base 1.0 accepted / Saved View amendment 1.1 TARGET-IN_REVIEW | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 
 ## Current baseline
 
@@ -13,7 +13,7 @@ Verified in source on 2026-11-09 (branch `docs/audit-competitor-superset`):
 - UI in `apps/litecowork-ui/src/artifacts/`: `ArtifactLibrary.tsx` (no create control), `ArtifactWorkbench.tsx` (edit gated on `media_type == "text/plain"`), `StructuredTextPreview.tsx` (restricted Markdown renderer with raw fallback), `artifact-api.ts` (`supportsTextPreview`), `text-version-diff-model.ts` (bounded LCS `lineDiff`), `TaskArtifactOutputs.tsx`.
 - Office: `apps/litecoworkd/src/environment_office_qualification.rs` readiness probes only.
 
-Gaps: create (B-30), Markdown adapter (B-21), export receipt (B-31), declared capability matrix with DOCX/XLSX/PPTX/PDF read-only or unsupported, Conversation association, restart/compare qualification on both rows.
+Gaps: create (B-30), Markdown adapter (B-21), export receipt (B-31), declared capability matrix with DOCX/XLSX/PPTX/PDF read-only or unsupported, Conversation association, restart/compare qualification on both rows, and the TARGET-only Saved View create/open/update/archive lifecycle. See `contracts/saved-view.md`; that amendment is not implementation authority until owner review and T01/T02 promotion.
 
 ## 007-T01 - Promote accepted 007 contracts into owner docs and machine schemas
 
@@ -21,11 +21,11 @@ Gaps: create (B-30), Markdown adapter (B-21), export receipt (B-31), declared ca
 - **Depends on:** NONE
 - **Cross-package prerequisites:** Feature 001 committed-message identity (message id used by `ConversationOrigin`); orchestrator assigns the next free migration number.
 - **Owner:** Artifacts, Storage, Product (B-31 caveat)
-- **Allowed paths:** `docs/ARTIFACTS-EVIDENCE.md`, `docs/API.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/domain-event.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/sqlite-v37.sql` (new, allocated in docs/LITECOWORK-BUILD-TASKS.md; v32 is the highest present), `crates/storage-sqlite/src/lib.rs` (migration registration only), `apps/litecoworkd/Cargo.toml` (Markdown engine dependency pin), this package
-- **Contract:** SPEC §5 B-21, B-30, B-31, capability matrix; §7.2; AC-010, AC-006, AC-016, AC-017, AC-019
-- **Change intent:** Promote `CreateArtifact` (with `ConversationOrigin`), `ArtifactFormatAdapter`, `CommitArtifactExport`, `FormatCapability`, `FormatError` and `ArtifactError` into ARTIFACTS-EVIDENCE; add `POST /v1/artifacts`, the Markdown publish route, `POST /v1/artifacts/{artifact_id}/exports`, the capability read route and the `conversation_id` list filter to OpenAPI; register `artifact.exported.v1`; reconcile `UNSUPPORTED_FORMAT` (SPEC B-21 text) with the canonical `UNSUPPORTED_MEDIA_TYPE`; add `artifact_export_receipts` and nullable `source_conversation_id`/`source_message_id` columns; pin the Markdown engine (RESEARCH candidates) with exact version and license.
+- **Allowed paths:** `docs/ARTIFACTS-EVIDENCE.md`, `docs/API.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/domain-event.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/saved-view-artifact.schema.json`, `docs/schemas/sqlite-v37.sql` (new, allocated in docs/LITECOWORK-BUILD-TASKS.md; v32 is the highest present), `crates/storage-sqlite/src/lib.rs` (migration registration only), `apps/litecoworkd/Cargo.toml` (Markdown engine dependency pin), this package
+- **Contract:** SPEC §5 B-21, B-30, B-31, capability matrix; §7.2; AC-010, AC-006, AC-016, AC-017, AC-019, AC-020..AC-027 (TARGET amendment)
+- **Change intent:** Promote `CreateArtifact` (with `ConversationOrigin` and `RICH_PRESENTATION_SAVED_VIEW`), `ArtifactFormatAdapter`, `CommitArtifactExport`, `FormatCapability`, `FormatError` and `ArtifactError` into ARTIFACTS-EVIDENCE; add atomic Saved View creation in `SAVED` status only for explicit save intent, exact Saved View version append, Library kind filter, the Markdown publish route and export/capability routes to OpenAPI; register `artifact.exported.v1` but no new Saved View event; add `docs/schemas/saved-view-artifact.schema.json`, Artifact export receipt storage and Conversation origin columns; pin the Markdown engine. The Saved View write remains a typed exact-source request whose bytes are assembled and validated by the daemon, not client-supplied arbitrary JSON. T01 cannot close until Feature 016 T01/T02 agree on stable input IDs/profile validation and the Feature 007 amendment receives cross-owner review.
 - **Acceptance:**
-  - [ ] Owner prose and machine schemas change in one reviewed change; one error code for unsupported media.
+  - [ ] Owner prose and machine schemas change in one reviewed change; one error code for unsupported media. Saved View AC-020..AC-027 remain blocked until Artifact/Storage/Conversation/Privacy/Backup/Product review and matching Feature 016 T01/T02 promotion; they preserve B-40 and do not admit changed session values.
   - [ ] The conflicting B-31 order in SPEC §7 versus HLD/API/T06, and its write-before-receipt recovery, are resolved and owner-approved under A-81 before its export command/event/schema is promoted.
   - [x] Product recorded the local-export receipt destination class (B-31 caveat): `LOCAL_OWNER_SELECTED_FILE` (sarv-projects, 2026-11-10).
   - [ ] Migration is additive and immutable; upgrade from v28 test passes.
@@ -41,7 +41,7 @@ Gaps: create (B-30), Markdown adapter (B-21), export receipt (B-31), declared ca
 - **Owner:** Artifacts, Storage
 - **Allowed paths:** `crates/storage-core/src/artifact.rs`, `crates/storage-sqlite/src/artifacts.rs`, `crates/storage-sqlite/src/artifact_create_tests.rs` (new), `crates/storage-sqlite/src/blob.rs`
 - **Contract:** SPEC §5 B-30, §7.2 `CreateArtifact`; ARTIFACTS-EVIDENCE create; AC-010, AC-012, AC-009
-- **Change intent:** Add `ArtifactCreateStore::create_artifact(CreateArtifact) -> CommittedArtifactCreate` that stages the first-version blob outside SQLite (reuse `stage_text_content` checks), then in one IMMEDIATE transaction inserts Artifact, ARTIFACT Resource, ResourceRevision 1, ArtifactVersion 1, provenance and input edges, optional Conversation origin, snapshot, `artifact.created.v1` and the principal-scoped idempotency receipt.
+- **Change intent:** Add `ArtifactCreateStore::create_artifact(CreateArtifact) -> CommittedArtifactCreate` that stages the first-version blob outside SQLite, then in one IMMEDIATE transaction inserts Artifact, ARTIFACT Resource, ResourceRevision 1, ArtifactVersion 1, provenance and input edges, optional Conversation origin, snapshot, canonical events and principal-scoped idempotency receipt. Preserve normal source/status rules. The explicit `RICH_PRESENTATION_SAVED_VIEW` source is the only path that creates directly in `SAVED`; it must atomically recheck active Workspace, exact committed message/presentation digests and source deletion fencing, and store a self-contained canonical envelope.
 - **Acceptance:**
   - [ ] AC-010: fault injection at each insert leaves no visible partial record; staged blob becomes GC-eligible.
   - [ ] AC-012: identical replay returns the original receipt; changed payload under the same key conflicts.
@@ -78,7 +78,7 @@ Gaps: create (B-30), Markdown adapter (B-21), export receipt (B-31), declared ca
 - **Owner:** Artifacts, Storage
 - **Allowed paths:** `apps/litecoworkd/src/artifact_operator.rs`, `crates/storage-sqlite/src/artifacts.rs`, `crates/storage-sqlite/src/artifact_tests.rs`
 - **Contract:** SPEC §7, §11; AC-001, AC-013, AC-008
-- **Change intent:** Allow `text/markdown` through the append path only after the T03 adapter validates and round-trips the bytes outside SQLite; keep `text/plain` behavior unchanged; refuse every other media type with `UNSUPPORTED_MEDIA_TYPE`.
+- **Change intent:** Allow `text/markdown` through the append path only after the T03 adapter validates and round-trips the bytes outside SQLite; keep `text/plain` behavior unchanged; refuse every other media type with `UNSUPPORTED_MEDIA_TYPE`. Add a separate `saved-view-versions` append path only after the shared Rust validator verifies the closed Saved View envelope, embedded RichPresentation and exact source lineage; pin both Artifact and Resource versions. The update body must reference a new committed eligible presentation and must not include view-local calculator state. Never route Saved View JSON through Markdown parsing or the generic text append.
 - **Acceptance:**
   - [ ] AC-001: save commits a new immutable version or leaves the prior version current.
   - [ ] AC-013: two concurrent publishes against one head commit exactly one; the loser gets `STALE_VERSION` with no partial version, receipt or event.
@@ -96,7 +96,7 @@ Gaps: create (B-30), Markdown adapter (B-21), export receipt (B-31), declared ca
 - **Owner:** Artifacts
 - **Allowed paths:** `apps/litecoworkd/src/artifact_capabilities.rs` (new), `apps/litecoworkd/src/artifact_operator.rs` (route mount), `apps/litecoworkd/src/artifact_capabilities_tests.rs` (new)
 - **Contract:** SPEC §5 declared V1 matrix; release contract §4; AC-016, AC-005
-- **Change intent:** Serve the SPEC §5 matrix as a static, versioned table keyed by normalized media type, including the engine id and version for `text/markdown`. Every write route (T04, T06) checks the same table server-side, so a client that ignores the matrix still gets `UNSUPPORTED_MEDIA_TYPE`.
+- **Change intent:** Serve the SPEC §5 matrix as a static, versioned table keyed by exact media type, including the Markdown engine and the Saved View profile/renderer versions. The Saved View row permits only validated presentation-version updates from a new committed source; session-modified input values are excluded under B-40. Export, generic editing and compare stay unsupported. Every write route checks the same table server-side, so a client that ignores the matrix still gets `UNSUPPORTED_MEDIA_TYPE`.
 - **Acceptance:**
   - [ ] AC-016: DOCX, XLSX, PPTX and PDF report edit and export UNSUPPORTED and view UNSUPPORTED (or READ_ONLY for PDF only after T10 qualification).
   - [ ] AC-005: an edit or export request for an unsupported type is refused server-side with no write.

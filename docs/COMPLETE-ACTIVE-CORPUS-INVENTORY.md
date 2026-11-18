@@ -9,9 +9,9 @@ This is an inventory, not proof that every sentence is correct, implemented,
 integrated or qualified. The authority chain is in docs/README.md. Current source
 evidence is in docs/IMPLEMENTATION-STATUS.md.
 
-- Included files: 373
-- Included lines: 77871
-- Included bytes: 7838046
+- Included files: 372
+- Included lines: 79307
+- Included bytes: 8335799
 - Per-file SHA-256: docs/audit/active-corpus-manifest.csv
 - This manifest excludes itself to avoid a self-referential hash/count.
 - reading/ contains derived audit snapshots and is intentionally excluded.
@@ -25,10 +25,10 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | apps/ | 3 | 273 |
 | capabilities/ | 1 | 133 |
 | crates/ | 1 | 137 |
-| docs/ | 150 | 50795 |
-| repository root | 8 | 2877 |
+| docs/ | 150 | 51348 |
+| repository root | 6 | 2707 |
 | scripts/ | 1 | 14 |
-| specs/ | 202 | 23405 |
+| specs/ | 203 | 24458 |
 
 ## Complete file manifest
 
@@ -44,27 +44,25 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | AGENTS.md | 133 | 11515 | e534272a21474a59 |
 | ARCHITECTURE.md | 824 | 58190 | 45248d5f5a1a6ca7 |
 | CONTRIBUTING.md | 81 | 6032 | 2fc07511243a861e |
-| CURRENT-RUN.md | 915 | 222577 | af5c1d3f616c62ab |
+| CURRENT-RUN.md | 1284 | 344032 | bff0c10390570b8f |
 | GLOSSARY.md | 292 | 12637 | bd9ffa34cb5ee0a0 |
 | README.md | 93 | 8289 | 3727827fd285fbe4 |
 | apps/litecowork-ui/README.md | 77 | 4351 | c47d822925a4b15b |
 | apps/litecowork-ui/src/artifacts/README.md | 155 | 10605 | 026ff15152d880dc |
 | apps/litecowork-ui/src/presentation/README.md | 41 | 2713 | 6c32f158b0848281 |
-| audit-output/principal-audit-2026-11-08/PRINCIPAL-AUDIT.md | 390 | 27401 | 00eeb71c32c3ae39 |
-| audit-output/principal-audit-2026-11-08/SUPERSET-MINIMUM-RELEASE-AUDIT.md | 149 | 12205 | 8f563d678e639113 |
 | capabilities/zip_intake/README.md | 133 | 9899 | 1f783a3eb9cd5fe0 |
 | crates/domain-responsibility/README.md | 137 | 9692 | fb9f8d2eaaabae54 |
 | docs/ACCEPTANCE-AND-E2E-PLAN.md | 152 | 14844 | 62af75ec7d4a8924 |
-| docs/ACP-PRESENTATION-PIPELINE-LLD.md | 127 | 28570 | 7d5d8caa057d078f |
+| docs/ACP-PRESENTATION-PIPELINE-LLD.md | 134 | 31453 | 6994da4bf79ba4b9 |
 | docs/AGENT-ACCOUNT-ROUTE-MATRIX.md | 105 | 13947 | 4c6732bf0ea16f6e |
 | docs/AGENT-CONTROL.md | 1347 | 55342 | 6700424469327bdb |
 | docs/AGENT-FABRIC.md | 497 | 32590 | 2a40c04496cfb4ec |
-| docs/API.md | 2467 | 174898 | e7959b57512c3fbd |
-| docs/ARTIFACTS-EVIDENCE.md | 378 | 23528 | 578bcdabd6d2a17d |
+| docs/API.md | 2487 | 176575 | 500db667b2321ec9 |
+| docs/ARTIFACTS-EVIDENCE.md | 392 | 26875 | ef2653c813ddf76a |
 | docs/AUTOMATION.md | 705 | 42580 | e414de5ea42faeec |
 | docs/BENCHMARKS.md | 754 | 45114 | 42f307511fe0d5ac |
 | docs/CAPABILITY-FABRIC.md | 456 | 29925 | dc29be98a84bf177 |
-| docs/CAPABILITY-INVOCATIONS.md | 467 | 32012 | b735b7652ecf9b30 |
+| docs/CAPABILITY-INVOCATIONS.md | 480 | 33039 | 14eec1d396325060 |
 | docs/CHANNELS.md | 280 | 17404 | 2c945c1f85f38632 |
 | docs/CHROME-BROWSER-LLD.md | 193 | 22079 | 1386b82b3546f539 |
 | docs/CODING-COCKPIT-UI-SPEC.md | 113 | 8662 | 51e4f0bbc4a51dc2 |
@@ -74,11 +72,11 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/CONNECTOR-FACTORY-DESIGN.md | 139 | 10873 | 6212797fb13b160f |
 | docs/CONNECTORS-WORKFLOWS.md | 1020 | 50069 | 61c9453212502f75 |
 | docs/CONTEXT.md | 274 | 20112 | deae265133353676 |
-| docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md | 211 | 121071 | 916aa0334a0cdcc9 |
-| docs/COVERAGE-MATRIX.md | 174 | 25536 | c9ecf3f3a1eeaf23 |
+| docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md | 215 | 128873 | 0b76a6649186817b |
+| docs/COVERAGE-MATRIX.md | 174 | 25594 | a6f6d90c9e789fa3 |
 | docs/COWORKER-FLOWS.md | 166 | 20076 | 309015aa4fe4a14a |
 | docs/COWORKERS-TARGET.md | 458 | 58359 | 21a5bfa6d79156e6 |
-| docs/DATA-MODEL.md | 2724 | 130324 | 92d6d36654272306 |
+| docs/DATA-MODEL.md | 2730 | 131769 | 488bd5e2453788f8 |
 | docs/DEEPSEEK-HARNESS-DESKTOP-DEEP-DIVE-2026-11.md | 603 | 145063 | a6516f1870d6cee5 |
 | docs/DEEPSEEK-HARNESS-PLUGIN-ARCHITECTURE-DEEP-DIVE-2026-11.md | 82 | 14250 | e3b3fa1b9b4e1c43 |
 | docs/DEEPSEEK-HARNESS-REUSE-MAP-2026-11.md | 252 | 39690 | 5ebaa5cf1206453d |
@@ -87,21 +85,21 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/DESKTOP-REFERENCE-IMPLEMENTATION-AUDIT.md | 196 | 26038 | 7f263349a5b4d436 |
 | docs/DESKTOP-SHELL-LLD.md | 280 | 30037 | 3c14a60b20dcafd0 |
 | docs/DOCS-REAUDIT-2026.md | 123 | 15197 | 1396d46be41b1e98 |
-| docs/ENVIRONMENTS.md | 439 | 25588 | 58e9f7aab6cea011 |
-| docs/EVENTS.md | 929 | 69386 | 2b28f32d9255594c |
+| docs/ENVIRONMENTS.md | 549 | 35057 | a0e5c01c3c7c2a60 |
+| docs/EVENTS.md | 929 | 69761 | 698a49e99aba0efb |
 | docs/EXPERIENCE.md | 1095 | 77484 | ba319774ca2b7995 |
 | docs/FAILURE-RECOVERY.md | 213 | 17867 | 71418bc2b863c859 |
-| docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md | 137 | 21422 | c7e758f26880afd1 |
+| docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md | 137 | 21968 | a10e0c77c9dc74a1 |
 | docs/FLOWS.md | 4514 | 319578 | 152ec91b456dd96d |
 | docs/HANDOFF-NEXT-AGENT-2026-11.md | 841 | 191950 | 4d18924863b3c0b5 |
 | docs/HOST-GUIDANCE.md | 138 | 5902 | c2a6b68146651635 |
-| docs/IMPLEMENTATION-MASTER-PLAN.md | 168 | 12860 | e901a943fa3b9ad6 |
-| docs/IMPLEMENTATION-STATUS.md | 385 | 102504 | 94bacf60f6fccfc9 |
+| docs/IMPLEMENTATION-MASTER-PLAN.md | 176 | 19635 | 04135b6418fbbef4 |
+| docs/IMPLEMENTATION-STATUS.md | 437 | 136604 | 0fad357905b19622 |
 | docs/IMPLEMENTATION.md | 232 | 9336 | c9dbf532b8948bbc |
-| docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md | 73 | 12251 | 2f50c42dfe67bada |
+| docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md | 73 | 13145 | d0b5d00b65bdc648 |
 | docs/INTERACTIVE-ARTIFACT-RUNTIME.md | 135 | 20237 | 6d5d6bd44fb9dd82 |
 | docs/LEARNING.md | 818 | 37584 | 6119feedd994363e |
-| docs/LITECOWORK-BUILD-TASKS.md | 273 | 23742 | c53d1d7d3c24eaa5 |
+| docs/LITECOWORK-BUILD-TASKS.md | 273 | 24802 | 5ebacb974f03bce5 |
 | docs/LITESPM-INTEGRATION-PLAN.md | 195 | 18351 | 4b83a93a718ef253 |
 | docs/LITESPM-INTEGRATION-STUDY-2026-11.md | 84 | 13583 | 885903bc3410756c |
 | docs/LITESPM-LITECOWORK-INTEROP-LLD.md | 287 | 32531 | 89db30f1a9ebc273 |
@@ -112,13 +110,13 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/OBSERVABILITY.md | 262 | 12291 | 3192bfcda6340d0a |
 | docs/OPEN-DESIGN-CAPABILITY-DEEP-DIVE-2026-11.md | 66 | 12012 | d734504079895f10 |
 | docs/OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md | 279 | 29919 | 2bf520dce2718a2e |
-| docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md | 137 | 23962 | 04f6b15e099a53a0 |
-| docs/PRESENTATION-RUNTIME.md | 576 | 33186 | ca02fe1014fcf87b |
+| docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md | 149 | 27914 | cd7d9dbad32fbc7d |
+| docs/PRESENTATION-RUNTIME.md | 582 | 34286 | 9af1d206d7943798 |
 | docs/PRODUCT-CONTRACT-INDEX.md | 46 | 7423 | 89c315f38f707f1d |
 | docs/PRODUCT-STRATEGY.md | 113 | 10724 | 8e39b7022710cfef |
 | docs/PRODUCT.md | 290 | 23435 | a40efcaa6770e72e |
 | docs/PROTOCOLS.md | 191 | 10282 | 622d330487b69a5b |
-| docs/README.md | 102 | 11897 | af0a74b9dff6778c |
+| docs/README.md | 103 | 12081 | 372c6fe757815d52 |
 | docs/REFERENCE-IMPLEMENTATIONS.md | 801 | 100908 | 38f7adc22e2d1a88 |
 | docs/REFERENCE-REPOS-CORE-ARCHITECTURE-INDEX.md | 264 | 24873 | f1d7303606da51da |
 | docs/REFERENCE-SYNTHESIS-AND-V1-FEATURE-ALIGNMENT-2026-11.md | 132 | 23651 | a8500c11f9e38f32 |
@@ -131,20 +129,20 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/ROUTINES.md | 255 | 14453 | 8666756d7d03ddad |
 | docs/RUNTIME-LIFECYCLE.md | 616 | 46153 | 5acb500a4dfdaf31 |
 | docs/RUNTIME-MESH.md | 744 | 36915 | 5df0580b7369d59d |
-| docs/SCHEMAS.md | 1635 | 74352 | d7c2f5545cf6c578 |
+| docs/SCHEMAS.md | 1702 | 78438 | 6f2dac79196bbde2 |
 | docs/SECURITY.md | 299 | 17184 | 77bdfeb2b19ebbfa |
 | docs/SEMANTIC-SERVED-UI-MAP.md | 186 | 33237 | 306b29a3127a9c86 |
 | docs/SERVICES.md | 1602 | 103352 | 7179d22fbbf7da22 |
 | docs/SETTINGS-AND-SHELL-SURFACE-AUDIT.md | 113 | 19333 | e2c76efcd7a6a4bc |
 | docs/SOURCE-RECONCILIATION.md | 179 | 16220 | 5567fad3a3b603ea |
-| docs/SPEC-TASK-TRACEABILITY.md | 121 | 13422 | b6e8d20bba77d96f |
+| docs/SPEC-TASK-TRACEABILITY.md | 121 | 14031 | 00e10a6b62db090f |
 | docs/SPECIFICATION-STANDARD.md | 134 | 10792 | f2cf584a47acdda7 |
-| docs/STATE-MACHINES.md | 1453 | 93144 | 25cd5eafc39b6ed9 |
-| docs/STORAGE.md | 1367 | 101947 | 549dc1c5a362883a |
+| docs/STATE-MACHINES.md | 1453 | 93289 | 46c869a199852635 |
+| docs/STORAGE.md | 1413 | 106004 | dd311d28605e9373 |
 | docs/SUPERSET-GAP-MATRIX.md | 192 | 30414 | e7d7ccf5a1495ca4 |
-| docs/TASK-RUNTIME.md | 766 | 45254 | 34b802daabe9c601 |
+| docs/TASK-RUNTIME.md | 904 | 57479 | 14378f71a2238308 |
 | docs/TESTING.md | 538 | 47339 | a106856e125d6989 |
-| docs/TRUST.md | 326 | 17328 | 5e3539070c4a49f1 |
+| docs/TRUST.md | 361 | 19928 | e83f66a872e443b9 |
 | docs/UI-CORE-TYPED-CONTRACTS.md | 80 | 5371 | 6c5d71eca3083a28 |
 | docs/UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md | 196 | 30903 | 5448059886a7bcec |
 | docs/USER-EXPERIENCE-RESEARCH-AND-MAGNETIC-USE-CASES.md | 243 | 22769 | a52bb38efaeeb7d2 |
@@ -152,20 +150,20 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md | 104 | 10353 | f4303bac846cf07e |
 | docs/V1-DESIGN-INDEX.md | 83 | 12347 | d1e75d8c9040ee3d |
 | docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md | 72 | 16127 | 84dc86b1be98969c |
-| docs/V1-FEATURE-SDD-REGISTER.md | 85 | 19351 | 475360bb4d5b92c3 |
+| docs/V1-FEATURE-SDD-REGISTER.md | 85 | 20071 | c68e0b86486f36da |
 | docs/V1-FUNCTION-CONTRACT-LEDGER.md | 273 | 116209 | 51c1fb0993d1f3e9 |
 | docs/V1-FUNCTION-FILE-CATALOG.md | 505 | 41402 | b3ed7a3eeb974279 |
 | docs/V1-INTEGRATED-TERMINAL-LLD.md | 181 | 24777 | 2dcbf82fbc54d4d3 |
-| docs/V1-PRODUCT-FEATURE-COVERAGE.md | 86 | 16655 | f42879ea19d268ac |
-| docs/V1-PRODUCT-RELEASE-CONTRACT.md | 92 | 15846 | 6ab2354ec39ad53e |
+| docs/V1-PRODUCT-FEATURE-COVERAGE.md | 86 | 17469 | 2f297dc8efe4311f |
+| docs/V1-PRODUCT-RELEASE-CONTRACT.md | 94 | 16563 | aea736a6b9ca70c8 |
 | docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md | 63 | 8162 | 21ee35867ca419f1 |
 | docs/V1-SETTINGS-CONTRACT-LEDGER.md | 235 | 59062 | ca708a1e14166a4f |
 | docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md | 351 | 37853 | 375da7f1482fe2da |
-| docs/V1-UI-ACTION-STATE-LEDGER.md | 80 | 17491 | 8513f0ec9d0ad196 |
-| docs/V1-UI-SCREEN-CONTRACT.md | 386 | 59042 | a9b937d14599918e |
+| docs/V1-UI-ACTION-STATE-LEDGER.md | 82 | 19287 | 116285f1d5f123ac |
+| docs/V1-UI-SCREEN-CONTRACT.md | 394 | 63227 | 0a77849eff448a0a |
 | docs/V1-WORKFLOW-EVENT-LLD.md | 139 | 14813 | aa20f0e960080e6e |
 | docs/VIABILITY-VS-COMPETITORS.md | 239 | 24161 | cac988e17f7a3ca5 |
-| docs/WORKSPACE-EXPERIENCE-REVISION-2026-11.md | 186 | 33715 | b7935b79dcb0fa7e |
+| docs/WORKSPACE-EXPERIENCE-REVISION-2026-11.md | 188 | 35431 | 14a4589def131942 |
 | docs/WORLD-RESOURCES.md | 529 | 38043 | bef06f6e6dd86d16 |
 | docs/ZCODE-PARADEV-CODING-COCKPIT-DEEP-DIVE-2026-11.md | 50 | 10299 | 0ac1decf9309730e |
 | docs/ZCODE-UI-INSPIRATION-AUDIT.md | 265 | 34660 | 84bc346175de6632 |
@@ -205,33 +203,33 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | docs/superpowers/plans/2026-10-25-conversation-session-start-reservation.md | 75 | 6877 | b7eaedfba715840c |
 | docs/superpowers/plans/2026-10-25-turn-pinned-agent-host-resolution.md | 98 | 7248 | bef6335cbc81b3af |
 | scripts/retired/README.md | 14 | 1081 | 16253b8f56ab2730 |
-| specs/001-conversation-session-supervisor/DATA-MODEL.md | 79 | 10232 | 1745cf92da06d41b |
-| specs/001-conversation-session-supervisor/PLAN.md | 117 | 10598 | e3a4d0fb3027cacc |
-| specs/001-conversation-session-supervisor/README.md | 32 | 5336 | 7d12fb55bdfb51e7 |
-| specs/001-conversation-session-supervisor/RESEARCH.md | 165 | 36776 | cb4b739d9db2d20e |
-| specs/001-conversation-session-supervisor/SPEC.md | 397 | 60485 | 3a6e859d46b54fdf |
-| specs/001-conversation-session-supervisor/TASKS.md | 574 | 107100 | de6ab44754db4551 |
-| specs/001-conversation-session-supervisor/contracts/README.md | 13 | 1008 | 1876e3bb467eff45 |
-| specs/001-conversation-session-supervisor/contracts/api-events.md | 69 | 8842 | 557597141c95823e |
-| specs/001-conversation-session-supervisor/contracts/errors-recovery.md | 78 | 9090 | 47de1c535b262d4f |
-| specs/001-conversation-session-supervisor/contracts/native-permission-design.md | 117 | 17727 | 125edff259a47ca4 |
-| specs/001-conversation-session-supervisor/contracts/ui-behavior.md | 112 | 19411 | f6e4fea0c4907649 |
+| specs/001-conversation-session-supervisor/DATA-MODEL.md | 79 | 10388 | cb5497d222ae3557 |
+| specs/001-conversation-session-supervisor/PLAN.md | 117 | 10967 | b5e1cd099ca17280 |
+| specs/001-conversation-session-supervisor/README.md | 34 | 7385 | dfafa7f0bde195f0 |
+| specs/001-conversation-session-supervisor/RESEARCH.md | 185 | 41963 | 47da420d2a8df60f |
+| specs/001-conversation-session-supervisor/SPEC.md | 397 | 62653 | cfd7a4529d97a86c |
+| specs/001-conversation-session-supervisor/TASKS.md | 587 | 117833 | 6e2a08674e820a78 |
+| specs/001-conversation-session-supervisor/contracts/README.md | 13 | 1019 | 7f57261a13d1032e |
+| specs/001-conversation-session-supervisor/contracts/api-events.md | 71 | 10899 | d6c4f36be127de70 |
+| specs/001-conversation-session-supervisor/contracts/errors-recovery.md | 80 | 9625 | 63b893ccbbc8a890 |
+| specs/001-conversation-session-supervisor/contracts/native-permission-design.md | 125 | 26222 | 9453b3a003569d9b |
+| specs/001-conversation-session-supervisor/contracts/ui-behavior.md | 117 | 25708 | 2092444726b795b2 |
 | specs/002-native-agent-install-auth-binding/DATA-MODEL.md | 44 | 5793 | 6abe39c9aac9b6c9 |
 | specs/002-native-agent-install-auth-binding/PLAN.md | 54 | 4876 | 5ed090245ca7b584 |
 | specs/002-native-agent-install-auth-binding/README.md | 40 | 5364 | 855e41bcfd9f2d42 |
-| specs/002-native-agent-install-auth-binding/RESEARCH.md | 114 | 20314 | 1461afe6d6288af9 |
-| specs/002-native-agent-install-auth-binding/SPEC.md | 468 | 54667 | 1c624639dd9fd06a |
-| specs/002-native-agent-install-auth-binding/TASKS.md | 401 | 65314 | 834326ec70c517a7 |
+| specs/002-native-agent-install-auth-binding/RESEARCH.md | 131 | 26717 | 1b1e4f97791050fc |
+| specs/002-native-agent-install-auth-binding/SPEC.md | 469 | 55575 | 8b8f4d24c26c489c |
+| specs/002-native-agent-install-auth-binding/TASKS.md | 401 | 66154 | 392515412c4320d6 |
 | specs/002-native-agent-install-auth-binding/contracts/README.md | 9 | 351 | 650e7a2f3b6ee610 |
-| specs/002-native-agent-install-auth-binding/contracts/api-events.md | 28 | 3102 | aebadc0e358e1fce |
+| specs/002-native-agent-install-auth-binding/contracts/api-events.md | 28 | 3256 | 6442037157fcd9f3 |
 | specs/002-native-agent-install-auth-binding/contracts/errors-recovery.md | 9 | 1460 | 58b054462532f74a |
-| specs/002-native-agent-install-auth-binding/contracts/ui-behavior.md | 109 | 15769 | f2832195b20f9039 |
-| specs/003-workspace-roots-context-ingestion/DATA-MODEL.md | 36 | 3657 | d17eda11c45cf1e1 |
-| specs/003-workspace-roots-context-ingestion/PLAN.md | 43 | 3682 | 0a66d755d261b4e1 |
+| specs/002-native-agent-install-auth-binding/contracts/ui-behavior.md | 109 | 15885 | 1310f4136afe51df |
+| specs/003-workspace-roots-context-ingestion/DATA-MODEL.md | 36 | 3657 | 9b6a340a1fc1cdc1 |
+| specs/003-workspace-roots-context-ingestion/PLAN.md | 43 | 3704 | 3a0555b758de02b6 |
 | specs/003-workspace-roots-context-ingestion/README.md | 36 | 4695 | 521d0b1ac3b498d5 |
 | specs/003-workspace-roots-context-ingestion/RESEARCH.md | 66 | 11285 | 0536afa48b99ab9c |
 | specs/003-workspace-roots-context-ingestion/SPEC.md | 341 | 33713 | 3b8c44c504f2ef14 |
-| specs/003-workspace-roots-context-ingestion/TASKS.md | 378 | 46130 | bef3ffb352b8b8b6 |
+| specs/003-workspace-roots-context-ingestion/TASKS.md | 378 | 46177 | b5017c11a8435dc7 |
 | specs/003-workspace-roots-context-ingestion/contracts/README.md | 9 | 351 | 5eec3c904cd05b4d |
 | specs/003-workspace-roots-context-ingestion/contracts/api-events.md | 11 | 2211 | 815c53e7fbeb7429 |
 | specs/003-workspace-roots-context-ingestion/contracts/errors-recovery.md | 9 | 1046 | 23b50b52397b4c9a |
@@ -246,16 +244,16 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | specs/004-agent-relay/contracts/api-events.md | 27 | 3304 | ec01acbfe47c71c6 |
 | specs/004-agent-relay/contracts/errors-recovery.md | 24 | 3443 | b3f6ceffed29339c |
 | specs/004-agent-relay/contracts/ui-behavior.md | 37 | 5746 | e1db762b22f8b05d |
-| specs/005-safe-task-path/DATA-MODEL.md | 47 | 4831 | c328765ae929f7b4 |
-| specs/005-safe-task-path/PLAN.md | 49 | 4269 | 0e3d977b33ccc277 |
-| specs/005-safe-task-path/README.md | 28 | 2573 | f699572f659abc82 |
-| specs/005-safe-task-path/RESEARCH.md | 105 | 15643 | eefcc259dddfbda5 |
-| specs/005-safe-task-path/SPEC.md | 393 | 47250 | c012298daa897699 |
-| specs/005-safe-task-path/TASKS.md | 446 | 60393 | df9ac27946ea8c4f |
+| specs/005-safe-task-path/DATA-MODEL.md | 59 | 11240 | b852f341a5986ecc |
+| specs/005-safe-task-path/PLAN.md | 49 | 4789 | 7ba25a83eea7ec97 |
+| specs/005-safe-task-path/README.md | 28 | 3228 | 04c07c9691e75308 |
+| specs/005-safe-task-path/RESEARCH.md | 217 | 28703 | f34a9223c7a5a99d |
+| specs/005-safe-task-path/SPEC.md | 601 | 80894 | 6febd1cbcb843cec |
+| specs/005-safe-task-path/TASKS.md | 482 | 91785 | 16c34de81aa52669 |
 | specs/005-safe-task-path/contracts/README.md | 9 | 351 | 17f83e0c247dded8 |
-| specs/005-safe-task-path/contracts/api-events.md | 30 | 4518 | ac2d7d80355cca8f |
-| specs/005-safe-task-path/contracts/errors-recovery.md | 37 | 5192 | a44b577d74304cca |
-| specs/005-safe-task-path/contracts/ui-behavior.md | 46 | 6216 | 6576389cc74ca846 |
+| specs/005-safe-task-path/contracts/api-events.md | 68 | 10656 | 537a07c829f54f92 |
+| specs/005-safe-task-path/contracts/errors-recovery.md | 40 | 7890 | d316f425097c29f8 |
+| specs/005-safe-task-path/contracts/ui-behavior.md | 64 | 11230 | 34a99a6b770e0199 |
 | specs/006-golden-connection-capability-write/DATA-MODEL.md | 41 | 3195 | 0ee0ff9231941e6f |
 | specs/006-golden-connection-capability-write/PLAN.md | 41 | 3324 | 3ca8a880dab001ef |
 | specs/006-golden-connection-capability-write/README.md | 34 | 3194 | c803ea0f82925a89 |
@@ -266,26 +264,27 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | specs/006-golden-connection-capability-write/contracts/api-events.md | 32 | 4431 | 3d5bf3f0ae571108 |
 | specs/006-golden-connection-capability-write/contracts/errors-recovery.md | 38 | 4708 | d769d59fa3d0d117 |
 | specs/006-golden-connection-capability-write/contracts/ui-behavior.md | 45 | 5617 | cef671b3390c275b |
-| specs/007-professional-artifacts/DATA-MODEL.md | 43 | 4094 | 0feb260179d36f6f |
-| specs/007-professional-artifacts/PLAN.md | 42 | 3593 | 9098367e5109d545 |
-| specs/007-professional-artifacts/README.md | 36 | 3661 | 36bb00dfefbd3a52 |
+| specs/007-professional-artifacts/DATA-MODEL.md | 46 | 5905 | 2dd78aca154a1d1b |
+| specs/007-professional-artifacts/PLAN.md | 43 | 4162 | 2c3889240ff68ec6 |
+| specs/007-professional-artifacts/README.md | 36 | 4119 | 4afd034b511349a1 |
 | specs/007-professional-artifacts/RESEARCH.md | 89 | 13920 | 7622e57e0bebb17a |
-| specs/007-professional-artifacts/SPEC.md | 362 | 39931 | c154a43949ecdbf2 |
-| specs/007-professional-artifacts/TASKS.md | 346 | 33981 | 63f22de0d8755a08 |
+| specs/007-professional-artifacts/SPEC.md | 382 | 46162 | 2041b42a0f54560f |
+| specs/007-professional-artifacts/TASKS.md | 346 | 35817 | 0301dbd767ea2c95 |
 | specs/007-professional-artifacts/contracts/README.md | 9 | 351 | 6851fe2bea36897e |
-| specs/007-professional-artifacts/contracts/api-events.md | 44 | 5438 | 43d8d4df3de015f5 |
-| specs/007-professional-artifacts/contracts/errors-recovery.md | 34 | 4357 | ff59c2d0d62f1176 |
-| specs/007-professional-artifacts/contracts/ui-behavior.md | 42 | 5924 | c57a24333c722e0b |
+| specs/007-professional-artifacts/contracts/api-events.md | 51 | 8348 | ba1cfcd9cef8edaf |
+| specs/007-professional-artifacts/contracts/errors-recovery.md | 48 | 6650 | 8e825ad6562bc167 |
+| specs/007-professional-artifacts/contracts/saved-view.md | 98 | 18127 | 12b021033a0ad8ed |
+| specs/007-professional-artifacts/contracts/ui-behavior.md | 47 | 7687 | 8443fab426f3edf9 |
 | specs/008-workbench-browser-terminal-computer/DATA-MODEL.md | 66 | 8904 | c50cdd93394a80c5 |
-| specs/008-workbench-browser-terminal-computer/PLAN.md | 64 | 7367 | 8a3e4f2aa2133c53 |
+| specs/008-workbench-browser-terminal-computer/PLAN.md | 66 | 8124 | 3f5a1f0303d84491 |
 | specs/008-workbench-browser-terminal-computer/README.md | 38 | 6093 | e3de6a27e929132e |
-| specs/008-workbench-browser-terminal-computer/RESEARCH.md | 120 | 25653 | e25baa5dec9f2ac2 |
-| specs/008-workbench-browser-terminal-computer/SPEC.md | 382 | 52094 | b0f0a5cdee1f551f |
-| specs/008-workbench-browser-terminal-computer/TASKS.md | 551 | 66112 | 8df46db4275d8f00 |
+| specs/008-workbench-browser-terminal-computer/RESEARCH.md | 171 | 44746 | 342085f85ce5cdb3 |
+| specs/008-workbench-browser-terminal-computer/SPEC.md | 388 | 55118 | d04c2e33b4ba0a4f |
+| specs/008-workbench-browser-terminal-computer/TASKS.md | 555 | 68384 | 74ec1a7152c40133 |
 | specs/008-workbench-browser-terminal-computer/contracts/README.md | 11 | 757 | 62c58e544ea7d372 |
 | specs/008-workbench-browser-terminal-computer/contracts/api-events.md | 50 | 6793 | 2c0a0889d19e1dd7 |
 | specs/008-workbench-browser-terminal-computer/contracts/errors-recovery.md | 52 | 6876 | 4071fba35b19334a |
-| specs/008-workbench-browser-terminal-computer/contracts/ui-behavior.md | 102 | 20154 | e4a77028673ab566 |
+| specs/008-workbench-browser-terminal-computer/contracts/ui-behavior.md | 129 | 29056 | 61370caf47e1cad2 |
 | specs/009-coworkers-scoped-memory/DATA-MODEL.md | 44 | 3527 | 13f04e9afc52c6fa |
 | specs/009-coworkers-scoped-memory/PLAN.md | 41 | 4261 | 5eaf54dadcf2b805 |
 | specs/009-coworkers-scoped-memory/README.md | 28 | 3295 | f0e5d75014e3e791 |
@@ -347,25 +346,25 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | specs/014-conversation-history-management/contracts/errors-recovery.md | 55 | 4093 | 77e14d07fb11e66e |
 | specs/014-conversation-history-management/contracts/ui-behavior.md | 56 | 4957 | 74e2b2e58c121cd0 |
 | specs/015-task-control-delegation/DATA-MODEL.md | 64 | 6633 | 18a45522c5605a2a |
-| specs/015-task-control-delegation/PLAN.md | 106 | 7487 | 99b1b10d180545a7 |
-| specs/015-task-control-delegation/README.md | 35 | 4208 | f245b77025f88186 |
-| specs/015-task-control-delegation/RESEARCH.md | 73 | 8223 | f87926201290f233 |
-| specs/015-task-control-delegation/SPEC.md | 356 | 51831 | 5414ff2992e73c4d |
-| specs/015-task-control-delegation/TASKS.md | 411 | 48433 | 78ebdbb8a0447a01 |
+| specs/015-task-control-delegation/PLAN.md | 106 | 7603 | 2d12f4389c05ccfd |
+| specs/015-task-control-delegation/README.md | 35 | 4367 | 6080dae0fb04c973 |
+| specs/015-task-control-delegation/RESEARCH.md | 73 | 8466 | d1095585d1a70a59 |
+| specs/015-task-control-delegation/SPEC.md | 356 | 54685 | a81d6979ee898993 |
+| specs/015-task-control-delegation/TASKS.md | 413 | 50276 | 230c8590a7955f5e |
 | specs/015-task-control-delegation/contracts/README.md | 12 | 802 | 4c4aa4fe225c0bc0 |
-| specs/015-task-control-delegation/contracts/api-events.md | 42 | 4614 | 43f407ff6d4f8ea0 |
-| specs/015-task-control-delegation/contracts/errors-recovery.md | 49 | 4561 | 3791e3a200c3b448 |
+| specs/015-task-control-delegation/contracts/api-events.md | 42 | 4695 | b8c3c5d534403baa |
+| specs/015-task-control-delegation/contracts/errors-recovery.md | 51 | 5260 | fbace09a05e3eb41 |
 | specs/015-task-control-delegation/contracts/ui-behavior.md | 79 | 7104 | 750c24ac4cb09151 |
-| specs/016-rich-presentation-intelligent-ui/DATA-MODEL.md | 60 | 5765 | e1d3a2fa453b88bf |
-| specs/016-rich-presentation-intelligent-ui/PLAN.md | 120 | 8416 | 97eea26e74ca7e5f |
-| specs/016-rich-presentation-intelligent-ui/README.md | 39 | 5226 | 2c31e6b304f715d6 |
-| specs/016-rich-presentation-intelligent-ui/RESEARCH.md | 118 | 23085 | e15728b850b51eba |
-| specs/016-rich-presentation-intelligent-ui/SPEC.md | 324 | 42032 | d7c4299f6487dffd |
-| specs/016-rich-presentation-intelligent-ui/TASKS.md | 458 | 47008 | eed1481c1cd4bb15 |
-| specs/016-rich-presentation-intelligent-ui/contracts/README.md | 14 | 1475 | 2f336eb1180a47f3 |
-| specs/016-rich-presentation-intelligent-ui/contracts/api-events.md | 47 | 5643 | ac3862feb09e7906 |
-| specs/016-rich-presentation-intelligent-ui/contracts/errors-recovery.md | 57 | 4367 | 3b459f8ec97e1481 |
-| specs/016-rich-presentation-intelligent-ui/contracts/ui-behavior.md | 84 | 7655 | cc84c69a0cc0a2ac |
+| specs/016-rich-presentation-intelligent-ui/DATA-MODEL.md | 84 | 11489 | a4b4400cda63e8fa |
+| specs/016-rich-presentation-intelligent-ui/PLAN.md | 127 | 11441 | b2fd18daaf0d8d9b |
+| specs/016-rich-presentation-intelligent-ui/README.md | 39 | 6136 | f9400e69c4d53df8 |
+| specs/016-rich-presentation-intelligent-ui/RESEARCH.md | 191 | 43803 | 73823136e92f0675 |
+| specs/016-rich-presentation-intelligent-ui/SPEC.md | 515 | 78714 | 8295f9cf3bab1689 |
+| specs/016-rich-presentation-intelligent-ui/TASKS.md | 459 | 53836 | 35d5cb9434754a3c |
+| specs/016-rich-presentation-intelligent-ui/contracts/README.md | 14 | 1440 | 078fb864fed75f7a |
+| specs/016-rich-presentation-intelligent-ui/contracts/api-events.md | 59 | 7176 | 0c01ca66598146f7 |
+| specs/016-rich-presentation-intelligent-ui/contracts/errors-recovery.md | 55 | 6351 | 9fb6f039fe0cd8fa |
+| specs/016-rich-presentation-intelligent-ui/contracts/ui-behavior.md | 92 | 13496 | ee1c819e701b2833 |
 | specs/017-data-portability-backup-restore/DATA-MODEL.md | 76 | 4974 | 4407d4b7115e0c96 |
 | specs/017-data-portability-backup-restore/PLAN.md | 88 | 7889 | a6ae2367c1ee8c4b |
 | specs/017-data-portability-backup-restore/README.md | 32 | 3269 | c2741565a8cabcca |
@@ -406,7 +405,7 @@ evidence is in docs/IMPLEMENTATION-STATUS.md.
 | specs/020-proactivity-quiet-learning/contracts/api-events.md | 52 | 4298 | d72d2fc847d9a997 |
 | specs/020-proactivity-quiet-learning/contracts/errors-recovery.md | 45 | 3029 | 6711886e9a27a86e |
 | specs/020-proactivity-quiet-learning/contracts/ui-behavior.md | 64 | 5160 | 284c7456032cdd1d |
-| specs/README.md | 64 | 9620 | 0fa98f8338830585 |
+| specs/README.md | 64 | 9832 | 187bbde7ed5c1672 |
 
 ## Review rule
 

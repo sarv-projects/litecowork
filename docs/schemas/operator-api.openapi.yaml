@@ -1019,6 +1019,49 @@ paths:
                 type: array
                 items: {$ref: '#/components/schemas/Attempt'}
         default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [tasks]
+      operationId: admitTaskAttempt
+      description: >-
+        TARGET ONLY; no Operator handler is currently mounted. Admission is owner-authorized
+        only after a fresh ATTEMPT_PRIVATE Environment is prepared and attested outside
+        SQLite by a trusted idle supervisor holding the exact probed scope. Runtime writes
+        a private recovery intent before provider creation; no native harness, tool server,
+        credential or user code may start before admission. In one transaction recheck
+        Workspace, Task version/status, accepted plan, READY Step, current Runtime
+        incarnation and replay identity, then persist the public Environment identity,
+        Attempt, Step binding, lease, STARTING AgentSession and receipt. Resolve the exact
+        receipt, then use a one-time private handoff to start the native provider inside the
+        held scope. The service selects the current lead;
+        request data cannot assert Runtime, AgentBinding, Environment, attestation, grant,
+        lease, provider handle or transcript. If storage admission fails after preparation,
+        destroy or quarantine the unbound Environment before retry.
+      parameters:
+      - {$ref: '#/components/parameters/TaskId'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdmitTaskAttemptRequest'}
+      responses:
+        '201':
+          description: New Attempt and admission receipt committed; native provider/harness launch follows receipt resolution
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AttemptAdmissionReceipt'}
+        '200':
+          description: Exact idempotent replay returns the original Attempt and receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AttemptAdmissionReceipt'}
+        '409':
+          description: Stale Task or plan version, non-READY Step, lease conflict, or idempotency conflict
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/timeline:
     get:
       tags: [tasks]
@@ -6281,7 +6324,7 @@ components:
           oneOf: [{$ref: '#/components/schemas/CapabilityRef'}, {type: 'null'}]
         operation: {type: string}
         target:
-          oneOf: [{$ref: '#/components/schemas/ResourceRef'}, {type: string}]
+          oneOf: [{$ref: '#/components/schemas/ResourceRef'}, {$ref: '#/components/schemas/FileReplacementTarget'}, {type: string}]
         idempotency_key: {type: [string, 'null']}
         state: {type: string, enum: [PROPOSED, STARTED, ACKNOWLEDGED, RECONCILING, OBSERVED, VERIFIED, FAILED, AMBIGUOUS]}
         request_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
@@ -6316,6 +6359,21 @@ components:
         entity_ref: {type: string}
         accepted_at: {type: string, format: date-time}
         correlation_id: {type: string}
+    AdmitTaskAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [plan_revision, step_id]
+      description: Caller-selected input only. Task/Workspace/version/idempotency come from authenticated route metadata; lead, Runtime, Environment, grant, lease, attestation and provider session are resolved by their owning services.
+      properties:
+        plan_revision: {type: integer, minimum: 1}
+        step_id: {type: string, minLength: 1, maxLength: 200}
+    AttemptAdmissionReceipt:
+      type: object
+      additionalProperties: false
+      required: [attempt, receipt]
+      properties:
+        attempt: {$ref: '#/components/schemas/Attempt'}
+        receipt: {$ref: '#/components/schemas/CommandReceipt'}
     RuntimeIncarnation:
       type: object
       required: [runtime_incarnation_id, runtime_id, process_started_at, litecowork_version, recovered_from_unclean_shutdown, recovery_state, version]
@@ -6578,6 +6636,24 @@ components:
           source: {type: string, minLength: 1, description: Host-authenticated MCP server identity}
           digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$', description: Digest of the complete advertised Skill manifest}
           component: {type: string, format: uri, description: Exact advertised SKILL.md URI}
+      - type: object
+        additionalProperties: false
+        required: [capability_id, identity_kind, source, digest, component]
+        properties:
+          capability_id: {const: workspace.file.replace}
+          identity_kind: {const: CORE_BUILTIN}
+          source: {const: litecowork.core}
+          digest: {const: 'sha256:5600e4897d63fffee5edfcd3c82f0da99e58f3fa3bfad37d07a50b11b37dda99'}
+          component: {const: workspace.file.replace}
+    ReadCapabilityRef:
+      allOf:
+        - {$ref: '#/components/schemas/CapabilityRef'}
+        - not:
+            type: object
+            required: [identity_kind]
+            properties:
+              identity_kind: {const: CORE_BUILTIN}
+      description: Package-component or MCP Skill identity accepted by the generic owner read-grant route; Core built-ins are Trust-issued through their owning operation.
     GrantResourceRef:
       type: object
       additionalProperties: false
@@ -6612,7 +6688,7 @@ components:
       required: [task_id, capability_ref, resource_refs, expires_at]
       properties:
         task_id: {type: string, minLength: 1, maxLength: 512}
-        capability_ref: {$ref: '#/components/schemas/CapabilityRef'}
+        capability_ref: {$ref: '#/components/schemas/ReadCapabilityRef'}
         resource_refs:
           type: array
           minItems: 1
@@ -8426,6 +8502,58 @@ components:
         required: [revision_id]
         properties:
           revision_id: {type: string, minLength: 1}
+    WorkspaceRelativePath:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      pattern: '^(?!/)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))(?!.*[\\:])(?!.*[\u0000-\u001F\u007F])[^/]+(?:/[^/]+)*$'
+      description: >-
+        Canonical UTF-8 root-relative path using slash separators. No leading or trailing slash,
+        empty, dot or parent segment, backslash, drive/UNC/device prefix, NUL or control
+        character. This lexical check does not prove confinement; the provider resolves beneath
+        an opened WorkspaceRoot handle and rejects symlink/reparse escapes.
+    FileWriteScopeRequest:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, step_id, workspace_root_id, target_relative_path, base_revision_digest, requested_max_bytes, candidate_resource]
+      description: >-
+        Internal Trust storage request only; no HTTP operation accepts it. Attempt and Step IDs
+        are untrusted selectors checked against the live admitted session and current accepted Step.
+        This is requested scope, not a CapabilityGrant or write authorization.
+      properties:
+        attempt_id: {type: string, minLength: 1, maxLength: 512}
+        step_id: {type: string, minLength: 1, maxLength: 512}
+        workspace_root_id: {type: string, minLength: 1}
+        target_relative_path: {$ref: '#/components/schemas/WorkspaceRelativePath'}
+        base_revision_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        requested_max_bytes: {type: integer, minimum: 1, maximum: 1048576}
+        candidate_resource:
+          allOf:
+          - {$ref: '#/components/schemas/PinnedResourceRef'}
+          description: Exact managed immutable ResourceRevision; external-only content is not eligible.
+    FileReplacementTarget:
+      type: object
+      additionalProperties: false
+      description: >-
+        Closed Effect target shape with CODE validation in the domain Effect validator and
+        SQLite proposal and dispatch boundaries. The atomic dispatch store also requires
+        the exact Core file-write grant ResourceRef and root/path/base/candidate digest/size/
+        plan-action/max-byte scope to match this target. This is not a standalone request
+        body and creates no authority; Task proposal/Attempt/dispatch production remains
+        unintegrated.
+      required: [kind, workspace_root_id, target_relative_path, base_revision_digest, content, content_digest, content_bytes, plan_action_digest]
+      properties:
+        kind: {type: string, const: FILE_REPLACEMENT}
+        workspace_root_id: {type: string, minLength: 1}
+        target_relative_path: {$ref: '#/components/schemas/WorkspaceRelativePath'}
+        base_revision_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content:
+          allOf:
+          - {$ref: '#/components/schemas/PinnedResourceRef'}
+          description: Exact managed immutable ResourceRevision; the target's digest and size must match its bytes.
+        content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content_bytes: {type: integer, minimum: 0, maximum: 1048576}
+        plan_action_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
     ResourceInput:
       type: object
       additionalProperties: false

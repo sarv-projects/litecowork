@@ -7,16 +7,16 @@
 //! idempotency receipt together. A rejected admission writes nothing, and no
 //! provider call may happen before this transaction commits.
 //!
-//! The schema still closes Invocation creation and the first `DISPATCHED`
-//! transition behind `sqlite-v15.sql`. This adapter therefore fails closed on
-//! the current schema until the lead-owned migration that replaces those two
-//! guards is applied; see `implementation/reviews/E04-S03.md`.
+//! Migration v26 removes the blanket v15 creation block and allows the first
+//! `DISPATCHED` transition only when an exact ApprovalUse has been consumed.
+//! The schema's live-authority and ApprovalUse guards remain active; this
+//! adapter rechecks Trust, the lease fence and the exact Approval in one writer.
 
 use super::*;
 use domain_effects::{EffectRecord, EffectState, ExecutionMethod};
 use domain_invocations::{CapabilityInvocationRecord, InvocationStatus};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use storage_core::{
     AdmitCapabilityDispatchCommit, CapabilityDispatchStore, CommittedCapabilityDispatch,
     EffectEvidenceEventContext,
@@ -252,10 +252,12 @@ fn validate_invocation_event_context(
     })
 }
 
-/// The `capability_grants` columns an admission reads for its grant:
-/// scope kind, task, attempt, capability reference JSON, allowed operations
-/// JSON, expiry and status.
+/// The `capability_grants` columns an admission reads for its grant, including
+/// the durable resource scope needed to revalidate Core file-write targets.
 type GrantRow = (
+    String,
+    String,
+    String,
     String,
     String,
     String,
@@ -323,7 +325,8 @@ fn verify_admission(
     let grant: Option<GrantRow> = transaction
         .query_row(
             "SELECT scope_kind,COALESCE(task_id,''),COALESCE(attempt_id,''),capability_ref_json,
-                    allowed_operations_json,expires_at,status
+                    allowed_operations_json,resource_scope_json,secret_refs_json,granted_by_json,
+                    expires_at,status
              FROM capability_grants WHERE capability_grant_id=?1",
             params![invocation.capability_grant_id],
             |row| {
@@ -335,6 +338,9 @@ fn verify_admission(
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
                 ))
             },
         )
@@ -346,6 +352,9 @@ fn verify_admission(
         grant_attempt_id,
         grant_capability_ref,
         grant_operations,
+        grant_resource_scope,
+        grant_secret_refs,
+        grant_issued_by,
         grant_expires_at,
         grant_status,
     )) = grant
@@ -378,6 +387,17 @@ fn verify_admission(
             "CAPABILITY_DISPATCH_OPERATION_NOT_GRANTED".to_owned(),
         ));
     }
+    let capability_ref =
+        invocation_capability_ref(transaction, &commit.workspace_id, &commit.invocation_id)?;
+    validate_file_replacement_grant_scope(
+        &commit.workspace_id,
+        &invocation,
+        &effect,
+        &capability_ref,
+        &grant_resource_scope,
+        &grant_secret_refs,
+        &grant_issued_by,
+    )?;
     if grant_expires_at
         .as_deref()
         .is_some_and(|expires| !timestamp_is_future(expires))
@@ -550,6 +570,132 @@ fn verify_admission(
         approval_action_digest: approval.action_digest,
         approval_scope_digest: approval.scope_digest,
     })
+}
+
+/// Revalidate the exact, Trust-issued file-write scope at the last durable
+/// boundary before the filesystem call. A Trust decision and Approval bind the
+/// proposed Effect, but neither can widen the immutable Attempt grant.
+fn validate_file_replacement_grant_scope(
+    workspace_id: &str,
+    invocation: &CapabilityInvocationRecord,
+    effect: &EffectRecord,
+    capability_ref: &serde_json::Value,
+    grant_resource_scope_json: &str,
+    grant_secret_refs_json: &str,
+    grant_issued_by_json: &str,
+) -> Result<(), StoreError> {
+    let expected_capability_ref = serde_json::json!({
+        "capability_id": storage_core::CORE_FILE_REPLACE_CAPABILITY_ID,
+        "identity_kind": "CORE_BUILTIN",
+        "source": storage_core::CORE_FILE_REPLACE_CAPABILITY_SOURCE,
+        "component": storage_core::CORE_FILE_REPLACE_CAPABILITY_ID,
+        "digest": storage_core::CORE_FILE_REPLACE_CAPABILITY_DIGEST,
+    });
+    let is_file_target = effect
+        .target
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        == Some("FILE_REPLACEMENT");
+    let is_file_operation = invocation.operation == storage_core::CORE_FILE_REPLACE_CAPABILITY_ID;
+    let is_file_capability = capability_ref == &expected_capability_ref;
+    if !(is_file_target || is_file_operation || is_file_capability) {
+        return Ok(());
+    }
+
+    let invalid_scope =
+        || StoreError::Invalid("CAPABILITY_DISPATCH_FILE_REPLACEMENT_SCOPE_MISMATCH".to_owned());
+    if !is_file_target
+        || !is_file_operation
+        || !is_file_capability
+        || effect.execution_method != ExecutionMethod::DeterministicLocal
+    {
+        return Err(invalid_scope());
+    }
+
+    let target = effect.target.as_object().ok_or_else(invalid_scope)?;
+    let content = target.get("content").ok_or_else(invalid_scope)?;
+    if content
+        .get("workspace_id")
+        .and_then(serde_json::Value::as_str)
+        != Some(workspace_id)
+    {
+        return Err(invalid_scope());
+    }
+
+    let resource_scope: serde_json::Value = serde_json::from_str(grant_resource_scope_json)
+        .map_err(|_| {
+            StoreError::Integrity("CapabilityGrant resource scope JSON is corrupt".to_owned())
+        })?;
+    let scope = resource_scope.as_object().ok_or_else(invalid_scope)?;
+    let operation_ids = serde_json::json!([storage_core::CORE_FILE_REPLACE_CAPABILITY_ID]);
+    let resource_refs = serde_json::json!([content]);
+    if scope.len() != 3
+        || !scope
+            .keys()
+            .all(|key| ["resource_refs", "operation_ids", "constraints"].contains(&key.as_str()))
+        || scope.get("resource_refs") != Some(&resource_refs)
+        || scope.get("operation_ids") != Some(&operation_ids)
+    {
+        return Err(invalid_scope());
+    }
+
+    let constraints = scope
+        .get("constraints")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(invalid_scope)?;
+    const CONSTRAINT_KEYS: [&str; 7] = [
+        "workspace_root_id",
+        "target_relative_path",
+        "base_revision_digest",
+        "max_bytes",
+        "candidate_content_digest",
+        "candidate_size_bytes",
+        "plan_action_digest",
+    ];
+    let max_bytes = constraints
+        .get("max_bytes")
+        .and_then(serde_json::Value::as_u64);
+    let candidate_size = constraints
+        .get("candidate_size_bytes")
+        .and_then(serde_json::Value::as_u64);
+    let content_bytes = target
+        .get("content_bytes")
+        .and_then(serde_json::Value::as_u64);
+    if constraints.len() != CONSTRAINT_KEYS.len()
+        || !constraints
+            .keys()
+            .all(|key| CONSTRAINT_KEYS.contains(&key.as_str()))
+        || constraints.get("workspace_root_id") != target.get("workspace_root_id")
+        || constraints.get("target_relative_path") != target.get("target_relative_path")
+        || constraints.get("base_revision_digest") != target.get("base_revision_digest")
+        || constraints.get("candidate_content_digest") != target.get("content_digest")
+        || constraints.get("plan_action_digest") != target.get("plan_action_digest")
+        || max_bytes.is_none_or(|value| value == 0 || value > 1_048_576)
+        || candidate_size != content_bytes
+        || content_bytes
+            .zip(max_bytes)
+            .is_none_or(|(size, bound)| size > bound)
+    {
+        return Err(invalid_scope());
+    }
+
+    let secret_refs: serde_json::Value =
+        serde_json::from_str(grant_secret_refs_json).map_err(|_| {
+            StoreError::Integrity("CapabilityGrant secret refs JSON is corrupt".to_owned())
+        })?;
+    let issued_by: serde_json::Value = serde_json::from_str(grant_issued_by_json)
+        .map_err(|_| StoreError::Integrity("CapabilityGrant issuer JSON is corrupt".to_owned()))?;
+    if secret_refs != serde_json::json!([])
+        || issued_by
+            != serde_json::json!({
+                "kind": "CORE_TRUST",
+                "policy_id": "litecowork.standard",
+                "policy_revision": 1,
+            })
+    {
+        return Err(invalid_scope());
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1163,6 +1309,9 @@ fn load_effect(
         version: u64::try_from(raw.17)
             .map_err(|_| StoreError::Integrity("Effect version is out of range".to_owned()))?,
     };
+    record.validate().map_err(|error| {
+        StoreError::Invalid(format!("invalid Effect record at dispatch: {error}"))
+    })?;
     Ok(record)
 }
 
@@ -1408,10 +1557,8 @@ mod tests {
         .expect("SQLite store opens")
     }
 
-    /// The combined admission writer needs the lead-owned migration that
-    /// replaces the two `sqlite-v15.sql` guards. The fixture applies the
-    /// proposed replacement so the transaction itself can be exercised.
-    fn apply_proposed_dispatch_ddl(connection: &Connection) {
+    /// Verify the shipped v26 dispatch guards before exercising the writer.
+    fn assert_dispatch_admission_ddl(connection: &Connection) {
         // The production schema now carries the dispatch admission itself: version
         // twenty-six drops the blanket creation block, allows CREATED to DISPATCHED in
         // the transition guard, and refuses a dispatch that is not bound to a consumed
@@ -1442,6 +1589,62 @@ mod tests {
     }
 
     fn seed_fixture(directory: &tempfile::TempDir) -> Result<(), StoreError> {
+        seed_fixture_with_target(directory, None, None)
+    }
+
+    fn seed_file_replacement_fixture(
+        directory: &tempfile::TempDir,
+        target: &Value,
+        grant_scope_override: Option<&Value>,
+    ) -> Result<(), StoreError> {
+        seed_fixture_with_target(directory, Some(target), grant_scope_override)
+    }
+
+    fn seed_fixture_with_target(
+        directory: &tempfile::TempDir,
+        file_replacement_target: Option<&Value>,
+        grant_scope_override: Option<&Value>,
+    ) -> Result<(), StoreError> {
+        let is_file_replacement = file_replacement_target.is_some();
+        let capability_ref = if is_file_replacement {
+            core_file_replacement_capability_ref()
+        } else {
+            serde_json::from_str(CAPABILITY_REF).expect("generic capability ref")
+        };
+        let capability_ref_json = encode(&capability_ref)?;
+        let operation = if is_file_replacement {
+            storage_core::CORE_FILE_REPLACE_CAPABILITY_ID
+        } else {
+            "external.message.send"
+        };
+        let allowed_operations_json = encode(&json!([operation]))?;
+        let execution_method = if is_file_replacement {
+            "DETERMINISTIC_LOCAL"
+        } else {
+            "STRUCTURED_API"
+        };
+        let grant_resource_scope = grant_scope_override.cloned().unwrap_or_else(|| {
+            file_replacement_target
+                .map(file_replacement_grant_resource_scope)
+                .unwrap_or_else(|| json!({"operation_ids": [operation]}))
+        });
+        let grant_resource_scope_json = encode(&grant_resource_scope)?;
+        let granted_by_json = if is_file_replacement {
+            encode(&json!({
+                "kind": "CORE_TRUST",
+                "policy_id": "litecowork.standard",
+                "policy_revision": 1,
+            }))?
+        } else {
+            encode(&json!({"principal_id":"owner","kind":"USER"}))?
+        };
+        let effect_target = file_replacement_target
+            .cloned()
+            .unwrap_or_else(|| json!("mailbox:user@example.test"));
+        let effect_target_json = encode(&effect_target)?;
+        let approval_target = file_replacement_target
+            .map(file_replacement_approval_target)
+            .unwrap_or_else(target_ref);
         let connection =
             Connection::open(state_database(directory)).expect("open fixture database");
         connection
@@ -1479,25 +1682,25 @@ mod tests {
                  INSERT INTO plan_revisions(task_id,revision,task_spec_revision,produced_by_agent_session_id,produced_by_attempt_id,steps_json,created_at)
                  VALUES('task-1',1,1,'session-1','attempt-1','[]','{AT}');
                  INSERT INTO capability_grants(capability_grant_id,scope_kind,task_id,attempt_id,capability_ref_json,allowed_operations_json,resource_scope_json,secret_refs_json,granted_by_json,expires_at,status,created_at,version)
-                 VALUES('grant-1','ATTEMPT_EXECUTION','task-1','attempt-1','{CAPABILITY_REF}','[\"external.message.send\"]','{{\"operation_ids\":[\"external.message.send\"]}}','[]','{{\"principal_id\":\"owner\",\"kind\":\"USER\"}}','{FUTURE}','ACTIVE','{AT}',1);
+                 VALUES('grant-1','ATTEMPT_EXECUTION','task-1','attempt-1','{capability_ref_json}','{allowed_operations_json}','{grant_resource_scope_json}','[]','{granted_by_json}','{FUTURE}','ACTIVE','{AT}',1);
                  INSERT INTO capability_activations(activation_id,workspace_id,scope_kind,task_id,attempt_id,capability_ref_json,runtime_id,runtime_incarnation_id,mode,status,health,created_at,updated_at,version)
-                 VALUES('activation-1','ws','ATTEMPT_EXECUTION','task-1','attempt-1','{CAPABILITY_REF}','runtime','incarnation','MCP','ACTIVE','HEALTHY','{AT}','{AT}',1);"
+                 VALUES('activation-1','ws','ATTEMPT_EXECUTION','task-1','attempt-1','{capability_ref_json}','runtime','incarnation','MCP','ACTIVE','HEALTHY','{AT}','{AT}',1);"
             ))
             .map_err(|error| {
                 StoreError::Database(format!("seed dispatch fixture failed: {error}"))
             })?;
-        apply_proposed_dispatch_ddl(&connection);
+        assert_dispatch_admission_ddl(&connection);
         connection
             .execute_batch(&format!(
                 "INSERT INTO capability_invocations(invocation_id,workspace_id,scope_kind,task_id,attempt_id,agent_session_id,activation_id,capability_ref_json,operation,request_digest,execution_method,capability_grant_id,status,partial_result_refs_json,result_refs_json,created_at,updated_at,version)
-                 VALUES('inv-1','ws','ATTEMPT_EXECUTION','task-1','attempt-1','session-1','activation-1','{CAPABILITY_REF}','external.message.send','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','STRUCTURED_API','grant-1','CREATED','[]','[]','{AT}','{AT}',1);
+                 VALUES('inv-1','ws','ATTEMPT_EXECUTION','task-1','attempt-1','session-1','activation-1','{capability_ref_json}','{operation}','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','{execution_method}','grant-1','CREATED','[]','[]','{AT}','{AT}',1);
                  INSERT INTO effects(effect_id,task_id,attempt_id,capability_ref_json,operation,target_json,idempotency_key,state,request_digest,capability_invocation_id,execution_method,dispatch_ordinal,created_at,updated_at,version)
-                 VALUES('effect-1','task-1','attempt-1','{CAPABILITY_REF}','external.message.send','{{\"mailbox\":\"user@example.test\"}}',NULL,'PROPOSED','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','inv-1','STRUCTURED_API',0,'{AT}','{AT}',1);"
+                 VALUES('effect-1','task-1','attempt-1','{capability_ref_json}','{operation}','{effect_target_json}',NULL,'PROPOSED','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','inv-1','{execution_method}',0,'{AT}','{AT}',1);"
             ))
             .map_err(|error| {
                 StoreError::Database(format!("seed invocation and effect failed: {error}"))
             })?;
-        seed_approval(&connection)?;
+        seed_approval_for(&connection, approval_target, operation)?;
         Ok(())
     }
 
@@ -1519,21 +1722,24 @@ mod tests {
         json!({
             "capability_ref": serde_json::from_str::<Value>(CAPABILITY_REF).expect("capability ref"),
             "target_digest": digest(
-                &canonical_json(&json!({"mailbox": "user@example.test"})).expect("canonical target")
+                &canonical_json(&json!("mailbox:user@example.test")).expect("canonical target")
             ),
             "execution_method": "STRUCTURED_API",
             "effect_id": "effect-1",
         })
     }
 
-    fn seed_approval(connection: &Connection) -> Result<(), StoreError> {
-        let target = target_ref();
+    fn seed_approval_for(
+        connection: &Connection,
+        target: Value,
+        operation: &str,
+    ) -> Result<(), StoreError> {
         let scope = scope_digest();
         let action_digest = digest(
             &canonical_json(&json!({
                 "task_id": "task-1",
                 "attempt_id": "attempt-1",
-                "action": "external.message.send",
+                "action": operation,
                 "target": target,
                 "scope_digest": scope,
             }))
@@ -1542,8 +1748,9 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO approvals(approval_id,task_id,requested_by_attempt,kind,action_summary,target_ref_json,scope_digest,action_digest,risk,required_assurance,status,requested_at,expires_at,version)
-                 VALUES('approval-1','task-1','attempt-1','external.message.send','Approve operation',?1,?2,?3,'SENSITIVE','APPROVE_SENSITIVE','APPROVED',?4,?5,1)",
+                 VALUES('approval-1','task-1','attempt-1',?1,'Approve operation',?2,?3,?4,'SENSITIVE','APPROVE_SENSITIVE','APPROVED',?5,?6,1)",
                 params![
+                    operation,
                     encode(&target).expect("encode target"),
                     scope,
                     action_digest,
@@ -1557,11 +1764,96 @@ mod tests {
         Ok(())
     }
 
+    fn core_file_replacement_capability_ref() -> Value {
+        json!({
+            "capability_id": storage_core::CORE_FILE_REPLACE_CAPABILITY_ID,
+            "identity_kind": "CORE_BUILTIN",
+            "source": storage_core::CORE_FILE_REPLACE_CAPABILITY_SOURCE,
+            "component": storage_core::CORE_FILE_REPLACE_CAPABILITY_ID,
+            "digest": storage_core::CORE_FILE_REPLACE_CAPABILITY_DIGEST,
+        })
+    }
+
+    fn file_replacement_target(include_unknown_field: bool) -> Value {
+        let mut target = json!({
+            "kind": "FILE_REPLACEMENT",
+            "workspace_root_id": "root-1",
+            "target_relative_path": "src/main.rs",
+            "base_revision_digest": format!("sha256:{}", "a".repeat(64)),
+            "content": {
+                "workspace_id": "ws",
+                "resource_id": "candidate-1",
+                "revision_id": "candidate-revision-1"
+            },
+            "content_digest": format!("sha256:{}", "b".repeat(64)),
+            "content_bytes": 18,
+            "plan_action_digest": format!("sha256:{}", "c".repeat(64)),
+        });
+        if include_unknown_field {
+            target["unexpected_authority"] = json!(true);
+        }
+        target
+    }
+
+    fn file_replacement_grant_resource_scope(target: &Value) -> Value {
+        json!({
+            "resource_refs": [target["content"].clone()],
+            "operation_ids": [storage_core::CORE_FILE_REPLACE_CAPABILITY_ID],
+            "constraints": {
+                "workspace_root_id": target["workspace_root_id"],
+                "target_relative_path": target["target_relative_path"],
+                "base_revision_digest": target["base_revision_digest"],
+                "max_bytes": 128,
+                "candidate_content_digest": target["content_digest"],
+                "candidate_size_bytes": target["content_bytes"],
+                "plan_action_digest": target["plan_action_digest"],
+            }
+        })
+    }
+
+    fn file_replacement_approval_target(target: &Value) -> Value {
+        json!({
+            "capability_ref": core_file_replacement_capability_ref(),
+            "target_digest": digest(&canonical_json(target).expect("canonical target")),
+            "execution_method": "DETERMINISTIC_LOCAL",
+            "effect_id": "effect-1",
+        })
+    }
+
+    fn file_replacement_commit(request_id: &str, target: &Value) -> AdmitCapabilityDispatchCommit {
+        let mut commit = commit(request_id);
+        let capability_ref = core_file_replacement_capability_ref();
+        let target_digest = digest(&canonical_json(target).expect("canonical target"));
+        commit.trust_decision = TrustDispatchDecision {
+            decision: "REQUIRE_APPROVAL".to_owned(),
+            reason_code: "ApprovalRequired".to_owned(),
+            policy_id: "litecowork.standard".to_owned(),
+            policy_revision: 1,
+            policy_content_digest: format!("sha256:{}", "e".repeat(64)),
+            request_digest: format!("sha256:{}", "d".repeat(64)),
+            action_digest: digest(
+                &canonical_json(&json!({
+                    "capability_ref": capability_ref,
+                    "operation": storage_core::CORE_FILE_REPLACE_CAPABILITY_ID,
+                    "target_digest": target_digest,
+                    "execution_method": "DETERMINISTIC_LOCAL",
+                    "effect_id": "effect-1",
+                }))
+                .expect("canonical action"),
+            ),
+            scope_digest: scope_digest(),
+            invocation_id: "inv-1".to_owned(),
+            capability_grant_id: "grant-1".to_owned(),
+            activation_id: "activation-1".to_owned(),
+            effect_id: "effect-1".to_owned(),
+        };
+        commit
+    }
+
     fn trust_decision() -> TrustDispatchDecision {
         let capability_ref = serde_json::from_str::<Value>(CAPABILITY_REF).expect("capability ref");
-        let target_digest = digest(
-            &canonical_json(&json!({"mailbox": "user@example.test"})).expect("canonical target"),
-        );
+        let target_digest =
+            digest(&canonical_json(&json!("mailbox:user@example.test")).expect("canonical target"));
         TrustDispatchDecision {
             decision: "REQUIRE_APPROVAL".to_owned(),
             reason_code: "ApprovalRequired".to_owned(),
@@ -1737,6 +2029,112 @@ mod tests {
         assert_eq!(count(&connection, "audit_records"), 1);
         assert_eq!(count(&connection, "request_dedup"), 1);
         assert_eq!(count(&connection, "aggregate_snapshots"), 2);
+    }
+
+    #[test]
+    fn file_replacement_dispatch_revalidates_the_closed_effect_target() {
+        let directory = tempfile::tempdir().expect("temporary store");
+        let store = test_store(&directory);
+        let target = file_replacement_target(true);
+        seed_file_replacement_fixture(&directory, &target, None)
+            .expect("seed file dispatch fixture");
+        let dispatch = SqliteCapabilityDispatchStore::new(store.clone());
+
+        let result =
+            dispatch.admit_capability_dispatch(file_replacement_commit("request-1", &target));
+
+        assert!(matches!(
+            result,
+            Err(StoreError::Invalid(_) | StoreError::Integrity(_))
+        ));
+        let connection =
+            Connection::open(state_database(&directory)).expect("open fixture database");
+        assert_eq!(count(&connection, "approval_uses"), 0);
+        assert_eq!(count(&connection, "domain_events"), 0);
+        assert_eq!(count(&connection, "audit_records"), 0);
+        assert_eq!(count(&connection, "request_dedup"), 0);
+        let invocation_status: String = connection
+            .query_row(
+                "SELECT status FROM capability_invocations WHERE invocation_id='inv-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("invocation row");
+        let effect_state: String = connection
+            .query_row(
+                "SELECT state FROM effects WHERE effect_id='effect-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("Effect row");
+        assert_eq!(invocation_status, "CREATED");
+        assert_eq!(effect_state, "PROPOSED");
+    }
+
+    #[test]
+    fn file_replacement_dispatch_rejects_a_grant_for_another_target_scope() {
+        let directory = tempfile::tempdir().expect("temporary store");
+        let store = test_store(&directory);
+        let target = file_replacement_target(false);
+        let mut resource_scope = file_replacement_grant_resource_scope(&target);
+        resource_scope["constraints"]["target_relative_path"] = json!("src/other.rs");
+        seed_file_replacement_fixture(&directory, &target, Some(&resource_scope))
+            .expect("seed file dispatch fixture with mismatched Trust scope");
+        let connection =
+            Connection::open(state_database(&directory)).expect("open fixture database");
+        let dispatch = SqliteCapabilityDispatchStore::new(store.clone());
+
+        let result =
+            dispatch.admit_capability_dispatch(file_replacement_commit("request-1", &target));
+
+        assert!(matches!(result, Err(StoreError::Invalid(_))));
+        assert_eq!(count(&connection, "approval_uses"), 0);
+        assert_eq!(count(&connection, "domain_events"), 0);
+        assert_eq!(count(&connection, "audit_records"), 0);
+        assert_eq!(count(&connection, "request_dedup"), 0);
+        let invocation_status: String = connection
+            .query_row(
+                "SELECT status FROM capability_invocations WHERE invocation_id='inv-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("invocation row");
+        let effect_state: String = connection
+            .query_row(
+                "SELECT state FROM effects WHERE effect_id='effect-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("Effect row");
+        assert_eq!(invocation_status, "CREATED");
+        assert_eq!(effect_state, "PROPOSED");
+    }
+
+    #[test]
+    fn file_replacement_dispatch_commits_exact_scoped_target() {
+        let directory = tempfile::tempdir().expect("temporary store");
+        let store = test_store(&directory);
+        let target = file_replacement_target(false);
+        seed_file_replacement_fixture(&directory, &target, None)
+            .expect("seed file dispatch fixture");
+        let dispatch = SqliteCapabilityDispatchStore::new(store.clone());
+
+        let committed = dispatch
+            .admit_capability_dispatch(file_replacement_commit("request-1", &target))
+            .expect("exactly scoped file replacement dispatch commits");
+
+        assert_eq!(committed.invocation_id, "inv-1");
+        assert_eq!(committed.invocation_version, 2);
+        assert_eq!(committed.effect_id, "effect-1");
+        assert_eq!(committed.effect_state, "STARTED");
+        assert_eq!(committed.dispatch_ordinal, 1);
+        assert_eq!(committed.events.len(), 3);
+        let connection =
+            Connection::open(state_database(&directory)).expect("open fixture database");
+        assert_eq!(count(&connection, "approval_uses"), 1);
+        assert_eq!(count(&connection, "domain_events"), 3);
+        assert_eq!(count(&connection, "audit_records"), 1);
+        assert_eq!(count(&connection, "request_dedup"), 1);
     }
 
     #[test]

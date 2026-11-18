@@ -37,7 +37,7 @@ flowchart LR
   F005[Feature 005 safe file-write Attempt slice] -.-> T04
   F005 -.-> T08
   F004[Feature 002/004 Claude Code] -.-> T08
-  O06[Owner decision: generic provider Attempt/session admission seam] -.-> T07
+  O06[Cross-owner review: Task Runtime generic Attempt/session admission seam] -.-> T07
   O06 -.-> T08
   O06 -.-> T10
   O07[Owner decision: lead binding vs execution replacement] -.-> T07
@@ -79,7 +79,7 @@ One forward-only migration (allocated v42 in docs/LITECOWORK-BUILD-TASKS.md; cha
 | Worker writes leak between Attempts | `ATTEMPT_PRIVATE` only (B-39); shared scope denied |
 | Late result accepted after handoff | Lease epoch and Attempt id fence in `DelegationResultService` and Effect receipts |
 | Claude Code result format unstable | Pin version in Feature 002; adapter normalization fixture |
-| Attempt/session interface mismatch | Feature 005 T08 is `admit_file_write`, not a generic native-session Attempt service; keep execution tasks blocked pending O-06 owner/API alignment |
+| Generic Attempt/session lifecycle is not served | Feature 005 revision 1.1 records an owner-directed Task Runtime seam, but cross-owner review and Feature 015 acceptance are pending; keep execution tasks blocked until API, cancellation, recovery and provider lifecycle contracts are reviewed |
 | Lead reassignment conflated with execution replacement | TASK-RUNTIME keeps binding change, planning-session replacement and execution Attempt replacement distinct; keep T07/UI semantics gated by O-07 |
 | Verifier collusion (same binding) | Storage-level check that verifier binding differs from producer binding |
 | Windows users see missing features | Visible UNAVAILABLE reason, no hidden partial path |

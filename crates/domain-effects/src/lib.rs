@@ -103,7 +103,7 @@ pub struct EffectRecord {
     pub attempt_id: String,
     pub capability_ref: Option<Value>,
     pub operation: String,
-    /// A `ResourceRef` object or an opaque, non-empty provider target string.
+    /// A `ResourceRef`, the closed file-replacement target, or an opaque provider target string.
     pub target: Value,
     pub idempotency_key: Option<String>,
     pub state: EffectState,
@@ -736,12 +736,85 @@ fn valid_target(value: &Value) -> bool {
     value
         .as_str()
         .is_some_and(|target| !invalid_bounded(target, 4096))
-        || value.as_object().is_some_and(|object| {
+        || (value.as_object().is_some_and(|object| {
             object
                 .keys()
                 .all(|key| ["workspace_id", "resource_id", "revision_id"].contains(&key.as_str()))
                 && valid_resource_ref(value)
-        })
+        }))
+        || valid_file_replacement_target(value)
+}
+fn valid_file_replacement_target(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    const FIELDS: [&str; 8] = [
+        "kind",
+        "workspace_root_id",
+        "target_relative_path",
+        "base_revision_digest",
+        "content",
+        "content_digest",
+        "content_bytes",
+        "plan_action_digest",
+    ];
+    object.len() == FIELDS.len()
+        && object.keys().all(|key| FIELDS.contains(&key.as_str()))
+        && object.get("kind").and_then(Value::as_str) == Some("FILE_REPLACEMENT")
+        && object
+            .get("workspace_root_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !invalid_bounded(id, 256))
+        && object
+            .get("target_relative_path")
+            .and_then(Value::as_str)
+            .is_some_and(valid_workspace_relative_path)
+        && object
+            .get("base_revision_digest")
+            .and_then(Value::as_str)
+            .is_some_and(valid_digest)
+        && object.get("content").is_some_and(valid_pinned_resource_ref)
+        && object
+            .get("content_digest")
+            .and_then(Value::as_str)
+            .is_some_and(valid_digest)
+        && object
+            .get("content_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|size| size <= 1_048_576)
+        && object
+            .get("plan_action_digest")
+            .and_then(Value::as_str)
+            .is_some_and(valid_digest)
+}
+fn valid_pinned_resource_ref(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.len() == 3
+        && object
+            .keys()
+            .all(|key| ["workspace_id", "resource_id", "revision_id"].contains(&key.as_str()))
+        && ["workspace_id", "resource_id", "revision_id"]
+            .iter()
+            .all(|key| {
+                object
+                    .get(*key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !invalid_bounded(value, 256))
+            })
+}
+fn valid_workspace_relative_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.chars().count() <= 4096
+        && !path.starts_with('/')
+        && !path.ends_with('/')
+        && !path.contains("//")
+        && !path.contains(['\\', ':'])
+        && !path.chars().any(char::is_control)
+        && path
+            .split('/')
+            .all(|segment| segment != "." && segment != "..")
 }
 fn valid_resource_ref(value: &Value) -> bool {
     value.as_object().is_some_and(|object| {
@@ -806,6 +879,109 @@ mod tests {
             created_at: "2026-10-08T00:00:00Z".into(),
             updated_at: "2026-10-08T00:00:00Z".into(),
             version: 1,
+        }
+    }
+
+    fn file_replacement_target() -> Value {
+        json!({
+            "kind": "FILE_REPLACEMENT",
+            "workspace_root_id": "root-1",
+            "target_relative_path": "src/main.rs",
+            "base_revision_digest": format!("sha256:{}", "b".repeat(64)),
+            "content": {
+                "workspace_id": "workspace-1",
+                "resource_id": "resource-1",
+                "revision_id": "revision-1"
+            },
+            "content_digest": format!("sha256:{}", "c".repeat(64)),
+            "content_bytes": 1024,
+            "plan_action_digest": format!("sha256:{}", "d".repeat(64))
+        })
+    }
+
+    #[test]
+    fn accepts_closed_file_replacement_target() {
+        let mut effect = proposed();
+        effect.target = file_replacement_target();
+
+        assert_eq!(effect.validate(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_open_or_incomplete_file_replacement_target() {
+        let mut extra_field = file_replacement_target();
+        extra_field
+            .as_object_mut()
+            .expect("target object")
+            .insert("untrusted_extra".to_owned(), json!(true));
+
+        let mut missing_field = file_replacement_target();
+        missing_field
+            .as_object_mut()
+            .expect("target object")
+            .remove("plan_action_digest");
+
+        let mut wrong_kind = file_replacement_target();
+        wrong_kind["kind"] = json!("OTHER");
+
+        for target in [extra_field, missing_field, wrong_kind] {
+            let mut effect = proposed();
+            effect.target = target;
+            assert_eq!(effect.validate(), Err(EffectError::InvalidRecord));
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_paths_in_file_replacement_target() {
+        for path in [
+            "",
+            "/etc/passwd",
+            "../outside",
+            "src/../outside",
+            "src/./main.rs",
+            "src//main.rs",
+            "src/",
+            "src\\main.rs",
+            "C:/temp/file",
+        ] {
+            let mut target = file_replacement_target();
+            target["target_relative_path"] = json!(path);
+            let mut effect = proposed();
+            effect.target = target;
+            assert_eq!(
+                effect.validate(),
+                Err(EffectError::InvalidRecord),
+                "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unpinned_or_unbounded_file_replacement_content() {
+        let mut missing_revision = file_replacement_target();
+        missing_revision["content"] = json!({
+            "workspace_id": "workspace-1",
+            "resource_id": "resource-1"
+        });
+
+        let mut oversized_content = file_replacement_target();
+        oversized_content["content_bytes"] = json!(1_048_577);
+
+        let mut malformed_digest = file_replacement_target();
+        malformed_digest["content_digest"] = json!("sha256:BAD");
+
+        let mut negative_size = file_replacement_target();
+        negative_size["content_bytes"] = json!(-1);
+
+        for target in [
+            missing_revision,
+            oversized_content,
+            malformed_digest,
+            negative_size,
+        ] {
+            let mut effect = proposed();
+            effect.target = target;
+            assert_eq!(effect.validate(), Err(EffectError::InvalidRecord));
         }
     }
 

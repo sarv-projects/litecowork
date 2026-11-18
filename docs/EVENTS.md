@@ -210,8 +210,8 @@ attempt.status.changed.v1
 attempt.checkpointed.v1
 attempt.failure.recorded.v1
 
-agent.session.starting.v1 — claims a bounded durable STARTING reservation; it is not adapter readiness and grants no Task authority.
-agent.session.started.v1 — records adapter readiness after an atomic transition to ACTIVE; for Conversation scope the same transaction moves the exact OPEN turn to RUNNING and binds the local host; payload/state must not include native handles.
+agent.session.starting.v1 — claims a bounded durable STARTING reservation; it is not adapter readiness and grants no Task authority. New Task-scoped sessions include their public environment_id; Conversation sessions use null. This does not include private attestation or provider handles.
+agent.session.started.v1 — records adapter readiness after an atomic transition to ACTIVE; for Conversation scope the same transaction moves the exact OPEN turn to RUNNING and binds the local host; Task scope preserves its public environment_id. Payload/state must not include native handles.
 agent.session.lost.v1
 agent.session.closed.v1
 agent.binding.changed.v1
@@ -409,10 +409,10 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `attempt.status.changed` | `attempt_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `attempt.checkpointed` | `attempt_id`, `resume_packet_ref`, `digest`, `source_spec_revision` |
 | `attempt.failure.recorded` | `attempt_id`, `failure_code`, `failure_signature`, `retryable` |
-| `agent.session.starting.v1` | `agent_session_id`, `scope`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; scope contains Conversation IDs for CONVERSATION, task_id for TASK_PLANNING, and task_id plus attempt_id for ATTEMPT_EXECUTION. The top-level task_spec_revision is null for CONVERSATION and the pinned positive revision for Task scopes. Native handles and credentials are excluded. |
-| `agent.session.started.v1` | `agent_session_id`, `scope`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; task_spec_revision is null for CONVERSATION and the pinned positive revision for Task scopes. Native handles are excluded. |
-| `agent.session.lost.v1` | `agent_session_id`, `scope`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; task_spec_revision is null for CONVERSATION and the pinned positive revision for Task scopes. The Conversation LOST transition does not settle its turn. |
-| `agent.session.closed.v1` | `agent_session_id`, `scope`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; task_spec_revision is null for CONVERSATION and the pinned positive revision for Task scopes. Native handles are excluded. |
+| `agent.session.starting.v1` | `agent_session_id`, `scope`, `environment_id?`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; new Task scopes include the public Environment ID, Conversation uses null, and legacy events may omit it. Scope contains Conversation IDs for CONVERSATION, task_id for TASK_PLANNING, and task_id plus attempt_id for ATTEMPT_EXECUTION. Native handles, attestation bodies and credentials are excluded. |
+| `agent.session.started.v1` | `agent_session_id`, `scope`, `environment_id?`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; new Task scopes preserve the public Environment ID and Conversation uses null. Native handles and attestation bodies are excluded. |
+| `agent.session.lost.v1` | `agent_session_id`, `scope`, `environment_id?`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; Task scope preserves the public Environment ID. The Conversation LOST transition does not settle its turn. |
+| `agent.session.closed.v1` | `agent_session_id`, `scope`, `environment_id?`, `agent_binding_id`, `endpoint_id`, `runtime_incarnation_id`, `runtime_id`, `task_spec_revision`, `session_state`, `reported_at`; Task scope preserves the public Environment ID. Native handles and attestation bodies are excluded. |
 | `agent.binding.changed` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `runtime_id?`, `from_enabled`, `to_enabled`, `aggregate_version`, `requested_by` |
 | `runtime.*` | `runtime_id`, `device_id?`, `availability`, `offers_digest?`, `key_version?` |
 | `provider.circuit.changed` | `runtime_id`, `provider_kind`, `provider_ref`, `from`, `to`, `failure_window_started_at?`, `consecutive_failures`, `open_until?`, `aggregate_version` |
@@ -510,7 +510,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 and its prior revision in the same transaction that advances the Workspace settings head,
 Workspace aggregate version, and idempotency receipt. Workspace creation seeds revision 1
 with `NATIVE_DEFAULT`, an empty worker ceiling, and `AGENT_DEFAULT`; migration v28 (wired,
-`SCHEMA_VERSION` is 32; register A-40) seeds
+`SCHEMA_VERSION` is 33; register A-40) seeds
 existing Workspaces deterministically and does not fabricate user-authored setting events.
 The v1 settings event contains no credentials, model-provider secrets, native session data,
 or capability grant. The settings event changes future Task admission policy only.
@@ -620,8 +620,8 @@ the external provider response.
 | `task.coworker.origin.pinned.v1` | Task / TaskService | Immutable Task origin provenance; Coworker revision is pinned |
 | `agent.binding.lead_eligibility.changed.v1` | AgentBinding / AgentBindingService | Workspace authorization state; no endpoint locator or credentials |
 | `agent.binding.configuration.changed.v1` | AgentBinding / AgentBindingService | Versioned non-secret configuration/default-session-option digests and declared credential slot IDs only; no SecretRefs, secret bytes, native config, or endpoint locators |
-| `agent.session.starting.v1` | AgentSession / AgentSessionStore | Conversation storage operation atomically reserves the turn-pinned eligible host, snapshot, event, and principal-scoped receipt as STARTING; no native handle and no readiness claim |
-| `agent.session.started.v1` | AgentSession / AgentSessionStore (Conversation) or AgentSessionSupervisor (Task planning) | Conversation activation atomically commits ACTIVE session, RUNNING turn, both aggregate snapshots/events, and the local host binding; Task first-planning activation also transitions Task to RUNNING. Payload excludes native handles. |
+| `agent.session.starting.v1` | AgentSession / AgentSessionStore | Conversation storage operation atomically reserves the turn-pinned eligible host, snapshot, event, and principal-scoped receipt as STARTING; Task admission binds the public Environment ID after provider attestation. No native handle, attestation body or readiness claim. |
+| `agent.session.started.v1` | AgentSession / AgentSessionStore (Conversation) or AgentSessionSupervisor (Task) | Conversation activation atomically commits ACTIVE session, RUNNING turn, both aggregate snapshots/events, and local host binding; Task activation also transitions Task to RUNNING while preserving the admitted Environment identity. Payload excludes native handles and private attestation. |
 | `agent.session.lost.v1` | AgentSession / AgentSessionStore or supervisor recovery | Expected-version settlement of a stranded STARTING session; Conversation turn state remains unchanged |
 | `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
 | `delegation_profile.*.v1` | DelegationProfile / DelegationProfileService | Profile revisions/status replicate; provider-native option values remain opaque, non-secret adapter-owned values |

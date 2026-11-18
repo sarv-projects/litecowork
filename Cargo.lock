@@ -1376,6 +1376,7 @@ dependencies = [
 name = "linux-process-scope"
 version = "0.1.0"
 dependencies = [
+ "rustix",
  "tempfile",
 ]
 
@@ -1437,6 +1438,7 @@ version = "0.1.0"
 dependencies = [
  "domain-environment",
  "hex",
+ "rustix",
  "serde_json",
  "sha2",
  "storage-core",

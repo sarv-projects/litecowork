@@ -105,6 +105,7 @@ struct ConversationApiState {
     store: SqliteWorkspaceStore,
     principal_id: String,
     runtime_id: String,
+    local_incarnation_id: String,
     supervisor: Option<Arc<crate::agents::AgentSessionSupervisor>>,
 }
 
@@ -114,6 +115,7 @@ impl FromRef<ApiState> for ConversationApiState {
             store: state.store.clone(),
             principal_id: state.principal_id.clone(),
             runtime_id: state.runtime_id.clone(),
+            local_incarnation_id: state.local_incarnation_id.clone(),
             // The Operator's single process-lifetime supervisor, never a new one: the
             // Stop registry must be the same map the admitted turn registered into.
             supervisor: Some(Arc::clone(&state.supervisor)),
@@ -193,6 +195,7 @@ pub(super) fn test_router(
             store,
             principal_id,
             runtime_id,
+            local_incarnation_id: String::new(),
             supervisor: None,
         })
 }
@@ -202,6 +205,7 @@ pub(super) fn test_router_with_supervisor(
     store: SqliteWorkspaceStore,
     principal_id: String,
     runtime_id: String,
+    local_incarnation_id: String,
     supervisor: Arc<crate::agents::AgentSessionSupervisor>,
 ) -> Router {
     routes_with_state::<ConversationApiState>()
@@ -210,6 +214,7 @@ pub(super) fn test_router_with_supervisor(
             store,
             principal_id,
             runtime_id,
+            local_incarnation_id,
             supervisor: Some(supervisor),
         })
 }
@@ -1154,7 +1159,14 @@ async fn submit_conversation_turn(
         let tid = turn.turn_id.clone();
         let cor = correlation_id.clone();
         crate::agents::turn_coordinator::AgentTurnCoordinator::new(supervisor.clone())
-            .dispatch_admitted_turn(&principal_id, &workspace_id, &conversation_id, turn, &cor);
+            .dispatch_admitted_turn(
+                &state.local_incarnation_id,
+                &principal_id,
+                &workspace_id,
+                &conversation_id,
+                turn,
+                &cor,
+            );
 
         let receipt = ConversationTurnReceipt {
             turn_id: tid,
@@ -1366,6 +1378,7 @@ async fn retry_conversation_turn(
     if let Some(ref supervisor) = state.supervisor {
         crate::agents::turn_coordinator::AgentTurnCoordinator::new(supervisor.clone())
             .dispatch_admitted_turn(
+                &state.local_incarnation_id,
                 &state.principal_id,
                 &workspace_id,
                 &conversation_id,

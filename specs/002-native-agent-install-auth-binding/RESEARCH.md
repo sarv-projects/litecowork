@@ -49,7 +49,7 @@ Reject:
 - Local inventory probes bounded version/path metadata; auth is UNKNOWN and readiness NOT_PROBED. No native AgentModule install/update action exists.
 - Profile probing supports Codex/OpenCode after local Runtime enrollment. Codex App Server initialize/account/model-list is observed. OpenCode offer admission is now computed; only exact 2.0.32 plus a complete probe and observed host stop is bindable in code. Neither profile probe proves an end-to-end Conversation session.
 - Descriptor GET/refresh is served for the trusted OpenCode module, using a validated descriptor and the table already present since migration 16. Module-less profiles still return 503. The per-module three-per-minute budget is in-memory, so restart resets the throttle.
-- Credential submission remains 503 before SecretStore mutation: the production path uses `NoAgentDescriptorSource`, and durable idempotency/reconciliation is not implemented. No current module declares a LiteCowork-owned credential slot.
+- Credential submission remains 503 before SecretStore mutation: the production path now reads the fresh module descriptor through `StoredAgentDescriptorSource`, but durable idempotency/reconciliation is not implemented. No current module declares a LiteCowork-owned credential slot.
 - Auth-begin and native-config-open are served through authenticated ID-only Tauri commands, but the production launcher/opener fail closed; OpenCode declares no auth method or native-config target. Auth observations are in-memory and restart to UNKNOWN.
 - Binding list/create/enable/disable/default actions are served. Enable checks a fresh descriptor revision when the profile's module declares one; the legacy module-less path remains outside that gate.
 - The Conversation supervisor dispatches OpenCode, not Codex. The OpenCode profile offer can now be compatible under the exact predicate, but local/integrated/qualified provider execution evidence is still absent from the package's release row.
@@ -68,7 +68,7 @@ Adopt the compact interaction hierarchy only: agent/profile identity, searchable
 
 The OpenBot package declares PolyForm Noncommercial 1.0.0 and its README describes a development preview with danger-full-access / approvalPolicy never. No code or permission model is reused. Full source pin and limitations: [OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md](../../docs/OPENBOT-REFERENCE-IMPLEMENTATION-STUDY.md).
 
-LiteCowork's model/effort picker remains target-only until fresh AgentControlDescriptor read/refresh, adapter compatibility, account scope, and an exact native Conversation/Task send path are all qualified. Existing discovery/profile/binding evidence does not establish that a selected model is dispatchable.
+LiteCowork's model/effort picker remains unavailable: fresh-descriptor session-options and harness-capability projections are served, but there is no Tauri/UI consumer or Conversation admission revalidation. Adapter compatibility, account scope and an exact native Conversation/Task send path still require qualification. Existing discovery/profile/binding evidence does not establish that a selected model is dispatchable.
 
 
 ## Claude Code CLI as the second module (B-11, accepted 2026-11-09)

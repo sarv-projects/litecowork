@@ -115,7 +115,7 @@ edges:
     to: "turn-coordinator"
     kind: "post-commit dispatch handoff"
     implementation_status: "PARTIAL CODE: submit and retry invoke dispatch_admitted_turn after the durable storage commit; exact same-Runtime attempt replays are suppressed before setup by the supervisor owner guard"
-    contract: "admitted turn and correlation ID; per-Runtime exact-attempt owner prevents duplicate pre-claim setup; durable supervisor intent CAS remains cross-process authority and precedes STARTING; first-send intent on an unselected New Chat does not reach this edge"
+    contract: "admitted turn, correlation ID and local Runtime incarnation; per-Runtime exact-attempt owner suppresses duplicates; durable intent CAS precedes host/binding/profile preflight; only the confirmed claimant may settle setup failures, and a losing/ambiguous claim is left for recovery; first-send intent on an unselected New Chat does not reach this edge"
   - id: "e23"
     from: "desktop-ui"
     to: "operator"
@@ -244,6 +244,12 @@ edges:
     kind: "bounded-attempt-scoped-provider-command"
     implementation_status: "PARTIAL CODE: an attempt-scoped bounded mailbox is registered after native session creation; the active adapter callback drains it immediately before each provider poll and remains sole owner of OpenCodeServer. The handler never receives the server handle or credentials. Focused native-Windows permission state/route coverage is recorded in CURRENT-RUN; it includes synthetic idempotency, pending-list reconciliation, bounded snapshots and owner-scope denial cases; no successful reply to a real provider is tested. Runtime restart discards the mailbox/registry and does not replay decisions"
     contract: "Resolve opaque prompt token and idempotency decision inside the Runtime; send only exact native session/request IDs plus the closed once/reject enum over an in-process channel; adapter returns acknowledged or reconciled outcome without automatic replay"
+  - id: "e29"
+    from: "desktop-ui"
+    to: "operator"
+    kind: "authenticated-resource-page-read"
+    implementation_status: "CODE/SERVED: the composer invokes the existing Tauri list_resources command and follows returned nextCursor pages; it merges eligible same-Workspace text Resources by Resource ID while retaining the first-seen pinned revision, keeps prior results/cursor after a later-page failure for retry, invalidates stale work on close/scope change and stops cursor loops. Cursor-size validation matches the daemon's 2,048-byte UTF-8 limit. Attachment helper tests (6/6), the Conversation source-route guard (7/7) and UI build pass; no mounted-picker network/retry interaction or provider/packaged qualification is established"
+    contract: "GET /v1/resources through the validated local Operator connection; X-Workspace-ID, limit=100 and optional opaque cursor; read-only listing does not grant attachment authority, which is rechecked for exact Resource revision at submit and dispatch"
 transactions:
   - id: "tx-conversation-create"
     owner: "Operator route via Storage (target owner: ConversationService)"
@@ -302,8 +308,8 @@ external_boundaries:
 recovery:
   owner: "Runtime startup recovery with Storage (target orchestration owners: AgentTurnCoordinator / ConversationService)"
   source_of_truth: ["AgentSession", "ConversationTurn", "DomainEvent", "AgentSessionHostBinding"]
-  implementation_status: "PARTIAL CODE: runtime startup invokes agents/conversation_recovery.rs before Operator admission; tests cover seeded RUNNING/CANCEL_REQUESTED/OPEN-UNCLAIMED states, a CLAIMED intent after settlement failure, prior-incarnation RUNNING + ACTIVE AgentSession recovery to FAILED/LOST with binding release, an orphan STARTING -> LOST with turn/intent settlement and idempotency, and a real SQLite final-response commit followed by a new-incarnation recovery sweep that preserves the AGENT answer and exact replayable receipt. A-104: startup does not reconcile prior-incarnation AgentHostInstance process rows; OpenCode's persisted process identity is PID-only. Exact failed-turn UI/Retry projection, host-process reconciliation, the full crash-window matrix, and real process-kill or packaged restart qualification remain open"
-  known_gap: "Live provider quiescence, crash/restart and packaged recovery qualification remain open"
+  implementation_status: "PARTIAL CODE: runtime startup invokes agents/conversation_recovery.rs before Operator admission; tests cover seeded RUNNING/CANCEL_REQUESTED/OPEN-UNCLAIMED states, a CLAIMED intent after settlement failure, prior-incarnation RUNNING + ACTIVE AgentSession recovery to FAILED/LOST with binding release, an orphan STARTING -> LOST with turn/intent settlement and idempotency, and a real SQLite final-response commit followed by a new-incarnation recovery sweep that preserves the AGENT answer and exact replayable receipt. Workspace catalog enumeration errors now increment the Conversation recovery failure count; a shared list_workspaces() failure also yields EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED and CONVERSATION_SESSION_RECOVERY_FAILED, persisted as DEGRADED before Operator admission. CODE regressions: conversation_session_recovery_reports_workspace_enumeration_failure and startup_workspace_enumeration_failure_persists_recovery_blockers. A-104: startup does not reconcile prior-incarnation AgentHostInstance process rows; OpenCode's persisted process identity is PID-only. Exact failed-turn UI/Retry projection, host-process reconciliation, the full crash-window matrix, and real process-kill or packaged restart qualification remain open"
+  known_gap: "Live provider quiescence, crash/restart and packaged recovery qualification remain open; Settings displays a degraded lifecycle and blockers but Conversation Send eligibility consumes Operator readiness without consuming lifecycle recoveryState/executionReady"
   restart_action: "Settle prior-incarnation unsettled intents FAILED with RUNTIME_RESTARTED, release orphan STARTING sessions LOST; never replay uncertain prompt across incarnation"
-  ui_action: "resume durable projection cursor and authorized snapshot; discard non-replayable transient frames"
+  ui_action: "On startup, resume the durable projection cursor and authorized snapshot; discard non-replayable transient frames. Settings > Runtime > Refresh Status reads Runtime status and, when available, the identity-scoped lifecycle snapshot and safe blocker hints. Current Conversation Send still checks Operator readiness rather than the lifecycle recovery state; it is not fail-closed on DEGRADED"
 

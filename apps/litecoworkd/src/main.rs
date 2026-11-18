@@ -26,6 +26,11 @@ mod environment_office_qualification;
 // Environment provider capability, budget admission, and lifecycle guards.
 #[allow(dead_code)]
 mod environment_provider;
+// Linux Bubblewrap request mapping. This prepares an OS launch plan but does not by
+// itself provision, attest, admit, or dispatch a Task Attempt.
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+mod linux_environment_provider;
 mod local_filesystem;
 mod operator;
 #[cfg_attr(not(test), allow(dead_code))]

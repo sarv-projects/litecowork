@@ -1,47 +1,59 @@
 # API and Event Contract - Feature 016
 
-**Status:** IN_REVIEW - authored for owner review; does not authorize implementation. Links to global owners are normative.
+**Status:** IN_REVIEW, revision 0.4 TARGET proposal. The owner selected Saved Views for V1; Feature 007's B-21/B-30 contract is drafted, while cross-owner review and whole-scope T01/T02 remain open. This file does not authorize implementation.
+**Canonical owners:** [Operator OpenAPI](../../../docs/schemas/operator-api.openapi.yaml), [operator stream schema](../../../docs/schemas/operator-stream.schema.json), [domain events](../../../docs/schemas/domain-event.schema.json), [RichPresentation schema](../../../docs/schemas/rich-presentation.schema.json), [presentation intent schema](../../../docs/schemas/presentation-intent.schema.json), and Feature 001/007/008/011 contracts.
 
-## 1. Existing served routes
+## 1. Existing routes and evidence
 
-| Method and path | Handler | Behaviour |
+| Method and path | Handler | Current evidence and behavior |
 |---|---|---|
-| `GET /v1/rich-presentations/{presentation_id}` | `get_rich_presentation` in `apps/litecoworkd/src/presentation_operator.rs` | Workspace-owner check (403 `FORBIDDEN`), id validation (400 `INVALID_ARGUMENT`), read through `SqliteRichPresentationStore::read_rich_presentation` (500 `INTEGRITY_FAILURE` on failure), size recheck; returns the envelope with `workspace_id, conversation_id, message_id, presentation_id, schema_version, renderer_contract_version, semantic_content_digest, document_digest, document_size_bytes, document` |
-| `GET /v1/conversations/{conversation_id}/presentation` | `get_conversation_presentation` | Conversation presentation snapshot with message and presentation references |
-| `POST /v1/stream` | `subscribe_stream` | Frames `stream.ready`, `projection`, `stream.resync_required`; content type `application/vnd.litecowork.operator-stream+json` |
+| `GET /v1/rich-presentations/{presentation_id}` | `get_rich_presentation` in `apps/litecoworkd/src/presentation_operator.rs` | SERVED read: Workspace-owner check, identifier validation, storage read, size recheck and immutable message-bound envelope. No production writer is wired. |
+| `GET /v1/conversations/{conversation_id}/presentation` | `get_conversation_presentation` | SERVED projection containing committed message and presentation references. |
+| `POST /v1/stream` | `subscribe_stream` | SERVED stream: `stream.ready`, `projection`, `stream.resync_required`; not a rich-component draft stream. |
+| Tauri `get_rich_presentation` | `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs` | CODE bridge validates the response before returning it to the WebView. |
 
-Tauri: `get_rich_presentation` in `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs` checks the envelope with `valid_rich_presentation_response` before returning it to the WebView.
+The current Rust and TypeScript validators admit five block kinds and the same 512 KiB bound. This is partial CODE evidence, not the proposed renderer v2 profile, publication journey or provider integration.
 
-## 2. Baseline: no new public route
+## 2. Candidate contract promotions (T02, after T25/T01)
 
-Publishing is daemon-internal (binder after commit). Media ingestion is daemon-internal and creates Artifacts through Feature 007, whose routes serve them. This package adds no desktop-callable write route; a rendered element therefore has nothing to call.
+T02 must reconcile the accepted proposal with the owner documents and promote the exact profile in existing canonical schemas. It must not create a Feature 016-only route/event/schema authority.
 
-## 3. Schema changes (accepted target, promoted by T02)
+- **RichPresentation:** versioned closed component registry; semantic-source bindings; exact metric measure/unit/scale/time/aggregation; registered local inputs; bounded deterministic calculation; producer/source identity; immutable message binding; complete semantic fallback.
+- **Presentation intent:** one model/provider-visible input shape mapped by a trusted adapter to the host-normalized intent. Host scope, message/session identities, authorization, sequence, retry and replay identity are host-derived. A-85 remains open until T20 proves exact ingress and sequence/replay semantics.
+- **Events/errors:** bounded ids, digest, version and reason only; no text, credentials, native handles, private transcript or input-state values in events/logs. Existing event names and error-code owners govern any additions.
+- **Feature 007 Saved View:** Feature 007 owns media/type, create, exact-version read, immutable update from a new committed presentation, archive, Library projection, idempotency receipt, retention and recovery. The user decision is recorded; detailed contract and API promotion remain pending. Feature 016 does not mint a second API. Saved Views preserve declared defaults only; transient changed calculator values are not persisted or sent under B-40.
+- **Feature 008 Canvas:** expansion is host navigation/controller reuse; no new Feature 016 route.
+- **Feature 001 modification:** explicit preview followed by the ordinary Conversation send API and its existing idempotency/turn contract; no presentation-specific send API.
 
-- `docs/schemas/rich-presentation.schema.json`: renderer contract version 2 adds `SAFE_CALCULATOR`; a V1 allowlist profile names TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE, CHART, SAFE_CALCULATOR; CHART binding limited to a semantic table slice; `chart_kind` limited to BAR, LINE, AREA in the V1 profile.
-- `docs/schemas/calc-ast.schema.json` (new): node kinds LITERAL, VARIABLE, BINARY_OP, UNARY_OP, FUNCTION; at most 64 nodes, depth 12.
-- `docs/schemas/presentation-intent.schema.json`: current schema has no calculation variant. T02/T20 must promote the bounded calculation intent before SAFE_CALCULATOR proposals. CHART_FROM_RESULT requires an actual authorized invocation/result; semantic Markdown table charts are deterministic host derivation, never a fabricated invocation.
+## 3. Events and publication boundary
 
-## 4. Events
+Existing `rich.presentation.published.v1` identifies the committed message and presentation by ids, schema/renderer versions, semantic/document digests, size and permitted producer metadata. Existing event contract remains authoritative.
 
-Existing: `rich.presentation.published.v1` (`presentation_id`, `conversation_id`, `message_id`, `schema_version`, `renderer_contract_version`, `semantic_content_digest`, `document_digest`, `document_size_bytes`, `producer_agent_session_id?`, `host_instruction_digest?`, `host_skill_refs[]`, `aggregate_version`).
+`rich.presentation.rejected.v1` and presentation intent acknowledgements remain TARGET until T02/T20 promote exact names and fields in `docs/EVENTS.md` and canonical schemas. If adopted, they contain ids, schema/version and a closed rejection reason only. Publishing occurs only after semantic settlement and must be idempotent for an exact message/turn/retry identity. Partial stream candidates are not durable presentations.
 
-Accepted target: `rich.presentation.rejected.v1` (`conversation_id`, `message_id`, `binder_version`, `reason`). Media Artifacts use the Feature 007 Artifact events.
+## 4. No new public routes are currently served
 
-## 5. Errors
+No RichPresentation production publisher is mounted. No route exists for Remember/Forget state or Saved View create/open/update/archive. Saved View operations are Feature 007-owned and remain TARGET until T01/T02 promotion and owner implementation; they are not Feature 016 routes. Candidate Remember/Forget route shapes are design notes only; T22 must either promote exact canonical OpenAPI/event/state contracts or remove that separate operation before implementation.
 
-Accepted target codes: `PRESENTATION_REJECTED` (internal, with `reason`), `MEDIA_TYPE_UNSUPPORTED`, `MEDIA_TOO_LARGE`. These never reach the user as a failed answer; they are counted and the semantic text is shown.
+Use only Feature 007's owner routes and receipts defined in its Saved View contract. Do not guess route names from this package, call SQLite from React, or treat a successful UI click as a durable write. No hard-delete operation or session-state snapshot is in the V1 Saved View contract.
 
-## 6. Security contract
+## 5. Error and fallback mapping
 
-No route, frame or event carries model HTML, scripts or URLs to be fetched. Documents carry no actions or citations in V1.
+| Condition | Required semantic result |
+|---|---|
+| Invalid/unknown presentation schema or block | Keep complete semantic answer; accepted per-block fallback may render safe siblings. |
+| Missing or conflicting metric binding | Table or clarification, never an inferred numeric claim. |
+| Unsupported provider ingress, replay or wrong scope | Refuse candidate; preserve answer and do not dispatch a host action. |
+| Remembered-state conflict or unavailable storage | Keep local draft and show truthful state; reconcile ambiguous receipt before retry. |
+| Saved View denial, missing exact version or corrupt content | Show unavailable; never substitute a moving head or expose stale protected data. |
+| Feature 001 send timeout | Use the exact ordinary Conversation request receipt/reconciliation; do not create a second turn. |
 
-## 7. Revision 0.2 TARGET interfaces (not served)
+Canonical error identifiers and wire responses are assigned by their owning schemas/API contracts in T02/T20/T22/T23, not invented here.
 
-[Pipeline LLD](../../../docs/ACP-PRESENTATION-PIPELINE-LLD.md) sections 3 and 7 specify scope, budgets, receipts and transactions. `litecowork.presentation.propose` remains ephemeral and creates no domain write/Effect/CapabilityInvocation. Exact native structured carrier or optional first-party MCP exposure is AgentModule/version-qualified; current ACP sends no MCP servers and normalizes no presentation object. Tool observations are not callable host methods.
+## 6. Security and ownership
 
-**A-85 unresolved:** the canonical intent schema requires `submitted_at_sequence`, while the pipeline says proposal sequence is host-assigned. No model-visible MCP `inputSchema`, trusted sequence source/replay identity or complete typed acknowledgement contract is promoted. This proposal tool is not exposed until T20 resolves the model-input-to-normalized-intent mapping in the owning canonical schema. Do not add an API route for this MCP tool or a feature-local duplicate schema.
+No route, frame or event carries model HTML, scripts, CSS, fetchable URLs, secrets, native handles or a callable model-authored action. ACP content/tool events are untrusted provider output; ACP does not itself provide this UI contract or a universal subagent feed. A future supported ingress must be adapter/version-qualified, correlated, bounded and normalized into the single canonical RichPresentation profile. The renderer is a passive registered host UI; only explicit host-owned controls call owner routes.
 
-Candidate route names for promotion by T22 (not added to OpenAPI or served inventory until reviewed): `GET`, `PUT`, `DELETE /v1/rich-presentations/{presentation_id}/interaction-state`; typed Tauri get/update/forget commands. Principal/device and exact Workspace/message/document namespace are host-derived; update includes expected revision, RequestId, body digest and allowlisted inputs. Read reauthorizes; writes require ACTIVE scope; forget advances a deletion fence. Proposed response distinguishes SAVED, CONFLICT, FORGOTTEN and unavailable; a timeout remains unresolved pending same-receipt reconciliation. Exact wire fields/status/error codes/event names require owner promotion in canonical schemas/OpenAPI/event registry before implementation. Do not treat these prose names as a second wire authority.
+## 7. Trace references
 
-State mutation events contain identity/revision/reason only, no input values. New conversational modification is a normal Feature 001 turn; host provenance pins parent presentation/base revision, and a resulting presentation belongs to a new message. No mutation/supersession of an existing immutable RichPresentation. Generic presentation action arrays remain empty; host-owned state/navigation/Send controls do not authorize Task/Effect/Approval operations.
+Read-only route behavior and current UI mapping are in [UI behavior](ui-behavior.md). State transitions and timeout/deletion behavior are in [Errors and recovery](errors-recovery.md). Proposed owner tasks are T02, T20-T24 and cross-owner gate T25. All proposed operations remain TARGET and unavailable until their owners accept, contracts are promoted, routes are served and exact UI journeys are qualified.

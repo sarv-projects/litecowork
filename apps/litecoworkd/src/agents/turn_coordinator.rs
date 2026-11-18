@@ -4,8 +4,9 @@
 //! The Operator admits a turn (the durable USER message, OPEN turn and dispatch intent
 //! commit atomically first, AC-001) and returns 202. It then hands the turn to this
 //! coordinator, which drives the `AgentSessionSupervisor` off the request path. The
-//! supervisor claims the durable dispatch intent before reserving a session, and the
-//! startup recovery sweep owns any intent a crash left behind (AC-022).
+//! supervisor claims the durable dispatch intent with the dispatching Runtime incarnation
+//! before host/binding preflight or session reservation. A losing or ambiguous claim
+//! cannot settle the turn; startup recovery owns any durable intent left behind (AC-022).
 
 use std::{io::Write, sync::Arc};
 
@@ -28,6 +29,7 @@ impl AgentTurnCoordinator {
     /// durable intent for startup recovery; this layer reports no error detail.
     pub(crate) fn dispatch_admitted_turn(
         &self,
+        local_incarnation_id: &str,
         principal_id: &str,
         workspace_id: &str,
         conversation_id: &str,
@@ -35,6 +37,7 @@ impl AgentTurnCoordinator {
         correlation_id: &str,
     ) {
         let supervisor = Arc::clone(&self.supervisor);
+        let local_incarnation_id = local_incarnation_id.to_owned();
         let principal_id = principal_id.to_owned();
         let workspace_id = workspace_id.to_owned();
         let conversation_id = conversation_id.to_owned();
@@ -43,6 +46,7 @@ impl AgentTurnCoordinator {
         tokio::spawn(async move {
             if let Err(error) = supervisor
                 .dispatch_turn(
+                    &local_incarnation_id,
                     &principal_id,
                     &workspace_id,
                     &conversation_id,

@@ -1,6 +1,6 @@
 # Research - Safe Task Path
 
-**Feature:** 005 | **Checked:** 2026-11-06; source crosswalk re-checked 2026-11-12. The older pinned rival-source review remains dated 2026-11-06.
+**Feature:** 005 | **Checked:** 2026-11-06; source crosswalk re-checked 2026-11-12; B-18 filesystem primitives and Task proposal handoff cross-checked on 2026-11-18. The older pinned rival-source review remains dated 2026-11-06.
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -23,6 +23,32 @@ Authorities: docs/TASK-RUNTIME.md, docs/ENVIRONMENTS.md, docs/TRUST.md, docs/DEL
 | OpenCowork path guard + VM bridges (`src/main/sandbox/path-guard.ts`, `lima-bridge.ts`, `wsl-bridge.ts`) | https://github.com/opencoworkai/open-cowork/blob/e94ee2c50239e64ba0e18921e339d49b93dae31f/src/main/sandbox/path-guard.ts | MIT at checked root LICENSE | Path-traversal/zip-slip guarding and VM isolation map directly to the ENFORCED filesystem-root dimension of `IsolationAttestation` and the confined-path write (AC-008/AC-009). | Prototype the path-guard checks against ENVIRONMENTS attestation; do not adopt the Electron sandbox as a second authority. |
 
 No OpenWork or OpenCowork code is imported; all three are prototype/reference inputs that reinforce the isolation-attestation and reconcile-before-retry contracts this slice already requires.
+
+### B-18 filesystem API cross-check (2026-11-18)
+
+| Primary source | Exact URL | Finding used for the design |
+|---|---|---|
+| Linux `openat2(2)` manual | https://man7.org/linux/man-pages/man2/openat2.2.html | `RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS` and `RESOLVE_NO_XDEV` provide handle-relative resolution constraints; unsupported flags or kernels must fail closed rather than fall back to path canonicalization. |
+| rustix 1.1 `openat2` | https://docs.rs/rustix/1.1.5/rustix/fs/fn.openat2.html | The workspace already pins rustix 1.1.5; the shared low-level crate can depend directly on the existing version for the Linux-only descriptor operations. |
+| Microsoft `NtSetInformationFile` and `FILE_RENAME_INFORMATION` | https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntsetinformationfile ; https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information | The implementation uses `FileRenameInformationEx` with `FILE_RENAME_REPLACE_IF_EXISTS`, a verified parent directory in `RootDirectory`, and a relative leaf. A native Windows regression verifies replacement stays rooted and preserves the expected content/security metadata. |
+| Microsoft `SetFileInformationByHandle` | https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle | Still used to copy supported file basic attributes; it is not the replacement rename path. |
+| Microsoft `ReplaceFileW` | https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew | `ReplaceFileW` preserves several target attributes and ACLs, but it is path-based and `REPLACEFILE_WRITE_THROUGH` is documented as unsupported; it is therefore not a safe replacement for the handle-relative boundary. |
+| Microsoft `MoveFileExW` | https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw | `MOVEFILE_WRITE_THROUGH` applies to the path-based operation; existing helper cannot be used as-is when the caller must remain bound to a held root/parent handle. |
+| Microsoft `CreateFile` write-through flags | https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea?redirectedfrom=MSDN | The Windows temp is opened through `NtCreateFile` with `FILE_WRITE_THROUGH`, its contents are flushed with `sync_all`, and replacement is allowed only on NTFS. Microsoft documents write-through as requesting that metadata changes (including rename changes) be flushed on NTFS; unsupported volumes fail closed. This is a platform contract relied on by the implementation, not native Windows Task qualification. |
+| Microsoft `FlushFileBuffers` | https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers | Flush requires a writable handle. The staged file is flushed before rename; Linux additionally fsyncs the parent directory. Windows relies on NTFS write-through semantics for rename metadata rather than claiming a portable directory-handle flush sequence. |
+
+The selected direction is to retain the root capability, walk/open children without following
+reparse points, preserve only explicitly supported metadata, and perform replacement through
+the held parent directory. Linux copies UID/GID, mode, POSIX access ACL and `user.*` xattrs,
+but rejects unknown/security xattr namespaces; the ACL copy branch remains unverified because
+available WSL filesystems returned `ENOTSUP` even for a disposable ext4 loop mount. Windows
+copies owner/group/DACL, DACL protection state and a closed set of DOS attributes, and fails
+closed outside NTFS. A pre-rename process-crash test terminates a child after the temp is
+flushed. Both paths recheck the base digest before rename, but this is not a filesystem CAS:
+external editors/native tools do not participate in LiteCowork's lease fence and can race the
+final rename. Ambiguous outcomes must be reconciled before retry. Windows Task provider
+qualification remains blocked by B-35 and does not follow from these primitive tests; neither
+platform has a served/integrated Task dispatch journey yet.
 
 ## Source, route and UI audit (2026-11-06)
 
@@ -83,6 +109,92 @@ The original crosswalk above is retained as dated research history and must not 
 - A Job Object gives process-tree lifetime (KILL_ON_JOB_CLOSE), active-process, memory and CPU limits. It confines nothing on the filesystem or network by itself (B-09 caveat).
 - Windows Filtering Platform filters can block outbound traffic for an AppContainer package SID.
 - Only the combination, with each dimension observed after launch, can satisfy the four-dimension attestation. Exact Windows builds, required privileges for WFP filter install and cleanup after crash are open items for the owner decision task.
+
+## Task candidate handoff source check (2026-11-18)
+
+- Local source: `apps/litecoworkd/src/agents/adapter.rs` defines the ACP Client `fs_read_text_file` and `fs_write_text_file` callbacks; the write callback is currently documented as a Client-mediated filesystem write. `apps/litecoworkd/src/agents/acp_client.rs` advertises those Client filesystem capabilities to an ACP agent. Neither callback is bound to a Task Attempt-private Environment or to the managed Resource lifecycle.
+- Local source: `crates/storage-core/src/lib.rs` already defines `Resource.provenance.created_by_attempt` in the canonical `ProvenanceRecord`; the Resource revision and its content digest are immutable. `docs/schemas/domain-event.schema.json` permits that provenance in the existing `resource.created.v1` payload. Therefore a Task proposal can preserve Attempt provenance without inventing a proposal table or changing the Resource event.
+- Local source: `crates/storage-sqlite/src/trust.rs` checks the exact managed candidate location/digest/size and requires `resources.provenance_json.created_by_attempt = attempts.attempt_id`; native-Windows T07 focused tests pass 4/4, including absent and foreign Attempt provenance. This is grant-issue CODE with no production caller or file dispatch, as recorded in CURRENT-RUN.md.
+- Decision for revision 1.1 implementation: use a Runtime-owned, protocol-neutral capture service after the exact worker process tree is observed QUIESCENT. The provider returns the one accepted-Step output as bounded bytes through a private Attempt/Environment/current-incarnation channel. Runtime computes the digest and creates the Resource; Trust verifies the Resource provenance before grant issue. ACP `fs/write_text_file` is not repurposed, since that would change its current Client-write meaning and could bypass user review.
+- Limitation at the time of this source check: the Bubblewrap launch plan kept generated files on a bounded private `/workspace` tmpfs and did not expose a host output directory; no provider output-export channel or daemon Task caller existed then. The T04 source implementation check below records the lower-level channel code added afterward. Candidate capture, approval and file dispatch remain unavailable until a daemon caller and qualified provider use it.
+
+### T04 output-channel design review (2026-11-18)
+
+The post-exit reader idea was rejected after tracing mount lifetime: once the Bubblewrap
+process tree exits, its private `/workspace` tmpfs and candidate inode are gone. Keeping a
+collector alive in the same cgroup prevents the existing recursive cgroup `populated 0`
+proof; binding the host output directory into the worker violates the Environment boundary.
+Passing a fresh host file descriptor through the current `systemd-run --scope` → scope gate
+→ Bubblewrap launch is not an existing contract, and would introduce a second launch/FD
+handoff path that T04 has not qualified.
+
+The selected revision 1.1 implementation proposal uses the current scope stderr pipe as a
+Runtime-private framed channel. The packaged scope-gate binary's explicit `--attempt-runner`
+mode starts the native harness with
+stdin/stdout unchanged and stderr captured separately. The runner acts as a child
+subreaper, hides its own `/proc` descriptors from the child, waits for all harness
+descendants, reads one fixed candidate from the bounded private tmpfs with no-follow
+semantics, and emits one versioned bounded frame. The Runtime can parse the frame while
+the runner is alive, but only returns candidate bytes after the independent cgroup-v2
+quiescence observation. This retains ordinary file semantics for the harness, avoids
+exposing a socket or host path, keeps the candidate within the existing scratch cap, and
+keeps the accepted Workspace target out of worker-controlled output.
+
+The design is not yet accepted across Environment/Security/Task Runtime owners. The exact
+Bubblewrap build and packaged runner hash remain release evidence. Source checks used:
+
+- Bubblewrap v0.8.0 source/tag (4ab175f): its help includes `--ro-bind`/`--bind` and has
+  no `--bind-fd`; the selected channel does not depend on a newer FD-bind option:
+  [bubblewrap v0.8.0 source](https://github.com/containers/bubblewrap/blob/v0.8.0/bubblewrap.c).
+- Ubuntu 24.04 Noble package metadata currently lists Bubblewrap 0.9.0-1ubuntu0.3; this
+  is reference metadata, not the V1 release pin:
+  [Ubuntu Noble Bubblewrap source package](https://packages.ubuntu.com/eu/source/noble/bubblewrap).
+- Linux man-pages specify that `PR_SET_CHILD_SUBREAPER` reparents orphaned descendants to
+  the nearest living subreaper and makes them waitable; this is a collection aid, not a
+  substitute for cgroup evidence:
+  [PR_SET_CHILD_SUBREAPER(2)](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html).
+- Linux man-pages specify that `SO_PEERCRED` returns the peer credentials at connection
+  time. This approach was not selected because exposing a socket path to the worker would
+  require a more complex origin/permission boundary than the existing stderr pipe:
+  [unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html).
+
+The v0.8.0 and Noble references establish only command availability. They do not prove the
+target Linux kernel, cgroup-v2, tmpfs, user-namespace, systemd, packaged runner or provider
+behavior. Native Linux T04 and packaged Task qualification remain required.
+
+### T04 source implementation check (2026-11-18)
+
+The active code now includes `--cap-drop ALL` in the Bubblewrap command plan, a trusted
+`--attempt-runner` mode in the packaged scope gate, descriptor-relative fixed proposal
+reading with no-follow/regular-file/single-link/size checks, and the source-defined
+versioned `LCOW` frame writer/parser. The format uses a 10-byte header, 1 MiB maximum
+candidate, 4 KiB maximum log frame and 64 KiB cumulative log payload. WSL 24.04 CODE
+checks passed for the process-scope package (36 library tests and 4 runner tests) and
+staging crate (38 tests). The daemon has a private launch-plan mapper with 5 focused tests.
+It checks the persisted ready Attempt-private Environment against Task, Attempt,
+Runtime/incarnation and Workspace identity; compares exact staged Resource, revision and
+content-digest pins; and converts only supported resource limits. A private capture session
+connects the plan to `spawn_bubblewrapped`, preserves native harness stdin/stdout, drains
+the candidate channel concurrently, and releases parsed bytes only after `ManagedScope`
+reports recursive quiescence and launcher reap. Three fake-scope tests cover withholding
+and retry, failed exchange, nonzero-exit retry denial, and cancellation. A nonzero exit
+drains and discards the frame and remains terminal when the retained session is retried;
+only an unknown/quiescence-timeout result may retry collection on the same scope. A separate
+opt-in WSL integration test starts the locally built runner as PID 1 in direct Bubblewrap,
+blocks child frame forgery, waits for a delayed reparented descendant, and parses one
+candidate. It bypasses the daemon helper, `ManagedScope`, and systemd/cgroup supervision.
+The helper still has no production Task Runtime caller: no candidate was correlated with
+durable Attempt state, and no Resource revision or attestation was created. The frame source
+remains private process transport, not a new public API or event. Seven pre-existing
+Bubblewrap/systemd checks and the new direct runner test are ignored by default on this WSL
+host; only the direct test was explicitly run. Native Linux Bubblewrap/systemd qualification
+remains open.
+
+### T04 Bubblewrap `/tmp` scratch mapping correction (2026-11-18)
+
+- The production `prepare_bubblewrap_command` output initially used `--bind /workspace/tmp /tmp` to share the bounded workspace tmpfs. Running that exact command under the available WSL Bubblewrap 0.9.0 reproducibly failed before worker exec with `Can't find source path /workspace/tmp`, because `--bind` resolves its source from the host namespace rather than from the mount tree being assembled.
+- The builder now uses Bubblewrap's `--symlink /workspace/tmp /tmp`, which creates the link inside the sandbox. A minimal WSL 24.04 reproduction succeeded, and the opt-in production-builder regression verifies the exact 1 MiB tmpfs readback, writes through both `/workspace/outputs` and `/tmp`, and observes `ENOSPC` against the shared quota.
+- This is CODE for the command builder and tmpfs behavior under WSL only. It does not prove the released Bubblewrap version, Environment-config-to-builder mapping, systemd/cgroup supervision, native Linux behavior, attestation, Attempt admission or Task integration. Keep T04 PARTIAL and do not mark an Environment dimension ENFORCED from this probe.
 
 ## Unresolved questions
 

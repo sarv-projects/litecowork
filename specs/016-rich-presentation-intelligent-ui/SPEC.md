@@ -1,38 +1,43 @@
-# Feature Specification - Rich Presentation, Intelligent UI and Generated Media
+# Feature Specification - Intelligent Workspace Presentation Runtime
 
-- **Feature ID:** 016 | **Status:** IN_REVIEW | **Revision:** 0.2 (proposed)
-- **Owner acceptance:** the V1 baseline AC-001..AC-019 remains pending owner acceptance (TASKS 016-T01). B-40 was accepted as proposed by the owner (sarv-projects) on 2026-11-10; that decision did not accept the full baseline or section 19. Revision 0.2 section 19 / AC-020..AC-028 is a separate TARGET proposal under A-84 and needs an independent owner decision at T25 before contract promotion or implementation.
+- **Feature ID:** 016 | **Status:** IN_REVIEW | **Revision:** 0.4 (proposed)
+- **Owner acceptance:** revised V1 scope AC-001..AC-041 is a TARGET proposal and requires explicit owner acceptance at T01. B-40 was accepted as proposed on 2026-11-10; it preserves bounded SAFE_CALCULATOR with transient-only values and the PREVIEW_ONLY executable Artifact posture. On 2026-11-17 the owner directed that Saved Views remain in V1 and Feature 007 B-21 be amended. The Saved View contract is drafted, but cross-owner review and T01/T02 remain open. Nothing in this revision authorizes implementation.
 - **Change control:** after acceptance this becomes a locked contract; any later change needs a new revision and renewed owner approval (SPECIFICATION-STANDARD section 7).
-- **Target:** LiteCowork V1 local desktop: master plan P10 "Intelligent UI and media", build tasks BT-06.3, BT-06.4 and BT-06.5, E2E-11 "Rich UI response with presentation disabled", release contract section 4 "Workbench and deliverables".
+- **Target:** LiteCowork V1 local desktop: master plan P10 "Intelligent UI and media", build tasks BT-06.3, BT-06.4 and BT-06.5, E2E-11 "Rich UI response with presentation disabled", release contract sections 3-4 "product areas" and "Workbench and deliverables". The revised proposal extends the conversational answer into a bounded interactive view, a contextual Canvas and a Library-backed Saved View; it does not turn LiteCowork into a hosted model router or executable app platform.
 - **Release rows:** Windows 11/10 `x86_64-pc-windows-msvc` with OpenCode v2.0.32 first, Linux x86_64 second. Nothing in this package needs an Environment provider, so both rows can qualify; the Interactive Artifact Runtime stays PREVIEW_ONLY on both rows in V1.
 - **Owners:** Presentation Runtime, Conversation, Artifacts, Storage, Operator/API, Desktop UI, Security, Accessibility, Product.
-- **Dependencies:** Feature 001 (committed semantic AGENT message is authoritative), Feature 007 (atomic Artifact create with provenance, Conversation association), Feature 011 (WebView CSP, local display preferences, IPC), Feature 019 (CSP audit, release rows).
+- **Dependencies:** Feature 001 (committed semantic AGENT message is authoritative; ordinary Send and producer identity), Feature 003/006 only for exact authorized data sources, Feature 007 (Artifact create/version/Library lifecycle and Saved View compatibility), Feature 008 (contextual Workbench Canvas), Feature 011 (CSP, display preferences and authenticated IPC), Feature 014 (Conversation retention/deletion), Feature 017 (backup/restore), Feature 019 (CSP audit and release rows).
+
+> **Revision authority:** Sections 1-18 retain the earlier technical baseline and AC-001..AC-019 for history and traceability. Section 19 is historical. Section 20 is the current revision 0.4 TARGET proposal and supersedes earlier text where scope conflicts; it does not override global owner contracts or authorize code. The owner has decided to keep Saved Views in V1; T25 cross-owner review and T01 whole-scope acceptance must close before T02 promotes the full profile.
 
 ## 1. Problem and user outcome
 
-LiteCowork answers are committed semantic messages. A RichPresentation is an optional, display-only projection that makes an answer easier to read (cards, callouts, tables, a chart), and generated images are files the user can keep. Today the pieces exist and the two validators agree: the desktop TypeScript validator and the Rust storage validator both accept the five V1 block kinds (TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE) under one 512 KiB document cap, which the served wire schema carries too. Nothing in production publishes a RichPresentation, charts and images have no renderer, and there is no Intelligent UI component. P10 asks for a typed, validated, accessible path in which malicious presentation can never mint host state or authority, and in which the semantic answer stays complete when rendering is disabled.
+LiteCowork's product direction is one local, conversation-first workspace that can present supported work as readable answers, analysis, deliverables and safe interactive views. The current RichPresentation is an immutable, message-bound display projection, but the runtime is not yet an end-to-end experience: validators accept five block kinds, while no production publisher exists and chart, calculator, saved-view and Canvas paths are not integrated. The design must serve native agents that only return text as well as exact routes that can provide qualified structured intent. It must keep semantic content authoritative, map all optional structure into one validated host-owned format, and preserve a complete answer if any presentation path is missing, disabled, invalid or interrupted.
 
-**Outcome:** the user sees a well-formatted answer with tables, a chart that always has an equivalent data table, and one interactive "what-if" calculator whose numbers come from the answer itself. Turning rich presentation off, or any validation failure, shows the full original text. A generated image appears as a Library Artifact with its source Conversation and turn. Interactive app Artifacts open as an inert preview; nothing runs in the chat WebView.
+**Outcome:** the user can move from a readable answer to a registered interactive view and expand that same view into the right-side Workbench Canvas. When a committed response has grounded data, LiteCowork can present accessible tables, accurately labelled metrics, charts with data-table fallback and bounded local calculations. The proposal adds separate explicit controls to remember inputs on this device, save a reusable view to Library, reopen its exact version, update by appending a reviewed version, and ask for a conversational change through an ordinary new turn. Those host actions are not component actions and require renewed owner decisions because accepted B-40 currently keeps calculator state transient. The semantic response remains complete. No hidden model call or arbitrary generated code is used; executable custom applications remain outside Feature 016 V1 and the separate Artifact Runtime remains PREVIEW_ONLY.
 
 ## 2. Goals
 
 - G-01 One server-side Rust validator owns the RichPresentation v1 bounds and block allowlist; the TypeScript validator mirrors it exactly and both pass one shared golden corpus.
-- G-02 The V1 block allowlist is closed: TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE, CHART, plus one Intelligent UI component (B-40). Every other kind is rejected at publish and falls back to semantic text.
-- G-03 Calculations use only a restricted arithmetic AST validated in Rust at publish time and evaluated by a pure TypeScript reducer over view-local state.
+- G-02 The proposed renderer profile is closed: TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE, METRIC, CHART, SAFE_CALCULATOR and explicitly admitted local input bindings. B-46 and T02 must promote the exact profile; every unknown kind, field or binding fails closed to semantic text.
+- G-03 Calculations use only a restricted arithmetic AST validated in Rust at publish time and evaluated by a pure TypeScript reducer over local state. Explicit remembered-state or user-reviewed send actions are separate host-owned operations, never implicit component behavior.
 - G-04 A CHART is bound to a semantic-message table, drawn by host React components as SVG elements, and always exposes an equivalent accessible data table.
 - G-05 A host-side binder publishes RichPresentations after the semantic message commits, outside the commit transaction; presentation failure never blocks or changes turn settlement.
 - G-06 The owner can disable rich presentation; the semantic answer remains complete and readable (E2E-11).
 - G-07 Generated media is stored as a provenance-bearing Artifact (Conversation, turn, AgentSession, digest) through the Feature 007 create path, never fetched from a model-supplied URL.
 - G-08 Interactive Artifacts open PREVIEW_ONLY and inert in V1 until E08-S09 CODE, SYSTEM and owner USER evidence exists for the exact OS and Runtime profile.
 - G-09 No executable model content reaches the chat WebView: no eval, no script, no model HTML, CSS or SVG markup, no `dangerouslySetInnerHTML` on agent output, CSP `script-src 'self'` unchanged.
+- G-10 An eligible presentation can expand into the existing contextual Canvas with exact message/document/controller identity; no new permanent specialist navigation tab is added.
+- G-11 The owner selected Saved Views for V1; save/open/update/archive use the proposed Feature 007 immutable-version and durable-receipt lifecycle after cross-owner review and contract promotion. Saved answer state is not an executable app or a second schema.
+- G-12 Native agents are optional proposal sources, not UI contract authorities. Unsupported or unqualified ingress uses deterministic host formatting or semantic-only fallback; ACP alone implies neither a UI tree nor child-agent feed.
 
 ## 3. Non-goals
 
-No DIAGRAM (Mermaid) rendering, MEDIA blocks inside a RichPresentation, HOST_PROJECTION, MCP_APP, CHECKLIST, DELIVERABLE_GROUP or ARTIFACT_COLLECTION in V1. No presentation actions or citations in V1 (arrays stay empty). No Interactive Artifact execution. No SVG image ingestion (no sanitizer is qualified). No image generation by LiteCowork itself (images come from the native harness as files). No change to semantic message storage. No adoption of OpenIntelligentUI's arbitrary HTML/CSS/JavaScript renderer, its eval use or its CSP.
+No arbitrary generated HTML, JavaScript, CSS, model SVG, code execution, or generic model-authored host action is admitted. No Interactive Artifact execution or arbitrary sandbox-generated mini-apps are included in this Feature 016 V1 proposal; the Interactive Artifact Runtime remains a separate PREVIEW_ONLY owner path. No schema-declared block becomes supported until validators, renderer, fallback and evidence are promoted together. Host-owned Save, Forget, Expand, Send, Update and Library controls are separate typed owner operations, never model-authored actions. Generated media, Artifact creation and durable saved-view data use Feature 007 and other existing owners; Feature 016 does not duplicate their stores or lifecycle.
 
 ## 4. Current implementation/evidence boundary
 
-Baseline source claims cross-checked on `main` at `8432397befc69bafd3335a0c30b2f1e9e82bef5e`, 2026-11-12. The relevant presentation/storage/bridge files have no source diff since the prior `64c435149a82ba952c6c3bf3049e26cf2d9344b1` check. Original B-40 scope plans no migration; proposed persistent interaction data requires T22 allocation and approval.
+Source claims rechecked against the current working tree based on `main` HEAD `f146bb3a187449d5348c5bf2e380c122c6d290c0`, 2026-11-17. The rich-presentation validator/store/reader and renderer were inspected directly; no Feature 016 runtime implementation was added during this review. The separate Feature 002 Tauri bridge change is tracked in `CURRENT-RUN.md`. B-40's accepted baseline has no migration and keeps calculator input state transient; revision 0.4 keeps any separately remembered-input record gated on T22 allocation and owner approval.
 
 | Capability | Current evidence | Limitation |
 |---|---|---|
@@ -41,7 +46,7 @@ Baseline source claims cross-checked on `main` at `8432397befc69bafd3335a0c30b2f
 | Size cap | `MAX_RICH_PRESENTATION_BYTES: u64 = 524_288` in `crates/storage-core/src/rich_presentation.rs`, matching `MAX_DOCUMENT_BYTES = 512 * 1024` in the desktop validator and `document_size_bytes.maximum` in `docs/schemas/operator-stream.schema.json` | Aligned on all three surfaces; `rich_presentation_document_cap_agrees_with_the_desktop_and_the_wire_schema` fails if any one of them changes alone |
 | Store | CODE: `RichPresentationStore` (`publish_rich_presentation`, `read_rich_presentation`, conversation presentation reads) and `SqliteRichPresentationStore`; table from migration `rich_presentation_optional_v12` | `publish_rich_presentation` is called only by tests (`rich_presentation_read_tests` in `apps/litecoworkd/src/presentation_operator.rs`); no production producer |
 | Read route | CODE/SERVED: `GET /v1/rich-presentations/{presentation_id}` (`get_rich_presentation`), `GET /v1/conversations/{conversation_id}/presentation`, `POST /v1/stream` in `apps/litecoworkd/src/presentation_operator.rs`; Tauri `get_rich_presentation` and `valid_rich_presentation_response` in `apps/litecowork-ui/src-tauri/src/conversation_bridge.rs` | No publish route (by design: publishing is daemon-internal) |
-| Renderer | CODE/UI: `RichResponseView.tsx` renders TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE with an accessible table region and a "Read the original response" disclosure; used by `ConversationsPage.tsx` | No chart, image or Intelligent UI rendering |
+| Renderer | CODE/UI: `apps/litecowork-ui/src/presentation/RichResponseView.tsx` renders TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE with an accessible table region and a "Read the original response" disclosure; used by `ConversationsPage.tsx`. Semantic fallback uses `apps/litecowork-ui/src/artifacts/StructuredTextPreview.tsx`, a bounded hand-written Markdown subset. | No chart, image or Intelligent UI rendering. Unsupported Markdown falls back for the whole message; no GFM table, horizontal-rule or nested-list rendering; no code label/copy/highlighting; TEXT_SLICE is plain text. These partial adjacent capabilities do not satisfy AC-019/T18. |
 | Fallback tests | CODE: `apps/litecowork-ui/tests/presentation-runtime-fallback.test.mjs` (escaping, unsupported kinds, malformed payloads for `PresentationRuntime.tsx` and `presentation-types.ts`), `rich-presentation.test.ts`, `rich-response-view-policy.test.ts` | No shared Rust and TypeScript corpus |
 | Schemas | `docs/schemas/rich-presentation.schema.json` (13 block kinds, root_blocks 200, accessibility_summary 4000), `docs/schemas/presentation-intent.schema.json` (strategies, elements 40) | No separate Intelligent UI schema: calculator/interaction extensions must be promoted into the existing canonical contracts; former competing illustrative document removed |
 | Rust schema library | NOT FOUND: no `jsonschema` crate in `Cargo.lock`; hand-written `closed_object` validation is the repo pattern; `serde_json_canonicalizer` and `sha2` are present | |
@@ -80,7 +85,9 @@ Baseline source claims cross-checked on `main` at `8432397befc69bafd3335a0c30b2f
 |---|---|---|---|
 | B-40 | First Intelligent UI component and Interactive Artifact Runtime V1 posture | **ACCEPTED as proposed (owner sarv-projects, 2026-11-10).** (1) **First component: `SAFE_CALCULATOR`** (the canonical SAFE_CALCULATOR target with declared numeric inputs): up to 8 labelled numeric inputs whose initial values are bound to cells of a TABLE in the same semantic message, one `formula_ast` from the restricted CalcAst (LITERAL, VARIABLE, BINARY_OP `+ - * / %`, UNARY_OP `-`, FUNCTION `MIN MAX ROUND ABS CLAMP`; at most 64 nodes, depth at most 12, finite literals only), output formats `NUMBER`, `INTEGER`, `PERCENTAGE`, `CURRENCY_USD`, and a required `fallback_text` that states the formula and the result for the original values. State is view-local, never persisted, never sent to the agent and never used as an action. Divide by zero or a non-finite result shows "Cannot calculate with these values" and the fallback text. It is carried as a new block kind `SAFE_CALCULATOR` in RichPresentation renderer contract version 2 (schema version stays 1 for existing kinds), so there is one validated document per message. (2) **CHART** is a static block in the same contract version, bound only to a semantic-message TABLE slice in V1. (3) **Interactive Artifact Runtime V1 posture: PREVIEW_ONLY on both release rows.** Selecting an interactive Artifact opens an inert preview (title, exact version, provenance, package validation result, source view); there is no Run control in V1, only the text "Running interactive apps is not available in this version." Run may be enabled only by a later accepted revision after E08-S09 CODE, SYSTEM and owner USER evidence for the exact packaged build and OS. | [INTELLIGENT-UI-AND-IMAGE-CONTENT.md](../../docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md), [RICH-RESPONSE.md](../../docs/RICH-RESPONSE.md), [INTERACTIVE-ARTIFACT-RUNTIME.md](../../docs/INTERACTIVE-ARTIFACT-RUNTIME.md). Exercises the restricted AST and reducer (BT-06.4) with the smallest attack surface; keeps BT-06.5 honest. Owner: Presentation Runtime with Product and Security; decision needed from the repository owner. |
 
-B-40 was accepted as proposed on 2026-11-10. Baseline acceptance for AC-001..AC-019 remains pending at T01; the package stays IN_REVIEW. Section 19 / AC-020..AC-028 is a separate extension proposal gated by T25 and is not accepted by B-40 or T01. Implementation and qualification status are tracked in section 4 and [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md).
+B-40 was accepted as proposed on 2026-11-10 and remains the current component-level boundary. The former baseline-versus-extension split is superseded: revision 0.4 proposes one complete V1 scope across AC-001..AC-041. That revised scope is still TARGET and IN_REVIEW; the owner's decision to keep Saved Views in V1 and amend Feature 007 B-21 settles that product direction only. Feature 007's Saved View contract still needs cross-owner review, then T01 must record whole-scope acceptance or exclusions, and T02 must promote owner contracts and schemas before implementation. No implementation is authorized by this proposal. Current source evidence is in section 4 and [docs/IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md).
+
+**Historical revision 0.3 decision note (superseded by §20 revision 0.4):** B-40 still governs calculator behavior: the component is local-only, transient, and cannot submit or persist. B-46 remains open for any separate host-owned remembered-input or input-sharing behavior. The owner has since selected Saved Views for V1 and directed the Feature 007 B-21 amendment; T25 records that direction, with technical cross-owner review and T01/T02 still open.
 
 ## 6. High-level design
 
@@ -218,7 +225,7 @@ Full matrix in [contracts/errors-recovery.md](contracts/errors-recovery.md). Key
 
 ## 12. Configuration and compatibility
 
-Renderer contract version 1 documents (existing kinds) stay valid; version 2 adds CHART and SAFE_CALCULATOR. A desktop that does not know version 2 falls back to semantic text. `rich_presentation_enabled` defaults to true and is local to the device. Both release rows use the same WebView rules (WebView2 on Windows, WebKitGTK on Linux); rendering conformance is tested on each.
+Renderer contract version 1 documents (existing kinds) stay valid; the proposed version 2 profile may add METRIC, CHART, SAFE_CALCULATOR and the admitted local input types only after B-46/T02. A desktop that does not know the accepted profile falls back to semantic text. `rich_presentation_enabled` defaults and turn-captured retry behavior must match the accepted Rich Response contract. Optional remembered-input state is off by default and uses a separately approved local owner store; Saved View snapshots use Feature 007, never browser localStorage. Both release rows use their supported WebView rules and require exact conformance evidence.
 
 ## 13. Observability
 
@@ -227,14 +234,14 @@ Count published, rejected (by reason), fallback-rendered and disabled views; val
 ## 14. EARS acceptance criteria
 
 - AC-001 WHEN the binder publishes a RichPresentation, THE SYSTEM SHALL validate it in Rust with `MAX_DOCUMENT_BYTES` 512 KiB, at most 200 blocks, depth at most 8, closed keys, RFC 8785 canonical bytes and matching document and slice digests, and IF the document is 512 KiB + 1 byte or larger, THEN THE SYSTEM SHALL reject it with `PRESENTATION_REJECTED` (`TooLarge`). Verify: boundary unit tests in `domain-presentation`.
-- AC-002 WHEN a document contains a block kind outside the V1 allowlist (TEXT_SLICE, LAYOUT, CARD, CALLOUT, TABLE, CHART, SAFE_CALCULATOR), THE SYSTEM SHALL reject it at publish, and the desktop SHALL render the semantic text for any such document it receives. Verify: corpus tests on both sides.
+- AC-002 WHEN a document contains a block kind, field, binding or local control outside the accepted canonical profile, THE SYSTEM SHALL reject it at publish, and the desktop SHALL render the semantic text for any such document it receives. The proposed profile is listed in §20.4 and remains TARGET pending B-46/T01/T02. Verify: corpus tests on both sides.
 - AC-003 WHEN the Rust and TypeScript validators process the shared golden corpus, THE SYSTEM SHALL produce identical accept or reject verdicts for every file. Verify: parity test run by `cargo test` and `pnpm test`.
 - AC-004 WHILE rich presentation is disabled, missing, invalid or failed to render, THE SYSTEM SHALL show the complete semantic message, and presentation work SHALL NOT delay or change turn settlement. Verify: E2E-11 and a binder fault-injection test.
 - AC-005 WHEN any presentation content is rendered, THE SYSTEM SHALL render model strings only as text nodes and SHALL NOT use `dangerouslySetInnerHTML`, `eval`, `new Function`, model-supplied HTML, CSS or SVG markup, or fetch an external URL; any Markdown navigation link admitted by AC-019 SHALL be an explicit `https:` link, and the WebView CSP SHALL keep `script-src 'self'`. Verify: static gate test, hostile corpus test and CSP audit.
 - AC-006 IF a document contains action references, citation references, HOST_PROJECTION or MCP_APP, THEN THE SYSTEM SHALL reject it, and no rendered presentation element SHALL invoke a Tauri command that creates or settles an Approval, Task, Effect or grant. A semantic TEXT_SLICE may contain ordinary Markdown links only under AC-019's host-rendered `https:` policy; a link is not an action or citation reference. Verify: hostile corpus and bridge-call spy test.
 - AC-007 WHEN a SAFE_CALCULATOR is validated, THE SYSTEM SHALL accept only CalcAst nodes LITERAL, VARIABLE, BINARY_OP (`+ - * / %`), UNARY_OP (`-`) and FUNCTION (MIN, MAX, ROUND, ABS, CLAMP) with at most 64 nodes, depth at most 12, finite literals and variables that name declared inputs, and IF evaluation divides by zero or yields a non-finite value, THEN THE SYSTEM SHALL show "Cannot calculate with these values" with the fallback text. Verify: Rust validator tests and TypeScript reducer property tests.
 - AC-008 WHEN a CHART is rendered, THE SYSTEM SHALL draw it from host SVG components using only the bound semantic TABLE values, show its accessible summary, and offer an equivalent data table reachable by keyboard; IF the binding does not match the semantic table or a value is not finite, THEN THE SYSTEM SHALL render the table fallback. Verify: chart component tests.
-- AC-009 WHEN the SAFE_CALCULATOR renders, THE SYSTEM SHALL label every input, announce the result in an `aria-live="polite"` region, keep state view-local, and SHALL NOT persist the values or send them to the agent. Verify: component test with a bridge-call spy.
+- AC-009 WHEN the SAFE_CALCULATOR renders, THE SYSTEM SHALL label every input, announce the result in an `aria-live="polite"` region, and SHALL NOT itself persist values or send them to an agent. Under the current accepted B-40 baseline, values remain transient. Only if revised B-46 is accepted may a separate host-owned Remember or ordinary Send operation carry a user-selected snapshot after consent/review; the component itself still cannot invoke IPC or submit. Verify: component bridge-call spy plus explicit host-operation consent/send tests.
 - AC-010 WHEN rich content is displayed, THE SYSTEM SHALL meet keyboard operation, visible focus, accessible names, `<th scope>` headers, text contrast 4.5:1 and reduced-motion rules, with no serious or critical axe violations. Verify: accessibility audit in the UI test suite.
 - AC-011 WHEN a native harness produces an image file in the admitted Workspace, THE SYSTEM SHALL ingest it only if the sniffed type is PNG, JPEG, WebP or GIF and the size is at most 20 MiB, store the bytes content-addressed, and create an Artifact version through Feature 007 with provenance (Conversation, turn, AgentSession, digest). Verify: ingestion integration test.
 - AC-012 IF a media file is SVG, oversized, has a type mismatch, or is referenced only by a URL, THEN THE SYSTEM SHALL reject it with `MEDIA_TYPE_UNSUPPORTED` or `MEDIA_TOO_LARGE`, create no Artifact, fetch nothing and keep the semantic answer. Verify: negative ingestion tests.
@@ -248,17 +255,17 @@ Count published, rejected (by reason), fallback-rendered and disabled views; val
 
 ## 15. Executable acceptance command
 
-**Canonical feature acceptance command (accepted target; the Rust crate and test target do not exist yet and are created by TASKS 016-T03 and 016-T16):**
+**Proposed feature acceptance command (the Rust crate and E2E target do not exist yet and require owner acceptance plus TASKS 016-T03 and 016-T16):**
 
 ```bash
 cargo test -p domain-presentation --locked && cargo test -p litecoworkd --test rich_presentation_intelligent_ui --locked -- --nocapture && pnpm --dir apps/litecowork-ui test
 ```
 
-Do not mark the baseline feature VERIFIED until this passes and covers AC-001 to AC-019 on the Windows x64 row and the Linux x64 row, with E2E-11 USER evidence on each. The separately gated revision 0.2 extension criteria AC-020 to AC-028 remain blocked until their own acceptance and evidence gates close.
+Do not mark the feature VERIFIED until the accepted revision's AC-001 to AC-041 pass on each release row with packaged SYSTEM and owner USER evidence. Unit tests, schema validation, route presence and component screenshots are not release qualification.
 
 ## 16. Out-of-bounds paths and side effects
 
-This package is IN_REVIEW and authorizes nothing yet. After acceptance each task names its allowed paths. Out of scope: semantic message storage and the final-commit transaction (Feature 001), Artifact create internals (Feature 007), CSP ownership and Settings shell (Feature 011), Interactive Artifact Runtime execution (later revision after E08-S09), Task presentation (`TaskPresentationPanel.tsx` stays as is). Do not run native harnesses or write user files during design validation.
+This package is IN_REVIEW and authorizes nothing yet. After acceptance each task names its allowed paths. Out of scope for Feature 016 ownership: semantic message storage/final-commit transaction (Feature 001), Artifact create/version/Library internals (Feature 007), Workbench shell and live Computer/Browser/Terminal providers (Feature 008), CSP and Settings shell (Feature 011), Conversation retention/deletion (Feature 014), backup/restore (Feature 017), and Interactive Artifact Runtime execution (separate E08-S09 owner). Feature 016 integrates through their accepted commands and records but does not implement a competing owner. Do not run native harnesses or write user files during design validation.
 
 ## 17. Assumptions and open questions
 
@@ -294,11 +301,15 @@ This package is IN_REVIEW and authorizes nothing yet. After acceptance each task
 | Per-block Markdown degradation and code/TEXT_SLICE rendering (P-03) | INTELLIGENT-UI-AND-IMAGE-CONTENT | 016-T18 | AC-019 |
 | VERIFIED transition | SPECIFICATION-STANDARD | 016-T19 | AC-001, AC-002, AC-003, AC-004, AC-005, AC-006, AC-007, AC-008, AC-009, AC-010, AC-011, AC-012, AC-013, AC-014, AC-015, AC-016, AC-017, AC-018, AC-019 |
 
-## 19. Revision 0.2: native declarative interaction integration (TARGET proposal)
+The revised V1 trace for Canvas, state, Saved View, conversational modification, provider ingress and release evidence is in §20.12; it supersedes the baseline-only trace above when those capabilities are accepted.
 
-**Request versus decision:** the owner requested evaluation of useful declarative UI ideas. Section 19 proposes bounded ingress, shared expanded Canvas, opt-in local input retention and explicit conversational modification in [ACP-PRESENTATION-PIPELINE-LLD.md](../../docs/ACP-PRESENTATION-PIPELINE-LLD.md). That request does not accept the proposal. A-84 separates baseline acceptance (T01) from extension acceptance (T25); A-85 keeps the MCP proposal tool unavailable until its model-visible input, host sequence and replay contract are resolved. B-40's view-local calculator and PREVIEW_ONLY app posture are preserved; AC-009 continues to govern baseline calculators. Persistence and new-turn modification are separate decisions; the latter must work with persistence off and cannot silently broaden AC-009.
+## 19. Superseded revision 0.2 extension proposal (historical TARGET)
 
-The extension distinguishes four things that a casual "saved app" label would collapse: a RichPresentation remains attached to its committed Conversation message and is revisited through that Conversation; optional Feature 016 `PresentationInteractionState` remembers only approved answer inputs on this device; an interactive app package is a committed `INTERACTIVE_APP` ArtifactVersion published through the ArtifactStore owner path; and optional runtime data for a running app belongs to the separate isolated Artifact Runtime store described in `docs/INTERACTIVE-ARTIFACT-RUNTIME.md` §9. Neither kind of local input data is an Artifact or Library item, and Artifact Runtime data is not T22 PresentationInteractionState. No standalone `SavedView`/`SavedApp` record, route, event or Library category is defined. The current Feature 007 create path is not served, and the interactive Artifact output/runtime path is not implemented or qualified. The design recommendation is to use the existing immutable ArtifactVersion/Library model for a reusable app package, if Feature 007 confirms the accepted interactive media/provenance contract covers it; defer any standalone Saved View unless a separate cross-owner Feature 016/007 revision proves the Artifact model insufficient and defines identity, version/update, source lineage, delete/retention, receipt, restart and UI contracts. No control may imply this capability before those owner paths exist.
+This section records the prior 0.2 proposal for traceability. **It is superseded as a scope and task gate by §20.** Its AC-020..AC-028 text is not a second normative proposal and does not constitute acceptance. The revised V1 proposal below reuses those stable AC identifiers, expands and reorders their scope, and adds AC-029..AC-041. No prior T01 or B-40 decision accepts §20.
+
+**Historical revision 0.2 decision state:** at that point A-84 split baseline acceptance (T01) from extension acceptance (T25). Revision 0.3 §20 supersedes that split with one whole-scope T01 review after the Saved View boundary decision at T25. A-85 still keeps any model-visible proposal tool unavailable until its model input, host sequence and replay contract are resolved. B-40's view-local calculator and PREVIEW_ONLY app posture remain accepted; optional persistence and new-turn modification still require explicit owner decisions and must not silently broaden B-40.
+
+**Historical revision 0.2 boundary (superseded by §20 revision 0.4):** this earlier text distinguished the message-bound RichPresentation, optional device-local `PresentationInteractionState`, executable `INTERACTIVE_APP` ArtifactVersion and isolated Artifact Runtime data. It did not yet include the later owner-selected Saved View. The current direction is a Feature 007-owned non-executable Artifact snapshot with exact source lineage, semantic fallback and declared presentation defaults only; no session-modified values are saved or sent. The draft contract and its remaining cross-owner, T01 and T02 gates are recorded in §20 and `specs/007-professional-artifacts/contracts/saved-view.md`.
 
 The LLD supplies HLD/LLD interfaces, optional scoped MCP tool ingress, native structured output capability gates, fallback, typed metrics, deterministic calculations, state data model, authenticated state-command transaction, lineage, provenance, races and recovery. Existing global schemas remain the only machine authorities. T02/T20 must promote calculation intent in the existing schema: current schema has no CALC. No arbitrary native tool event becomes a host invocation. No hidden rendering model, provider substitution, global harness config write or stack replacement is adopted.
 
@@ -325,4 +336,180 @@ The LLD supplies HLD/LLD interfaces, optional scoped MCP tool ingress, native st
 | Saved answer, remembered inputs and reusable Artifact boundary | Feature 007 Artifact owner; Data Model and UI behavior; A-103 | T25, then any separately authorized cross-owner task | AC-028 |
 | Hostile/recovery/packaged evidence | LLD sections 9-10; Feature 019 | T24 | AC-020 through AC-028 |
 
-Open gates: baseline AC-001..AC-019 owner acceptance at T01; separate extension acceptance at T25, including the explicit defer/include decision for standalone Saved View scope under A-103; exact provider/version ingress and capture; immutable upstream research pins/licenses; A-85 model-visible MCP input/sequence/replay contract; calculation intent promotion; scope/transport/budget review; persistence/privacy/backup/deletion/migration owner decisions; numerical kernels and locale admission; shared global API/event/schema/UI index promotion; existing Windows/release deferrals; packaged real-provider SYSTEM and owner USER evidence. No implementation is authorized by this annex.
+Open gates under that superseded design: these notes are retained as historical review context only. Current gates are listed in §20 and TASKS.md; do not start T20-T24 based on this section.
+
+## 20. Revision 0.4: intelligent workspace presentation (TARGET V1 proposal)
+
+### 20.1 Product decision and V1 boundary
+
+The revised proposal turns the narrow rich-answer baseline and the useful 0.2 interaction proposal into one end-to-end V1 capability. The user describes a goal in Conversation; LiteCowork preserves the selected native agent's semantic answer and presents supported data through a safe host-owned component registry. A view may remain inline, expand in the contextual Workbench Canvas, and be explicitly saved as a reusable Library view. It is one workspace experience, not a separate specialist mode.
+
+"Universal" means one canonical, extensible declarative contract and a host registry that accepts optional proposals from different capable native agents. It does not mean every agent emits the same structure, every application can be rebuilt in V1, or ACP itself carries a universal UI tree. Plain text and Markdown remain first-class. If a native route has no qualified structured ingress, deterministic host rendering may use only clearly identified semantic structures or supported structured results; otherwise the full semantic response is shown. No hidden rendering model, provider substitution, hosted BYOK router, native config rewrite, or mandatory agent-side UI generation is introduced.
+
+The V1 proposal includes a bounded native declarative interactive-view runtime and durable Saved View behavior behind Feature 007's owner-backed Artifact/Library path. It does **not** include arbitrary generated executable apps. Such apps need the separate OS-isolated Artifact Runtime and its qualification; that Runtime remains PREVIEW_ONLY. This boundary keeps the product broad in user outcomes while keeping all executed code host-owned and deterministic.
+
+### 20.2 User experience and surface ownership
+
+| Surface | User sees | Owner and invariant |
+|---|---|---|
+| Conversation | Semantic answer streams and commits first; rich rendering loads after commit. The original response is always available. | Feature 001 owns turn identity and semantic text. Presentation failure cannot change settlement. |
+| Inline interactive answer | A compact combination of prose, metrics, tables, charts and supported local controls. It preserves the producing AgentSession and exact source bindings. | Feature 016 renders one immutable message-bound RichPresentation; no generated element grants authority. |
+| Expanded Canvas | The same answer/view opens in the existing right Workbench pane. Expand/collapse preserves the presentation digest, current local inputs, scroll context and focus. | Feature 008 owns the contextual object shell; Feature 016 supplies the Canvas object and one controller. Opening a tab is not authorization or execution. |
+| Saved Views in Library | The owner selected V1 Saved Views and directed a Feature 007 B-21 amendment. The proposed non-executable snapshot can be reopened and updated through immutable Artifact versions after review. | Feature 007 revision 1.1 remains IN_REVIEW pending Artifact, Storage, Conversation, Privacy, Backup and Product review, plus Feature 016 T01/T02. No new permanent sidebar tab is proposed. |
+| Activity / tools / computer | Relevant status and source details remain inspectable through owner-backed Activity or Inspector views. | Features 001/008/015 retain lifecycle and control ownership. Presentation cannot invent subagents, progress, approvals, Effects, or verification. |
+
+The frequent left navigation does not gain a chart/app/tool tab. Conversation owns the answer; Library owns saved objects; Workbench owns the currently open contextual object. The right pane is not a fixed browser/file/terminal inventory. The live computer preview and Take over/Stop run controls remain Feature 008-owned and require their separate consent, provider and qualification gates.
+
+### 20.3 HLD and runtime topology
+
+```mermaid
+flowchart LR
+  U[User intent] --> C[Conversation composer]
+  C --> A[Selected native AgentModule]
+  A -->|semantic output + optional correlated intent/data| N[Feature 001 normalization]
+  N --> M[Committed semantic message]
+  M --> B[Feature 016 deterministic binder]
+  N -. qualified structured proposal .-> B
+  B --> V[Rust presentation validator]
+  V -->|valid| S[Immutable RichPresentation store]
+  V -->|unsupported or invalid| F[Semantic fallback]
+  S --> R[Authenticated read and stream projection]
+  R --> T[Defensive TypeScript validation]
+  T --> H[Registered host React renderer]
+  H --> I[Inline view + local controller]
+  I --> W[Feature 008 Workbench Canvas]
+  I --> L[Explicit Save View request]
+  L --> O[Feature 007 Artifact/Library owner]
+  O --> Lb[Versioned Library projection]
+  F --> U
+```
+
+Runtime order: (1) selected native harness produces untrusted observations; (2) Feature 001 correlates and commits the complete semantic message; (3) Feature 016 deterministically derives or normalizes a presentation outside the message transaction; (4) the canonical validator binds the document to exact message, source and producer identities; (5) an immutable presentation is stored and projected; (6) the desktop revalidates before rendering; (7) inline and Canvas views share one controller; (8) explicit save/update goes through Feature 007 and returns a durable receipt. A saved view is not published until that receipt is committed. A presentation error never delays or retries the Conversation turn.
+
+### 20.4 One canonical declarative contract and component registry
+
+`docs/schemas/rich-presentation.schema.json` remains the single final-view tree contract. `presentation-intent.schema.json` remains the optional untrusted ingress intent, and ACP/provider envelopes remain adapter inputs rather than a second frontend schema. A future input format such as A2UI may be considered only as a version-pinned adapter that maps a bounded subset into these existing owners; it may not introduce its own renderer, action runtime, or persistent state authority. ACP does not guarantee UI payloads or subagent listings.
+
+Proposed V1 registered families (each requires promotion in the canonical schema and implementation on both validator/renderer sides):
+
+| Family | Proposed behavior | Required source/fallback |
+|---|---|---|
+| Semantic Markdown | Headings, paragraphs, links, lists, tables, horizontal rules and code render with block-local plain-text fallback; code copy/highlighting returns host React nodes. | Complete original semantic message remains available; links are HTTPS-only. |
+| Layout, Card, Callout | Host-owned responsive layout and hierarchy; no CSS or style names from the agent. | Ordered readable stack and semantic text. |
+| Table | Accessible, bounded tabular data; sorting/filter controls only if separately registered and local. | Same source values and row order remain inspectable. |
+| Metric | Label, finite value, unit/currency/scale, interval and aggregation; exact source binding. | A table or semantic clarification when any definition is absent. |
+| Chart | First profile: BAR, LINE or AREA from an authorized semantic table or exact authorized structured result. | Equivalent accessible data table and summary. |
+| SAFE_CALCULATOR | B-40's at-most-eight numeric inputs, bounded CalcAst and local evaluation. Further common inputs (range/select) require the new B-46 owner decision and canonical schema promotion; no unreviewed calculator kernel. | Formula, original values and result are described in semantic text; invalid arithmetic shows the declared fallback. |
+| Saved View controls | Host-owned Save, Open, Update and Archive controls appear only when Feature 007 returns the corresponding capability and durable receipt. | No control is implied by a presentation block or a stored input value; V1 has no hard-delete control. |
+
+The component registry is closed per accepted renderer profile. A component cannot contain arbitrary markup, script, CSS imports, event-handler strings, network URLs or a model-supplied function. User-editable inputs bind only to declared primitive state. Calculations use the bounded AST or a separately owner-reviewed deterministic kernel. Unknown kinds/fields/functions are refused, not guessed. A schema-declared or catalog-listed type is not enabled until the exact runtime supports it.
+
+### 20.5 Presentation choice, metrics and provenance
+
+Presentation policy is host-owned and versioned. `AUTO` prefers readable prose for ordinary questions, tables for explicit comparisons/tabular facts, charts only when source and metric semantics are clear, and a bounded interactive view only when the answer contains a useful approved input/calculation relationship or a user explicitly asks to explore. `SIMPLE` suppresses decorative composition while preserving functional owner controls; `RICH` requests eligible structure but never requires it. The user's preference is captured on the turn and reused for retry per Rich Response. There is no required second model call.
+
+Every metric and chart value must pin its source and declare measure, units/currency, scale, time interval and aggregation. "Total", "latest", "average" and "change" are distinct operations. For example, a time series with values 120000, 155000, 148000, 210000, 260000, 315000 may show June as INR 3.15 lakh, January–June total as INR 12.08 lakh, and start-to-end change as 162.5%; these are three different values, not interchangeable labels. Missing or contradictory meaning yields a table or clarification. A candidate presentation may not invent data, units, citations, verification, source lineage or provider identity.
+
+The semantic answer remains the factual explanation and caveats. A RichPresentation may reorganize and interact with explicitly bound data, but every user-visible number must be traceable to committed semantic content or an authorized exact-version result. `BlockProvenance` retains host-assigned producer/source identity. Native AgentSession, provider-reported tool call, LiteCowork Task worker, committed Artifact and verified outcome remain distinct evidence levels.
+
+### 20.6 Stateful views and Saved View lifecycle
+
+There are four separate state/data identities; the UI labels them plainly:
+
+1. **Transient view state:** controller values used while this message is open. B-40's default calculator remains view-local until the owner accepts the persistence extension.
+2. **Remembered answer inputs:** an optional, explicit, device-local state for one exact message/presentation digest. It is not a Library item, Artifact, agent memory, or shared Workspace fact. It requires consent, expected revision, same-receipt reconciliation, deletion fencing, bounded quota and backup/retention decisions.
+3. **Saved View:** a user-requested reusable Library object derived from one immutable RichPresentation, with exact source Conversation/message/presentation digests and semantic fallback. The owner selected this for V1 and directed a narrow Feature 007 B-21 amendment; revision 1.1 proposes the Artifact representation and is IN_REVIEW. A Saved View preserves the RichPresentation's original declared defaults. Values changed in an open calculator remain transient under accepted B-40 and are not persisted or sent. No standalone SavedView identity, table, store, route or navigation destination is introduced.
+4. **Interactive Artifact app/runtime data:** an executable `INTERACTIVE_APP` Artifact and its isolated runtime state, owned by Feature 007 and `INTERACTIVE-ARTIFACT-RUNTIME.md`. This is not a Saved View and remains PREVIEW_ONLY in V1.
+
+Saving a view is an explicit host command, not an implicit presentation action. It commits an exact immutable version and reports success only after Feature 007's durable receipt. Reopening loads that exact version after current authorization; it never silently follows a newer head or executes code. Calculator changes are transient and reset to the saved RichPresentation defaults on reopen. Updating a Saved View requires a new committed eligible presentation and a separate confirmation that appends a new immutable ArtifactVersion using the owner's expected-version/idempotency rules. A conflict preserves the review draft. Changing the originating answer is a separate, explicit Conversation Send that creates a new message and presentation with parent/base revision lineage; current calculator values are not included automatically. No original message or ArtifactVersion is overwritten.
+
+Remembered answer-input persistence remains a separate contract from the saved reusable object. If both are accepted, their namespace and deletion/revocation rules must not overlap. No browser localStorage, provider configuration mutation, native agent memory injection or silent cross-device sync is allowed.
+
+### 20.7 UI state, actions and failure paths
+
+| State | User-visible behavior | Recovery |
+|---|---|---|
+| Semantic streaming | Existing Conversation stream is shown; no half-validated UI tree flashes. | On commit, the stable presentation may load independently. |
+| Presentation pending/unavailable | Complete semantic answer remains visible; optional progress is display-only and not a turn state. | Read/retry presentation only; never resend the agent turn. |
+| Invalid/unsupported block | The affected block falls back safely where the accepted contract allows; otherwise show the complete semantic answer. | Keep original answer and display a concise non-authoritative reason in Inspector. |
+| Metric semantics missing | No misleading metric/chart is rendered. | Show source table or ask a plain-language clarification. |
+| Local calculation invalid | Show bounded reason and declared fallback; no host call. | Restore valid input or Reset to original values. |
+| Canvas expand/collapse | Same message, document digest, input revision and controller. | Restore focus to originating control; no new task, session or provider call. |
+| Save/update pending or ambiguous | Retain operation identity and draft; never show Saved until receipt resolves. | Reconcile same RequestId and digest before retry; conflict keeps draft. |
+| Saved View unavailable/revoked/deleted | Show an unavailable state without stale data. | Reauthorize exact version; do not silently substitute head. |
+| Conversation modification | Preview selected values and the text/context to be sent; explicit Send only. | Cancel leaves original answer and saved version unchanged. |
+
+Only host-owned controls call owner routes. A structured input may change local reducer state; it cannot call Tauri/Operator directly, create Task/Effect/Approval/Artifact, change Trust, claim completion, or send a message. External navigation, publishing and data access stay behind their existing confirmation/authorization owners.
+
+### 20.8 Security and trust boundaries
+
+| Boundary | Requirement |
+|---|---|
+| Native agent -> adapter | Every event, tool result and UI proposal is untrusted and correlated to exact provider/version/auth route, AgentSession, Conversation, turn and retry. Unsupported ingress falls back to semantic text. |
+| Adapter -> binder | Only allowlisted, bounded input fields enter the canonical intent model. Provider credentials, native session handles, private transcript/reasoning and unmediated tool effects do not enter presentation records. |
+| Binder -> storage | Rust validates closed objects, limits, canonical bytes, exact source bindings, producer provenance, metric semantics and calculator AST. Publish after semantic commit, idempotently. |
+| Storage -> WebView | Authenticated exact-message read; defensive TypeScript validation; stale digest/version falls back. |
+| Renderer -> host | Registered React components only. Local reducer state only, except explicit host chrome commands routed through owner APIs. CSP remains `script-src 'self'`; no `eval`, `new Function`, `dangerouslySetInnerHTML`, model HTML/JS, remote code or arbitrary iframe. |
+| Canvas -> Workbench | View selection/reopen reauthorizes through the owning object. Opening Canvas does not capture screen, start a process, resume a Task, launch an app or grant authority. |
+| Saved View -> ArtifactStore | Exact type, source refs, declared presentation defaults only, expected version, authorization and RequestId; idempotent receipt; no direct SQLite or file write from React. |
+
+### 20.9 Proposed owner decisions and gates
+
+| Decision | Proposal | Required owners / gate |
+|---|---|---|
+| B-46: declarative controls and explicit state boundary | Keep B-40 SAFE_CALCULATOR as the first view and its component behavior transient/local with no direct submit. Decide whether the closed V1 profile may add METRIC plus NUMBER, RANGE and SELECT controls, and whether separately labelled host-owned Remember-on-device and Ask-to-change controls may persist or send an explicitly selected snapshot after consent/review. No generic action/form submission, autosave, model-triggered persistence or implicit provider disclosure. This is a proposed extension to B-40 and is not accepted yet. | Product, Presentation Runtime, Security, Accessibility, Privacy, Storage and Conversation; T01 before T02 schema/API promotion. |
+| Saved View representation | The product owner decided to keep Saved Views in V1 and amend Feature 007 B-21 on 2026-11-17. Feature 007 revision 1.1 proposes one bounded non-executable Artifact media type with exact source lineage, semantic fallback, immutable update from a new committed presentation, receipt/recovery, and archive-only removal. It preserves B-40: view-local modified values are neither persisted nor sent; no SavedView side table, route owner or permanent navigation destination is added. The detailed Artifact/Library/API/schema contract is in Feature 007 `contracts/saved-view.md`; its cross-owner review remains open. | Feature 007, Presentation Runtime, Storage, Privacy, Conversation, Backup and Product; T25 review before T01. |
+| Local remembered answer state | Include only after explicit opt-in, per-device scope, version/digest partition, bounded quota, replay receipts, forget fence, backup/retention and deletion/revocation behavior are accepted. | Presentation Runtime, Storage, Feature 011, Conversation/Workspace retention, Backup; T22. |
+| Native intent input | Text path always works; structured proposals require exact provider capability evidence and A-85 input/sequence/replay mapping. A2UI is an optional pinned adapter candidate, not the canonical schema. | AgentModule, Presentation Runtime, Security, API/Schema; T20. |
+| Executable generated apps | Excluded from Feature 016 V1. The separate Runtime remains preview-only until its own OS process isolation and release qualification. | Feature 007, Runtime, Security, Feature 019; no scope implied by this proposal. |
+
+### 20.10 New and revised EARS acceptance criteria
+
+AC-001..AC-019 remain the Feature 016 foundation, subject to the revised contract promotion. The following criteria replace the former §19 wording for AC-020..AC-028 and add AC-029..AC-041. They are all TARGET until T01 and the named cross-owner gates are accepted.
+
+- **AC-020:** WHEN a selected native route has no qualified UI-structure ingress, THE SYSTEM SHALL preserve and render its complete semantic answer using only deterministic, supported formatting, without hidden model calls, provider switching or native configuration writes.
+- **AC-021:** WHEN a provider reports an arbitrary function, UI schema, HTML, JavaScript, handler, or out-of-scope intent, THE SYSTEM SHALL treat it as untrusted data, reject or safely display it, and SHALL NOT dispatch host operations or change host state.
+- **AC-022:** WHEN a user expands or collapses an eligible answer, THE SYSTEM SHALL preserve the same committed message, RichPresentation digest, local state revision and controller across inline/Canvas surfaces, restore focus predictably, and SHALL NOT invoke an agent or app runtime.
+- **AC-023:** WHEN a metric or chart is published, THE SYSTEM SHALL bind each value to an exact semantic table or authorized result and require explicit measure, units/currency/scale, time interval and aggregation; missing or contradictory semantics SHALL produce a table or clarification instead of a guessed metric.
+- **AC-024:** WHEN an interactive calculation is published, THE SYSTEM SHALL use only B-40's bounded CalcAst or another explicitly registered and owner-reviewed deterministic kernel; unknown operations, including unregistered `sipFutureValue`, SHALL be rejected.
+- **AC-025:** WHERE the owner enables Remember on this device, THE SYSTEM SHALL persist only allowlisted primitive inputs for the exact Workspace/Conversation/message/presentation digest after explicit consent, with expected revision, RequestId, body digest, bounded quota and a durable receipt; state SHALL NOT be sent to an agent or stored in browser localStorage.
+- **AC-026:** WHEN Forget, deletion, revocation or Workspace removal races a remembered-state write, THE SYSTEM SHALL fence late writes and acknowledgements, remove protected live data, and prevent restart/backup restore from resurrecting it.
+- **AC-027:** IF a later accepted B-46 contract enables Ask to change this view, WHEN the user chooses it, THE SYSTEM SHALL preview the exact user-authored text and every separately approved context field, require explicit ordinary Conversation Send, create a new message/presentation with host-recorded parent/base lineage, and SHALL NOT mutate the source message or send on input change. Under the current accepted B-40 boundary, session-modified calculator values are excluded from the send.
+- **AC-028:** WHEN a user saves or reopens an interactive answer, THE SYSTEM SHALL distinguish a message-bound RichPresentation, optional separately gated remembered answer inputs, a versioned Saved View Artifact, and executable INTERACTIVE_APP/runtime data. Save/Open/Update/Archive SHALL be shown only when Feature 007 serves the corresponding authorized operation and receipt; opening shall reauthorize the exact version, restore only the presentation's original declared defaults, and never imply code execution. Session-modified values remain transient under B-40.
+- **AC-029:** WHEN presentation policy is AUTO, SIMPLE or RICH, THE SYSTEM SHALL apply one versioned deterministic host policy, capture the preference on the turn for retry, preserve essential semantic content and functional owner controls, and make no mandatory second model call.
+- **AC-030:** WHEN the renderer receives a component document, THE SYSTEM SHALL accept only the closed, versioned component profile promoted in the canonical RichPresentation schema; unknown kind, field, binding or control SHALL fail closed and preserve semantic fallback.
+- **AC-031:** WHEN RichPresentation displays a number, source, unit/scale, time interval and operation SHALL remain inspectable; any value not derivable from committed semantic content or an authorized exact-version result SHALL be rejected.
+- **AC-032:** WHEN an admitted NUMBER, RANGE or SELECT control changes, THE SYSTEM SHALL update only declared local state and approved deterministic derived values; controls SHALL be keyboard-accessible, visibly labelled, bounded, resettable and unable to invoke IPC, Task, Effect, Approval, Artifact or provider operations.
+- **AC-033:** WHEN a user explicitly saves an eligible view, THE SYSTEM SHALL create one durable Library Artifact through the Feature 007 owner path, bind its exact source Conversation/message/presentation digests and self-contained semantic/RichPresentation snapshot, and show success only after the idempotent durable receipt commits. Session-modified input values are excluded.
+- **AC-034:** WHEN a user reopens a Saved View, THE SYSTEM SHALL read and reauthorize the exact immutable ArtifactVersion in the current Workspace, restore the original declared presentation defaults, and never silently substitute a newer version or an uncommitted local state. If the source Conversation was deleted, the self-contained Saved View remains readable while its origin link is masked or marked under Feature 014.
+- **AC-035:** WHEN the user updates a Saved View from a new eligible committed presentation in the same Conversation, THE SYSTEM SHALL append a new immutable ArtifactVersion under the owner's expected-version and idempotency contract; stale conflicts preserve the review draft and require explicit confirmation. Updating from another Conversation creates a new Saved View.
+- **AC-036:** WHEN the user requests a conversational modification to a Saved View, THE SYSTEM SHALL use an ordinary Conversation Send and SHALL NOT automatically include transient calculator values; updating the Library object requires a separate explicit Update from answer review and receipt. User-provided message text remains subject to the normal Conversation contract.
+- **AC-037:** WHEN presentation composition or a component fails, THE SYSTEM SHALL leave the committed Conversation settlement unchanged, keep the semantic answer visible and record only bounded identifiers/reasons without logging content or credentials.
+- **AC-038:** WHEN an answer or component is generated from a native provider, THE SYSTEM SHALL retain producer/session/source provenance and SHALL NOT render reported native activity as LiteCowork-verified Task, Effect, Approval, progress or completion.
+- **AC-039:** WHILE a provider is streaming or a RichPresentation is not committed, THE SYSTEM SHALL render no partial executable or stateful component tree; reconnect and stream gaps SHALL rehydrate from the committed message/presentation projection.
+- **AC-040:** WHEN a Saved View itself or separately owned remembered state is inaccessible, stale, denied, deleted, corrupt or has an unknown schema, THE SYSTEM SHALL show a truthful unavailable/recovery state and preserve any unsaved draft without rendering stale protected data. Deleting the source Conversation masks or marks Saved View provenance but does not make its self-contained snapshot unavailable.
+- **AC-041:** WHEN the user opens Canvas, saves, reopens, updates, forgets or modifies a view, THE SYSTEM SHALL preserve conversation scroll/composer state, use the owning Feature 007/008/011/001 command as applicable, and SHALL NOT add a permanent Saved Apps sidebar destination or create a duplicate object/state owner.
+
+### 20.11 Delivery sequence and release gates
+
+1. **Owner decision and semantic promotion:** resolve B-46 and Saved View representation (T25), then accept this whole revised scope (T01); reconcile Rich Response, Presentation Runtime, Feature 007 Artifact, Workbench Canvas, V1 product/UI contracts, canonical schemas and API/event owners in T02 before code.
+2. **Safe output foundation:** Rust/TypeScript validator parity and hostile corpus; Markdown and TEXT_SLICE renderer; deterministic binder and complete semantic fallback; chart/table and B-40 calculator; explicit producer/source provenance.
+3. **Interactive workspace:** registered bindings/reducer, inline-to-Canvas controller, accessibility and exact-source metric checks. No code execution or host actions.
+4. **Durable continuity:** opt-in answer-state persistence with receipts and forget fences (T22); Saved View create/reopen/versioned update using Feature 007 (T23); ordinary-turn conversational modification with explicit preview/send.
+5. **Qualification:** E2E-11 remains the presentation-disabled/malicious-content fallback journey. T02 should add and assign a separate rich-answer-to-Canvas continuity journey (candidate E2E-18; ID must be checked against the global plan), then T24 must exercise accepted capabilities including provider fallback, denial, duplicate/replay, timeout-after-commit, stale digest/version, two-window update, forget/save race, deletion/revocation, crash/restart/reconnect, keyboard/zoom/screen-reader on exact Windows and Linux release rows. Saved View and remembered-input steps are included only if their T25/T01/T02 owner gates accept them.
+
+The candidate journey begins with an ordinary turn through a qualified native route, commits semantic content before any rich projection, reads the same valid view inline and in Canvas, changes a bounded input locally, then verifies source identity, keyboard/focus/scroll/composer continuity, safe fallback and no hidden provider call. Conditional steps cover explicit consent and restart recovery for remembered inputs, Feature 007 Saved View create/reopen/version conflict, and preview-then-Send modification as a new ordinary Conversation turn. Negative/recovery cases include unsupported ingress, invalid/unbound data, denied save/state operations, timeout after possible commit, duplicate replay, source deletion, restart/reconnect and stale version. T02 must remove steps whose owner capability is deferred; no test ID here is canonical until T02 updates the global E2E plan.
+
+Feature 016 cannot be VERIFIED until the semantic answer, rich renderer, interactive local state, durable Saved View lifecycle and all required cross-owner journeys are qualified on each declared row. Sandboxed custom app execution is not a substitute and remains separately PREVIEW_ONLY.
+
+### 20.12 Traceability
+
+| Outcome | Owner | Task | Acceptance |
+|---|---|---|---|
+| Semantic message and retry identity | Feature 001 | T08/T16 | AC-004, 017, 020, 037-039 |
+| Intent ingress and component/metric contract | Feature 001/002, Presentation, API/schema | T02/T20 | AC-020/021/023/024/029-032/038 |
+| Inline renderer and safe fallback | Presentation/Desktop UI/Security/Accessibility | T03-T07/T12/T18 | AC-001-010, 030-032, 037, 039 |
+| Contextual Canvas | Feature 008 and Presentation | T21 | AC-022/041 |
+| Remember/Forget answer state | Presentation/Storage/011/014/017 | T22 | AC-025/026/040 |
+| Saved View Artifact and Library | Feature 007, Presentation, Storage | T23 | AC-028, 033-036, 040/041 |
+| Packaged release qualification | Feature 019, Product and repository owner | T16/T24 | AC-001-041 |

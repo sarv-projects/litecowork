@@ -28,6 +28,37 @@ export function isAttachable(candidate: AttachmentCandidate): boolean {
   return TEXT_MEDIA.test(candidate.mediaType.trim()) && candidate.sizeBytes <= MAX_ATTACHMENT_BYTES;
 }
 
+/** Merge picker pages without changing the revision already shown for a repeated Resource. */
+export function mergeAttachmentCandidates(
+  current: readonly AttachmentCandidate[],
+  incoming: readonly AttachmentCandidate[],
+  workspaceId: string,
+): AttachmentCandidate[] {
+  const seen = new Set<string>();
+  const merged: AttachmentCandidate[] = [];
+  for (const candidate of [...current, ...incoming]) {
+    if (candidate.workspaceId !== workspaceId || !isAttachable(candidate) || seen.has(candidate.resourceId)) continue;
+    seen.add(candidate.resourceId);
+    merged.push(candidate);
+  }
+  return merged;
+}
+
+export type AttachmentCursorStatus = "MORE" | "EXHAUSTED" | "STALLED";
+
+/** Reject repeated or malformed opaque cursors instead of letting the picker loop forever. */
+export function classifyAttachmentCursor(
+  requestedCursor: string | null,
+  nextCursor: string | null,
+  consumedCursors: readonly string[],
+): AttachmentCursorStatus {
+  if (nextCursor === null) return "EXHAUSTED";
+  if (nextCursor.length === 0 || new TextEncoder().encode(nextCursor).byteLength > 2048 || nextCursor === requestedCursor || consumedCursors.includes(nextCursor)) {
+    return "STALLED";
+  }
+  return "MORE";
+}
+
 export function addAttachment(chips: readonly AttachmentChip[], candidate: AttachmentCandidate, workspaceId: string): AttachmentChip[] {
   if (candidate.workspaceId !== workspaceId || !isAttachable(candidate)) return [...chips];
   if (chips.some(chip => chip.resourceId === candidate.resourceId)) return [...chips];

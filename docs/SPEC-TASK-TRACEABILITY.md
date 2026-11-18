@@ -1,6 +1,6 @@
 # Spec, Build TASKS, and USER Test Traceability
 
-**Updated:** 2026-11-12
+**Updated:** 2026-11-17
 
 **Purpose:** one crosswalk between **global build tasks** ([LITECOWORK-BUILD-TASKS.md](LITECOWORK-BUILD-TASKS.md)), **feature SDD tasks** (`specs/NNN-*/TASKS.md`), **acceptance IDs** (SPEC EARS), and **competitor USER cases** ([COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md)).
 
@@ -47,7 +47,7 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | 002 | ACCEPTED/LOCKED 2026-11-09 (B-11, B-12; folded ACP client P-11, Matchmaker P-12) | T01..T19 | 002-T15, 002-T19 | E2E-01, E2E-02 | UC agent install/auth | W1 |
 | 003 | ACCEPTED/LOCKED 2026-11-09 (B-13, B-14 with Windows scanner rider; folded Context Debugger P-15) | T01..T18 | 003-T15, 003-T18 | E2E-03 | UC files and citations | W1 |
 | 004 | ACCEPTED/LOCKED 2026-11-09 (B-15, B-16) | T01..T12 | 004-T10, 004-T12 | E2E-02 | UC relay A to B to A | W4 |
-| 005 | ACCEPTED/LOCKED 2026-11-09 (B-17 Linux-first rider, B-18); B-35 Windows provider PROPOSED; A-70/A-87/A-88/A-90 block execution sequencing and T08 pending T01 | T01..T20 | 005-T15, 005-T18, 005-T20 | E2E-04 | UC one safe task edit | W2 |
+| 005 | Revision 1.0 ACCEPTED/LOCKED; revision 1.1 IN_REVIEW with owner-directed A-70/A-87/A-88/A-90 decisions; B-35 remains PROPOSED. T01 v33 Environment binding is CODE; T04 is PARTIAL; T08 has CODE for closed target validation and exact Core grant-scope revalidation in the atomic SQLite dispatch store. Provider admission, candidate producer, production dispatch caller, filesystem call, reconciliation and recovery remain unintegrated | T01..T20 | 005-T15, 005-T18, 005-T20 | E2E-04 | UC one safe task edit | W2 |
 | 006 | ACCEPTED/LOCKED 2026-11-09 (B-19, B-20); T01/T02 BLOCKED on authentication/effective permissions (A-82); Task-write row order OPEN (A-80) | T01..T17 | 006-T15, 006-T17 | E2E-05 | UC one connection write | W3 |
 | 007 | ACCEPTED/LOCKED 2026-11-09 (B-21, B-30, B-31); T01/T06 BLOCKED on export receipt ordering/local recovery (A-81); destination-class decision closed | T01..T17 | 007-T15, 007-T17 | E2E-07 | UC one professional format | W2 |
 | 008 | Revision 1.0 ACCEPTED/LOCKED 2026-11-09 (B-22, B-23, B-32 deferred; P-06/P-13); revision 1.1 IN_REVIEW (selected laptop Computer, compact Workbench, takeover) | T01..T27 | 008-T17, 008-T21 (rev 1.0); 008-T22..T27 (rev 1.1 review/promotion/qualification gates) | E2E-08; revision 1.1 E2E mapping pending owner/schema promotion | UC browser/terminal; selected-screen Computer proposal | W3 |
@@ -58,7 +58,7 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | 013 | IN_REVIEW (new 2026-11-09); B-36, B-37 DEFERRED by the owner 2026-11-10 (LiteSPM parts deferred); folded LiteSPM pin P-17 | T01..T21 | 013-T18, 013-T21 | E2E-06 | UC discover and install a package | W2 observe, W3 plan/apply |
 | 014 | IN_REVIEW (new); B-38 ACCEPTED as proposed 2026-11-10 | T01..T19 | 014-T17, 014-T19 | E2E-14 (adopted) | UC find, rename, archive, delete chats | W1 |
 | 015 | IN_REVIEW (new); B-39 ACCEPTED as proposed 2026-11-10; folded Mission Control/Compare P-14 | T01..T21 | 015-T17, 015-T18, 015-T21 | E2E-15 (adopted) | UC steer, pause and delegate a Task | W4 |
-| 016 | IN_REVIEW; baseline AC-001..AC-019 acceptance pending T01; extension AC-020..AC-028 separately gated at T25 (A-84); A-85 blocks MCP proposal exposure; A-103 Saved View boundary remains a proposal | T01..T25 | 016-T16, 016-T19, 016-T24 | E2E-11 | UC rich answer with fallback | W2 |
+| 016 | IN_REVIEW; revision 0.4 proposes AC-001..AC-041 as one V1 scope (TARGET only). The owner selected Saved Views for V1 and directed the Feature 007 B-21 amendment; T25 cross-owner review, T01 whole-scope acceptance and T02 contract promotion remain open before implementation. A-85 still blocks model-visible proposal input pending canonical correlation/replay contract. | T01..T25 | 016-T16, 016-T19, 016-T24 | E2E-11 plus candidate E2E-18 pending T02 ID review | UC rich answer with fallback, contextual Canvas and Library Saved View (TARGET) | W2 |
 | 017 | IN_REVIEW (new); B-41 ACCEPTED as proposed 2026-11-10 | T01..T18 | 017-T16, 017-T18 | E2E-12 | UC back up and restore | W6 |
 | 018 | IN_REVIEW (new); B-42 PROPOSED (open, BLOCKED); folded operator-api.ts codegen + drift gate P-18 | T01..T19 | 018-T16, 018-T19 | E2E-16 (adopted) | UC usage and support bundle | W6 |
 | 019 | IN_REVIEW (new); B-43, B-44 DEFERRED 2026-11-10 (release dependent) | T01..T23 | 019-T22, 019-T23 (V1 go/no-go) | all rows | UC install, update, sign-off | W0 skeleton, W6 qualification |

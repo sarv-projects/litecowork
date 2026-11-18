@@ -21,7 +21,7 @@ import {
   stopTarget,
   turnStatusLabel,
 } from "./conversation-turn-state";
-import { addAttachment, attachmentChipLabel, attachmentRefusalNotice, isAttachable, removeAttachment, toResourceRefs, type AttachmentCandidate, type AttachmentChip } from "./conversation-attachments";
+import { addAttachment, attachmentChipLabel, attachmentRefusalNotice, classifyAttachmentCursor, mergeAttachmentCandidates, removeAttachment, toResourceRefs, type AttachmentCandidate, type AttachmentChip } from "./conversation-attachments";
 import { TurnActivityView } from "./TurnActivityView";
 import { mergeActivity, parseActivityPage, type ActivityEntry } from "./turn-activity";
 import { NativePermissionCard } from "../needs-you/NativePermissionCard";
@@ -957,15 +957,92 @@ export function ConversationsPage({
   // Composer attachments (T14): chips are kept per selected Conversation and survive a refused send.
   const [attachmentChips, setAttachmentChips] = useState<Record<string, AttachmentChip[]>>({});
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerState, setPickerState] = useState<{ status: "LOADING" | "READY" | "FAILED"; items: AttachmentCandidate[] }>({ status: "LOADING", items: [] });
+  const [pickerState, setPickerState] = useState<{
+    status: "LOADING" | "READY" | "FAILED";
+    items: AttachmentCandidate[];
+    nextCursor: string | null;
+    loadingMore: boolean;
+    moreFailed: boolean;
+    cursorStalled: boolean;
+  }>({ status: "LOADING", items: [], nextCursor: null, loadingMore: false, moreFailed: false, cursorStalled: false });
+  const pickerGeneration = useRef(0);
+  const pickerMoreRequest = useRef<{ generation: number; cursor: string } | null>(null);
+  const consumedPickerCursors = useRef(new Set<string>());
+  const pickerScopeKey = JSON.stringify([workspaceId, selectedId]);
+  const pickerScopeRef = useRef(pickerScopeKey);
+  pickerScopeRef.current = pickerScopeKey;
+
+  useEffect(() => {
+    pickerGeneration.current += 1;
+    pickerMoreRequest.current = null;
+    consumedPickerCursors.current.clear();
+    setPickerOpen(false);
+    setPickerState({ status: "LOADING", items: [], nextCursor: null, loadingMore: false, moreFailed: false, cursorStalled: false });
+  }, [pickerScopeKey]);
+
   const chips = composerDraftKey ? attachmentChips[composerDraftKey] ?? [] : [];
   const openPicker = () => {
     if (!workspaceId || !selectedId) return;
+    const generation = pickerGeneration.current + 1;
+    pickerGeneration.current = generation;
+    pickerMoreRequest.current = null;
+    consumedPickerCursors.current.clear();
+    const scopeKey = pickerScopeKey;
     setPickerOpen(true);
-    setPickerState({ status: "LOADING", items: [] });
-    invoke<{ items: AttachmentCandidate[] }>("list_resources", { workspaceId, cursor: null })
-      .then(page => setPickerState({ status: "READY", items: page.items.filter(item => item.workspaceId === workspaceId && isAttachable(item)) }))
-      .catch(() => setPickerState({ status: "FAILED", items: [] }));
+    setPickerState({ status: "LOADING", items: [], nextCursor: null, loadingMore: false, moreFailed: false, cursorStalled: false });
+    invoke<{ items: AttachmentCandidate[]; nextCursor: string | null }>("list_resources", { workspaceId, cursor: null })
+      .then(page => {
+        if (generation !== pickerGeneration.current || scopeKey !== pickerScopeRef.current) return;
+        const cursorStatus = classifyAttachmentCursor(null, page.nextCursor, []);
+        setPickerState({
+          status: "READY",
+          items: mergeAttachmentCandidates([], page.items, workspaceId),
+          nextCursor: cursorStatus === "MORE" ? page.nextCursor : null,
+          loadingMore: false,
+          moreFailed: false,
+          cursorStalled: cursorStatus === "STALLED",
+        });
+      })
+      .catch(() => {
+        if (generation !== pickerGeneration.current || scopeKey !== pickerScopeRef.current) return;
+        setPickerState({ status: "FAILED", items: [], nextCursor: null, loadingMore: false, moreFailed: false, cursorStalled: false });
+      });
+  };
+
+  const closePicker = () => {
+    pickerGeneration.current += 1;
+    pickerMoreRequest.current = null;
+    setPickerOpen(false);
+  };
+
+  const loadMorePickerFiles = async () => {
+    const cursor = pickerState.nextCursor;
+    if (!workspaceId || !selectedId || !cursor || pickerMoreRequest.current) return;
+    const generation = pickerGeneration.current;
+    const scopeKey = pickerScopeKey;
+    const request = { generation, cursor };
+    pickerMoreRequest.current = request;
+    setPickerState(current => ({ ...current, loadingMore: true, moreFailed: false }));
+    try {
+      const page = await invoke<{ items: AttachmentCandidate[]; nextCursor: string | null }>("list_resources", { workspaceId, cursor });
+      if (generation !== pickerGeneration.current || scopeKey !== pickerScopeRef.current) return;
+      const cursorStatus = classifyAttachmentCursor(cursor, page.nextCursor, [...consumedPickerCursors.current, cursor]);
+      consumedPickerCursors.current.add(cursor);
+      setPickerState(current => ({
+        ...current,
+        status: "READY",
+        items: mergeAttachmentCandidates(current.items, page.items, workspaceId),
+        nextCursor: cursorStatus === "MORE" ? page.nextCursor : null,
+        loadingMore: false,
+        moreFailed: false,
+        cursorStalled: cursorStatus === "STALLED",
+      }));
+    } catch {
+      if (generation !== pickerGeneration.current || scopeKey !== pickerScopeRef.current) return;
+      setPickerState(current => ({ ...current, loadingMore: false, moreFailed: true }));
+    } finally {
+      if (pickerMoreRequest.current === request) pickerMoreRequest.current = null;
+    }
   };
 
   const sendTurn = async () => {
@@ -1359,26 +1436,30 @@ export function ConversationsPage({
               aria-label="Add context or file"
               aria-expanded={pickerOpen}
               disabled={!operatorReady || !selectedId || isTurnRunning}
-              onClick={() => (pickerOpen ? setPickerOpen(false) : openPicker())}
+              onClick={() => (pickerOpen ? closePicker() : openPicker())}
             >
               +
             </button>
             {pickerOpen && (
-              <div className="composer-attachment-picker" role="dialog" aria-label="Attach a file from this Workspace" onKeyDown={event => { if (event.key === "Escape") setPickerOpen(false); }}>
+              <div className="composer-attachment-picker" role="dialog" aria-label="Attach a file from this Workspace" onKeyDown={event => { if (event.key === "Escape") closePicker(); }}>
                 {pickerState.status === "LOADING" && <p role="status">Loading files…</p>}
-                {pickerState.status === "FAILED" && <p role="alert">Files could not be loaded.</p>}
-                {pickerState.status === "READY" && pickerState.items.length === 0 && <p>No text files in this Workspace yet.</p>}
+                {pickerState.status === "FAILED" && <p role="alert">Files could not be loaded. <button className="text-button" type="button" onClick={openPicker}>Retry</button></p>}
+                {pickerState.status === "READY" && pickerState.cursorStalled && <p role="alert">The file list did not advance. <button className="text-button" type="button" onClick={openPicker}>Reopen the picker to refresh</button></p>}
+                {pickerState.status === "READY" && pickerState.items.length === 0 && pickerState.nextCursor !== null && <p>No text files on this page. More files may be available below.</p>}
+                {pickerState.status === "READY" && pickerState.items.length === 0 && pickerState.nextCursor === null && !pickerState.cursorStalled && <p>No text files in this Workspace yet.</p>}
                 <ul>
                   {pickerState.items.map(item => (
                     <li key={item.resourceId}>
                       <button type="button" onClick={() => {
                         if (!composerDraftKey || !workspaceId) return;
                         setAttachmentChips(current => ({ ...current, [composerDraftKey]: addAttachment(current[composerDraftKey] ?? [], item, workspaceId) }));
-                        setPickerOpen(false);
+                        closePicker();
                       }}>{item.displayName}</button>
                     </li>
                   ))}
                 </ul>
+                {pickerState.status === "READY" && pickerState.moreFailed && <p role="alert">More files could not be loaded. Your selected files are still available. <button className="text-button" type="button" disabled={pickerState.loadingMore} onClick={() => void loadMorePickerFiles()}>Retry</button></p>}
+                {pickerState.status === "READY" && pickerState.nextCursor !== null && !pickerState.moreFailed && <button className="text-button" type="button" disabled={pickerState.loadingMore} onClick={() => void loadMorePickerFiles()}>{pickerState.loadingMore ? "Loading more files…" : "Load more files"}</button>}
               </div>
             )}
             {chips.map(chip => (

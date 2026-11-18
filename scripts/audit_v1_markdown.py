@@ -18,7 +18,7 @@ SKIP_DIRS = {
     ".git", "node_modules", "target", ".venv", ".pytest_cache",
     ".agent-worktrees", ".worktrees", ".zwork", ".superpowers", "superpowers", "reading", "staging_tar",
     ".agents", "repo_take", "dist", "build", "coverage",
-    ".next", ".cache", "vendor", "out", ".turbo",
+    ".next", ".cache", "vendor", "out", ".turbo", "audit-output",
 }
 # Archives are pruned by prefix so archive/, archives/, archive_code/ and archives_docs/
 # are all excluded regardless of casing.
@@ -125,7 +125,7 @@ def emit(records, broken):
         f"- Lines read: {total_lines}",
         f"- Bytes read: {total_bytes}",
         f"- Broken relative targets: {len(broken)}",
-        "- Excluded: archives, reference clones, generated audit outputs, dependency/build/cache directories and local run worktrees.",
+        "- Excluded: archives, reference clones, local `audit-output/`, generated audit reports, dependency/build/cache directories and local run worktrees.",
         "- Per-file SHA-256 values: V1-MARKDOWN-INVENTORY.csv",
         "",
         "## Per-file inventory",

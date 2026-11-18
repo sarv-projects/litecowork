@@ -23,6 +23,6 @@ No new global model-catalog or provider route is introduced. The UI reads model/
 | `getAgentControlDescriptor`, `refreshAgentProfileControl` | SERVED for the trusted OpenCode module; module-less profiles return `503`; descriptor writes reuse the migration-16 table | 002-T05 |
 | `submitAgentCredential` | mounted, returns `503`; no SecretStore write | 002-T08 |
 | `beginAgentAuthentication` | SERVED (fail-closed: declared methods only; OpenCode declares none; production launcher is unqualified; observations are in-memory) | 002-T07 |
-| `getAgentSessionOptions`, `getAgentHarnessCapabilities` | OpenAPI target-only, not served | 002-T05, 002-T09 |
+| `getAgentSessionOptions`, `getAgentHarnessCapabilities` | SERVED for a binding with a fresh OpenCode descriptor; capabilities also require one matching current Runtime endpoint/offer. No Tauri picker bridge or Send-admission consumer is wired. | 002-T05, 002-T09 |
 | `openAgentNativeConfiguration` | SERVED (fail-closed: declared targets only; V1 modules declare none; unqualified opener) | 002-T10 |
 | install / update under `/agent-registry/{registryAgentId}` | OpenAPI target-only, not served; V1 shows them unavailable | 002-T11 |

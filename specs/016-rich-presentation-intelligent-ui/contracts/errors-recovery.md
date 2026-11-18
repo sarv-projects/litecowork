@@ -1,57 +1,55 @@
 # Error and Recovery Contract - Feature 016
 
-**Status:** IN_REVIEW - authored for owner review; does not authorize implementation.
-Canonical codes: [docs/schemas/error-codes.schema.json](../../../docs/schemas/error-codes.schema.json). Recovery semantics: [docs/FAILURE-RECOVERY.md](../../../docs/FAILURE-RECOVERY.md).
+**Status:** IN_REVIEW, revision 0.4 TARGET proposal; no new canonical error code or recovery route is approved here.
+Canonical codes: [error-codes.schema.json](../../../docs/schemas/error-codes.schema.json). Cross-domain recovery: [FAILURE-RECOVERY.md](../../../docs/FAILURE-RECOVERY.md), Feature 001 Conversation, Feature 007 Artifacts, Feature 008 Workbench, Feature 014 deletion and Feature 017 backup.
 
-## 1. Rejection reasons (`PRESENTATION_REJECTED.reason`, accepted target)
+## 1. Presentation rejection and safe fallback
 
-| Reason | Trigger | User-visible result |
-|---|---|---|
-| `TooLarge` | document over 512 KiB | semantic text |
-| `NotCanonical` | bytes are not RFC 8785 canonical | semantic text |
-| `DigestMismatch` | document or slice digest differs | semantic text |
-| `UnknownKey` | key outside the closed object | semantic text |
-| `UnsupportedBlock` | kind outside the V1 allowlist | semantic text |
-| `DepthExceeded`, `TooManyBlocks` | depth over 8 or over 200 paths | semantic text |
-| `BindingMismatch` | TABLE or CHART does not match the semantic table | semantic text (chart: table fallback if the table itself is valid) |
-| `NonFiniteNumber` | NaN or Infinity in a value | semantic text |
-| `CalcTooComplex`, `CalcUnknownVariable` | CalcAst over limits or unbound variable | semantic text |
-| `ProvenanceInvalid` | provenance origin or refs not allowed | semantic text |
-
-Media: `MEDIA_TYPE_UNSUPPORTED` (SVG, unknown, magic-byte mismatch, URL-only), `MEDIA_TOO_LARGE` (over 20 MiB or 16,384 pixels per side). No Artifact is created; the answer is unchanged.
-
-## 2. Failure and crash matrix
-
-| Window | Required behaviour |
+| Condition | Required behavior |
 |---|---|
-| Binder throws or times out | Turn already settled; nothing published; counter increments |
-| Crash after presentation blob write, before row commit | Orphan blob removed by the blob sweep; next binder run republishes idempotently |
-| Crash after media blob write, before Artifact commit | Orphan blob removed; harness file can be re-ingested |
-| Duplicate publish (same id, same digest) | Stored record returned |
-| Same id, different digest | Conflict; no write |
-| Two publishes race for one message | One commits; the other gets the conflict or the stored record |
-| Stream gap | `stream.resync_required`; desktop reloads the Conversation presentation; no duplicate messages |
-| Desktop validator rejects a published document | Semantic text shown; a local diagnostic counter increments (no network report) |
-| Calculator divide by zero or non-finite | "Cannot calculate with these values" plus fallback text |
+| Oversize/non-canonical document, digest mismatch or unknown key | Refuse the rich document; retain the complete semantic answer. |
+| Unsupported block, excessive depth/count or malformed binding | Apply only the accepted per-block fallback; otherwise show semantic answer. Never render raw HTML or interpret source as code. |
+| Missing/contradictory metric semantics or unknown aggregation | Do not show the metric/chart. Show the source table or ask for clarification. |
+| Non-finite number, unknown calculation variable/kernel or AST over bound | Refuse the computed view and retain declared semantic explanation/fallback. No IPC or provider call. |
+| Unsupported/replayed/wrong-session provider intent | Reject the candidate by host correlation and scope; settle or preserve Conversation according to Feature 001. Never invent a new answer. |
+| Unsupported media type, mismatched magic bytes, oversize media | Do not create an Artifact; leave semantic answer unchanged. Feature 007 owns any Artifact failure receipt. |
 
-## 3. Mandatory behaviour
+Exact machine reason names and error codes must be promoted in the canonical owner schemas by T02/T20. This table is behavior, not a second error enum.
 
-Presentation never blocks, retries or changes a turn. Validation failure is never shown as an answer failure. No recovery path rewrites a semantic message.
+## 2. UI state and recovery
 
-## 4. Revision 0.2 proposed denial and state recovery
-
-LLD sections 3, 7 and 9 are the design reference; exact additional error codes require T20/T22 canonical promotion. Distinguish unsupported ingress, expired/foreign proposal scope, changed-body replay, unregistered kernel, missing metric semantics, state quota/validation refusal, stale expected revision, consent absent, and deleted/revoked namespace. No refusal fails a settled semantic turn.
-
-| Window | Extension behavior |
+| Failure window | Required behavior |
 |---|---|
-| MCP tool accepted proposal but acknowledgement lost | Replay same digest/identity only inside live scope; no publication claim |
-| Native tool_call carries arbitrary UI operation | Observation only; no execution |
-| Missing unit/time/aggregation or unknown SIP kernel | Table/semantic fallback or explicit clarification |
-| Expand/collapse/remount | Live controller shares state; B-40 unmount/restart discards it |
-| State save commits then timeout | Keep saving/unknown; reconcile same RequestId before retry |
-| Two windows update same state revision | One commits; loser retains draft and reviews current state |
-| Forget races write or late success response | Deletion fence rejects stale write; UI cannot resurrect forgotten data |
-| Restart/revocation/backup restore | Reauthorize exact namespace and consent; no data resurrection or native execution |
-| Agent modification arrives after local edit | Preserve current values; explicit compare/review, new message lineage |
+| Rich read fails or document is rejected | Preserve semantic message; retry only the read/projection, never resend the agent turn. |
+| Binder throws/times out after Conversation settlement | Conversation settlement remains final; no partial presentation. A later idempotent publication may retry under the accepted binder contract. |
+| Blob write succeeds but immutable presentation transaction does not | Storage's orphan cleanup handles unreferenced content; retry exact publication identity/digest. |
+| Duplicate publish with same identity/digest | Return/reuse the committed presentation; no duplicate row/event. |
+| Same publication identity with different digest | Conflict; preserve committed presentation and semantic answer. |
+| Stream gap/reconnect | Discard transient candidate UI and rehydrate committed Conversation and presentation projections. |
+| WebView validator rejects server document | Show semantic answer and increment only bounded local diagnostics; no content/credential logging. |
+| Canvas expand/collapse or remount | Keep the same in-memory controller and revision for the open presentation; no new agent call. Restart returns to original inputs unless separately remembered/saved. |
+| Feature 007 Save/update times out after dispatch | Keep operation pending/unknown; reconcile the same owner RequestId/digest before retry. Do not show success without receipt. Saved View update uses a new committed presentation and does not persist transient calculator values. |
+| Feature 007 version conflict | Preserve the user's draft; show exact current version for review; append only after explicit retry/confirmation under owner contract. |
+| Remember/Forget timeout or two-window conflict | T22 contract must reconcile exact receipt/revision; preserve local draft, fence late writes and never claim forgotten/saved until durable outcome is known. |
+| Conversation modification is cancelled or send is ambiguous | Cancel changes nothing. For ambiguous send use Feature 001's request identity, retry ordinal and receipt; never create a second turn or mutate the source presentation. |
+| Workspace/Conversation deletion or revocation | Feature 014/retention owner fences access and late writes; clear protected live UI; saved Artifact behavior follows explicit cross-owner source-deletion policy. |
+| Backup restore or unknown Saved View schema | Reauthorize exact current version and reject incompatible schema/content; preserve any unsaved local draft separately. Saved View restore follows Artifact retention and does not restore session-modified calculator values. |
 
-Off-by-default persistence, explicit snapshot sharing, migration allocation, quota, receipt retention and backup deletion semantics are unresolved owner gates; do not ship switches or routes before resolution.
+## 3. Required invariants
+
+1. Presentation failure never changes a settled Conversation turn.
+2. Unknown is not success: no Saved, Forgotten, Published or Updated label before the owning durable receipt resolves.
+3. RichPresentation and ArtifactVersion are immutable; update creates a new version and conversational modification creates a new message.
+4. Remembered answer state, Saved View content and executable Artifact runtime data have distinct owners, namespaces, consent and deletion rules. Saved View content preserves declared defaults only; it does not persist session-modified calculator state under B-40.
+5. No recovery operation retries a provider action, Artifact write or state mutation without its exact existing identity/idempotency contract.
+6. No event/log contains answer content, input values, credentials, native session handles, private transcripts or arbitrary provider payloads.
+
+## 4. Owner gates
+
+- The product owner directed Saved Views to remain in V1 and Feature 007 B-21 to be amended on 2026-11-17. T25's detailed Feature 007 Artifact/Library contract is drafted; cross-owner review of source deletion, receipt, retention, backup, versioning and recovery remains a gate before T01/T02.
+- T01 accepts or revises the complete V1 AC set after T25; B-40 alone does not authorize implementation.
+- T02 promotes canonical RichPresentation, API/event/error/UI contracts before code.
+- T20 resolves provider ingress/sequence/replay evidence; unsupported ingress remains semantic-only.
+- T22 can implement remembered state only after quota, migration, consent, encryption/backup, deletion, receipt and revocation behavior are accepted.
+- T23 can implement Saved View commands only through Feature 007; its target routes are not served by this package.
+- T24/T16 require exact packaged SYSTEM and owner USER evidence per release row; unit/schema/route tests are not qualification.

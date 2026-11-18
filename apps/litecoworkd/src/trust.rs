@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use storage_core::{
-    ApprovalActor, ApprovalRecord, ApprovalStore, EventDraft, RequestApprovalCommit, StoreError,
+    ApprovalActor, ApprovalRecord, ApprovalStore, CORE_FILE_REPLACE_CAPABILITY_DIGEST,
+    CORE_FILE_REPLACE_CAPABILITY_ID, CORE_FILE_REPLACE_CAPABILITY_SOURCE, EventDraft,
+    RequestApprovalCommit, StoreError,
 };
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
@@ -46,6 +48,7 @@ id_type!(EffectId);
 pub(crate) enum CapabilityIdentityKind {
     PackageComponent,
     McpSkill,
+    CoreBuiltin,
 }
 
 /// Canonical CapabilityRef value. Keeping the normalized source/version/digest
@@ -108,6 +111,13 @@ impl CapabilityRef {
                         .component
                         .as_deref()
                         .is_some_and(|value| valid_text(value, 2048))
+            }
+            CapabilityIdentityKind::CoreBuiltin => {
+                self.capability_id == CORE_FILE_REPLACE_CAPABILITY_ID
+                    && self.source == CORE_FILE_REPLACE_CAPABILITY_SOURCE
+                    && self.package_version.is_none()
+                    && self.component.as_deref() == Some(CORE_FILE_REPLACE_CAPABILITY_ID)
+                    && self.digest == CORE_FILE_REPLACE_CAPABILITY_DIGEST
             }
         }
     }
@@ -375,6 +385,13 @@ impl PolicyBundle {
                 allowed_execution_methods: vec![ExecutionMethod::StructuredApi],
             },
         );
+        operation_rules.insert(
+            "workspace.file.replace".to_owned(),
+            OperationRule {
+                disposition: OperationDisposition::RequireApproval,
+                allowed_execution_methods: vec![ExecutionMethod::DeterministicLocal],
+            },
+        );
         Self::from_body(PolicyBundleBody {
             policy_id: policy_id.to_owned(),
             revision: 1,
@@ -428,6 +445,13 @@ impl PolicyEngine {
             OperationRule {
                 disposition: OperationDisposition::RequireApproval,
                 allowed_execution_methods: vec![ExecutionMethod::StructuredApi],
+            },
+        );
+        operation_rules.insert(
+            "workspace.file.replace".to_owned(),
+            OperationRule {
+                disposition: OperationDisposition::RequireApproval,
+                allowed_execution_methods: vec![ExecutionMethod::DeterministicLocal],
             },
         );
         Self {
@@ -1887,5 +1911,40 @@ mod tests {
         let result = engine.evaluate(&request, &context);
         assert_eq!(result.decision(), DecisionKind::Deny);
         assert_eq!(result.reason_code(), ReasonCode::RequestDigestMismatch);
+    }
+
+    #[test]
+    fn core_file_replacement_is_a_deterministic_local_action_requiring_exact_approval() {
+        let (engine, mut request, mut context) = task_attempt_fixture();
+        let operation = OperationId::from(CORE_FILE_REPLACE_CAPABILITY_ID);
+        let capability = CapabilityRef {
+            capability_id: CORE_FILE_REPLACE_CAPABILITY_ID.into(),
+            identity_kind: CapabilityIdentityKind::CoreBuiltin,
+            source: CORE_FILE_REPLACE_CAPABILITY_SOURCE.into(),
+            package_version: None,
+            digest: CORE_FILE_REPLACE_CAPABILITY_DIGEST.into(),
+            component: Some(CORE_FILE_REPLACE_CAPABILITY_ID.into()),
+        };
+        assert!(capability.validate());
+
+        context.grant_capability_ref = capability.clone();
+        context.activation_capability_ref = capability.clone();
+        context.capability_ref = capability.clone();
+        context.operation = operation.clone();
+        context.grant_allowed_operations = vec![operation.clone()];
+        context.execution_method = ExecutionMethod::DeterministicLocal;
+        request.capability_ref = capability;
+        request.operation = operation;
+        request.execution_method = ExecutionMethod::DeterministicLocal;
+        request.request_digest = context.digest_for(&request);
+        context.request_digest = request.request_digest.clone();
+
+        let evaluation = engine.evaluate(&request, &context);
+        assert_eq!(evaluation.decision(), DecisionKind::RequireApproval);
+        assert_eq!(evaluation.reason_code(), ReasonCode::ApprovalRequired);
+        assert_eq!(
+            evaluation.details().action_digest,
+            digest_serializable(&ActionDigestInput::from(&request))
+        );
     }
 }

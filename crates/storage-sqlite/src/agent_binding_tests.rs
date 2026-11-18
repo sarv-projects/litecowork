@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Barrier, Mutex, mpsc},
     time::Duration,
 };
 use storage_core::{
@@ -1033,8 +1033,25 @@ fn seed_running_task_and_planner(fixture: &Fixture, session_status: &str) {
     )
     .expect("native host is present");
     tx.execute(
-        "INSERT INTO agent_sessions(agent_session_id,workspace_id,scope_kind,task_id,task_spec_revision,agent_binding_id,endpoint_id,runtime_id,runtime_incarnation_id,status,started_at,last_event_at,version)
-         VALUES('session-pinned-planner',?1,'TASK_PLANNING','task-pinned-planner',1,?2,?3,?4,?5,?6,?7,?7,1)",
+        "INSERT INTO environments(
+             environment_id, runtime_id, provider_kind, class, lifetime,
+             owner_workspace_id, owner_task_id, sharing_scope, name,
+             created_by_incarnation_id, status, health, budget_enforcement_policy,
+             budget_enforcement, resource_limits_json, network_policy_json,
+             budget_ceiling_json, backup_policy, created_at, updated_at
+         ) VALUES (
+             'environment-pinned-planner', ?1, 'LOCAL_BUBBLEWRAP', 'LOCAL_WORKSPACE',
+             'TASK_RETAINED', ?2, 'task-pinned-planner', 'TASK_SHARED',
+             'Pinned planner fixture', ?3, 'READY', 'HEALTHY',
+             'REQUIRE_PROVIDER_ENFORCED', 'PROVIDER_ENFORCED', '{}', '{}', '{}',
+             'EXCLUDED', ?4, ?4
+         )",
+        params![RUNTIME_ID, WORKSPACE_ID, INCARNATION_ID, NOW],
+    )
+    .expect("Task-owned read-only planning Environment is ready");
+    tx.execute(
+        "INSERT INTO agent_sessions(agent_session_id,workspace_id,scope_kind,task_id,task_spec_revision,agent_binding_id,endpoint_id,runtime_id,runtime_incarnation_id,status,started_at,last_event_at,version,environment_id)
+         VALUES('session-pinned-planner',?1,'TASK_PLANNING','task-pinned-planner',1,?2,?3,?4,?5,?6,?7,?7,1,'environment-pinned-planner')",
         params![WORKSPACE_ID, BINDING_ID, ENDPOINT_ID, RUNTIME_ID, INCARNATION_ID, session_status, NOW],
     )
     .expect("Task-planning session is pinned");
@@ -1047,6 +1064,80 @@ fn seed_running_task_and_planner(fixture: &Fixture, session_status: &str) {
         .expect("active session remains attached to its host");
     }
     tx.commit().expect("persist active planner fixture");
+}
+
+#[test]
+fn v33_upgrade_preserves_legacy_unbound_planner_and_requires_environment_for_restart() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "CLOSED");
+    let Fixture {
+        directory, store, ..
+    } = fixture;
+    drop(store);
+
+    let mut connection = Connection::open(database_path(&directory)).expect("open test DB");
+    connection
+        .execute(
+            "DELETE FROM agent_sessions WHERE agent_session_id = 'session-pinned-planner'",
+            [],
+        )
+        .expect("remove the closed v33 seed session before reconstructing v32");
+    crate::tests::downgrade_v33_to_v32_for_test(&connection);
+    let v32_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read reconstructed v32 schema version");
+    assert_eq!(v32_version, V32_SCHEMA_VERSION);
+
+    connection
+        .execute(
+            "INSERT INTO agent_sessions(
+                 agent_session_id, workspace_id, scope_kind, task_id, task_spec_revision,
+                 agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id,
+                 status, started_at, last_event_at, version
+             ) VALUES (
+                 'legacy-active-task-session', ?1, 'TASK_PLANNING', 'task-pinned-planner', 1,
+                 ?2, ?3, ?4, ?5, 'ACTIVE', ?6, ?6, 1
+             )",
+            params![
+                WORKSPACE_ID,
+                BINDING_ID,
+                ENDPOINT_ID,
+                RUNTIME_ID,
+                INCARNATION_ID,
+                NOW
+            ],
+        )
+        .expect("seed a valid legacy active planner under the v32 schema");
+
+    super::migrate(&mut connection).expect("upgrade the v32 database to v33");
+    let (status, environment_id): (String, Option<String>) = connection
+        .query_row(
+            "SELECT status, environment_id FROM agent_sessions
+             WHERE agent_session_id = 'legacy-active-task-session'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read legacy planner after v33 migration");
+    assert_eq!(status, "ACTIVE");
+    assert_eq!(environment_id, None);
+    assert!(
+        connection
+            .execute(
+                "UPDATE agent_sessions SET status = 'STARTING'
+             WHERE agent_session_id = 'legacy-active-task-session'",
+                [],
+            )
+            .is_err()
+    );
+    let status: String = connection
+        .query_row(
+            "SELECT status FROM agent_sessions
+             WHERE agent_session_id = 'legacy-active-task-session'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read planner after rejected restart");
+    assert_eq!(status, "ACTIVE");
 }
 
 fn plan_commit() -> (
@@ -1151,6 +1242,372 @@ fn plan_commit() -> (
         record_schema_version: 1,
     }];
     (commit, task_state_ref, step_state_refs)
+}
+
+type PlanAcceptanceSnapshot = (i64, Option<i64>, i64, i64, i64, i64, i64);
+
+fn plan_acceptance_snapshot(connection: &Connection, request_id: &str) -> PlanAcceptanceSnapshot {
+    let task: (i64, Option<i64>) = connection
+        .query_row(
+            "SELECT version, current_plan_revision FROM tasks
+             WHERE workspace_id = ?1 AND task_id = ?2",
+            params![WORKSPACE_ID, "task-pinned-planner"],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read Task plan-acceptance state");
+    let plans = connection
+        .query_row(
+            "SELECT COUNT(*) FROM plan_revisions WHERE task_id = ?1",
+            ["task-pinned-planner"],
+            |row| row.get(0),
+        )
+        .expect("count PlanRevisions");
+    let steps = connection
+        .query_row(
+            "SELECT COUNT(*) FROM steps WHERE task_id = ?1",
+            ["task-pinned-planner"],
+            |row| row.get(0),
+        )
+        .expect("count Steps");
+    let attempts = connection
+        .query_row(
+            "SELECT COUNT(*) FROM attempts WHERE task_id = ?1",
+            ["task-pinned-planner"],
+            |row| row.get(0),
+        )
+        .expect("count Attempts");
+    let events = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events
+             WHERE workspace_id = ?1 AND (
+                 (entity_type = 'Task' AND entity_id = ?2 AND type = 'task.plan.revised.v1')
+                 OR (entity_type = 'Step' AND entity_id = ?3 AND type = 'step.created.v1')
+             )",
+            params![WORKSPACE_ID, "task-pinned-planner", "step-pinned-planner"],
+            |row| row.get(0),
+        )
+        .expect("count plan acceptance events");
+    let receipts = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            params![OWNER_ID, request_id],
+            |row| row.get(0),
+        )
+        .expect("count plan acceptance receipt");
+    (task.0, task.1, plans, steps, attempts, events, receipts)
+}
+
+fn open_planner_connection(fixture: &Fixture) -> Connection {
+    let connection = Connection::open(database_path(&fixture.directory)).expect("open SQLite");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable foreign keys");
+    connection
+        .busy_timeout(Duration::from_secs(10))
+        .expect("allow concurrent immediate transaction to settle");
+    connection
+}
+
+#[test]
+fn plan_acceptance_commits_plan_steps_events_and_receipt_without_attempt() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "ACTIVE");
+    let (commit, task_state_ref, step_state_refs) = plan_commit();
+    validate_plan_acceptance_commit(&commit).expect("plan commit fixture matches the contract");
+    let mut connection = open_planner_connection(&fixture);
+    let accepted = accept_initial_plan_transaction(
+        &mut connection,
+        commit.clone(),
+        task_state_ref,
+        step_state_refs,
+    )
+    .expect("initial plan acceptance commits");
+
+    assert_eq!(accepted.task_version, 2);
+    assert_eq!(accepted.plan_revision.revision, 1);
+    assert_eq!(accepted.materialized_steps.len(), 1);
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, &commit.request_id),
+        (2, Some(1), 1, 1, 0, 2, 1),
+        "plan, Step, both events and receipt commit together, without admitting an Attempt"
+    );
+}
+
+#[test]
+fn plan_acceptance_rejects_stale_task_version_without_writes() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "ACTIVE");
+    let (commit, task_state_ref, step_state_refs) = plan_commit();
+    let mut connection = open_planner_connection(&fixture);
+    connection
+        .execute(
+            "UPDATE tasks SET version = version + 1
+             WHERE workspace_id = ?1 AND task_id = ?2",
+            params![WORKSPACE_ID, "task-pinned-planner"],
+        )
+        .expect("advance the Task after the proposal captured its version");
+    let before = plan_acceptance_snapshot(&connection, &commit.request_id);
+
+    assert!(matches!(
+        accept_initial_plan_transaction(&mut connection, commit, task_state_ref, step_state_refs),
+        Err(StoreError::Conflict {
+            expected: Some(1),
+            actual: Some(2),
+        })
+    ));
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, "request-plan-after-binding-change"),
+        before,
+        "a stale Task version leaves no plan, Step, event or receipt"
+    );
+}
+
+#[test]
+fn plan_acceptance_rejects_stale_task_spec_head_with_typed_code_without_writes() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "ACTIVE");
+    let (mut commit, mut task_state_ref, step_state_refs) = plan_commit();
+    let mut connection = open_planner_connection(&fixture);
+    connection
+        .execute(
+            "INSERT INTO task_spec_revisions(
+                 task_id, workspace_id, revision, objective, lead_failover_policy_json,
+                 placement_preference, preferred_lead_agent_binding_id, authored_by_json,
+                 created_at, delegation_policy_snapshot_json
+             ) VALUES (
+                 'task-pinned-planner', ?1, 2, 'New current objective', ?2, '{}', ?3, ?4, ?5, ?6
+             )",
+            params![
+                WORKSPACE_ID,
+                r#"{"mode":"DISABLED","triggers":[],"fallback_agent_binding_ids":[],"max_lead_changes":0}"#,
+                BINDING_ID,
+                serde_json::to_string(&serde_json::json!({"kind":"USER","principal_id":OWNER_ID}))
+                    .expect("TaskSpec actor JSON"),
+                NOW,
+                r#"{"source":"WORKSPACE_DEFAULT","strategy":"NATIVE_DEFAULT","native_child_model_policy":"AGENT_DEFAULT","worker_profiles":[],"workspace_settings_revision":1}"#,
+            ],
+        )
+        .expect("append the newer TaskSpec revision");
+    connection
+        .execute(
+            "UPDATE tasks SET current_spec_revision = 2, version = 2
+             WHERE workspace_id = ?1 AND task_id = ?2",
+            params![WORKSPACE_ID, "task-pinned-planner"],
+        )
+        .expect("advance current TaskSpec head and Task version");
+    commit.expected_task_version = 2;
+    task_state_ref.entity_revision = 3;
+    commit.plan_event.entity_revision = 3;
+    commit.plan_event.payload["aggregate_version"] = Value::from(3);
+    validate_plan_acceptance_commit(&commit).expect("stale proposal is structurally valid");
+    let before = plan_acceptance_snapshot(&connection, &commit.request_id);
+
+    assert!(matches!(
+        accept_initial_plan_transaction(&mut connection, commit.clone(), task_state_ref, step_state_refs),
+        Err(StoreError::Invalid(code)) if code == "STALE_SPEC_REVISION"
+    ));
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, &commit.request_id),
+        before,
+        "a stale TaskSpec head leaves no plan, Step, event or receipt"
+    );
+}
+
+#[test]
+fn plan_acceptance_rejects_inactive_planner_without_writes() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "CLOSED");
+    let (commit, task_state_ref, step_state_refs) = plan_commit();
+    let mut connection = open_planner_connection(&fixture);
+    let before = plan_acceptance_snapshot(&connection, &commit.request_id);
+
+    assert!(matches!(
+        accept_initial_plan_transaction(&mut connection, commit.clone(), task_state_ref, step_state_refs),
+        Err(StoreError::Invalid(message)) if message.contains("active lead planning session")
+    ));
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, &commit.request_id),
+        before,
+        "an inactive producer leaves no plan, Step, event or receipt"
+    );
+}
+
+#[test]
+fn plan_acceptance_exact_replay_returns_original_receipt_without_duplicate_writes() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "ACTIVE");
+    let (commit, task_state_ref, step_state_refs) = plan_commit();
+    let mut connection = open_planner_connection(&fixture);
+    let accepted = accept_initial_plan_transaction(
+        &mut connection,
+        commit.clone(),
+        task_state_ref.clone(),
+        step_state_refs.clone(),
+    )
+    .expect("initial plan acceptance commits");
+    let after_commit = plan_acceptance_snapshot(&connection, &commit.request_id);
+    let replay = accept_initial_plan_transaction(
+        &mut connection,
+        commit.clone(),
+        task_state_ref,
+        step_state_refs,
+    )
+    .expect("exact replay resolves the durable receipt before mutable admission checks");
+
+    assert_eq!(replay, accepted);
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, &commit.request_id),
+        after_commit,
+        "exact replay creates no duplicate plan, Step, event or receipt"
+    );
+}
+
+#[test]
+fn plan_acceptance_conflicting_replay_payload_returns_conflict_without_writes() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "ACTIVE");
+    let (commit, task_state_ref, step_state_refs) = plan_commit();
+    let mut connection = open_planner_connection(&fixture);
+    accept_initial_plan_transaction(
+        &mut connection,
+        commit.clone(),
+        task_state_ref.clone(),
+        step_state_refs.clone(),
+    )
+    .expect("initial plan acceptance commits");
+    let after_commit = plan_acceptance_snapshot(&connection, &commit.request_id);
+    let mut conflicting = commit.clone();
+    conflicting.request_payload["plan"]["logical_key"] = Value::from("different");
+
+    assert!(matches!(
+        accept_initial_plan_transaction(
+            &mut connection,
+            conflicting,
+            task_state_ref,
+            step_state_refs
+        ),
+        Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        })
+    ));
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, &commit.request_id),
+        after_commit,
+        "conflicting replay changes no durable state"
+    );
+}
+
+#[test]
+fn concurrent_plan_acceptances_commit_exactly_once_and_fence_the_loser() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "ACTIVE");
+    let database = database_path(&fixture.directory);
+    let barrier = Arc::new(Barrier::new(3));
+    let workers = (0..2)
+        .map(|worker| {
+            let database = database.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let mut connection = Connection::open(database).expect("open concurrent SQLite");
+                connection
+                    .pragma_update(None, "foreign_keys", true)
+                    .expect("enable foreign keys");
+                connection
+                    .busy_timeout(Duration::from_secs(10))
+                    .expect("wait for the serialized acceptance transaction");
+                let (mut commit, task_state_ref, step_state_refs) = plan_commit();
+                commit.request_id = format!("request-plan-race-{worker}");
+                commit.plan_event.event_id = format!("event-plan-race-{worker}");
+                commit.step_events[0].event_id = format!("event-step-race-{worker}");
+                barrier.wait();
+                accept_initial_plan_transaction(
+                    &mut connection,
+                    commit,
+                    task_state_ref,
+                    step_state_refs,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    let results = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("acceptance worker completes"))
+        .collect::<Vec<_>>();
+    let committed = results.iter().filter(|result| result.is_ok()).count();
+    let fenced = results
+        .iter()
+        .filter(|result| matches!(result, Err(StoreError::Conflict { .. })))
+        .count();
+    assert_eq!(
+        committed, 1,
+        "exactly one proposal owns the initial plan slot"
+    );
+    assert_eq!(fenced, 1, "the stale concurrent proposal is fenced");
+    let connection = open_planner_connection(&fixture);
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, "request-plan-race-0").5,
+        2,
+        "only the winning plan and Step events commit"
+    );
+    let receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id IN (?2, ?3)",
+            params![OWNER_ID, "request-plan-race-0", "request-plan-race-1"],
+            |row| row.get(0),
+        )
+        .expect("count concurrent plan receipts");
+    assert_eq!(receipts, 1, "only the winning request has a receipt");
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM plan_revisions WHERE task_id = ?1",
+                ["task-pinned-planner"],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count concurrent PlanRevisions"),
+        1
+    );
+}
+
+#[test]
+fn plan_acceptance_failure_after_step_insert_rolls_back_plan_and_receipt() {
+    let fixture = setup();
+    seed_running_task_and_planner(&fixture, "ACTIVE");
+    let (commit, task_state_ref, step_state_refs) = plan_commit();
+    let mut connection = open_planner_connection(&fixture);
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_plan_acceptance_after_step_insert
+             BEFORE UPDATE OF current_plan_revision ON tasks
+             WHEN NEW.task_id = 'task-pinned-planner'
+              AND NEW.current_plan_revision = 1
+              AND EXISTS (
+                  SELECT 1 FROM steps
+                  WHERE task_id = NEW.task_id AND step_id = 'step-pinned-planner'
+              )
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected failure after Step insert');
+             END;",
+        )
+        .expect("inject failure after Step insertion but before Task plan update");
+    let before = plan_acceptance_snapshot(&connection, &commit.request_id);
+
+    assert!(
+        accept_initial_plan_transaction(
+            &mut connection,
+            commit.clone(),
+            task_state_ref,
+            step_state_refs,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        plan_acceptance_snapshot(&connection, &commit.request_id),
+        before,
+        "failure after Step insertion rolls back PlanRevision, Step and every later write"
+    );
 }
 
 #[test]

@@ -67,7 +67,7 @@ READY | RUNNING | WAITING_USER | BLOCKED | VERIFYING | NEEDS_USER | INCOMPLETE |
 PAUSE_REQUESTED | PAUSED -> CANCEL_REQUESTED -> CANCELLED
 ```
 
-- `READY -> RUNNING`: TaskService after either (a) the authorized lead TASK_PLANNING AgentSession becomes ready, or (b) a READY Task with an accepted PlanRevision admits its first/recovery Step Attempt. Planning has no Step, Attempt, ExecutionLease, or Environment. A Step Attempt may start only after a PlanRevision is accepted and its Steps are materialized.
+- `READY -> RUNNING`: TaskService after either (a) the authorized lead TASK_PLANNING AgentSession becomes ready with its Task-scoped, read-only Environment binding, or (b) a READY Task with an accepted PlanRevision admits its first/recovery Step Attempt with a fresh ATTEMPT_PRIVATE Environment. Planning has no Step, Attempt or ExecutionLease; it does have a read-only Environment and cannot write through it. A Step Attempt may start only after a PlanRevision is accepted and its Steps are materialized.
 - `RUNNING -> VERIFYING`: TaskService accepts a completion proposal; the proposal is
   not evidence of completion.
 - `VERIFYING -> COMPLETED`: CompletionEvaluator recommends; TaskService commits only

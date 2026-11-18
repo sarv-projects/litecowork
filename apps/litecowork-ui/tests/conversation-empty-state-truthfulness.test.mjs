@@ -98,7 +98,7 @@ test("the attachment control has an owner route and stays fenced to a selected C
   const at = source.indexOf('aria-label="Add context or file"');
   assert.notEqual(at, -1, "the attach control exists");
   assert.match(source.slice(at, at + 200), /disabled=\{!operatorReady \|\| !selectedId \|\| isTurnRunning\}/);
-  assert.match(source, /invoke<\{ items: AttachmentCandidate\[\] \}>\("list_resources"/);
+  assert.match(source, /invoke<\{ items: AttachmentCandidate\[\]; nextCursor: string \| null \}>\("list_resources"/);
   assert.match(source, /resourceRefs: toResourceRefs\(chips, workspaceId\)/);
 });
 

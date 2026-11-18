@@ -18,10 +18,24 @@
     },
     {
       "method": "GET",
+      "path": "/v1/agent-bindings/{agent_binding_id}/harness-capabilities",
+      "openapi_path": "/agent-bindings/{agentBindingId}/harness-capabilities",
+      "operation_id": "getAgentHarnessCapabilities",
+      "source": "apps/litecoworkd/src/agent_control_operator.rs"
+    },
+    {
+      "method": "GET",
       "path": "/v1/agent-bindings/{agent_binding_id}/quota-observation",
       "openapi_path": "/agent-bindings/{agentBindingId}/quota-observation",
       "operation_id": "getAgentQuotaObservation",
       "source": "apps/litecoworkd/src/agent_quota_observation_operator.rs"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/agent-bindings/{agent_binding_id}/session-options",
+      "openapi_path": "/agent-bindings/{agentBindingId}/session-options",
+      "operation_id": "getAgentSessionOptions",
+      "source": "apps/litecoworkd/src/agent_control_operator.rs"
     },
     {
       "method": "GET",
@@ -1295,16 +1309,6 @@
   "target_only": [
     {
       "method": "GET",
-      "path": "/agent-bindings/{agentBindingId}/harness-capabilities",
-      "operation_id": "getAgentHarnessCapabilities"
-    },
-    {
-      "method": "GET",
-      "path": "/agent-bindings/{agentBindingId}/session-options",
-      "operation_id": "getAgentSessionOptions"
-    },
-    {
-      "method": "GET",
       "path": "/channel-bindings",
       "operation_id": "listChannelBindings"
     },
@@ -1457,6 +1461,11 @@
       "method": "POST",
       "path": "/runtimes/{runtimeId}/revoke",
       "operation_id": "revokeRuntime"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/attempts",
+      "operation_id": "admitTaskAttempt"
     },
     {
       "method": "POST",

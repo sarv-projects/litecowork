@@ -1,10 +1,10 @@
 # Plan - Safe Task Path
 
-**Feature:** 005 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Feature:** 005 | **Status:** Revision 1.0 ACCEPTED/LOCKED; revision 1.1 IN_REVIEW with owner-directed implementation authorization; not a claim of implementation or qualification.
 
 ## Phases
 
-1. Contract promotion (T01): owner docs, OpenAPI, error codes, events and the next immutable SQLite migration in one change.
+1. Contract promotion (T01): owner docs, OpenAPI, event contract, Environment/session binding and the next immutable SQLite migration in one change. Revision 1.1 is owner-directed for implementation and awaits cross-owner review.
 2. Foundations in parallel (T02-T07, T12): type/probe consolidation, plan acceptance storage, Linux bubblewrap provider and attestation, planning dispatch, B-18 replace primitive, Trust/grant wiring, Conversation promotion.
 3. Execution path (T08-T11): Attempt admission, reconciliation and verification, Operator routes and Tauri bridge, cancel/crash/restart recovery.
 4. UI (T13-T14): Work execution panel and the Windows-row UNAVAILABLE posture.
@@ -14,18 +14,18 @@
 
 ## Dependency DAG
 
-- T01 blocks every implementation task; T16 is an owner decision that only blocks T17 and T18. The full DAG is in [TASKS.md](TASKS.md#dependency-order).
+- T01 contracts are being promoted under the owner's 2026-11-17 implementation direction. T03-T08 retain their explicit task dependencies; T16 is a separate owner decision that only blocks T17 and T18. The full DAG is in [TASKS.md](TASKS.md#dependency-order).
 - External side effects never run inside the transactions declared in WIRING.yaml.
 - Feature 001 remains a prerequisite wherever this slice needs a committed Conversation turn.
 
 ## Owners and file scope
 
 Owners: Task Runtime, Environments, Trust, Storage, Desktop UI.
-Allowed implementation paths are listed per task. The active source tree is in apps/ and crates/. Changes remain limited to the task-owned paths and require package acceptance, a clean selected worktree, and source/contract/UI/test reconciliation.
+Allowed implementation paths are listed per task. The active source tree is in apps/ and crates/. Changes remain limited to the task-owned paths and require revision-specific review, a clean selected worktree, and source/contract/UI/test reconciliation. User authorization permits implementation of revision 1.1 while cross-owner review remains pending; it does not make that revision ACCEPTED or QUALIFIED.
 
 ## Migration, rollout, rollback
 
-No migration has shipped for this package yet. T01 promotes one forward-only immutable migration (`docs/schemas/sqlite-v36.sql` per the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md; v28 through v32 are already wired and a merged migration is never renumbered; if another package merges first take the next free number and update that table). Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
+T01 wires the forward-only immutable migration v33 at the first unmerged version assigned by `docs/LITECOWORK-BUILD-TASKS.md`. It binds newly reserved Task AgentSessions to Environment identity; it does not provision or attest an Environment, open CapabilityInvocation creation or dispatch, or serve Task admission. Revision 1.1 remains IN_REVIEW pending cross-owner review. A merged migration is never renumbered. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
 
 ## Risks
 
@@ -37,7 +37,7 @@ No migration has shipped for this package yet. T01 promotes one forward-only imm
 ## Verification gates
 
 - `python3 .specify/scripts/validate_feature_package.py`
-- Owner review recorded 2026-11-09 for B-17/B-18; B-35 pending
+- Owner review recorded 2026-11-09 for revision 1.0 B-17/B-18; revision 1.1 cross-owner review pending; B-35 pending
 - TASKS.md commands and denial, replay, restart and cancel cases
 
 ## DeepSeek Harness proposals (PROPOSED, owner review required)

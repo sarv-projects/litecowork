@@ -1,14 +1,15 @@
 # Plan - Professional Artifacts One Format
 
-**Feature:** 007 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Feature:** 007 | **Status:** Base revision 1.0 ACCEPTED/LOCKED; revision 1.1 Saved View amendment IN_REVIEW after owner direction 2026-11-17. The amendment does not authorize implementation before cross-owner review and contract promotion.
 **Spec revision:** 1.0 | **Release target:** V1 (Windows x64 first; Linux x64 second)
 
 ## Phases
 
-1. Contract promotion (TASKS T01): promote B-21 engine pin, B-30 create, B-31 export receipt, the capability matrix and Conversation origin into ARTIFACTS-EVIDENCE, API, EVENTS, SCHEMAS with `docs/schemas/operator-api.openapi.yaml`, `domain-event.schema.json` (`artifact.exported.v1`), `error-codes.schema.json` and the next immutable `docs/schemas/sqlite-vNN.sql`.
+1. Contract promotion (TASKS T01): promote B-21 Markdown and Saved View media rules, B-30 source classes and atomic Saved View create, B-31 export receipt, the capability matrix and Conversation origin into ARTIFACTS-EVIDENCE, API, EVENTS and SCHEMAS with the OpenAPI contract, canonical Saved View schema, `artifact.exported.v1`, error taxonomy and next immutable migration. Saved View uses existing ArtifactVersion/ResourceRevision and event/receipt owners; no separate table or event is allocated.
 2. Storage and format (T02-T06): atomic create, Markdown adapter, Markdown version publish, capability matrix producer, export receipt. T06 remains blocked on A-81 until owner review resolves the SPEC §7 versus HLD/API/T06 ordering conflict and local write-before-receipt recovery; do not promote its command/schema ahead of that review.
 3. Operator routes and Tauri bridge (T07); Conversation association (T08); imported source class (T12).
 4. UI (T09-T11): Library and Workbench create/edit/export, read-only/unsupported rendering for DOCX/XLSX/PPTX/PDF, stored-version compare.
+5. Saved View extension (same create/version/route/UI/recovery tasks): after Feature 016 T01/T02 and Feature 007 cross-owner acceptance, create a self-contained Saved View Artifact in Library, reopen the exact version, append reviewed updates, and archive it. No hard Delete, export of its internal JSON, or permanent Saved Apps destination.
 5. Failure/recovery (T13), cross-layer trace (T14), qualification of E2E-07 on both rows (T15), documentation sync (T16), package VERIFIED (T17).
 
 ## Dependency DAG

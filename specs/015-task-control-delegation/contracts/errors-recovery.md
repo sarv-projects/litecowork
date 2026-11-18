@@ -32,7 +32,9 @@ Canonical codes: [docs/schemas/error-codes.schema.json](../../../docs/schemas/er
 | Window | Required behaviour |
 |---|---|
 | Crash after PAUSE_REQUESTED commit, before quiescence | Startup sweep: prior leases cannot be renewed; Attempts ABANDONED; Effects reconciled; then PAUSED commits from the durable control request |
-| Crash after child admission commit, before worker start | Child Attempt CREATED with no session: generic session-admission recovery is blocked on O-06; once owner-defined, sweep must reconcile the durable reservation and mark the Attempt ABANDONED before any replacement |
+| Crash before child admission commit, after private provider preparation | No child Attempt exists. Startup resolves the preparation journal against the exact admission receipt; an unbound scope is destroyed only after provider identity and positive quiescence, while unknown evidence keeps a blocker |
+| Crash after child admission commit, before native launch handoff | Resolve the exact child-admission receipt. The durable Attempt/STARTING session is fenced to its old Runtime incarnation; stop or reconcile the held supervisor by exact identity, observe quiescence, then mark the Attempt ABANDONED before any replacement |
+| Crash after native launch handoff, before worker readiness is committed | Treat the child as possibly running. Reconcile exact process scope, stop if owned, prove quiescence, settle child Attempt and Effects, then permit replacement; never replay the launch handoff blindly |
 | Timeout after worker dispatch | Effect AMBIGUOUS; Feature 005 reconciler settles it before any replacement |
 | Late ResultEnvelope after handoff or replacement | Fenced observation; no state change |
 | Duplicate command replay | Stored receipt returned; no second effect |
@@ -46,4 +48,4 @@ Canonical codes: [docs/schemas/error-codes.schema.json](../../../docs/schemas/er
 
 UNKNOWN is never success. No retry resends a native prompt to repair a storage write. Recovery never replays recorded actions.
 
-Feature 005's current bounded file-write admission/recovery path is not a generic native provider session manager. O-06 blocks any delegation, verifier or Task-level quiescence recovery claim until the owning contract specifies those lifecycle operations. Native direct actions must not be represented as LiteCowork Effect receipts unless they actually cross the mediated Effect boundary.
+Feature 005's bounded file-write admission/recovery path is not a generic native provider session manager. Its revision 1.1 records the owner-directed Task Runtime seam; cross-owner review and Feature 015 acceptance/implementation remain required before delegation, verifier or Task-level quiescence recovery is claimed. Native direct actions must not be represented as LiteCowork Effect receipts unless they actually cross the mediated Effect boundary.

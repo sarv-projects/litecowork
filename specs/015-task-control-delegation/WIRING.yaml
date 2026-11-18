@@ -2,7 +2,7 @@ feature_id: "015"
 name: "Task Control and Heterogeneous Delegation"
 status: "IN_REVIEW"
 spec_revision: "0.1"
-notes: "All edges are TARGET unless marked existing. Served today: lead-agent binding change (CAS only) and verification-runs read. Feature 005 currently defines a bounded file-write Attempt slice, not the generic native provider-session admission/control seam assumed for delegation and verification; O-06 blocks those edges pending owner/API decision. O-07 keeps lead-binding change separate from execution replacement. A-37 on_exhaustion remains TARGET-not-yet-wired under its accepted owner contract. O-09 blocks Compare Agents until its Conversation/Agent Runtime surface and request/result/recovery owner contract exists. Linux qualification first; Windows stays UNAVAILABLE until Feature 005 B-35."
+notes: "All edges are TARGET unless marked existing. Served today: lead-agent binding change (CAS only) and verification-runs read. Feature 005 revision 1.1 records an owner-directed generic Task Runtime Environment-first Attempt/session seam; the revision remains IN_REVIEW and cross-owner review is pending, so Feature 015 execution/control edges remain blocked. The generic seam is distinct from Feature 005's bounded file-write Effect path. O-07 keeps lead-binding change separate from execution replacement. A-37 on_exhaustion remains TARGET-not-yet-wired under its accepted owner contract. O-09 blocks Compare Agents until its Conversation/Agent Runtime surface and request/result/recovery owner contract exists. Linux qualification first; Windows stays UNAVAILABLE until Feature 005 B-35."
 nodes:
   - id: "work-ui"
     owner: "Desktop UI (Work screen)"
@@ -74,9 +74,9 @@ nodes:
     outputs: ["file-write Attempt lifecycle and Effect observations"]
   - id: "attempt-session-seam"
     owner: "Task Runtime / Agent Runtime / Feature 005 decision"
-    kind: "owner decision / unresolved service interface"
+    kind: "owner-directed seam / concrete interface pending cross-owner review"
     responsibility: "Generic native provider Attempt and AgentSession admission, Environment binding, cancellation, quiescence, verifier lifecycle and restart recovery required by 015"
-    implementation_status: "BLOCKED: O-06; do not infer this API from Feature 005 `admit_file_write`"
+    implementation_status: "BLOCKED pending cross-owner review of the owner-directed Feature 005 revision 1.1 Task Runtime admission seam; do not infer from bounded `admit_file_write`"
     inputs: ["authorized generic Attempt/session request"]
     outputs: ["durable Attempt and session lifecycle observations"]
   - id: "session-supervisor"
@@ -137,7 +137,7 @@ edges:
   - id: "e-delegation-attempts"
     from: "delegation-admission-service"
     to: "attempt-session-seam"
-    kind: "attach ATTEMPT_PRIVATE Environment and start native worker after commit (O-06)"
+    kind: "prepare + attest ATTEMPT_PRIVATE Environment before admission; atomically persist public Environment identity and STARTING session with Attempt/Step/lease; start native worker after commit (O-06 direction, review pending)"
   - id: "e-attempts-supervisor"
     from: "attempt-service-005"
     to: "session-supervisor"
@@ -157,7 +157,7 @@ edges:
   - id: "e-verify-attempts"
     from: "verification-service"
     to: "attempt-session-seam"
-    kind: "verifier Attempt with read-only Environment (O-06)"
+    kind: "prepare + attest fresh read-only verifier Environment before admission; commit its public identity with verifier Attempt/session; start provider after commit (O-06 direction, review pending)"
   - id: "e-verify-store"
     from: "verification-service"
     to: "sqlite-store"

@@ -33,6 +33,7 @@ export function AgentControlDescriptorPanel({
   const generation = useRef(0);
   const actionGeneration = useRef(0);
   const [state, setState] = useState<PanelState>({ key, status: "LOADING" });
+  const [descriptorExpired, setDescriptorExpired] = useState(false);
   const [actionState, setActionState] = useState<{ key: string; status: "BUSY" | "INFO" | "ERROR"; message: string; reference?: string } | null>(null);
 
   useEffect(() => {
@@ -57,9 +58,36 @@ export function AgentControlDescriptorPanel({
   }, [api, key, profileId, workspaceId]);
 
   const visible = state.key === key ? state : { key, status: "LOADING" as const };
+  const descriptor = visible.status === "READY" ? visible.descriptor : undefined;
+
+  useEffect(() => {
+    if (!descriptor) {
+      setDescriptorExpired(false);
+      return;
+    }
+    const expiresAt = Date.parse(descriptor.expires_at);
+    if (isAgentControlDescriptorExpired(descriptor.expires_at)) {
+      setDescriptorExpired(true);
+      return;
+    }
+    setDescriptorExpired(false);
+    let timer: number | undefined;
+    const markExpiredWhenDue = () => {
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        setDescriptorExpired(true);
+      } else {
+        timer = window.setTimeout(markExpiredWhenDue, Math.min(remaining, 2_147_000_000));
+      }
+    };
+    markExpiredWhenDue();
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [descriptor?.expires_at, key]);
 
   const runAction = (action: "AUTH" | "CONFIG", id: string) => {
-    if (visible.status !== "READY" || !workspaceId) return;
+    if (visible.status !== "READY" || descriptorExpired || !workspaceId) return;
     const request = ++actionGeneration.current;
     setActionState({ key, status: "BUSY", message: action === "AUTH" ? "Starting the declared sign-in flow…" : "Opening the declared native configuration…" });
     const task = action === "AUTH"
@@ -133,6 +161,7 @@ export function AgentControlDescriptorPanel({
       )}
       {visible.status === "READY" && <DescriptorSummary
         descriptor={visible.descriptor}
+        stale={descriptorExpired}
         actions={{
           onBeginAuth: (methodId) => runAction("AUTH", methodId),
           onOpenNativeConfig: (targetId) => runAction("CONFIG", targetId),
@@ -177,7 +206,7 @@ const AUTH_TEXT: Record<AgentControlDescriptor["auth"]["state"], string> = {
   ERROR: "Sign-in failed or was denied.",
 };
 
-export function DescriptorSummary({ descriptor, actions = {}, actionBusy = false }: { descriptor: AgentControlDescriptor; actions?: DescriptorActions; actionBusy?: boolean }) {
+export function DescriptorSummary({ descriptor, actions = {}, actionBusy = false, stale = false }: { descriptor: AgentControlDescriptor; actions?: DescriptorActions; actionBusy?: boolean; stale?: boolean }) {
   const nativeFlows = descriptor.auth.methods.filter((method) => method.kind === "NATIVE_FLOW");
   const targets = descriptor.configuration.native_config_targets;
   return (
@@ -189,6 +218,9 @@ export function DescriptorSummary({ descriptor, actions = {}, actionBusy = false
         <div><dt>Observed</dt><dd><time dateTime={descriptor.observed_at}>{descriptor.observed_at}</time></dd></div>
         <div><dt>Expires</dt><dd><time dateTime={descriptor.expires_at}>{descriptor.expires_at}</time></dd></div>
       </dl>
+      {stale && <p className="agent-control-panel__notice" role="status" aria-live="polite">
+        These controls are stale. Refresh controls to check them again; sign-in and configuration actions are paused until then.
+      </p>}
       <p>
         Native input: {descriptor.input_surface.text ? "text" : "no text"}
         {descriptor.input_surface.images ? ", images" : ""}
@@ -213,7 +245,7 @@ export function DescriptorSummary({ descriptor, actions = {}, actionBusy = false
           <button
             key={method.auth_method_id}
             type="button"
-            disabled={!actions.onBeginAuth || actionBusy || descriptor.auth.state === "AUTHENTICATING"}
+            disabled={stale || !actions.onBeginAuth || actionBusy || descriptor.auth.state === "AUTHENTICATING"}
             onClick={() => actions.onBeginAuth?.(method.auth_method_id)}
           >
             {descriptor.auth.state === "AUTHENTICATING" ? "Authenticating…" : `Sign in: ${method.display_name}`}
@@ -225,7 +257,7 @@ export function DescriptorSummary({ descriptor, actions = {}, actionBusy = false
           <button
             key={target.target_id}
             type="button"
-            disabled={!actions.onOpenNativeConfig || actionBusy}
+            disabled={stale || !actions.onOpenNativeConfig || actionBusy}
             onClick={() => actions.onOpenNativeConfig?.(target.target_id)}
           >
             Open native config: {target.display_name}
@@ -261,4 +293,9 @@ function toErrorState(key: string, error: unknown): PanelState {
 
 function safeId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 96) || "agent";
+}
+
+export function isAgentControlDescriptorExpired(expiresAt: string, now = Date.now()): boolean {
+  const timestamp = Date.parse(expiresAt);
+  return !Number.isFinite(timestamp) || timestamp <= now;
 }

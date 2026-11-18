@@ -2771,24 +2771,17 @@ async fn enable_agent_binding(
     descriptor_revision: Option<String>,
 ) -> Result<AgentBindingView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty()
-            || agent_binding_id.trim().is_empty()
-            || !valid_idempotency_key(&request_id)
-            || descriptor_revision
-                .as_deref()
-                .is_some_and(|revision| revision.len() != 71 || !revision.starts_with("sha256:"))
-        {
-            return Err("Agent binding enable request is invalid".to_owned());
-        }
-        let (client, workspace_url) = operator_client(&app)?;
-        let base = workspace_url.replace("/v1/workspaces", "/v1/agent-bindings");
-        let mut request = client
-            .post(format!("{base}/{agent_binding_id}/enable"))
-            .header("X-Workspace-ID", &workspace_id)
-            .header("If-Match", expected_version.to_string())
-            .header("Idempotency-Key", request_id);
-        if let Some(revision) = descriptor_revision {
-            request = request.header("X-Agent-Descriptor-Revision", revision);
+        let (path, headers) = agent_binding_enable_command_plan(
+            &workspace_id,
+            &agent_binding_id,
+            expected_version,
+            &request_id,
+            descriptor_revision.as_deref(),
+        )?;
+        let (client, _) = operator_client(&app)?;
+        let mut request = client.post(path);
+        for header in headers {
+            request = request.header(header.name, header.value);
         }
         let response = request
             .send()
@@ -2800,6 +2793,63 @@ async fn enable_agent_binding(
     })
     .await
     .map_err(|_| "Agent binding enable request did not complete".to_owned())?
+}
+
+fn agent_binding_enable_command_plan(
+    workspace_id: &str,
+    agent_binding_id: &str,
+    expected_version: u64,
+    request_id: &str,
+    descriptor_revision: Option<&str>,
+) -> Result<(String, Vec<LogicalHeader>), String> {
+    let valid_binding_id = !agent_binding_id.is_empty()
+        && agent_binding_id.len() <= 200
+        && agent_binding_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
+    let valid_descriptor_revision = descriptor_revision.is_none_or(|revision| {
+        revision
+            .strip_prefix("sha256:")
+            .is_some_and(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+    });
+    if workspace_id.trim().is_empty()
+        || !valid_binding_id
+        || !valid_idempotency_key(request_id)
+        || !valid_descriptor_revision
+    {
+        return Err("Agent binding enable request is invalid".to_owned());
+    }
+
+    let mut headers = vec![
+        LogicalHeader {
+            name: "X-Workspace-ID".to_owned(),
+            value: workspace_id.to_owned(),
+        },
+        LogicalHeader {
+            name: "If-Match".to_owned(),
+            value: expected_version.to_string(),
+        },
+        LogicalHeader {
+            name: "Idempotency-Key".to_owned(),
+            value: request_id.to_owned(),
+        },
+    ];
+    if let Some(revision) = descriptor_revision {
+        headers.push(LogicalHeader {
+            name: "X-Agent-Descriptor-Revision".to_owned(),
+            value: revision.to_owned(),
+        });
+    }
+
+    Ok((
+        format!("/v1/agent-bindings/{agent_binding_id}/enable"),
+        headers,
+    ))
 }
 
 #[tauri::command]
@@ -6229,5 +6279,87 @@ mod idempotency_key_validation_tests {
         for invalid in ["", &"a".repeat(201), "has space", "line\nbreak", "café"] {
             assert!(!valid_idempotency_key(invalid), "accepted {invalid:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_binding_enable_command_tests {
+    use super::agent_binding_enable_command_plan;
+
+    fn header<'a>(headers: &'a [operator_ipc::LogicalHeader], name: &str) -> Option<&'a str> {
+        headers
+            .iter()
+            .find(|header| header.name.eq_ignore_ascii_case(name))
+            .map(|header| header.value.as_str())
+    }
+
+    #[test]
+    fn descriptor_backed_enable_forwards_workspace_cas_idempotency_and_revision() {
+        let (path, headers) = agent_binding_enable_command_plan(
+            "workspace-1",
+            "binding-7",
+            12,
+            "request-9",
+            Some(&format!("sha256:{}", "a".repeat(64))),
+        )
+        .expect("valid enable command plan");
+
+        assert_eq!(path, "/v1/agent-bindings/binding-7/enable");
+        assert_eq!(header(&headers, "X-Workspace-ID"), Some("workspace-1"));
+        assert_eq!(header(&headers, "If-Match"), Some("12"));
+        assert_eq!(header(&headers, "Idempotency-Key"), Some("request-9"));
+        assert_eq!(
+            header(&headers, "X-Agent-Descriptor-Revision"),
+            Some(format!("sha256:{}", "a".repeat(64)).as_str())
+        );
+        assert_eq!(headers.len(), 4, "the enable request has no extra authority headers");
+    }
+
+    #[test]
+    fn moduleless_enable_omits_the_optional_descriptor_revision_header() {
+        let (_, headers) = agent_binding_enable_command_plan(
+            "workspace-1",
+            "binding-7",
+            12,
+            "request-9",
+            None,
+        )
+        .expect("valid legacy enable command plan");
+
+        assert_eq!(headers.len(), 3);
+        assert_eq!(header(&headers, "X-Agent-Descriptor-Revision"), None);
+    }
+
+    #[test]
+    fn enable_command_rejects_invalid_descriptor_revision_before_dispatch() {
+        for revision in [
+            "sha256:short",
+            &format!("sha256:{}", "g".repeat(64)),
+            &format!("SHA256:{}", "a".repeat(64)),
+        ] {
+            assert!(
+                agent_binding_enable_command_plan(
+                    "workspace-1",
+                    "binding-7",
+                    12,
+                    "request-9",
+                    Some(revision),
+                )
+                .is_err(),
+                "accepted descriptor revision {revision:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn enable_command_rejects_binding_ids_that_escape_the_route_segment() {
+        assert!(agent_binding_enable_command_plan(
+            "workspace-1",
+            "binding/other",
+            12,
+            "request-9",
+            None,
+        )
+        .is_err());
     }
 }

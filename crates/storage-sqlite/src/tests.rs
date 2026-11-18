@@ -452,7 +452,7 @@ mod workspace_root_lifecycle_windows_tests {
     }
 }
 
-/// Removes the v28 and v29 objects and receipts so a fixture can return to the v27 boundary.
+/// Removes the v28-v32 objects and receipts so a fixture can return to the v27 boundary.
 pub(crate) const DOWNGRADE_V29_TO_V27_SQL: &str =
     "DROP TABLE IF EXISTS conversation_owner_side_notes;
              DROP TABLE IF EXISTS conversation_control_events;
@@ -488,6 +488,155 @@ pub(crate) const DOWNGRADE_V29_TO_V27_SQL: &str =
              ALTER TABLE task_spec_revisions DROP COLUMN delegation_policy_snapshot_json;
              ALTER TABLE delegation_profile_revisions DROP COLUMN worker_model_selection_policy;
              DELETE FROM schema_migrations WHERE version = 28;";
+
+fn schema_definition<'a>(source: &'a str, start_marker: &str, end_marker: &str) -> &'a str {
+    let start = source
+        .find(start_marker)
+        .expect("baseline schema contains the requested definition");
+    let tail = &source[start..];
+    let end = tail
+        .find(end_marker)
+        .expect("baseline schema definition has its closing marker")
+        + end_marker.len();
+    &tail[..end]
+}
+
+/// Restore the v32 AgentSession table shape and its attached objects before a
+/// historical migration fixture lowers its user_version below v32. SQLite's
+/// DROP COLUMN rewrites table SQL, so dropping only the v33 column cannot
+/// recreate the exact v32 fingerprint used by the production migration guard.
+pub(crate) fn downgrade_v33_to_v32_for_test(connection: &Connection) {
+    let environment_bindings: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE environment_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect fixture AgentSession Environment bindings");
+    assert_eq!(
+        environment_bindings, 0,
+        "historical migration fixtures must not discard a public Environment binding"
+    );
+
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .expect("disable foreign keys while replacing the test fixture table");
+
+    let indexes: Vec<(String, String)> = connection
+        .prepare(
+            "SELECT name, sql FROM sqlite_master
+             WHERE type = 'index' AND tbl_name = 'agent_sessions' AND sql IS NOT NULL
+             ORDER BY name",
+        )
+        .expect("prepare AgentSession index snapshot")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query AgentSession indexes")
+        .collect::<Result<_, _>>()
+        .expect("collect AgentSession indexes");
+    let triggers: Vec<(String, String)> = connection
+        .prepare(
+            "SELECT name, sql FROM sqlite_master
+             WHERE type = 'trigger' AND lower(sql) LIKE '%agent_sessions%'
+             ORDER BY name",
+        )
+        .expect("prepare AgentSession trigger snapshot")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query AgentSession triggers")
+        .collect::<Result<_, _>>()
+        .expect("collect AgentSession triggers");
+    let views: Vec<(String, String)> = connection
+        .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'view' ORDER BY name")
+        .expect("prepare schema view snapshot")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("query schema views")
+        .collect::<Result<_, _>>()
+        .expect("collect schema views");
+    for (name, _) in &triggers {
+        let quoted_name = name.replace('"', "\"\"");
+        connection
+            .execute_batch(&format!("DROP TRIGGER \"{quoted_name}\";"))
+            .expect("temporarily remove triggers that reference AgentSession");
+    }
+    for (name, _) in &views {
+        let quoted_name = name.replace('"', "\"\"");
+        connection
+            .execute_batch(&format!("DROP VIEW \"{quoted_name}\";"))
+            .expect("temporarily remove views while replacing AgentSession");
+    }
+
+    let v32_table_sql = schema_definition(SQLITE_V1_DDL, "CREATE TABLE agent_sessions (", "\n);");
+    connection
+        .execute_batch(
+            "CREATE TABLE agent_sessions_restore_backup AS
+               SELECT * FROM agent_sessions;
+             DROP TABLE agent_sessions;",
+        )
+        .expect("preserve AgentSession fixture rows before replacing the table");
+    connection
+        .execute_batch(v32_table_sql)
+        .expect("create the exact baseline AgentSession table shape");
+    connection
+        .execute_batch(
+            "INSERT INTO agent_sessions (
+                 agent_session_id, workspace_id, scope_kind, conversation_id,
+                 conversation_turn_id, task_id, task_spec_revision, attempt_id,
+                 agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id,
+                 configuration_digest, harness_descriptor_digest, status, started_at,
+                 last_event_at, closed_at, version
+             )
+             SELECT agent_session_id, workspace_id, scope_kind, conversation_id,
+                    conversation_turn_id, task_id, task_spec_revision, attempt_id,
+                    agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id,
+                    configuration_digest, harness_descriptor_digest, status, started_at,
+                    last_event_at, closed_at, version
+             FROM agent_sessions_restore_backup;
+             DROP TABLE agent_sessions_restore_backup;",
+        )
+        .expect("restore AgentSession fixture rows into the exact v32 table");
+
+    for (name, sql) in indexes {
+        if name == "idx_agent_sessions_environment_id" {
+            continue;
+        }
+        connection
+            .execute_batch(&sql)
+            .expect("restore a v32 AgentSession index");
+    }
+    for (name, sql) in triggers {
+        if name == "agent_session_environment_scope_guard_insert"
+            || name == "agent_session_environment_scope_guard_start"
+            || name == "agent_session_identity_immutable"
+        {
+            continue;
+        }
+        connection
+            .execute_batch(&sql)
+            .expect("restore a v32 trigger that references AgentSession");
+    }
+    for (_, sql) in views {
+        connection
+            .execute_batch(&sql)
+            .expect("restore a schema view after replacing AgentSession");
+    }
+    connection
+        .execute_batch(schema_definition(
+            SQLITE_V1_DDL,
+            "CREATE TRIGGER agent_session_identity_immutable",
+            "\nEND;",
+        ))
+        .expect("restore the immutable identity trigger from the v32 schema");
+    connection
+        .execute_batch("DELETE FROM schema_migrations WHERE version = 33;")
+        .expect("remove the v33 test-fixture migration receipt");
+    connection
+        .pragma_update(None, "user_version", V32_SCHEMA_VERSION)
+        .expect("restore the v32 test-fixture migration boundary");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("restore foreign-key enforcement after table replacement");
+    verify_migration_record(connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, true)
+        .expect("reconstructed fixture matches the exact v32 schema fingerprint");
+}
 
 #[test]
 fn shared_idempotency_key_bound_is_200_printable_ascii_bytes() {
@@ -2171,7 +2320,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
     assert!(agent_registry_exists);
     assert!(!resource_index_exists);
 
-    migrate(&mut connection).expect("apply migrations v14 through v32 in order");
+    migrate(&mut connection).expect("apply migrations v14 through v33 in order");
 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -2187,9 +2336,220 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
     assert_eq!(
         applied,
         [
-            14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
         ]
     );
+}
+
+#[test]
+fn v33_agent_session_environment_binding_migration_enforces_scope_and_identity() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = state_database(&directory);
+    std::fs::create_dir_all(database.parent().expect("database parent path"))
+        .expect("create the private state directory before opening the v32 boundary");
+    let mut connection = Connection::open(database).expect("open database");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable foreign keys");
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV33Migration)).is_err());
+    let prior_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read the v32 migration boundary");
+    assert_eq!(prior_version, V32_SCHEMA_VERSION);
+    let prior_binding_column: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name = 'environment_id'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect the v32 AgentSession schema");
+    assert_eq!(prior_binding_column, 0);
+
+    migrate(&mut connection).expect("apply migrations through the latest schema");
+
+    let user_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read migrated user_version");
+    assert_eq!(user_version, 33);
+    let environment_column: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name = 'environment_id' AND \"notnull\" = 0",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect agent_sessions environment binding column");
+    assert_eq!(environment_column, 1);
+    let environment_foreign_key: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('agent_sessions')
+             WHERE \"table\" = 'environments' AND \"from\" = 'environment_id' AND \"to\" = 'environment_id'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect AgentSession Environment foreign key");
+    assert_eq!(environment_foreign_key, 1);
+    let environment_index: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_sessions_environment_id'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect AgentSession Environment index");
+    assert_eq!(environment_index, 1);
+    let environment_scope_guards: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
+               'agent_session_environment_scope_guard_insert',
+               'agent_session_environment_scope_guard_start'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect AgentSession Environment scope guards");
+    assert_eq!(environment_scope_guards, 2);
+    let identity_guard_binds_environment: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+             AND name = 'agent_session_identity_immutable' AND sql LIKE '%environment_id%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect AgentSession immutable identity guard");
+    assert_eq!(identity_guard_binds_environment, 1);
+
+    fn insert_session(
+        connection: &Connection,
+        session_id: &str,
+        scope_kind: &str,
+        conversation_id: Option<&str>,
+        turn_id: Option<&str>,
+        task_id: Option<&str>,
+        task_spec_revision: Option<i64>,
+        attempt_id: Option<&str>,
+        status: &str,
+        environment_id: Option<&str>,
+    ) -> rusqlite::Result<usize> {
+        connection.execute(
+            "INSERT INTO agent_sessions (
+                 agent_session_id, workspace_id, scope_kind, conversation_id,
+                 conversation_turn_id, task_id, task_spec_revision, attempt_id,
+                 agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id,
+                 status, started_at, environment_id
+             ) VALUES (
+                 ?1, 'workspace', ?2, ?3, ?4, ?5, ?6, ?7,
+                 'binding', 'endpoint', 'runtime', 'incarnation', ?8, 'now', ?9
+             )",
+            rusqlite::params![
+                session_id,
+                scope_kind,
+                conversation_id,
+                turn_id,
+                task_id,
+                task_spec_revision,
+                attempt_id,
+                status,
+                environment_id
+            ],
+        )
+    }
+
+    connection
+        .pragma_update(None, "foreign_keys", false)
+        .expect("disable foreign keys for isolated trigger-boundary fixtures");
+
+    assert!(
+        insert_session(
+            &connection,
+            "task-start-without-environment",
+            "TASK_PLANNING",
+            None,
+            None,
+            Some("task-without-environment"),
+            Some(1),
+            None,
+            "STARTING",
+            None,
+        )
+        .is_err()
+    );
+    assert!(
+        insert_session(
+            &connection,
+            "task-start-with-wrong-environment",
+            "TASK_PLANNING",
+            None,
+            None,
+            Some("task-with-wrong-environment"),
+            Some(1),
+            None,
+            "STARTING",
+            Some("missing-environment"),
+        )
+        .is_err()
+    );
+    assert!(
+        insert_session(
+            &connection,
+            "attempt-start-with-wrong-environment",
+            "ATTEMPT_EXECUTION",
+            None,
+            None,
+            Some("task-with-attempt"),
+            Some(1),
+            Some("attempt"),
+            "STARTING",
+            Some("missing-environment"),
+        )
+        .is_err()
+    );
+
+    assert!(
+        insert_session(
+            &connection,
+            "conversation-with-environment",
+            "CONVERSATION",
+            Some("conversation"),
+            Some("turn"),
+            None,
+            None,
+            None,
+            "STARTING",
+            Some("environment"),
+        )
+        .is_err()
+    );
+    insert_session(
+        &connection,
+        "legacy-conversation-session",
+        "CONVERSATION",
+        Some("conversation"),
+        Some("turn"),
+        None,
+        None,
+        None,
+        "STARTING",
+        None,
+    )
+    .expect("allow an unbound Conversation session");
+    assert!(
+        connection
+            .execute(
+                "UPDATE agent_sessions SET environment_id = 'environment'
+             WHERE agent_session_id = 'legacy-conversation-session'",
+                [],
+            )
+            .is_err()
+    );
+    let conversation_environment: Option<String> = connection
+        .query_row(
+            "SELECT environment_id FROM agent_sessions
+             WHERE agent_session_id = 'legacy-conversation-session'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read the unchanged Conversation Environment binding");
+    assert_eq!(conversation_environment, None);
 }
 
 #[test]
@@ -2256,8 +2616,10 @@ fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() 
         .expect("verify historical v30 receipt");
     verify_migration_record(&connection, 31, V31_MIGRATION_NAME, SQLITE_V31_DDL, false)
         .expect("verify historical v31 receipt");
-    verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, true)
-        .expect("verify latest v32 receipt");
+    verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
+        .expect("verify historical v32 receipt");
+    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
+        .expect("verify latest v33 receipt");
 }
 
 #[test]
@@ -2399,6 +2761,7 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
     let source_rows_before = resource_index_rows(&connection);
     assert_eq!(source_rows_before.len(), 2);
 
+    downgrade_v33_to_v32_for_test(&connection);
     connection
         .execute_batch(DOWNGRADE_V29_TO_V27_SQL)
         .expect("restore the v27 migration boundary");
@@ -2529,8 +2892,10 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
         .expect("verify historical v30 receipt");
     verify_migration_record(&connection, 31, V31_MIGRATION_NAME, SQLITE_V31_DDL, false)
         .expect("verify historical v31 receipt");
-    verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, true)
-        .expect("verify latest v32 receipt");
+    verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
+        .expect("verify historical v32 receipt");
+    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
+        .expect("verify latest v33 receipt");
 
     let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
         .query_row(
@@ -3384,18 +3749,21 @@ fn v27_test_run_migration_rolls_back_and_replays() {
         .expect("verify historical v30 receipt");
     verify_migration_record(&connection, 31, V31_MIGRATION_NAME, SQLITE_V31_DDL, false)
         .expect("verify historical v31 receipt");
-    verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, true)
-        .expect("verify latest v32 receipt");
+    verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
+        .expect("verify historical v32 receipt");
+    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
+        .expect("verify latest v33 receipt");
 }
 
 #[test]
-fn v28_to_v32_migrations_roll_back_and_replay() {
+fn v28_to_v33_migrations_roll_back_and_replay() {
     for (failpoint, expected_version, name) in [
         (Failpoint::DuringV28Migration, V27_SCHEMA_VERSION, "v28"),
         (Failpoint::DuringV29Migration, V28_SCHEMA_VERSION, "v29"),
         (Failpoint::DuringV30Migration, V29_SCHEMA_VERSION, "v30"),
         (Failpoint::DuringV31Migration, V30_SCHEMA_VERSION, "v31"),
         (Failpoint::DuringV32Migration, V31_SCHEMA_VERSION, "v32"),
+        (Failpoint::DuringV33Migration, V32_SCHEMA_VERSION, "v33"),
     ] {
         let directory = tempfile::tempdir().expect("temporary directory");
         let mut connection = Connection::open(directory.path().join("migration.sqlite3"))
@@ -3432,8 +3800,10 @@ fn v28_to_v32_migrations_roll_back_and_replay() {
             .expect("verify historical v30 receipt");
         verify_migration_record(&connection, 31, V31_MIGRATION_NAME, SQLITE_V31_DDL, false)
             .expect("verify historical v31 receipt");
-        verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, true)
-            .expect("verify latest v32 receipt");
+        verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
+            .expect("verify historical v32 receipt");
+        verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
+            .expect("verify latest v33 receipt");
     }
 }
 

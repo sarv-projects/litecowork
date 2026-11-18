@@ -1145,8 +1145,8 @@ def check_provider_host_contract() -> None:
 
 def check_capability_ref_contract() -> None:
     schema_text = (DOCS / "SCHEMAS.md").read_text(encoding="utf-8")
-    if "identity_kind: PACKAGE_COMPONENT | MCP_SKILL" not in schema_text:
-        fail("SCHEMAS.md: CapabilityRef must distinguish package components from MCP Skills")
+    if "identity_kind: PACKAGE_COMPONENT | MCP_SKILL | CORE_BUILTIN" not in schema_text:
+        fail("SCHEMAS.md: CapabilityRef must define package, MCP Skill and Core-owned identities")
     if "MCP Skills require" not in schema_text or "exact advertised `SKILL.md` URI" not in schema_text:
         fail("SCHEMAS.md: MCP Skill CapabilityRef must pin origin, URI, and manifest digest")
 
@@ -1165,14 +1165,32 @@ def check_capability_ref_contract() -> None:
             }
             package = by_kind.get("PACKAGE_COMPONENT", {})
             skill = by_kind.get("MCP_SKILL", {})
-            if set(by_kind) != {"PACKAGE_COMPONENT", "MCP_SKILL"}:
-                fail(f"{name}: CapabilityRef must define PACKAGE_COMPONENT and MCP_SKILL variants")
+            core = by_kind.get("CORE_BUILTIN", {})
+            if set(by_kind) != {"PACKAGE_COMPONENT", "MCP_SKILL", "CORE_BUILTIN"}:
+                fail(f"{name}: CapabilityRef must define PACKAGE_COMPONENT, MCP_SKILL and CORE_BUILTIN variants")
             if "package_version" not in package.get("required", []):
                 fail(f"{name}: PACKAGE_COMPONENT CapabilityRef must require package_version")
             if "package_version" in skill.get("required", []) or "package_version" in skill.get("properties", {}):
                 fail(f"{name}: MCP_SKILL CapabilityRef must not invent package_version")
             if "component" not in skill.get("required", []):
                 fail(f"{name}: MCP_SKILL CapabilityRef must require exact component URI")
+            if set(core.get("required", [])) != {
+                "capability_id", "identity_kind", "source", "digest", "component"
+            }:
+                fail(f"{name}: CORE_BUILTIN CapabilityRef must require its closed exact identity")
+            core_properties = core.get("properties", {})
+            expected_core = {
+                "capability_id": "workspace.file.replace",
+                "identity_kind": "CORE_BUILTIN",
+                "source": "litecowork.core",
+                "digest": "sha256:5600e4897d63fffee5edfcd3c82f0da99e58f3fa3bfad37d07a50b11b37dda99",
+                "component": "workspace.file.replace",
+            }
+            for property_name, expected_value in expected_core.items():
+                if core_properties.get(property_name, {}).get("const") != expected_value:
+                    fail(f"{name}: CORE_BUILTIN CapabilityRef must pin {property_name} to the approved file operation")
+            if "package_version" in core_properties:
+                fail(f"{name}: CORE_BUILTIN CapabilityRef must not carry package_version")
         ref_validator = jsonschema.Draft202012Validator(event_ref, format_checker=jsonschema.FormatChecker())
         valid_package = {
             "capability_id": "cap-package",
@@ -1188,14 +1206,43 @@ def check_capability_ref_contract() -> None:
             "digest": "sha256:" + "b" * 64,
             "component": "https://mcp.example/skills/report/SKILL.md",
         }
-        for label, candidate in (("PACKAGE_COMPONENT", valid_package), ("MCP_SKILL", valid_skill)):
+        valid_core = {
+            "capability_id": "workspace.file.replace",
+            "identity_kind": "CORE_BUILTIN",
+            "source": "litecowork.core",
+            "digest": "sha256:5600e4897d63fffee5edfcd3c82f0da99e58f3fa3bfad37d07a50b11b37dda99",
+            "component": "workspace.file.replace",
+        }
+        for label, candidate in (
+            ("PACKAGE_COMPONENT", valid_package),
+            ("MCP_SKILL", valid_skill),
+            ("CORE_BUILTIN", valid_core),
+        ):
             if list(ref_validator.iter_errors(candidate)):
                 fail(f"DomainEvent: valid {label} CapabilityRef is rejected")
+        api_ref_validator = jsonschema.Draft202012Validator(api_ref, format_checker=jsonschema.FormatChecker())
+        if list(api_ref_validator.iter_errors(valid_core)):
+            fail("OpenAPI: valid CORE_BUILTIN CapabilityRef is rejected")
+        read_ref = api["components"]["schemas"].get("ReadCapabilityRef", {})
+        read_excludes_core = any(
+            block.get("not", {}).get("properties", {}).get("identity_kind", {}).get("const")
+            == "CORE_BUILTIN"
+            for block in read_ref.get("allOf", [])
+        )
+        create_grant_ref = (
+            api["components"]["schemas"].get("CreateCapabilityGrantRequest", {})
+            .get("properties", {}).get("capability_ref", {}).get("$ref")
+        )
+        if not read_excludes_core or create_grant_ref != "#/components/schemas/ReadCapabilityRef":
+            fail("OpenAPI: generic create_read_grant must exclude CORE_BUILTIN identities")
         invalid_refs = (
             {**valid_package, "package_version": None},
             {key: value for key, value in valid_skill.items() if key != "component"},
             {**valid_skill, "package_version": "1.0.0"},
             {**valid_skill, "component": ""},
+            {**valid_core, "digest": "sha256:" + "c" * 64},
+            {**valid_core, "package_version": "1.0.0"},
+            {**valid_core, "component": "workspace.resource.read"},
         )
         for candidate in invalid_refs:
             if not list(ref_validator.iter_errors(candidate)):

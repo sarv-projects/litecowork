@@ -91,6 +91,41 @@ Invocation but never widened.
 
 Default is DENY when a required fact is unknown.
 
+### Bounded Task file-write authority (Feature 005 revision 1.1 target)
+
+`FileWriteScopeRequest` is untrusted request data composed by Task Runtime after bounded
+post-quiescence candidate capture: Attempt/Step selectors, WorkspaceRoot ID, normalized
+root-relative path, base digest, requested byte bound and exact pinned candidate ResourceRef.
+It contains no Task/plan
+revision, CapabilityGrant, Approval, Trust decision, Environment attestation, provider
+handle, lease or fence and cannot create authority by itself. Trust/Storage derives Task
+and plan identity from the already admitted Attempt, then checks the current accepted
+PlanRevision, active Attempt/session/current Runtime incarnation/live lease, exact Step
+requirement, active WorkspaceRoot and exact locally managed immutable candidate revision
+whose `Resource.provenance.created_by_attempt` matches the live Attempt.
+Trust then issues the durable, expiring Attempt-bound `CapabilityGrant`
+through its internal `issue_attempt_file_write_grant` contract; this is not the owner-facing
+`POST /v1/capability-grants` route. The grant binds one accepted Step requirement,
+root/path/base digest, exact candidate ResourceRevision/digest/size, operation, plan-action
+digest and expiry no later than the live lease. It cannot authorize another path, base, content revision, operation,
+Attempt, or shell command. Its operation identity is the first-party `CORE_BUILTIN` CapabilityRef
+`workspace.file.replace`, not a LiteSPM package or MCP Skill.
+
+Issuing this narrow proposal grant commits the existing grant-created event, aggregate
+snapshot, Trust audit record and idempotency receipt in its own transaction. Exact retry
+replays that receipt before checking mutable lease/resource state; changed request content
+conflicts. It does not consume ApprovalUse. The public generic read-grant contract remains
+limited to package/MCP identities and `workspace.resource.read`.
+
+Issuing this narrow proposal grant does not approve or dispatch a file mutation. The owner
+separately approves the exact Effect target/content digest. Trust rechecks the persisted
+grant and exact Approval at the atomic mediated Invocation dispatch boundary, together
+with the current live lease fence; dispatch consumes the ApprovalUse. Missing, stale,
+expired or revoked authority fails closed. Direct native agent tools remain outside
+LiteCowork Trust unless they cross a qualified mediated boundary. This owner-directed
+contract is IN_REVIEW and does not claim that the route, activation, dispatcher or
+end-to-end Task journey is served.
+
 ## Coworker interaction defaults
 
 The pinned CoworkerRevision may provide narrow interaction defaults for read-only work,

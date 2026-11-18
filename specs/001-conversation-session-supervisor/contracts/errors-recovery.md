@@ -35,6 +35,7 @@ No retry sleeps and tries again without knowing whether an external side effect 
 | Before submit transaction | validation/auth fails | no USER message/turn/receipt | preserve draft; correct request |
 | Submit transaction | conflict/DB rollback | no partial commit | exact key can be retried if no receipt; changed payload requires new key |
 | After USER+OPEN commit, before reservation | daemon exits | turn exists OPEN | startup scanner finds turn/dispatch intent; if no safe intent exists, settle typed unavailable after bounded reconciliation |
+| Dispatch-intent claim | compare-and-set returns false or storage acknowledgement is uncertain | no ownership is proven for this invocation; the intent can remain UNCLAIMED or may have committed CLAIMED | do not preflight or settle from this invocation; reconcile the durable intent on restart |
 | After STARTING reservation, before process launch | daemon exits | STARTING + receipt | list STARTING; prove no live child or same-incarnation child; settle LOST if no safe continuation |
 | After process launch, before handshake | provider process exists, no readiness | STARTING | reconcile exact process/session; if ambiguous fail LOST and safely stop owned process |
 | After handshake, before activation commit | readiness observed, DB commit uncertain | STARTING unless activation receipt committed | query activation/session/turn/host binding; never send prompt until activation is confirmed |
@@ -62,6 +63,7 @@ No retry sleeps and tries again without knowing whether an external side effect 
 10. User retry is explicit and uses fresh session/retry ordinal; old AGENT messages and provenance remain immutable.
 11. A valid authenticated response to a Conversation-scoped UserRequest atomically stores its immutable UserRequestResponse and moves only the exact WAITING_USER turn to WAITING_DEPENDENCY. The old session is closed; no new AgentSession is admitted until the exact provider input is accepted and a fresh session becomes ready. For MCP INPUT_REQUIRED, tasks/update acknowledgement alone is not acceptance: poll the same provider task for the exact request key. If the provider remains INPUT_REQUIRED after rejection, close the old request and create a new UserRequest for the current key, returning the turn to WAITING_USER. Ambiguous acceptance remains WAITING_DEPENDENCY and blocks a new session. See [STATE-MACHINES.md](../../../docs/STATE-MACHINES.md), [API.md](../../../docs/API.md), [STORAGE.md](../../../docs/STORAGE.md) and [TRUST.md](../../../docs/TRUST.md).
 12. Native events are untrusted, bounded and correlated. A tool call/result from a provider does not prove Core-authorized Effect.
+13. Only a dispatcher whose durable intent claim returned true may settle post-admission setup failures. A losing claim, claim error or pre-claim worker panic is not settlement authority; preserve the durable intent for reconciliation.
 
 ## 5. Safe error envelope
 

@@ -1,6 +1,6 @@
 # API and events - Professional Artifacts One Format
 
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Status:** Base revision 1.0 ACCEPTED/LOCKED; Saved View revision 1.1 API amendment IN_REVIEW after owner direction 2026-11-17. Saved View target operations are not served.
 
 ## Currently served Artifact operations
 
@@ -12,6 +12,7 @@
 - `POST /v1/artifacts/{artifact_id}/text-version`: bounded owner-authored UTF-8 text append to an existing Artifact. The request pins the Artifact aggregate version through `If-Match`, plus content version, Resource aggregate version and exact parent ResourceRevision; `Idempotency-Key` replays the original receipt. Storage commits the paired ResourceRevision and immutable ArtifactVersion plus events and receipt atomically.
 - `POST /v1/artifacts/{artifact_id}/promote` and `/archive`: explicit TRANSIENT→SAVED and SAVED→ARCHIVED metadata transitions with expected aggregate version and idempotency receipt. Content versions and Resource heads are unchanged.
 - `GET /v1/tasks/{task_id}/artifacts`: read-only committed Task Artifact output projection; no Task execution/create support is implied.
+- No Saved View create, kind-filter, or update operation is served. Existing Artifact reads/archive do not prove Saved View support.
 
 ## Missing operations / target-only owner contract
 
@@ -26,14 +27,20 @@
 - Markdown version publish: the existing `text-version` append generalized to `text/markdown` through the B-21 adapter, or a sibling route fixed in TASKS T01; same `If-Match` and parent-revision pins.
 - `POST /v1/artifacts/{artifact_id}/exports` (B-31): exact version, export format, destination class; commits `ArtifactExportReceipt` and `artifact.exported.v1` (event to be registered in EVENTS.md and `domain-event.schema.json`).
 - Format capability matrix read (route name fixed in T01) and `GET /v1/artifacts?conversation_id=` filter for the Conversation association.
+- `POST /v1/artifacts` accepts `source.kind=RICH_PRESENTATION_SAVED_VIEW` with exact source IDs/digests only. The request does not carry client-authored semantic text, RichPresentation bytes or calculator state; the daemon reconstructs and validates the envelope from committed owner records and atomically creates a `SAVED_VIEW` Artifact in `SAVED` status with the standard create receipt.
+- `GET /v1/library?kind=SAVED_VIEW` (or the equivalent exact Library filter selected in T01) returns Workspace-scoped Saved View summaries. Open uses existing exact Artifact/version/content reads; Archive uses the existing `/archive` operation.
+- `POST /v1/artifacts/{artifact_id}/saved-view-versions` appends a canonical envelope from a newly committed exact eligible same-Conversation presentation. It requires `If-Match`, expected Artifact and Resource versions, exact parent ResourceRevision, source digests and `Idempotency-Key`; it returns the standard version receipt. Local calculator values remain transient. Cross-Conversation changes use create-as-new.
+- Saved Views have no delete, export, generic Markdown edit, compare or arbitrary JSON upload operation in V1. The internal envelope is not a user-export format.
 
 ## Canonical event boundary
 
-Use canonical owner events already registered in `docs/EVENTS.md` and `docs/schemas/domain-event.schema.json`: `artifact.created.v1`, `artifact.version.created.v1`, the matching `resource.created.v1` / `resource.revision.observed.v1`, and existing Artifact Library promotion/archive events. The current daemon emits the version-created event for text append and Library state events; it does not emit the initial artifact-created event because no create handler exists.
+Use canonical owner events already registered in `docs/EVENTS.md` and `docs/schemas/domain-event.schema.json`: `artifact.created.v1`, `artifact.version.created.v1`, the matching `resource.created.v1` / `resource.revision.observed.v1`, and existing Artifact Library promotion/archive events. The current daemon emits the version-created event for text append and Library state events; it does not emit the initial artifact-created event because no create handler exists. Saved Views add no event type; event bodies carry bounded IDs, versions and digests only, never semantic text, input values, RichPresentation bytes or local paths.
 
 ## Required target create ordering
 
-Authorize the owner and Workspace; validate source Task/Attempt or user-authored/imported source; verify and stage exact content bytes outside SQLite; in one authoritative transaction create the Artifact and ARTIFACT Resource, first ResourceRevision, version 1, provenance/input dependency edges, aggregate snapshots, canonical events and principal-scoped idempotency receipt. A duplicate key with a different logical payload conflicts. No format process/provider call occurs inside SQLite.
+Authorize the owner and Workspace; validate the source and construct its exact content bytes; stage the bounded blob outside SQLite; then, in one authoritative transaction, reauthorize and re-read the source, recheck its Workspace, commit/deletion fence and exact digests, and atomically create the Artifact and ARTIFACT Resource, first ResourceRevision, version 1, provenance/input dependency edges, aggregate snapshots, canonical events and principal-scoped idempotency receipt. For `RICH_PRESENTATION_SAVED_VIEW`, validate the embedded immutable RichPresentation's declared defaults and ranges; the request accepts no session-modified calculator state. Initialize `library_status=SAVED` only for this explicit Save to Library intent. If the source changed or was deleted while the blob was staged, the transaction writes no Artifact records; the unreferenced staged blob is handled by the existing orphan cleanup. A duplicate key with a different logical payload conflicts. No format process/provider call occurs inside SQLite.
+
+A Saved View version update uses the same outside-transaction blob staging and inside-transaction source recheck. The append transaction reauthorizes the Workspace and Artifact, confirms the Artifact and backing Resource are still writable, compares both expected head versions and the exact parent ResourceRevision, and revalidates the newly committed same-Conversation source and digest before appending the paired immutable ArtifactVersion/ResourceRevision, provenance, events and receipt. A source deletion, archive, or head conflict creates no new version; the previously committed head remains readable, and any staged but unreferenced blob is left to orphan cleanup. The request carries source identity and expected versions, never client-authored envelope bytes or session-modified control values.
 
 ## Required target export ordering
 

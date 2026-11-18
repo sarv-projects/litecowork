@@ -303,6 +303,33 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "required": [
+            "capability_id",
+            "identity_kind",
+            "source",
+            "digest",
+            "component"
+          ],
+          "properties": {
+            "capability_id": {
+              "const": "workspace.file.replace"
+            },
+            "identity_kind": {
+              "const": "CORE_BUILTIN"
+            },
+            "source": {
+              "const": "litecowork.core"
+            },
+            "digest": {
+              "const": "sha256:5600e4897d63fffee5edfcd3c82f0da99e58f3fa3bfad37d07a50b11b37dda99"
+            },
+            "component": {
+              "const": "workspace.file.replace"
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -2603,6 +2630,13 @@
               "null"
             ],
             "minimum": 1
+          },
+          "environment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
           }
         },
         "allOf": [
@@ -2624,6 +2658,9 @@
             "then": {
               "properties": {
                 "task_spec_revision": {
+                  "type": "null"
+                },
+                "environment_id": {
                   "type": "null"
                 }
               }
@@ -2652,6 +2689,10 @@
                 "task_spec_revision": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "environment_id": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }
@@ -2710,6 +2751,13 @@
               "null"
             ],
             "minimum": 1
+          },
+          "environment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
           }
         },
         "allOf": [
@@ -2731,6 +2779,9 @@
             "then": {
               "properties": {
                 "task_spec_revision": {
+                  "type": "null"
+                },
+                "environment_id": {
                   "type": "null"
                 }
               }
@@ -2759,6 +2810,10 @@
                 "task_spec_revision": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "environment_id": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }
@@ -2817,6 +2872,13 @@
               "null"
             ],
             "minimum": 1
+          },
+          "environment_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
           }
         },
         "allOf": [
@@ -2838,6 +2900,9 @@
             "then": {
               "properties": {
                 "task_spec_revision": {
+                  "type": "null"
+                },
+                "environment_id": {
                   "type": "null"
                 }
               }
@@ -2866,6 +2931,10 @@
                 "task_spec_revision": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "environment_id": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }

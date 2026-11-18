@@ -14,13 +14,15 @@ use sha2::{Digest, Sha256};
 use std::sync::mpsc;
 use storage_core::{
     ApprovalCursor, ApprovalDecision, ApprovalPage, ApprovalPageRequest, ApprovalRecord,
-    ApprovalStore, CapabilityGrantRecord, CapabilityGrantRevocationCommit, CapabilityGrantScope,
-    CapabilityGrantStatus, CapabilityGrantStore, CommittedApproval, CommittedCapabilityGrant,
-    CommittedCapabilityGrantRevocation, CommittedSecretLease, IssueCapabilityGrantCommit,
-    IssueSecretLeaseCommit, RequestApprovalCommit, ResolveApprovalCommit, RevokeSecretLeaseCommit,
-    SecretKind, SecretLeaseRecord, SecretLeaseStore, SecretPlacement, SecretRef, SecretStore,
-    StoreError,
+    ApprovalStore, CORE_FILE_REPLACE_CAPABILITY_DIGEST, CORE_FILE_REPLACE_CAPABILITY_ID,
+    CORE_FILE_REPLACE_CAPABILITY_SOURCE, CapabilityGrantRecord, CapabilityGrantRevocationCommit,
+    CapabilityGrantScope, CapabilityGrantStatus, CapabilityGrantStore, CommittedApproval,
+    CommittedCapabilityGrant, CommittedCapabilityGrantRevocation, CommittedSecretLease,
+    IssueAttemptFileWriteGrantCommit, IssueCapabilityGrantCommit, IssueSecretLeaseCommit,
+    RequestApprovalCommit, ResolveApprovalCommit, RevokeSecretLeaseCommit, SecretKind,
+    SecretLeaseRecord, SecretLeaseStore, SecretPlacement, SecretRef, SecretStore, StoreError,
 };
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_APPROVAL_ID_BYTES: usize = 512;
@@ -31,6 +33,9 @@ const MAX_APPROVAL_TARGET_DEPTH: usize = 8;
 const MAX_APPROVAL_TARGET_COLLECTION_ITEMS: usize = 64;
 const SECRET_KEYRING_SERVICE: &str = "com.litecow.secret-store";
 const MAX_SECRET_BYTES: usize = 48 * 1024;
+const MAX_FILE_WRITE_BYTES: u64 = 1024 * 1024;
+const FILE_WRITE_GRANT_TTL_SECONDS: i64 = 300;
+const CORE_TRUST_PRINCIPAL_ID: &str = "litecowork.core.trust";
 
 trait SecretCredentialBackend: Send + Sync {
     fn set_secret(&self, account: &str, secret: &str) -> Result<(), StoreError>;
@@ -478,6 +483,61 @@ impl CapabilityGrantStore for SqliteApprovalStore {
             put_capability_grant_state(&self.store, &command.workspace_id, &stored, "ACTIVE", 1)?;
         self.run_trust(move |connection| {
             issue_capability_grant_transaction(connection, command, state_ref, request_digest)
+        })
+    }
+
+    fn issue_attempt_file_write_grant(
+        &self,
+        mut command: IssueAttemptFileWriteGrantCommit,
+    ) -> Result<CommittedCapabilityGrant, StoreError> {
+        validate_file_write_scope_request(&command)?;
+        let request_digest = attempt_file_write_grant_request_digest(&command)?;
+        let request_id = command.request_id.clone();
+        let replay_digest = request_digest.clone();
+        let replay = self.run_trust(move |connection| {
+            let tx = connection.transaction().map_err(map_database_error)?;
+            let replay = find_capability_grant_issue_replay(
+                &tx,
+                CORE_TRUST_PRINCIPAL_ID,
+                &request_id,
+                &replay_digest,
+            )?;
+            tx.commit().map_err(map_database_error)?;
+            Ok(replay)
+        })?;
+        if let Some(replay) = replay {
+            return Ok(replay);
+        }
+
+        // Generated event and expiry metadata are not part of the immutable
+        // request digest. Canonicalize them only after exact replay has had a
+        // chance to return the original committed receipt.
+        command.event.recorded_at = canonicalize_utc_timestamp(&command.event.recorded_at)?;
+        command.expires_at = canonicalize_utc_timestamp(&command.expires_at)?;
+
+        // Resolve authority and write the aggregate blob before beginning the
+        // durable SQLite transaction. The transaction repeats every authority
+        // check and compares the resulting grant with this prepared snapshot.
+        let preparation_command = command.clone();
+        let prepared = self.run_trust(move |connection| {
+            prepare_attempt_file_write_grant(connection, &preparation_command)
+                .map(|prepared| prepared.0)
+        })?;
+        let state_ref = put_capability_grant_state(
+            &self.store,
+            &command.workspace_id,
+            &stored_grant_from_record(&prepared)?,
+            "ACTIVE",
+            1,
+        )?;
+        self.run_trust(move |connection| {
+            issue_attempt_file_write_grant_transaction(
+                connection,
+                command,
+                prepared,
+                state_ref,
+                request_digest,
+            )
         })
     }
 
@@ -1034,17 +1094,50 @@ fn load_capability_grant(
             value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control)
         })
         || !resource_scope_matches_contract(&grant.resource_scope, None)
-        || grant
-            .granted_by
-            .get("principal_id")
-            .and_then(Value::as_str)
-            .is_none()
+        || !capability_grant_issuer_matches_contract(&grant)
     {
         return Err(StoreError::Integrity(
             "CapabilityGrant row violates its record contract".into(),
         ));
     }
     Ok(Some(grant))
+}
+
+fn capability_grant_issuer_matches_contract(grant: &StoredCapabilityGrant) -> bool {
+    let user_issued = grant.granted_by.get("kind").and_then(Value::as_str) == Some("USER")
+        && grant
+            .granted_by
+            .get("principal_id")
+            .and_then(Value::as_str)
+            .is_some_and(|principal| !principal.trim().is_empty());
+    let core_trust_issued = grant.granted_by
+        == json!({
+            "kind": "CORE_TRUST",
+            "policy_id": "litecowork.standard",
+            "policy_revision": 1,
+        })
+        && grant.scope_kind == "ATTEMPT_EXECUTION"
+        && grant
+            .task_id
+            .as_deref()
+            .is_some_and(|task_id| !task_id.is_empty())
+        && grant
+            .attempt_id
+            .as_deref()
+            .is_some_and(|attempt_id| !attempt_id.is_empty())
+        && grant
+            .capability_ref
+            .get("identity_kind")
+            .and_then(Value::as_str)
+            == Some("CORE_BUILTIN")
+        && grant
+            .capability_ref
+            .get("capability_id")
+            .and_then(Value::as_str)
+            == Some(CORE_FILE_REPLACE_CAPABILITY_ID)
+        && grant.allowed_operations == ["workspace.file.replace"]
+        && grant.secret_refs.is_empty();
+    user_issued || core_trust_issued
 }
 
 fn capability_ref_matches_contract(value: &Value) -> bool {
@@ -1099,6 +1192,23 @@ fn capability_ref_matches_contract(value: &Value) -> bool {
                     )
                 })
                 && text("component", 2048)
+        }
+        Some("CORE_BUILTIN") => {
+            object.len() == 5
+                && object.keys().all(|key| {
+                    matches!(
+                        key.as_str(),
+                        "capability_id" | "identity_kind" | "source" | "digest" | "component"
+                    )
+                })
+                && object.get("capability_id").and_then(Value::as_str)
+                    == Some(CORE_FILE_REPLACE_CAPABILITY_ID)
+                && object.get("source").and_then(Value::as_str)
+                    == Some(CORE_FILE_REPLACE_CAPABILITY_SOURCE)
+                && object.get("component").and_then(Value::as_str)
+                    == Some(CORE_FILE_REPLACE_CAPABILITY_ID)
+                && object.get("digest").and_then(Value::as_str)
+                    == Some(CORE_FILE_REPLACE_CAPABILITY_DIGEST)
         }
         _ => false,
     }
@@ -1254,6 +1364,344 @@ fn put_capability_grant_state(
     })
 }
 
+fn valid_workspace_relative_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 4096
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains('\\')
+        && !value.contains(':')
+        && !value.chars().any(char::is_control)
+        && value
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+}
+
+fn validate_file_write_grant_issue(
+    command: &IssueAttemptFileWriteGrantCommit,
+) -> Result<(), StoreError> {
+    validate_file_write_scope_request(command)?;
+    let event = &command.event;
+    let now = OffsetDateTime::now_utc();
+    let created = OffsetDateTime::parse(&event.recorded_at, &Rfc3339)
+        .map_err(|_| StoreError::Invalid("file-write grant timestamp is invalid".into()))?;
+    let expires = OffsetDateTime::parse(&command.expires_at, &Rfc3339)
+        .map_err(|_| StoreError::Invalid("file-write grant expiry is invalid".into()))?;
+    if command.capability_grant_id.trim().is_empty()
+        || command.capability_grant_id.len() > MAX_APPROVAL_ID_BYTES
+        || event.workspace_id != command.workspace_id
+        || event.entity_type != "capability_grant"
+        || event.entity_id != command.capability_grant_id
+        || event.event_type != "capability.grant.created.v1"
+        || event.schema_version != 1
+        || event.entity_revision != 1
+        || event.event_id.trim().is_empty()
+        || event.origin_runtime_id.trim().is_empty()
+        || event.hlc_timestamp.trim().is_empty()
+        || event.correlation_id.trim().is_empty()
+        || event.recorded_at.is_empty()
+        || expires <= created
+        || expires <= now
+        || expires - created > Duration::seconds(FILE_WRITE_GRANT_TTL_SECONDS)
+        || created > now + Duration::seconds(60)
+        || [
+            command.capability_grant_id.as_str(),
+            event.event_id.as_str(),
+            event.origin_runtime_id.as_str(),
+            event.hlc_timestamp.as_str(),
+            event.correlation_id.as_str(),
+        ]
+        .iter()
+        .any(|value| value.chars().any(char::is_control))
+    {
+        return Err(StoreError::Invalid(
+            "file-write grant request is malformed or exceeds its bounds".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_file_write_scope_request(
+    command: &IssueAttemptFileWriteGrantCommit,
+) -> Result<(), StoreError> {
+    let request = &command.request;
+    if command.workspace_id.trim().is_empty()
+        || command.workspace_id.len() > MAX_PRINCIPAL_ID_BYTES
+        || command.request_id.trim().is_empty()
+        || command.request_id.len() > MAX_REQUEST_ID_BYTES
+        || request.attempt_id.trim().is_empty()
+        || request.attempt_id.len() > MAX_APPROVAL_ID_BYTES
+        || request.step_id.trim().is_empty()
+        || request.step_id.len() > MAX_APPROVAL_ID_BYTES
+        || request.workspace_root_id.trim().is_empty()
+        || request.workspace_root_id.len() > MAX_APPROVAL_ID_BYTES
+        || !valid_workspace_relative_path(&request.target_relative_path)
+        || !valid_sha256(&request.base_revision_digest)
+        || request.requested_max_bytes == 0
+        || request.requested_max_bytes > MAX_FILE_WRITE_BYTES
+        || request.candidate_resource.workspace_id != command.workspace_id
+        || request.candidate_resource.resource_id.trim().is_empty()
+        || request.candidate_resource.revision_id.trim().is_empty()
+        || [
+            command.workspace_id.as_str(),
+            command.request_id.as_str(),
+            request.attempt_id.as_str(),
+            request.step_id.as_str(),
+            request.workspace_root_id.as_str(),
+            request.target_relative_path.as_str(),
+            request.candidate_resource.resource_id.as_str(),
+            request.candidate_resource.revision_id.as_str(),
+        ]
+        .iter()
+        .any(|value| value.chars().any(char::is_control))
+    {
+        return Err(StoreError::Invalid(
+            "file-write scope request is malformed or exceeds its bounds".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn attempt_file_write_grant_request_digest(
+    command: &IssueAttemptFileWriteGrantCommit,
+) -> Result<String, StoreError> {
+    Ok(digest(&canonical_json(&json!({
+        "workspace_id": command.workspace_id,
+        "request": command.request,
+    }))?))
+}
+
+/// Resolve only the one Core-owned bounded replacement operation. The accepted Step
+/// remains the authority source; worker-supplied scope is compared field for field.
+fn prepare_attempt_file_write_grant(
+    connection: &Connection,
+    command: &IssueAttemptFileWriteGrantCommit,
+) -> Result<(CapabilityGrantRecord, String), StoreError> {
+    validate_file_write_grant_issue(command)?;
+    let request = &command.request;
+    let now = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .map_err(|_| StoreError::Invalid("file-write grant clock is unavailable".into()))?;
+    let live: Option<(String, i64, String, String)> = connection
+        .query_row(
+            "SELECT a.task_id,s.plan_revision,a.runtime_id,lease.expires_at
+               FROM attempts a
+               JOIN tasks t ON t.task_id=a.task_id AND t.workspace_id=?1
+               JOIN steps s ON s.step_id=a.step_id AND s.task_id=a.task_id
+               JOIN plan_revisions p ON p.task_id=s.task_id AND p.revision=s.plan_revision
+               JOIN agent_sessions session ON session.agent_session_id=a.agent_session_id
+                    AND session.workspace_id=t.workspace_id AND session.scope_kind='ATTEMPT_EXECUTION'
+                    AND session.task_id=a.task_id AND session.attempt_id=a.attempt_id
+                    AND session.runtime_id=a.runtime_id
+                    AND session.runtime_incarnation_id=a.runtime_incarnation_id
+               JOIN execution_leases lease ON lease.lease_id=a.execution_lease_id
+                    AND lease.task_id=a.task_id AND lease.step_id=a.step_id
+                    AND lease.attempt_id=a.attempt_id AND lease.runtime_id=a.runtime_id
+                    AND lease.runtime_incarnation_id=a.runtime_incarnation_id
+               JOIN runtimes runtime ON runtime.runtime_id=a.runtime_id
+                    AND runtime.workspace_id=t.workspace_id
+               JOIN runtime_incarnations incarnation ON incarnation.runtime_id=runtime.runtime_id
+                    AND incarnation.runtime_incarnation_id=a.runtime_incarnation_id
+              WHERE a.attempt_id=?2 AND a.step_id=?3 AND a.status='RUNNING'
+                AND t.status='RUNNING' AND t.current_plan_revision=s.plan_revision
+                AND s.status='RUNNING' AND s.current_attempt_id=a.attempt_id
+                AND session.status='ACTIVE' AND lease.state='ACTIVE' AND lease.expires_at>?4
+                AND runtime.availability='ONLINE'
+                AND runtime.current_incarnation_id=a.runtime_incarnation_id
+                AND incarnation.recovery_state='READY'
+                AND EXISTS(SELECT 1 FROM workspaces w WHERE w.workspace_id=t.workspace_id AND w.status='ACTIVE')",
+            params![command.workspace_id, request.attempt_id, request.step_id, now],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((task_id, plan_revision, runtime_id, lease_expires_at)) = live else {
+        return Err(StoreError::Invalid(
+            "FILE_WRITE_ATTEMPT_NOT_LIVE_OR_PLAN_NOT_CURRENT".into(),
+        ));
+    };
+    let lease_expires = OffsetDateTime::parse(&lease_expires_at, &Rfc3339)
+        .map_err(|_| StoreError::Integrity("active lease expiry is malformed".into()))?;
+    let grant_expires = OffsetDateTime::parse(&command.expires_at, &Rfc3339)
+        .map_err(|_| StoreError::Invalid("file-write grant expiry is invalid".into()))?;
+    if grant_expires > lease_expires {
+        return Err(StoreError::Invalid(
+            "FILE_WRITE_GRANT_EXCEEDS_LIVE_LEASE".into(),
+        ));
+    }
+    if command.event.origin_runtime_id != runtime_id {
+        return Err(StoreError::Invalid(
+            "FILE_WRITE_EVENT_RUNTIME_MISMATCH".into(),
+        ));
+    }
+
+    let root_active: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_roots WHERE workspace_id=?1 AND workspace_root_id=?2 AND status='ACTIVE')",
+            params![command.workspace_id, request.workspace_root_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !root_active {
+        return Err(StoreError::Invalid(
+            "FILE_WRITE_WORKSPACE_ROOT_UNAVAILABLE".into(),
+        ));
+    }
+
+    let required_capabilities: String = connection
+        .query_row(
+            "SELECT required_capabilities_json FROM steps WHERE task_id=?1 AND step_id=?2 AND plan_revision=?3",
+            params![task_id, request.step_id, plan_revision],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let required: Value = serde_json::from_str(&required_capabilities)
+        .map_err(|_| StoreError::Integrity("accepted Step capability scope is malformed".into()))?;
+    let capabilities = required.as_array().ok_or_else(|| {
+        StoreError::Integrity("accepted Step capability scope is not an array".into())
+    })?;
+    let mut file_scope = None;
+    for capability in capabilities {
+        if capability
+            .get("semantic_requirement")
+            .and_then(Value::as_str)
+            == Some("workspace.file.replace")
+        {
+            if file_scope.is_some() {
+                return Err(StoreError::Invalid(
+                    "accepted Step contains multiple file-replacement scopes".into(),
+                ));
+            }
+            file_scope = Some(capability);
+        }
+    }
+    let capability = file_scope.ok_or_else(|| {
+        StoreError::Invalid("accepted Step does not request file replacement".into())
+    })?;
+    let operation_ids = json!(["workspace.file.replace"]);
+    let scope = capability
+        .get("resource_scope")
+        .and_then(Value::as_object)
+        .ok_or_else(|| StoreError::Invalid("accepted file scope is malformed".into()))?;
+    let constraints = scope
+        .get("constraints")
+        .and_then(Value::as_object)
+        .ok_or_else(|| StoreError::Invalid("accepted file constraints are malformed".into()))?;
+    let plan_root = constraints.get("workspace_root_id").and_then(Value::as_str);
+    let plan_path = constraints
+        .get("target_relative_path")
+        .and_then(Value::as_str);
+    let plan_base = constraints
+        .get("base_revision_digest")
+        .and_then(Value::as_str);
+    let plan_max = constraints.get("max_bytes").and_then(Value::as_u64);
+    if capability.get("operation_ids") != Some(&operation_ids)
+        || scope.len() != 3
+        || scope.get("operation_ids") != Some(&operation_ids)
+        || scope
+            .get("resource_refs")
+            .and_then(Value::as_array)
+            .is_none_or(|refs| !refs.is_empty())
+        || constraints.len() != 4
+        || plan_root != Some(request.workspace_root_id.as_str())
+        || plan_path != Some(request.target_relative_path.as_str())
+        || plan_base != Some(request.base_revision_digest.as_str())
+        || plan_max.is_none_or(|maximum| maximum == 0 || maximum > MAX_FILE_WRITE_BYTES)
+        || request.requested_max_bytes > plan_max.unwrap_or_default()
+    {
+        return Err(StoreError::Invalid(
+            "FILE_WRITE_REQUEST_DOES_NOT_MATCH_ACCEPTED_STEP".into(),
+        ));
+    }
+    let effective_max = request.requested_max_bytes;
+
+    let candidate: Option<(String, i64)> = connection
+        .query_row(
+            "SELECT revision.content_digest,revision.size_bytes
+               FROM resources resource
+               JOIN resource_revisions revision ON revision.resource_id=resource.resource_id
+                    AND revision.resource_revision_id=?3
+               WHERE resource.workspace_id=?1 AND resource.resource_id=?2
+                 AND json_extract(resource.provenance_json,'$.created_by_attempt')=?4
+                 AND (resource.context_document_json IS NULL
+                      OR json_extract(resource.context_document_json,'$.status')='ACTIVE')
+                 AND EXISTS(SELECT 1 FROM resource_locations location
+                      WHERE location.resource_id=resource.resource_id
+                        AND location.provider_ref='litecowork.encrypted_blob'
+                        AND location.availability='AVAILABLE'
+                        AND location.runtime_id IS NULL AND location.environment_id IS NULL
+                        AND location.connection_id IS NULL)",
+            params![
+                request.candidate_resource.workspace_id,
+                request.candidate_resource.resource_id,
+                request.candidate_resource.revision_id,
+                request.attempt_id,
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((content_digest, candidate_size)) = candidate else {
+        return Err(StoreError::Invalid(
+            "FILE_WRITE_CANDIDATE_NOT_EXACT_MANAGED_RESOURCE".into(),
+        ));
+    };
+    if !valid_sha256(&content_digest) || candidate_size < 0 || candidate_size as u64 > effective_max
+    {
+        return Err(StoreError::Invalid(
+            "FILE_WRITE_CANDIDATE_EXCEEDS_SCOPE".into(),
+        ));
+    }
+
+    let plan_action_digest = digest(&canonical_json(&json!({
+        "workspace_id": command.workspace_id,
+        "task_id": task_id,
+        "plan_revision": plan_revision,
+        "step_id": request.step_id,
+        "operation": "workspace.file.replace",
+        "workspace_root_id": request.workspace_root_id,
+        "target_relative_path": request.target_relative_path,
+        "base_revision_digest": request.base_revision_digest,
+        "max_bytes": effective_max,
+    }))?);
+    let resource_scope = json!({
+        "resource_refs": [request.candidate_resource],
+        "operation_ids": ["workspace.file.replace"],
+        "constraints": {
+            "workspace_root_id": request.workspace_root_id,
+            "target_relative_path": request.target_relative_path,
+            "base_revision_digest": request.base_revision_digest,
+            "max_bytes": effective_max,
+            "candidate_content_digest": content_digest,
+            "candidate_size_bytes": candidate_size as u64,
+            "plan_action_digest": plan_action_digest,
+        }
+    });
+    let grant = CapabilityGrantRecord {
+        capability_grant_id: command.capability_grant_id.clone(),
+        scope: CapabilityGrantScope::AttemptExecution {
+            task_id,
+            attempt_id: request.attempt_id.clone(),
+        },
+        capability_ref: json!({
+            "capability_id": CORE_FILE_REPLACE_CAPABILITY_ID,
+            "identity_kind": "CORE_BUILTIN",
+            "source": CORE_FILE_REPLACE_CAPABILITY_SOURCE,
+            "component": CORE_FILE_REPLACE_CAPABILITY_ID,
+            "digest": CORE_FILE_REPLACE_CAPABILITY_DIGEST,
+        }),
+        allowed_operations: vec!["workspace.file.replace".into()],
+        resource_scope,
+        secret_refs: Vec::new(),
+        granted_by: json!({"kind":"CORE_TRUST","policy_id":"litecowork.standard","policy_revision":1}),
+        expires_at: Some(command.expires_at.clone()),
+        status: CapabilityGrantStatus::Active,
+        created_at: command.event.recorded_at.clone(),
+        version: 1,
+    };
+    Ok((grant, attempt_file_write_grant_request_digest(command)?))
+}
+
 fn validate_capability_grant_issue(command: &IssueCapabilityGrantCommit) -> Result<(), StoreError> {
     let event = &command.event;
     let grant = &command.grant;
@@ -1277,6 +1725,11 @@ fn validate_capability_grant_issue(command: &IssueCapabilityGrantCommit) -> Resu
                 || operation.chars().any(char::is_control)
         })
         || !capability_ref_matches_contract(&grant.capability_ref)
+        || grant
+            .capability_ref
+            .get("identity_kind")
+            .and_then(Value::as_str)
+            == Some("CORE_BUILTIN")
         || !resource_scope_matches_contract(&grant.resource_scope, Some(&command.workspace_id))
         || !grant.secret_refs.is_empty()
         || grant.expires_at.is_none()
@@ -1520,6 +1973,122 @@ fn issue_capability_grant_transaction(
         "INSERT INTO request_dedup(principal_id,request_id,request_digest,response_json,response_digest,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,NULL)",
         params![command.actor.principal_id, command.request_id, request_digest, response, digest(response.as_bytes()), event.recorded_at],
     ).map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+    Ok(committed)
+}
+
+fn issue_attempt_file_write_grant_transaction(
+    connection: &mut Connection,
+    command: IssueAttemptFileWriteGrantCommit,
+    prepared: CapabilityGrantRecord,
+    state_ref: AggregateStateRef,
+    request_digest: String,
+) -> Result<CommittedCapabilityGrant, StoreError> {
+    validate_file_write_scope_request(&command)?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    if let Some(replay) = find_capability_grant_issue_replay(
+        &tx,
+        CORE_TRUST_PRINCIPAL_ID,
+        &command.request_id,
+        &request_digest,
+    )? {
+        tx.commit().map_err(map_database_error)?;
+        return Ok(replay);
+    }
+    validate_file_write_grant_issue(&command)?;
+    let (current, verified_digest) = prepare_attempt_file_write_grant(&tx, &command)?;
+    if verified_digest != request_digest || current != prepared {
+        return Err(StoreError::Conflict {
+            expected: Some(1),
+            actual: None,
+        });
+    }
+    let scope_matches = matches!(
+        &current.scope,
+        CapabilityGrantScope::AttemptExecution { task_id, attempt_id }
+            if !task_id.is_empty() && attempt_id == &command.request.attempt_id
+    );
+    if !capability_ref_matches_contract(&current.capability_ref)
+        || current.allowed_operations != ["workspace.file.replace"]
+        || !scope_matches
+    {
+        return Err(StoreError::Integrity(
+            "resolved file-write grant violates its Core capability contract".into(),
+        ));
+    }
+
+    let stored = stored_grant_from_record(&current)?;
+    let payload = stored.event_payload()?;
+    tx.execute(
+        "INSERT INTO capability_grants(capability_grant_id,scope_kind,conversation_id,task_id,attempt_id,capability_ref_json,allowed_operations_json,resource_scope_json,secret_refs_json,granted_by_json,expires_at,status,created_at,version) VALUES (?1,'ATTEMPT_EXECUTION',NULL,?2,?3,?4,?5,?6,'[]',?7,?8,'ACTIVE',?9,1)",
+        params![
+            stored.capability_grant_id,
+            stored.task_id,
+            stored.attempt_id,
+            encode(&stored.capability_ref)?,
+            encode(&stored.allowed_operations)?,
+            encode(&stored.resource_scope)?,
+            encode(&stored.granted_by)?,
+            stored.expires_at,
+            stored.created_at,
+        ],
+    )
+    .map_err(map_database_error)?;
+    let mut event = command.event.clone();
+    event.payload = payload;
+    let committed_event = insert_domain_event(&tx, &event, &state_ref)?;
+    tx.execute(
+        "INSERT INTO aggregate_snapshots(workspace_id,entity_type,entity_id,through_revision,projection_schema_version,state_digest,blob_ref_json,created_at) VALUES (?1,'capability_grant',?2,1,1,?3,?4,?5)",
+        params![
+            command.workspace_id,
+            current.capability_grant_id,
+            state_ref.blob.digest,
+            encode(&state_ref.blob)?,
+            event.recorded_at,
+        ],
+    )
+    .map_err(map_database_error)?;
+    let scope_digest = stored.scope_digest()?;
+    let principal = json!({"principal_id":CORE_TRUST_PRINCIPAL_ID,"kind":"SYSTEM"});
+    let audit_digest = digest(&canonical_json(&json!({
+        "capability_grant_id": stored.capability_grant_id,
+        "scope_digest": scope_digest,
+        "policy_id": "litecowork.standard",
+        "policy_revision": 1,
+    }))?);
+    tx.execute(
+        "INSERT INTO audit_records(audit_record_id,workspace_id,principal_json,action,resource_ref_json,decision,reason_code,correlation_id,occurred_at,payload_digest) VALUES (?1,?2,?3,'CAPABILITY_GRANT_ISSUED',?4,'ALLOW','TRUST_SCOPED_FILE_WRITE_GRANT',?5,?6,?7)",
+        params![
+            format!("{}:audit", event.event_id),
+            command.workspace_id,
+            encode(&principal)?,
+            encode(&json!({"capability_grant_id":stored.capability_grant_id}))?,
+            event.correlation_id,
+            event.recorded_at,
+            audit_digest,
+        ],
+    )
+    .map_err(map_database_error)?;
+    let committed = CommittedCapabilityGrant {
+        grant: current,
+        event: committed_event,
+        replayed: false,
+    };
+    let response = encode(&committed)?;
+    tx.execute(
+        "INSERT INTO request_dedup(principal_id,request_id,request_digest,response_json,response_digest,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,NULL)",
+        params![
+            CORE_TRUST_PRINCIPAL_ID,
+            command.request_id,
+            request_digest,
+            response,
+            digest(response.as_bytes()),
+            event.recorded_at,
+        ],
+    )
+    .map_err(map_database_error)?;
     tx.commit().map_err(map_database_error)?;
     Ok(committed)
 }
@@ -2453,6 +3022,17 @@ fn approval_target_ref_matches_contract(target: &Value) -> bool {
                                 .is_some_and(|value| {
                                     !value.trim().is_empty() && value.len() <= 2048
                                 })
+                    }
+                    Some("CORE_BUILTIN") => {
+                        capability.len() == 5
+                            && capability.get("capability_id").and_then(Value::as_str)
+                                == Some(CORE_FILE_REPLACE_CAPABILITY_ID)
+                            && capability.get("source").and_then(Value::as_str)
+                                == Some(CORE_FILE_REPLACE_CAPABILITY_SOURCE)
+                            && capability.get("component").and_then(Value::as_str)
+                                == Some(CORE_FILE_REPLACE_CAPABILITY_ID)
+                            && capability.get("digest").and_then(Value::as_str)
+                                == Some(CORE_FILE_REPLACE_CAPABILITY_DIGEST)
                     }
                     _ => false,
                 }
@@ -4182,6 +4762,19 @@ mod tests {
             Err(StoreError::Invalid(_))
         ));
 
+        let mut core_builtin = capability_grant_issue_command();
+        core_builtin.grant.capability_ref = json!({
+            "capability_id": CORE_FILE_REPLACE_CAPABILITY_ID,
+            "identity_kind": "CORE_BUILTIN",
+            "source": CORE_FILE_REPLACE_CAPABILITY_SOURCE,
+            "component": CORE_FILE_REPLACE_CAPABILITY_ID,
+            "digest": CORE_FILE_REPLACE_CAPABILITY_DIGEST,
+        });
+        assert!(matches!(
+            validate_capability_grant_issue(&core_builtin),
+            Err(StoreError::Invalid(_))
+        ));
+
         let mut foreign_resource = capability_grant_issue_command();
         foreign_resource.grant.resource_scope["resource_refs"] = json!([{
             "workspace_id":"workspace-other",
@@ -4958,6 +5551,33 @@ mod tests {
     }
 
     #[test]
+    fn agent_cannot_resolve_an_owner_approval() {
+        let mut connection = connection();
+        let mut agent = command(ApprovalDecision::Approve);
+        agent.actor.principal_id = "agent-1".into();
+        agent.actor.principal_kind = "AGENT".into();
+        assert!(matches!(
+            resolve_transaction(
+                &mut connection,
+                agent,
+                next_record("APPROVED"),
+                state_ref(2),
+            ),
+            Err(StoreError::Invalid(_))
+        ));
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT status FROM approvals WHERE approval_id='approval-1'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "PENDING"
+        );
+    }
+
+    #[test]
     fn approval_requires_the_assurance_level_pinned_on_the_request() {
         let mut connection = connection();
         let mut insufficient = command(ApprovalDecision::Approve);
@@ -5002,5 +5622,294 @@ mod tests {
             ),
             Err(StoreError::IdempotencyConflict)
         ));
+    }
+}
+
+#[cfg(test)]
+mod attempt_file_write_grant_tests {
+    use super::*;
+    use storage_core::{
+        FileWriteScopeRequest, IssueAttemptFileWriteGrantCommit, PinnedResourceRef,
+    };
+
+    const BASE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const CONTENT: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const ACTION: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+    fn fixture() -> Connection {
+        let connection = Connection::open_in_memory().expect("open file grant fixture");
+        connection.execute_batch(
+            "CREATE TABLE workspaces(workspace_id TEXT PRIMARY KEY, owner_principal_id TEXT, status TEXT);
+             CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY, workspace_id TEXT);
+             CREATE TABLE tasks(task_id TEXT PRIMARY KEY, workspace_id TEXT, current_plan_revision INTEGER, status TEXT);
+             CREATE TABLE plan_revisions(task_id TEXT, revision INTEGER, steps_json TEXT, PRIMARY KEY(task_id, revision));
+             CREATE TABLE steps(step_id TEXT PRIMARY KEY, task_id TEXT, plan_revision INTEGER, required_capabilities_json TEXT, status TEXT, current_attempt_id TEXT);
+             CREATE TABLE attempts(attempt_id TEXT PRIMARY KEY, task_id TEXT, step_id TEXT, plan_revision INTEGER, agent_session_id TEXT, runtime_id TEXT, runtime_incarnation_id TEXT, execution_lease_id TEXT, status TEXT);
+             CREATE TABLE agent_sessions(agent_session_id TEXT PRIMARY KEY, workspace_id TEXT, scope_kind TEXT, task_id TEXT, attempt_id TEXT, runtime_id TEXT, runtime_incarnation_id TEXT, status TEXT);
+             CREATE TABLE runtimes(runtime_id TEXT PRIMARY KEY, workspace_id TEXT, availability TEXT, current_incarnation_id TEXT);
+             CREATE TABLE runtime_incarnations(runtime_id TEXT, runtime_incarnation_id TEXT, recovery_state TEXT, PRIMARY KEY(runtime_id,runtime_incarnation_id));
+             CREATE TABLE execution_leases(lease_id TEXT PRIMARY KEY, task_id TEXT, step_id TEXT, attempt_id TEXT, runtime_id TEXT, runtime_incarnation_id TEXT, fencing_token_digest TEXT, state TEXT, expires_at TEXT);
+             CREATE TABLE workspace_roots(workspace_id TEXT, workspace_root_id TEXT, status TEXT, PRIMARY KEY(workspace_id,workspace_root_id));
+             CREATE TABLE resources(resource_id TEXT PRIMARY KEY, workspace_id TEXT, current_revision_id TEXT, context_document_json TEXT, provenance_json TEXT);
+             CREATE TABLE resource_revisions(resource_revision_id TEXT PRIMARY KEY, resource_id TEXT, content_digest TEXT, size_bytes INTEGER);
+             CREATE TABLE resource_locations(location_id TEXT PRIMARY KEY, resource_id TEXT, runtime_id TEXT, environment_id TEXT, connection_id TEXT, provider_ref TEXT, availability TEXT);
+             CREATE TABLE capability_grants(capability_grant_id TEXT PRIMARY KEY, scope_kind TEXT, conversation_id TEXT, task_id TEXT, attempt_id TEXT, capability_ref_json TEXT, allowed_operations_json TEXT, resource_scope_json TEXT, secret_refs_json TEXT, granted_by_json TEXT, expires_at TEXT, status TEXT, created_at TEXT, version INTEGER);
+             CREATE TABLE workspace_origin_sequences(workspace_id TEXT, origin_runtime_id TEXT, last_sequence INTEGER, PRIMARY KEY(workspace_id,origin_runtime_id));
+             CREATE TABLE domain_events(event_id TEXT PRIMARY KEY, workspace_id TEXT, entity_type TEXT, entity_id TEXT, origin_runtime_id TEXT, origin_sequence INTEGER, entity_revision INTEGER, hlc_timestamp TEXT, correlation_id TEXT, causation_id TEXT, schema_version INTEGER, type TEXT, payload_json TEXT, aggregate_state_ref_json TEXT, recorded_at TEXT, payload_digest TEXT);
+             CREATE TABLE aggregate_snapshots(workspace_id TEXT, entity_type TEXT, entity_id TEXT, through_revision INTEGER, projection_schema_version INTEGER, state_digest TEXT, blob_ref_json TEXT, created_at TEXT, PRIMARY KEY(workspace_id,entity_type,entity_id,through_revision));
+             CREATE TABLE audit_records(audit_record_id TEXT PRIMARY KEY, workspace_id TEXT, principal_json TEXT, action TEXT, resource_ref_json TEXT, decision TEXT, reason_code TEXT, correlation_id TEXT, occurred_at TEXT, payload_digest TEXT);
+             CREATE TABLE request_dedup(principal_id TEXT, request_id TEXT, request_digest TEXT, response_json TEXT, response_digest TEXT, created_at TEXT, expires_at TEXT, PRIMARY KEY(principal_id,request_id));
+             INSERT INTO workspaces VALUES('ws-1','owner-1','ACTIVE');
+             INSERT INTO tasks VALUES('task-1','ws-1',1,'RUNNING');
+             INSERT INTO plan_revisions VALUES('task-1',1,'[]');
+             INSERT INTO steps VALUES('step-1','task-1',1,'[{\"semantic_requirement\":\"workspace.file.replace\",\"operation_ids\":[\"workspace.file.replace\"],\"resource_scope\":{\"resource_refs\":[],\"operation_ids\":[\"workspace.file.replace\"],\"constraints\":{\"workspace_root_id\":\"root-1\",\"target_relative_path\":\"src/main.rs\",\"base_revision_digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"max_bytes\":1048576}}}]','RUNNING','attempt-1');
+             INSERT INTO attempts VALUES('attempt-1','task-1','step-1',1,'session-1','runtime-1','inc-1','lease-1','RUNNING');
+             INSERT INTO agent_sessions VALUES('session-1','ws-1','ATTEMPT_EXECUTION','task-1','attempt-1','runtime-1','inc-1','ACTIVE');
+             INSERT INTO runtimes VALUES('runtime-1','ws-1','ONLINE','inc-1');
+             INSERT INTO runtime_incarnations VALUES('runtime-1','inc-1','READY');
+             INSERT INTO execution_leases VALUES('lease-1','task-1','step-1','attempt-1','runtime-1','inc-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','ACTIVE','2099-01-01T00:00:00.000000000Z');
+             INSERT INTO workspace_roots VALUES('ws-1','root-1','ACTIVE');
+             INSERT INTO resources VALUES('resource-1','ws-1','revision-1',NULL,'{\"source_inputs\":[],\"transformations\":[],\"tool_reports\":[],\"created_by_attempt\":\"attempt-1\"}');
+             INSERT INTO resource_revisions VALUES('revision-1','resource-1','sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',16);
+             INSERT INTO resource_locations VALUES('location-1','resource-1',NULL,NULL,NULL,'litecowork.encrypted_blob','AVAILABLE');",
+        ).expect("seed an active accepted Attempt and exact managed candidate");
+        connection
+    }
+
+    fn command() -> IssueAttemptFileWriteGrantCommit {
+        let created = OffsetDateTime::now_utc();
+        let created_at = created.format(&Rfc3339).expect("format event timestamp");
+        let expires_at = (created + Duration::seconds(FILE_WRITE_GRANT_TTL_SECONDS))
+            .format(&Rfc3339)
+            .expect("format grant expiry");
+        IssueAttemptFileWriteGrantCommit {
+            workspace_id: "ws-1".into(),
+            request_id: "file-write-1".into(),
+            request: FileWriteScopeRequest {
+                attempt_id: "attempt-1".into(),
+                step_id: "step-1".into(),
+                workspace_root_id: "root-1".into(),
+                target_relative_path: "src/main.rs".into(),
+                base_revision_digest: BASE.into(),
+                requested_max_bytes: 1024 * 1024,
+                candidate_resource: PinnedResourceRef {
+                    workspace_id: "ws-1".into(),
+                    resource_id: "resource-1".into(),
+                    revision_id: "revision-1".into(),
+                },
+            },
+            capability_grant_id: "grant-file-write-1".into(),
+            expires_at,
+            event: EventDraft {
+                event_id: "event-file-write-1".into(),
+                workspace_id: "ws-1".into(),
+                entity_type: "capability_grant".into(),
+                entity_id: "grant-file-write-1".into(),
+                origin_runtime_id: "runtime-1".into(),
+                entity_revision: 1,
+                hlc_timestamp: format!("{created_at}#0@runtime-1"),
+                correlation_id: "corr-file-write-1".into(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "capability.grant.created.v1".into(),
+                payload: Value::Null,
+                recorded_at: created_at,
+            },
+        }
+    }
+
+    fn state_ref() -> AggregateStateRef {
+        AggregateStateRef {
+            blob: BlobRef {
+                digest: ACTION.into(),
+                size_bytes: 1,
+                media_type: "application/vnd.litecow.capability-grant+json".into(),
+            },
+            entity_revision: 1,
+            record_schema_version: 1,
+        }
+    }
+
+    #[test]
+    fn exact_scope_request_creates_one_durable_core_file_grant_and_replays() {
+        let mut connection = fixture();
+        let mut issue = command();
+        let (prepared, digest) = prepare_attempt_file_write_grant(&connection, &issue).unwrap();
+        assert_eq!(prepared.allowed_operations, ["workspace.file.replace"]);
+        assert_eq!(
+            prepared.resource_scope["resource_refs"][0]["revision_id"],
+            "revision-1"
+        );
+        assert_eq!(
+            prepared.resource_scope["constraints"]["base_revision_digest"],
+            BASE
+        );
+        assert_eq!(
+            prepared.resource_scope["constraints"]["candidate_content_digest"],
+            CONTENT
+        );
+        let committed = issue_attempt_file_write_grant_transaction(
+            &mut connection,
+            issue.clone(),
+            prepared,
+            state_ref(),
+            digest.clone(),
+        )
+        .unwrap();
+        assert!(!committed.replayed);
+        assert_eq!(
+            committed.grant.scope,
+            CapabilityGrantScope::AttemptExecution {
+                task_id: "task-1".into(),
+                attempt_id: "attempt-1".into()
+            }
+        );
+        assert_eq!(committed.event.event_type, "capability.grant.created.v1");
+        let persisted = load_capability_grant(&connection, "ws-1", "grant-file-write-1")
+            .unwrap()
+            .expect("Core Trust grant reloads after persistence");
+        assert_eq!(persisted.attempt_id.as_deref(), Some("attempt-1"));
+        assert_eq!(persisted.granted_by["kind"], "CORE_TRUST");
+        connection
+            .execute(
+                "UPDATE execution_leases SET state='RELEASED' WHERE lease_id='lease-1'",
+                [],
+            )
+            .unwrap();
+        issue.capability_grant_id = "regenerated-grant-id".into();
+        issue.event.event_id = "regenerated-event-id".into();
+        issue.event.entity_id = "regenerated-grant-id".into();
+        issue.event.recorded_at = "2000-01-01T00:00:00Z".into();
+        issue.expires_at = "2000-01-01T00:05:00Z".into();
+        let replay = issue_attempt_file_write_grant_transaction(
+            &mut connection,
+            issue.clone(),
+            committed.grant.clone(),
+            state_ref(),
+            digest.clone(),
+        )
+        .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.grant, committed.grant);
+        assert_eq!(replay.event, committed.event);
+        let mut changed_payload = issue;
+        changed_payload.request.target_relative_path = "src/other.rs".into();
+        let changed_digest = attempt_file_write_grant_request_digest(&changed_payload).unwrap();
+        assert!(matches!(
+            issue_attempt_file_write_grant_transaction(
+                &mut connection,
+                changed_payload,
+                committed.grant.clone(),
+                state_ref(),
+                changed_digest,
+            ),
+            Err(StoreError::IdempotencyConflict)
+        ));
+        let grants: i64 = connection
+            .query_row("SELECT COUNT(*) FROM capability_grants", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let events: i64 = connection
+            .query_row("SELECT COUNT(*) FROM domain_events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!((grants, events), (1, 1));
+    }
+
+    fn assert_refused_without_grant(
+        connection: &Connection,
+        command: &IssueAttemptFileWriteGrantCommit,
+    ) {
+        assert!(matches!(
+            prepare_attempt_file_write_grant(connection, command),
+            Err(StoreError::Invalid(_))
+        ));
+        let grants: i64 = connection
+            .query_row("SELECT COUNT(*) FROM capability_grants", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(grants, 0);
+    }
+
+    #[test]
+    fn request_cannot_broaden_or_change_the_accepted_file_scope() {
+        let invalid_mutations: [Box<dyn Fn(&mut IssueAttemptFileWriteGrantCommit)>; 7] = [
+            Box::new(|value| value.request.target_relative_path = "src/other.rs".into()),
+            Box::new(|value| {
+                value.request.base_revision_digest =
+                    "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into()
+            }),
+            Box::new(|value| value.request.requested_max_bytes += 1),
+            Box::new(|value| value.request.workspace_root_id = "root-other".into()),
+            Box::new(|value| value.request.step_id = "step-other".into()),
+            Box::new(|value| value.request.attempt_id = "attempt-other".into()),
+            Box::new(|value| {
+                value.request.candidate_resource.revision_id = "revision-other".into()
+            }),
+        ];
+        for mutate in invalid_mutations {
+            let connection = fixture();
+            let mut issue = command();
+            mutate(&mut issue);
+            assert_refused_without_grant(&connection, &issue);
+        }
+
+        let connection = fixture();
+        let too_large_candidate = command();
+        connection
+            .execute(
+                "UPDATE resource_revisions SET size_bytes=1048577 WHERE resource_revision_id='revision-1'",
+                [],
+            )
+            .unwrap();
+        assert_refused_without_grant(&connection, &too_large_candidate);
+
+        let connection = fixture();
+        let mut escaped_path = command();
+        escaped_path.request.target_relative_path = "../escape.rs".into();
+        assert_refused_without_grant(&connection, &escaped_path);
+    }
+
+    #[test]
+    fn grant_issue_rechecks_attempt_session_runtime_lease_root_and_managed_candidate() {
+        let invalidations = [
+            "UPDATE workspaces SET status='DISABLED' WHERE workspace_id='ws-1'",
+            "UPDATE tasks SET current_plan_revision=2 WHERE task_id='task-1'",
+            "UPDATE tasks SET status='STOPPED' WHERE task_id='task-1'",
+            "UPDATE attempts SET status='FAILED' WHERE attempt_id='attempt-1'",
+            "UPDATE steps SET status='FAILED' WHERE step_id='step-1'",
+            "UPDATE steps SET current_attempt_id='attempt-other' WHERE step_id='step-1'",
+            "UPDATE agent_sessions SET status='STOPPED' WHERE agent_session_id='session-1'",
+            "UPDATE runtimes SET availability='OFFLINE' WHERE runtime_id='runtime-1'",
+            "UPDATE runtimes SET current_incarnation_id='inc-other' WHERE runtime_id='runtime-1'",
+            "UPDATE runtime_incarnations SET recovery_state='DEGRADED' WHERE runtime_id='runtime-1'",
+            "UPDATE execution_leases SET state='RELEASED' WHERE lease_id='lease-1'",
+            "UPDATE workspace_roots SET status='REVOKED' WHERE workspace_root_id='root-1'",
+            "UPDATE resource_locations SET availability='UNAVAILABLE' WHERE location_id='location-1'",
+            "UPDATE resources SET provenance_json=json_set(provenance_json,'$.created_by_attempt','attempt-other') WHERE resource_id='resource-1'",
+            "UPDATE resources SET provenance_json=json_remove(provenance_json,'$.created_by_attempt') WHERE resource_id='resource-1'",
+        ];
+        for invalidation in invalidations {
+            let connection = fixture();
+            connection.execute(invalidation, []).unwrap();
+            assert_refused_without_grant(&connection, &command());
+        }
+    }
+
+    #[test]
+    fn grant_expiry_cannot_outlive_the_current_lease() {
+        let connection = fixture();
+        let issue = command();
+        let lease_expiry = (OffsetDateTime::now_utc() + Duration::seconds(60))
+            .format(&Rfc3339)
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE execution_leases SET expires_at=?1 WHERE lease_id='lease-1'",
+                [&lease_expiry],
+            )
+            .unwrap();
+        assert_refused_without_grant(&connection, &issue);
     }
 }

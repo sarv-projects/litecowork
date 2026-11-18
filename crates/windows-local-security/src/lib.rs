@@ -168,6 +168,7 @@ impl DirectoryIdentity {
 #[cfg(windows)]
 pub struct VerifiedDirectory {
     _handle: win32::OwnedHandle,
+    _replacement_handle: Option<win32::OwnedHandle>,
     identity: DirectoryIdentity,
 }
 
@@ -175,6 +176,58 @@ pub struct VerifiedDirectory {
 impl VerifiedDirectory {
     pub fn identity(&self) -> DirectoryIdentity {
         self.identity
+    }
+
+    /// Reports whether the retained root is on NTFS, the only Windows filesystem for which
+    /// this crate currently relies on documented write-through rename metadata behavior.
+    pub fn supports_durable_handle_relative_replace(&self) -> io::Result<bool> {
+        let Some(replacement_handle) = &self._replacement_handle else {
+            return Ok(false);
+        };
+        win32::supports_durable_handle_relative_replace(replacement_handle)
+    }
+
+    /// Opens an existing regular file beneath this handle without following reparse points.
+    /// The returned handle is private Runtime state and must not be logged or serialized.
+    pub fn open_regular_file_beneath(
+        &self,
+        relative_path: &std::path::Path,
+    ) -> io::Result<std::fs::File> {
+        win32::open_regular_file_beneath(&self._handle, relative_path)
+    }
+
+    /// Creates an empty, exclusive, same-directory replacement temp beneath this handle.
+    /// It is opened for write-through, DACL preservation, and handle-relative rename.
+    pub fn create_new_replacement_file_beneath(
+        &self,
+        relative_path: &std::path::Path,
+    ) -> io::Result<std::fs::File> {
+        win32::create_new_replacement_file_beneath(&self._handle, relative_path)
+    }
+
+    /// Copies the source file's DACL to a newly created replacement file, failing closed
+    /// when the descriptor cannot be read or applied exactly enough for this operation.
+    pub fn copy_replacement_metadata(
+        &self,
+        source: &std::fs::File,
+        destination: &std::fs::File,
+    ) -> io::Result<()> {
+        win32::copy_replacement_metadata(source, destination)
+    }
+
+    /// Atomically renames an open replacement file over one existing root-relative target.
+    /// The destination parent is resolved from the retained root handle; no absolute path is
+    /// accepted or constructed.
+    pub fn replace_open_file_beneath(
+        &self,
+        source: &std::fs::File,
+        relative_path: &std::path::Path,
+    ) -> io::Result<()> {
+        let replacement_handle = self
+            ._replacement_handle
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "replacement unavailable"))?;
+        win32::replace_open_file_beneath(replacement_handle, self.identity, source, relative_path)
     }
 
     /// Reopens the same local drive-relative path and proves that it still resolves to
@@ -341,30 +394,36 @@ mod win32 {
     };
     use windows_sys::Win32::{
         Foundation::{
-            CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_FILES, GetLastError, HANDLE,
-            INVALID_HANDLE_VALUE, LocalFree, OBJ_DONT_REPARSE, STATUS_OBJECT_NAME_COLLISION,
-            STATUS_OBJECT_NAME_EXISTS, UNICODE_STRING,
+            CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_FILES, GENERIC_READ,
+            GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree, OBJ_DONT_REPARSE,
+            STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_EXISTS, UNICODE_STRING,
         },
         Globalization::{CSTR_EQUAL, CompareStringOrdinal},
         Security::Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
-            SetNamedSecurityInfoW,
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+            SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
         },
         Security::{
-            DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetTokenInformation,
-            PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES,
-            TOKEN_GROUPS, TOKEN_QUERY, TokenLogonSid,
+            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetSecurityDescriptorControl,
+            GetSecurityDescriptorDacl, GetTokenInformation, OWNER_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
+            SID_AND_ATTRIBUTES, TOKEN_GROUPS, TOKEN_QUERY, TokenLogonSid,
+            UNPROTECTED_DACL_SECURITY_INFORMATION,
         },
         Storage::FileSystem::{
-            CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY,
-            FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO,
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO,
-            FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FileAttributeTagInfo,
-            FileBasicInfo, FileIdInfo, FlushFileBuffers, GetDriveTypeW,
-            GetFileInformationByHandleEx, GetFinalPathNameByHandleW, MOVEFILE_REPLACE_EXISTING,
-            MOVEFILE_WRITE_THROUGH, MoveFileExW, OPEN_EXISTING, SetFileInformationByHandle,
-            VOLUME_NAME_GUID, WriteFile,
+            CreateFileW, DELETE, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_COMPRESSED,
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_HIDDEN,
+            FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED, FILE_ATTRIBUTE_READONLY,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_SYSTEM, FILE_ATTRIBUTE_TAG_INFO,
+            FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
+            FILE_STREAM_INFO, FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES, FileAttributeTagInfo,
+            FileBasicInfo, FileIdInfo, FileStandardInfo, FileStreamInfo, FlushFileBuffers,
+            GetDriveTypeW, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+            GetVolumeInformationByHandleW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+            MoveFileExW, OPEN_EXISTING, READ_CONTROL, SYNCHRONIZE, SetFileInformationByHandle,
+            VOLUME_NAME_GUID, WRITE_DAC, WRITE_OWNER, WriteFile,
         },
         System::{
             Diagnostics::ToolHelp::{
@@ -389,8 +448,9 @@ mod win32 {
             Foundation::OBJECT_ATTRIBUTES,
             Storage::FileSystem::{
                 FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
-                FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
-                NtCreateFile,
+                FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0,
+                FILE_RENAME_REPLACE_IF_EXISTS, FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_THROUGH,
+                FileRenameInformationEx, NtCreateFile, NtSetInformationFile,
             },
         },
         Win32::System::IO::IO_STATUS_BLOCK,
@@ -482,8 +542,14 @@ mod win32 {
             current = next;
         }
         let identity = directory_identity(&current)?;
+        // Try to acquire only the directory rights needed for atomic replacement. This is
+        // a second handle opened from the already verified object identity; if the user's
+        // ACL denies those rights, ordinary read-only use remains available and replacement
+        // reports unsupported before it stages any bytes.
+        let replacement_handle = open_directory_for_replacement(&current, identity).ok();
         Ok(VerifiedDirectory {
             _handle: current,
+            _replacement_handle: replacement_handle,
             identity,
         })
     }
@@ -697,6 +763,596 @@ mod win32 {
             return Err(redacted_error());
         }
         Ok(OwnedHandle(handle))
+    }
+
+    pub(super) fn supports_durable_handle_relative_replace(root: &OwnedHandle) -> io::Result<bool> {
+        let mut file_system_name = [0u16; 64];
+        // SAFETY: `root` is a live directory handle; optional volume name and metadata
+        // outputs are intentionally omitted, and the filesystem-name buffer is writable.
+        let ok = unsafe {
+            GetVolumeInformationByHandleW(
+                root.0,
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                file_system_name.as_mut_ptr(),
+                file_system_name.len() as u32,
+            )
+        };
+        if ok == 0 {
+            return Err(redacted_error());
+        }
+        let length = file_system_name
+            .iter()
+            .position(|unit| *unit == 0)
+            .ok_or_else(redacted_error)?;
+        let name = String::from_utf16(&file_system_name[..length]).map_err(|_| redacted_error())?;
+        Ok(name.eq_ignore_ascii_case("NTFS"))
+    }
+
+    pub(super) fn open_regular_file_beneath(
+        root: &OwnedHandle,
+        path: &Path,
+    ) -> io::Result<std::fs::File> {
+        let components = validate_relative_file_path(path)?;
+        let mut current = root;
+        let mut opened_directories = Vec::with_capacity(components.len().saturating_sub(1));
+        for component in &components[..components.len() - 1] {
+            let next =
+                open_child_directory(current, component).map_err(|_| unsafe_target_error())?;
+            validate_directory_handle(&next).map_err(|_| unsafe_target_error())?;
+            opened_directories.push(next);
+            current = opened_directories.last().expect("just pushed directory");
+        }
+        let file = open_child_regular_file(
+            current,
+            components.last().ok_or_else(invalid_relative_path_error)?,
+        )?;
+        Ok(into_std_file(file))
+    }
+
+    fn open_child_regular_file(parent: &OwnedHandle, component: &[u16]) -> io::Result<OwnedHandle> {
+        let byte_length = component
+            .len()
+            .checked_mul(size_of::<u16>())
+            .and_then(|length| u16::try_from(length).ok())
+            .filter(|length| *length != 0)
+            .ok_or_else(invalid_relative_path_error)?;
+        let mut name = UNICODE_STRING {
+            Length: byte_length,
+            MaximumLength: byte_length,
+            Buffer: component.as_ptr() as *mut u16,
+        };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: parent.0,
+            ObjectName: &mut name,
+            Attributes: OBJ_DONT_REPARSE,
+            SecurityDescriptor: ptr::null_mut(),
+            SecurityQualityOfService: ptr::null_mut(),
+        };
+        let mut io_status = IO_STATUS_BLOCK::default();
+        let mut handle: HANDLE = ptr::null_mut();
+        // SAFETY: parent is a live directory handle, component is exactly one validated
+        // UTF-16 component, and the output handles/status block are writable and aligned.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                GENERIC_READ | READ_CONTROL | FILE_READ_ATTRIBUTES | DELETE | SYNCHRONIZE,
+                &attributes,
+                &mut io_status,
+                ptr::null(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_DELETE,
+                FILE_OPEN,
+                FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+                ptr::null(),
+                0,
+            )
+        };
+        if status < 0 || handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(redacted_error());
+        }
+        let opened = OwnedHandle(handle);
+        let mut attributes = FILE_ATTRIBUTE_TAG_INFO::default();
+        // SAFETY: `opened` is a live handle and `attributes` is a writable output buffer.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                opened.0,
+                FileAttributeTagInfo,
+                (&mut attributes as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+                size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(redacted_error());
+        }
+        if attributes.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
+            != 0
+        {
+            return Err(unsafe_target_error());
+        }
+        if attributes.FileAttributes & (FILE_ATTRIBUTE_COMPRESSED | FILE_ATTRIBUTE_ENCRYPTED) != 0 {
+            return Err(unsupported_metadata_error());
+        }
+        const PRESERVED_ATTRIBUTES: u32 = FILE_ATTRIBUTE_NORMAL
+            | FILE_ATTRIBUTE_ARCHIVE
+            | FILE_ATTRIBUTE_HIDDEN
+            | FILE_ATTRIBUTE_SYSTEM
+            | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+        if attributes.FileAttributes & !PRESERVED_ATTRIBUTES != 0 {
+            return Err(unsupported_metadata_error());
+        }
+        if attributes.FileAttributes & FILE_ATTRIBUTE_NORMAL != 0
+            && attributes.FileAttributes & !FILE_ATTRIBUTE_NORMAL != 0
+        {
+            return Err(unsupported_metadata_error());
+        }
+        let mut standard = FILE_STANDARD_INFO::default();
+        // SAFETY: `opened` is a live handle and `standard` is a writable output buffer.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                opened.0,
+                FileStandardInfo,
+                (&mut standard as *mut FILE_STANDARD_INFO).cast(),
+                size_of::<FILE_STANDARD_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(redacted_error());
+        }
+        if standard.Directory || standard.NumberOfLinks != 1 {
+            return Err(unsafe_target_error());
+        }
+        if !has_only_default_data_stream(&opened)? {
+            return Err(unsupported_metadata_error());
+        }
+        Ok(opened)
+    }
+
+    fn has_only_default_data_stream(handle: &OwnedHandle) -> io::Result<bool> {
+        let mut buffer = vec![0usize; (64usize * 1024).div_ceil(size_of::<usize>())];
+        let byte_length = buffer
+            .len()
+            .checked_mul(size_of::<usize>())
+            .and_then(|length| u32::try_from(length).ok())
+            .ok_or_else(unsupported_metadata_error)?;
+        // SAFETY: `buffer` is word-aligned and large enough for a bounded stream-info list.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                handle.0,
+                FileStreamInfo,
+                buffer.as_mut_ptr().cast(),
+                byte_length,
+            )
+        };
+        if ok == 0 {
+            return Err(unsupported_metadata_error());
+        }
+        let raw = buffer.as_ptr().cast::<u8>();
+        let mut offset = 0usize;
+        let mut stream_count = 0usize;
+        loop {
+            let header_length = offset_of!(FILE_STREAM_INFO, StreamName);
+            if offset
+                .checked_add(header_length)
+                .is_none_or(|end| end > byte_length as usize)
+            {
+                return Err(unsupported_metadata_error());
+            }
+            // SAFETY: the loop bounds above prove the fixed fields fit in the query buffer.
+            let (next_offset, name_bytes) = unsafe {
+                let info = raw.add(offset).cast::<FILE_STREAM_INFO>();
+                (
+                    ptr::addr_of!((*info).NextEntryOffset).read_unaligned(),
+                    ptr::addr_of!((*info).StreamNameLength).read_unaligned() as usize,
+                )
+            };
+            if name_bytes % size_of::<u16>() != 0
+                || offset
+                    .checked_add(header_length)
+                    .and_then(|start| start.checked_add(name_bytes))
+                    .is_none_or(|end| end > byte_length as usize)
+            {
+                return Err(unsupported_metadata_error());
+            }
+            // SAFETY: the validated name range is inside the same buffer and each u16 is
+            // properly aligned relative to the FILE_STREAM_INFO header.
+            let stream_name = unsafe {
+                let info = raw.add(offset).cast::<FILE_STREAM_INFO>();
+                let name = ptr::addr_of!((*info).StreamName).cast::<u16>();
+                slice::from_raw_parts(name, name_bytes / size_of::<u16>())
+            };
+            let stream_name =
+                String::from_utf16(stream_name).map_err(|_| unsupported_metadata_error())?;
+            if stream_name != "::$DATA" {
+                return Ok(false);
+            }
+            stream_count += 1;
+            if next_offset == 0 {
+                break;
+            }
+            if (next_offset as usize) < header_length + name_bytes {
+                return Err(unsupported_metadata_error());
+            }
+            offset = offset
+                .checked_add(next_offset as usize)
+                .filter(|next| *next < byte_length as usize)
+                .ok_or_else(unsupported_metadata_error)?;
+        }
+        Ok(stream_count == 1)
+    }
+
+    pub(super) fn create_new_replacement_file_beneath(
+        root: &OwnedHandle,
+        path: &Path,
+    ) -> io::Result<std::fs::File> {
+        let components = validate_relative_file_path(path)?;
+        let mut current = root;
+        let mut opened_directories = Vec::with_capacity(components.len().saturating_sub(1));
+        for component in &components[..components.len() - 1] {
+            let next = open_child_directory(current, component)?;
+            validate_directory_handle(&next)?;
+            opened_directories.push(next);
+            current = opened_directories.last().expect("just pushed directory");
+        }
+        let file = create_child_replacement_file(
+            current,
+            components.last().ok_or_else(invalid_relative_path_error)?,
+        )?;
+        Ok(into_std_file(file))
+    }
+
+    fn create_child_replacement_file(
+        parent: &OwnedHandle,
+        component: &[u16],
+    ) -> io::Result<OwnedHandle> {
+        let security = security_descriptor("D:P(A;;FA;;;SY)(A;;FA;;;OW)")?;
+        let byte_length = component
+            .len()
+            .checked_mul(size_of::<u16>())
+            .and_then(|length| u16::try_from(length).ok())
+            .filter(|length| *length != 0)
+            .ok_or_else(invalid_relative_path_error)?;
+        let mut name = UNICODE_STRING {
+            Length: byte_length,
+            MaximumLength: byte_length,
+            Buffer: component.as_ptr() as *mut u16,
+        };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: parent.0,
+            ObjectName: &mut name,
+            Attributes: OBJ_DONT_REPARSE,
+            SecurityDescriptor: security.0.cast(),
+            SecurityQualityOfService: ptr::null_mut(),
+        };
+        let mut io_status = IO_STATUS_BLOCK::default();
+        let mut handle: HANDLE = ptr::null_mut();
+        // SAFETY: the parent and component remain live for this synchronous create. CREATE
+        // prevents clobbering a prior recovery temp; both NT options prohibit reparse traversal
+        // and request write-through for file and NTFS rename metadata.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                GENERIC_READ
+                    | GENERIC_WRITE
+                    | READ_CONTROL
+                    | WRITE_DAC
+                    | WRITE_OWNER
+                    | DELETE
+                    | SYNCHRONIZE,
+                &attributes,
+                &mut io_status,
+                ptr::null(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_DELETE,
+                FILE_CREATE,
+                FILE_NON_DIRECTORY_FILE
+                    | FILE_OPEN_REPARSE_POINT
+                    | FILE_SYNCHRONOUS_IO_NONALERT
+                    | FILE_WRITE_THROUGH,
+                ptr::null(),
+                0,
+            )
+        };
+        if status < 0 || handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(relative_create_error(status));
+        }
+        Ok(OwnedHandle(handle))
+    }
+
+    pub(super) fn copy_replacement_metadata(
+        source: &std::fs::File,
+        destination: &std::fs::File,
+    ) -> io::Result<()> {
+        let source = std::os::windows::io::AsRawHandle::as_raw_handle(source) as HANDLE;
+        let destination = std::os::windows::io::AsRawHandle::as_raw_handle(destination) as HANDLE;
+        let mut owner = ptr::null_mut();
+        let mut group = ptr::null_mut();
+        let mut dacl = ptr::null_mut();
+        let mut descriptor = ptr::null_mut();
+        // SAFETY: source is a live file handle and all output slots are writable; the
+        // returned descriptor is released below with LocalFree.
+        let status = unsafe {
+            GetSecurityInfo(
+                source,
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut owner,
+                &mut group,
+                &mut dacl,
+                ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != 0
+            || descriptor.is_null()
+            || owner.is_null()
+            || group.is_null()
+            || dacl.is_null()
+        {
+            return Err(unsupported_metadata_error());
+        }
+        let descriptor = OwnedSecurityDescriptor(descriptor);
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        // SAFETY: `descriptor` remains live and both control outputs are writable.
+        if unsafe { GetSecurityDescriptorControl(descriptor.0.cast(), &mut control, &mut revision) }
+            == 0
+        {
+            return Err(unsupported_metadata_error());
+        }
+        let dacl_flags = if control & SE_DACL_PROTECTED != 0 {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+        // SAFETY: destination is live, security values point into the retained descriptor,
+        // and the owner-created temp was opened with WRITE_DAC and WRITE_OWNER.
+        if unsafe {
+            SetSecurityInfo(
+                destination,
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION
+                    | GROUP_SECURITY_INFORMATION
+                    | DACL_SECURITY_INFORMATION
+                    | dacl_flags,
+                owner,
+                group,
+                dacl,
+                ptr::null_mut(),
+            )
+        } != 0
+        {
+            return Err(unsupported_metadata_error());
+        }
+        let mut basic = FILE_BASIC_INFO::default();
+        // SAFETY: source is a live file handle and `basic` is a writable output buffer.
+        if unsafe {
+            GetFileInformationByHandleEx(
+                source,
+                FileBasicInfo,
+                (&mut basic as *mut FILE_BASIC_INFO).cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(unsupported_metadata_error());
+        }
+        const PRESERVED_ATTRIBUTES: u32 = FILE_ATTRIBUTE_NORMAL
+            | FILE_ATTRIBUTE_ARCHIVE
+            | FILE_ATTRIBUTE_HIDDEN
+            | FILE_ATTRIBUTE_SYSTEM
+            | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+        if basic.FileAttributes & !PRESERVED_ATTRIBUTES != 0 {
+            return Err(unsupported_metadata_error());
+        }
+        if basic.FileAttributes & FILE_ATTRIBUTE_NORMAL != 0
+            && basic.FileAttributes & !FILE_ATTRIBUTE_NORMAL != 0
+        {
+            return Err(unsupported_metadata_error());
+        }
+        // Keep the ordinary create/write timestamps of the replacement; preserve only the
+        // supported DOS attributes that affect visibility and indexing.
+        basic.CreationTime = 0;
+        basic.LastAccessTime = 0;
+        basic.LastWriteTime = 0;
+        basic.ChangeTime = 0;
+        if basic.FileAttributes & PRESERVED_ATTRIBUTES == 0 {
+            basic.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+        } else {
+            basic.FileAttributes &= PRESERVED_ATTRIBUTES;
+        }
+        // SAFETY: destination is a live writable replacement handle and `basic` has the
+        // correctly sized FILE_BASIC_INFO layout returned by the OS above.
+        if unsafe {
+            SetFileInformationByHandle(
+                destination,
+                FileBasicInfo,
+                (&basic as *const FILE_BASIC_INFO).cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(unsupported_metadata_error());
+        }
+        Ok(())
+    }
+
+    pub(super) fn replace_open_file_beneath(
+        root: &OwnedHandle,
+        expected_identity: DirectoryIdentity,
+        source: &std::fs::File,
+        path: &Path,
+    ) -> io::Result<()> {
+        // The dedicated root handle was opened from the identity-checked directory at
+        // selection time with only traversal/read-attribute rights. The filesystem performs
+        // its relative destination open with the caller's normal write checks.
+        validate_directory_handle(root)?;
+        let identity = directory_identity(root)?;
+        if identity != expected_identity {
+            return Err(redacted_error());
+        }
+        let components = validate_relative_file_path(path)?;
+        let mut current = root;
+        let mut opened_directories = Vec::with_capacity(components.len().saturating_sub(1));
+        for component in &components[..components.len() - 1] {
+            let next = open_child_directory_for_replacement(current, component)?;
+            validate_directory_handle(&next)?;
+            opened_directories.push(next);
+            current = opened_directories.last().expect("just pushed directory");
+        }
+        let leaf = components.last().ok_or_else(invalid_relative_path_error)?;
+        let file_name_bytes = leaf
+            .len()
+            .checked_mul(size_of::<u16>())
+            .and_then(|length| u32::try_from(length).ok())
+            .ok_or_else(invalid_relative_path_error)?;
+        let header_length = offset_of!(FILE_RENAME_INFORMATION, FileName);
+        let total_length = size_of::<FILE_RENAME_INFORMATION>()
+            .checked_add(file_name_bytes as usize)
+            .ok_or_else(invalid_relative_path_error)?;
+        let word_count = total_length.div_ceil(size_of::<usize>());
+        let mut buffer = vec![0usize; word_count];
+        let raw_buffer = buffer.as_mut_ptr().cast::<u8>();
+        // SAFETY: `buffer` is pointer-aligned and large enough for the native rename header
+        // plus all UTF-16 name bytes; each field is written unaligned within storage.
+        unsafe {
+            let info = raw_buffer.cast::<FILE_RENAME_INFORMATION>();
+            ptr::addr_of_mut!((*info).Anonymous).write_unaligned(FILE_RENAME_INFORMATION_0 {
+                Flags: FILE_RENAME_REPLACE_IF_EXISTS,
+            });
+            ptr::addr_of_mut!((*info).RootDirectory).write_unaligned(current.0);
+            ptr::addr_of_mut!((*info).FileNameLength).write_unaligned(file_name_bytes);
+            ptr::copy_nonoverlapping(
+                leaf.as_ptr().cast::<u8>(),
+                raw_buffer.add(header_length),
+                file_name_bytes as usize,
+            );
+        }
+        let source = std::os::windows::io::AsRawHandle::as_raw_handle(source) as HANDLE;
+        let mut io_status = IO_STATUS_BLOCK::default();
+        // SAFETY: source has DELETE access, current is a verified traversable parent handle,
+        // the rename buffer is aligned/bounded, and io_status is writable for the call.
+        let status = unsafe {
+            NtSetInformationFile(
+                source,
+                &mut io_status,
+                raw_buffer.cast(),
+                u32::try_from(total_length).map_err(|_| invalid_relative_path_error())?,
+                FileRenameInformationEx,
+            )
+        };
+        if status < 0 {
+            return Err(redacted_error());
+        }
+        Ok(())
+    }
+
+    fn open_directory_for_replacement(
+        root: &OwnedHandle,
+        expected_identity: DirectoryIdentity,
+    ) -> io::Result<OwnedHandle> {
+        let mut path = final_volume_guid_path(root)?;
+        path.push(0);
+        // SAFETY: `path` is a canonical volume-GUID path derived from the verified root
+        // handle and is NUL terminated; CreateFileW returns an owned handle or failure.
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                ptr::null_mut(),
+            )
+        };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(redacted_error());
+        }
+        let reopened = OwnedHandle(handle);
+        validate_directory_handle(&reopened)?;
+        if directory_identity(&reopened)? != expected_identity {
+            return Err(redacted_error());
+        }
+        Ok(reopened)
+    }
+
+    fn open_child_directory_for_replacement(
+        parent: &OwnedHandle,
+        component: &[u16],
+    ) -> io::Result<OwnedHandle> {
+        let byte_length = component
+            .len()
+            .checked_mul(size_of::<u16>())
+            .and_then(|length| u16::try_from(length).ok())
+            .filter(|length| *length != 0)
+            .ok_or_else(invalid_relative_path_error)?;
+        let mut name = UNICODE_STRING {
+            Length: byte_length,
+            MaximumLength: byte_length,
+            Buffer: component.as_ptr() as *mut u16,
+        };
+        let attributes = OBJECT_ATTRIBUTES {
+            Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: parent.0,
+            ObjectName: &mut name,
+            Attributes: OBJ_DONT_REPARSE,
+            SecurityDescriptor: ptr::null_mut(),
+            SecurityQualityOfService: ptr::null_mut(),
+        };
+        let mut io_status = IO_STATUS_BLOCK::default();
+        let mut handle: HANDLE = ptr::null_mut();
+        // SAFETY: parent is a verified live directory, component is exactly one validated
+        // UTF-16 component, and all NT structures/outputs remain valid for the call.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                &attributes,
+                &mut io_status,
+                ptr::null(),
+                0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                FILE_OPEN,
+                FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+                ptr::null(),
+                0,
+            )
+        };
+        if status < 0 || handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(redacted_error());
+        }
+        Ok(OwnedHandle(handle))
+    }
+
+    fn into_std_file(handle: OwnedHandle) -> std::fs::File {
+        let raw = handle.0;
+        std::mem::forget(handle);
+        // SAFETY: ownership of the unique live HANDLE is transferred to File.
+        unsafe { <std::fs::File as std::os::windows::io::FromRawHandle>::from_raw_handle(raw) }
+    }
+
+    fn invalid_relative_path_error() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid handle-relative file path",
+        )
+    }
+
+    fn unsafe_target_error() -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, "unsafe file replacement target")
+    }
+
+    fn unsupported_metadata_error() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "file metadata cannot be preserved",
+        )
     }
 
     pub(super) fn validate_relative_file_path(path: &Path) -> io::Result<Vec<Vec<u16>>> {
@@ -931,6 +1587,84 @@ mod win32 {
         Ok(control & SE_DACL_PROTECTED != 0 && acl_size.AceCount == 2)
     }
 
+    #[cfg(test)]
+    pub(super) fn test_security_summary(
+        handle: HANDLE,
+    ) -> io::Result<(Vec<u8>, Vec<u8>, Vec<u8>, bool)> {
+        use windows_sys::Win32::Security::{
+            ACL_SIZE_INFORMATION, AclSizeInformation, GetAclInformation, GetLengthSid,
+        };
+
+        let mut owner = ptr::null_mut();
+        let mut group = ptr::null_mut();
+        let mut dacl = ptr::null_mut();
+        let mut descriptor = ptr::null_mut();
+        // SAFETY: handle is live and each output pointer is writable; LocalFree releases the
+        // returned descriptor after the SID and ACL contents have been copied.
+        let status = unsafe {
+            GetSecurityInfo(
+                handle,
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut owner,
+                &mut group,
+                &mut dacl,
+                ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != 0
+            || owner.is_null()
+            || group.is_null()
+            || dacl.is_null()
+            || descriptor.is_null()
+        {
+            return Err(redacted_error());
+        }
+        let descriptor = OwnedSecurityDescriptor(descriptor);
+        // SAFETY: owner/group point to valid SIDs within the live returned descriptor.
+        let owner_len = unsafe { GetLengthSid(owner) } as usize;
+        // SAFETY: owner/group point to valid SIDs within the live returned descriptor.
+        let group_len = unsafe { GetLengthSid(group) } as usize;
+        if owner_len == 0 || group_len == 0 {
+            return Err(redacted_error());
+        }
+        // SAFETY: valid SID lengths were returned by GetLengthSid and both pointers remain
+        // inside the live security descriptor until copied here.
+        let owner = unsafe { slice::from_raw_parts(owner.cast::<u8>(), owner_len) }.to_vec();
+        // SAFETY: valid SID lengths were returned by GetLengthSid and both pointers remain
+        // inside the live security descriptor until copied here.
+        let group = unsafe { slice::from_raw_parts(group.cast::<u8>(), group_len) }.to_vec();
+        let mut acl_size = ACL_SIZE_INFORMATION::default();
+        // SAFETY: dacl points inside the live descriptor and acl_size is a writable output.
+        if unsafe {
+            GetAclInformation(
+                dacl,
+                (&mut acl_size as *mut ACL_SIZE_INFORMATION).cast(),
+                size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+        } == 0
+        {
+            return Err(redacted_error());
+        }
+        let acl_len = acl_size.AclBytesInUse as usize;
+        if acl_len == 0 {
+            return Err(redacted_error());
+        }
+        // SAFETY: the ACL byte count is bounded by the ACL inside the live descriptor.
+        let dacl = unsafe { slice::from_raw_parts(dacl.cast::<u8>(), acl_len) }.to_vec();
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        // SAFETY: descriptor remains live and both control outputs are writable.
+        if unsafe { GetSecurityDescriptorControl(descriptor.0.cast(), &mut control, &mut revision) }
+            == 0
+        {
+            return Err(redacted_error());
+        }
+        Ok((owner, group, dacl, control & SE_DACL_PROTECTED != 0))
+    }
+
     pub(super) fn create_new_file_beneath(
         root: &OwnedHandle,
         path: &Path,
@@ -994,6 +1728,7 @@ mod win32 {
         let identity = directory_identity(&directory)?;
         Ok(VerifiedDirectory {
             _handle: directory,
+            _replacement_handle: None,
             identity,
         })
     }
@@ -2436,6 +3171,77 @@ mod workspace_root_directory_tests {
         );
         assert!(!root.join("pinned.txt").exists());
         assert!(opened.revalidate_path(&root).is_err());
+    }
+
+    #[test]
+    fn handle_relative_atomic_replacement_preserves_security_and_exact_content() {
+        use std::{io::Write, os::windows::ffi::OsStrExt};
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_HIDDEN, SetFileAttributesW,
+        };
+
+        let temporary = TempDir::new();
+        let root_path = temporary.path().join("safe-root");
+        fs::create_dir(&root_path).expect("create root");
+        let target_path = root_path.join("answer.txt");
+        fs::write(&target_path, b"before").expect("write base file");
+        let mut target_wide: Vec<u16> = target_path.as_os_str().encode_wide().collect();
+        target_wide.push(0);
+        // SAFETY: target_wide is a NUL-terminated path to the test file.
+        assert_ne!(
+            unsafe {
+                SetFileAttributesW(
+                    target_wide.as_ptr(),
+                    FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_HIDDEN,
+                )
+            },
+            0,
+            "mark test target hidden and archived"
+        );
+        let root = open_directory_path_without_reparse(&root_path).expect("open safe root");
+        assert!(
+            root.supports_durable_handle_relative_replace()
+                .expect("query replacement filesystem")
+        );
+
+        let original = root
+            .open_regular_file_beneath(std::path::Path::new("answer.txt"))
+            .expect("open original relative to root handle");
+        let expected_security = super::win32::test_security_summary(
+            std::os::windows::io::AsRawHandle::as_raw_handle(&original),
+        )
+        .expect("read original owner, group, and DACL");
+        let mut replacement = root
+            .create_new_replacement_file_beneath(std::path::Path::new(".replacement.tmp"))
+            .expect("create exclusive replacement temp relative to root handle");
+        root.copy_replacement_metadata(&original, &replacement)
+            .expect("copy owner, group, and DACL");
+        assert_eq!(
+            super::win32::test_security_summary(std::os::windows::io::AsRawHandle::as_raw_handle(
+                &replacement
+            ),)
+            .expect("read replacement owner, group, and DACL"),
+            expected_security
+        );
+        drop(original);
+        replacement
+            .write_all(b"approved replacement")
+            .expect("write exact replacement content");
+        replacement.sync_all().expect("flush staged content");
+
+        root.replace_open_file_beneath(&replacement, std::path::Path::new("answer.txt"))
+            .expect("atomically replace relative to verified parent handle");
+
+        assert_eq!(
+            fs::read(&target_path).expect("read replaced file"),
+            b"approved replacement"
+        );
+        let final_metadata = fs::metadata(&target_path).expect("read replacement attributes");
+        let final_attributes = std::os::windows::fs::MetadataExt::file_attributes(&final_metadata);
+        assert_eq!(
+            final_attributes & (FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_HIDDEN),
+            FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_HIDDEN
+        );
     }
 
     #[test]

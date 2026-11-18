@@ -555,3 +555,9 @@ Renderer-type coverage, source event normalization, semantic answer authority, m
 ## Intelligent UI and image content contract
 
 Do not use RichPresentation v1 as an executable UI container. The versioned declarative interaction target, generated-image reference policy, and evidence required for live chat rendering are defined in [Intelligent UI and Image Content](INTELLIGENT-UI-AND-IMAGE-CONTENT.md). Static presentation, image Artifacts, and isolated interactive apps remain separate output routes.
+
+### Saved Views in Library — TARGET, owner direction recorded 2026-11-17
+
+The owner selected Saved Views for V1 and directed a Feature 007 B-21 amendment. Feature 007 revision 1.1 proposes an ArtifactVersion-backed, non-executable snapshot of one eligible committed RichPresentation, with exact Conversation/message/presentation lineage and a semantic fallback. It preserves only the immutable presentation's declared defaults; session-modified calculator values remain transient under B-40. Saved Views live as a filter/group inside Library, use explicit Save/Open/Update/Archive actions, and add no permanent navigation destination or second store. The detailed contract is [Feature 007 Saved View](../specs/007-professional-artifacts/contracts/saved-view.md).
+
+This is TARGET only. Cross-owner review, Feature 016 T01/T02 promotion, API/schema promotion, handlers, projection, receipt recovery and packaged qualification remain open. The current source has no Saved View route or Library control; capability-based UI must remain unavailable until the owning path is served and qualified.

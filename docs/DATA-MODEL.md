@@ -519,6 +519,7 @@ AgentBinding {
 AgentSession {
   agent_session_id: AgentSessionId
   scope: AgentSessionScope
+  environment_id: EnvironmentId? # null for Conversation/history; mandatory for new Task admissions
   task_spec_revision: u64?
   agent_binding_id: AgentBindingId
   endpoint_id: AgentEndpointId
@@ -556,14 +557,19 @@ updates do not rewrite history.
 
 `AgentSessionScope` is a tagged union: `CONVERSATION {conversation_id,
 conversation_turn_id}`, `TASK_PLANNING {task_id}`, or `ATTEMPT_EXECUTION {task_id,
-attempt_id}`. A Conversation session is bound to exactly one durable turn and cannot
-be reused for another turn. Task-scoped sessions pin the exact `TaskSpecRevision` used
+attempt_id}`. `AgentSession.environment_id` is nullable only for Conversation sessions
+and historical Task sessions admitted before the Environment-binding migration; all new
+Task-scoped admissions require a verified binding. A Conversation session is bound to
+exactly one durable turn and cannot be reused for another turn. Task-scoped sessions pin the exact `TaskSpecRevision` used
 to construct their bounded context packet. For `TASK_PLANNING`, this must be the Task's
 current revision at admission. For `ATTEMPT_EXECUTION`, it is the revision referenced
 by the Attempt's Step PlanRevision, even if the Task later receives a newer spec.
 Conversation sessions have no Task mutation authority and may invoke only authorized
-read-only capabilities. Planning sessions have no Attempt/lease/Environment write access
-and may clarify intent, read the Task packet, and propose a plan. Execution sessions
+read-only capabilities. Planning sessions bind to a Task-owned, read-only `TASK_SHARED` /
+`TASK_RETAINED` Environment for the exact TaskSpec revision, Workspace, Resource set and
+Runtime incarnation; they have no Attempt or lease, no Environment write access, and may
+clarify intent, read the Task packet and propose a plan. Each execution session binds to
+the same fresh `ATTEMPT_PRIVATE` Environment as its Attempt and lease. Execution sessions
 require exactly one admitted Attempt, its current lease, Environment, and scoped grants.
 Only TaskService promotes an authorized plan proposal. Runtime/incarnation and endpoint
 selection are immutable session provenance.
@@ -573,7 +579,7 @@ settles. Native session handles never replicate. `harness_descriptor_digest` ide
 the normalized descriptor admitted for the session; the descriptor itself contains no
 secret bytes or copied native configuration.
 
-`PlanningAssignment` is an internal transient admission envelope, not a durable entity. The Task and its `TASK_PLANNING` AgentSession are the durable records of truth; at most one active planning session per Task is enforced by storage. A replacement planner uses a new AgentSession and a freshly built envelope pinned to the current TaskSpec revision.
+`PlanningAssignment` is an internal transient admission envelope, not a durable entity. The Task and its `TASK_PLANNING` AgentSession are the durable records of truth; at most one active planning session per Task is enforced by storage. A replacement planner uses a new AgentSession and a freshly built envelope pinned to the current TaskSpec revision and a newly prepared read-only planning Environment. Each execution, child and verifier Attempt uses a newly prepared private Environment. Before provider creation, Runtime durably journals a private preparation intent; a trusted idle supervisor applies and probes the exact scope without starting native harness code. Provider preparation/attestation occurs outside SQLite; the admission transaction binds public Environment metadata, Attempt/Step/lease and `STARTING` AgentSession. After its durable receipt is resolved, Runtime sends a one-time private handoff to start the native provider inside that same held scope. If storage may have committed, Runtime resolves the original receipt before launch or cleanup. An unbound scope is destroyed only after exact provider identity and quiescence are observed; unknown evidence retains a startup blocker.
 
 
 ## Runtime and incarnation

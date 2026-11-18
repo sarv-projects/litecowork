@@ -1,9 +1,16 @@
 //! Core persistence contracts for Trust decisions that can be durably recorded
 //! without granting authority or dispatching a Capability.
 
-use crate::{DomainEvent, EventDraft, StoreError};
+use crate::{DomainEvent, EventDraft, PinnedResourceRef, StoreError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Stable Core-owned identity for the one bounded local file replacement
+/// operation in the Feature 005 V1 execution contract.
+pub const CORE_FILE_REPLACE_CAPABILITY_ID: &str = "workspace.file.replace";
+pub const CORE_FILE_REPLACE_CAPABILITY_SOURCE: &str = "litecowork.core";
+pub const CORE_FILE_REPLACE_CAPABILITY_DIGEST: &str =
+    "sha256:5600e4897d63fffee5edfcd3c82f0da99e58f3fa3bfad37d07a50b11b37dda99";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -193,6 +200,36 @@ pub struct CommittedCapabilityGrant {
     pub replayed: bool,
 }
 
+/// Untrusted request made by an admitted Task worker for one bounded Core-owned
+/// file replacement. It carries no grant, Approval, lease, fence, attestation or
+/// provider handle. Storage resolves the accepted Plan Step and live Attempt before
+/// producing durable authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileWriteScopeRequest {
+    pub attempt_id: String,
+    pub step_id: String,
+    pub workspace_root_id: String,
+    pub target_relative_path: String,
+    pub base_revision_digest: String,
+    pub requested_max_bytes: u64,
+    pub candidate_resource: PinnedResourceRef,
+}
+
+/// Trust-only durable grant issue. The caller supplies untrusted requested scope
+/// plus generated receipt identifiers; storage derives the grant from the accepted
+/// PlanRevision and rechecks the live Attempt/lease and managed candidate in the
+/// same transaction that persists the grant, event, audit and idempotency receipt.
+#[derive(Clone, Debug)]
+pub struct IssueAttemptFileWriteGrantCommit {
+    pub workspace_id: String,
+    pub request_id: String,
+    pub request: FileWriteScopeRequest,
+    pub capability_grant_id: String,
+    pub expires_at: String,
+    pub event: EventDraft,
+}
+
 #[derive(Clone, Debug)]
 pub struct CapabilityGrantRevocationCommit {
     pub workspace_id: String,
@@ -219,6 +256,14 @@ pub trait CapabilityGrantStore: Send + Sync {
     fn issue_capability_grant(
         &self,
         command: IssueCapabilityGrantCommit,
+    ) -> Result<CommittedCapabilityGrant, StoreError>;
+
+    /// Issues the one supported Core file-replacement grant after an Attempt has
+    /// already been admitted. This is intentionally separate from the generic
+    /// owner grant route and does not consume an ApprovalUse.
+    fn issue_attempt_file_write_grant(
+        &self,
+        command: IssueAttemptFileWriteGrantCommit,
     ) -> Result<CommittedCapabilityGrant, StoreError>;
 
     fn revoke_capability_grant(
