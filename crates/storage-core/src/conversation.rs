@@ -463,6 +463,15 @@ pub trait ConversationTurnStore: Send + Sync {
         claimed_at: &str,
     ) -> Result<bool, StoreError>;
 
+    /// Reads exactly one durable dispatch intent by its primary key. This is used only
+    /// after an uncertain compare-and-set result to reconcile ownership; it must not be
+    /// implemented by scanning the bounded global state listing.
+    fn get_conversation_dispatch_intent(
+        &self,
+        turn_id: &str,
+        retry_ordinal: u32,
+    ) -> Result<Option<ConversationDispatchIntent>, StoreError>;
+
     /// Returns a CLAIMED intent to UNCLAIMED when the claiming incarnation is gone and no
     /// AgentSession was reserved for it. Returns `false` when the intent is not CLAIMED.
     fn release_conversation_dispatch_intent(

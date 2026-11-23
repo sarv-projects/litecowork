@@ -302,6 +302,206 @@ fn conversation_origin_task_creation_persists_exact_completed_source_and_replays
             candidate
         };
 
+    let with_source_pair = |mut candidate: TaskCreateCommit, source_refs: [&str; 2]| {
+        let refs = serde_json::json!(source_refs);
+        candidate.request.request_payload["source_message_refs"] = refs;
+        candidate.initial_spec_revision.source_message_refs =
+            source_refs.map(str::to_owned).to_vec();
+        candidate
+    };
+
+    let missing_source = with_source_pair(
+        with_task_identity(
+            commit.clone(),
+            "task-from-missing-source",
+            "event-task-missing-source",
+            "request-missing-source",
+        ),
+        ["message-does-not-exist", AGENT_MESSAGE],
+    );
+    assert!(
+        matches!(store.create_task(missing_source), Err(StoreError::NotFound)),
+        "a forged or missing source identity must not create a Task"
+    );
+
+    let duplicate_source = with_source_pair(
+        with_task_identity(
+            commit.clone(),
+            "task-from-duplicate-source-ref",
+            "event-task-duplicate-source-ref",
+            "request-duplicate-source-ref",
+        ),
+        [USER_MESSAGE, USER_MESSAGE],
+    );
+    assert!(
+        matches!(
+            store.create_task(duplicate_source),
+            Err(StoreError::Invalid(_))
+        ),
+        "a duplicate source identity must not create a Task"
+    );
+
+    let forged_user_author = serde_json::json!({"kind":"USER","principal_id":"other-owner"});
+    let original_user_author = serde_json::json!({"kind":"USER","principal_id":OWNER});
+    let source_event_read =
+        Connection::open(state_database(&directory)).expect("inspect source prompt event");
+    let original_user_event_json: String = source_event_read
+        .query_row(
+            "SELECT payload_json FROM domain_events WHERE workspace_id=?1 AND entity_type='Conversation' AND entity_id=?2 AND type='conversation.message.added.v1' AND json_extract(payload_json,'$.message_id')=?3",
+            rusqlite::params![WORKSPACE, CONVERSATION, USER_MESSAGE],
+            |row| row.get(0),
+        )
+        .expect("load source prompt event");
+    drop(source_event_read);
+    let mut forged_user_event: serde_json::Value =
+        serde_json::from_str(&original_user_event_json).expect("parse source prompt event");
+    forged_user_event["author"] = forged_user_author.clone();
+    let forged_user_event_json = canonical_string(&forged_user_event);
+    let forged_user_event_digest = digest(forged_user_event_json.as_bytes());
+    let forge_owner = Connection::open(state_database(&directory)).expect("forge source author");
+    forge_owner
+        .execute(
+            "UPDATE conversation_messages SET author_json=?1 WHERE message_id=?2",
+            rusqlite::params![canonical_string(&forged_user_author), USER_MESSAGE],
+        )
+        .expect("change source prompt author");
+    forge_owner
+        .execute(
+            "UPDATE domain_events SET payload_json=?1,payload_digest=?2 WHERE workspace_id=?3 AND entity_type='Conversation' AND entity_id=?4 AND type='conversation.message.added.v1' AND json_extract(payload_json,'$.message_id')=?5",
+            rusqlite::params![forged_user_event_json, forged_user_event_digest, WORKSPACE, CONVERSATION, USER_MESSAGE],
+        )
+        .expect("keep the forged source event internally consistent");
+    drop(forge_owner);
+    let forged_owner = with_task_identity(
+        commit.clone(),
+        "task-from-forged-owner",
+        "event-task-forged-owner",
+        "request-forged-owner",
+    );
+    assert!(
+        matches!(store.create_task(forged_owner), Err(StoreError::Invalid(_))),
+        "a source prompt authored by another principal must not create a Task"
+    );
+    let restore_user_author =
+        Connection::open(state_database(&directory)).expect("restore source author and event");
+    restore_user_author
+        .execute(
+            "UPDATE conversation_messages SET author_json=?1 WHERE message_id=?2",
+            rusqlite::params![canonical_string(&original_user_author), USER_MESSAGE],
+        )
+        .expect("restore source prompt author");
+    let original_user_event_digest = digest(original_user_event_json.as_bytes());
+    restore_user_author
+        .execute(
+            "UPDATE domain_events SET payload_json=?1,payload_digest=?2 WHERE workspace_id=?3 AND entity_type='Conversation' AND entity_id=?4 AND type='conversation.message.added.v1' AND json_extract(payload_json,'$.message_id')=?5",
+            rusqlite::params![original_user_event_json, original_user_event_digest, WORKSPACE, CONVERSATION, USER_MESSAGE],
+        )
+        .expect("restore canonical source prompt event");
+    drop(restore_user_author);
+
+    let mismatched_turn = Connection::open(state_database(&directory)).expect("change source turn");
+    mismatched_turn
+        .execute(
+            "UPDATE conversation_messages SET turn_id='turn-other' WHERE message_id=?1",
+            [AGENT_MESSAGE],
+        )
+        .expect("move the reply to a different turn");
+    drop(mismatched_turn);
+    let cross_turn = with_task_identity(
+        commit.clone(),
+        "task-from-cross-turn-source",
+        "event-task-cross-turn-source",
+        "request-cross-turn-source",
+    );
+    assert!(
+        matches!(store.create_task(cross_turn), Err(StoreError::Invalid(_))),
+        "a USER prompt and AGENT reply from different turns must not create a Task"
+    );
+    let restore_turn = Connection::open(state_database(&directory)).expect("restore source turn");
+    restore_turn
+        .execute(
+            "UPDATE conversation_messages SET turn_id=?1 WHERE message_id=?2",
+            rusqlite::params![TURN, AGENT_MESSAGE],
+        )
+        .expect("restore the exact source turn");
+    drop(restore_turn);
+
+    service(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: "workspace-promotion-foreign".into(),
+            name: "Foreign promotion workspace".into(),
+            owner_principal_id: OWNER.into(),
+            event: context("event-create-promotion-foreign", 1),
+        })
+        .expect("create a separate Workspace for cross-boundary denial");
+    let alternate_conversations =
+        Connection::open(state_database(&directory)).expect("create alternate Conversations");
+    alternate_conversations
+        .execute_batch(
+            "INSERT INTO conversations(conversation_id,workspace_id,title,active_agent_binding_id,created_at,version)
+                 VALUES('conversation-promotion-other','workspace-turn',NULL,NULL,'2026-10-09T12:00:01Z',1);
+             INSERT INTO conversations(conversation_id,workspace_id,title,active_agent_binding_id,created_at,version)
+                 VALUES('conversation-promotion-foreign','workspace-promotion-foreign',NULL,NULL,'2026-10-09T12:00:01Z',1);",
+        )
+        .expect("create same-Workspace and foreign-Workspace Conversations");
+    drop(alternate_conversations);
+
+    for (conversation_id, task_id, request_id) in [
+        (
+            "conversation-promotion-other",
+            "task-from-cross-conversation-source",
+            "request-cross-conversation-source",
+        ),
+        (
+            "conversation-promotion-foreign",
+            "task-from-cross-workspace-source",
+            "request-cross-workspace-source",
+        ),
+    ] {
+        let move_source = Connection::open(state_database(&directory))
+            .expect("move source reply to an alternate Conversation");
+        move_source
+            .execute(
+                "UPDATE conversation_messages SET conversation_id=?1 WHERE message_id=?2",
+                rusqlite::params![conversation_id, AGENT_MESSAGE],
+            )
+            .expect("move the source reply across its declared boundary");
+        drop(move_source);
+        let candidate = with_task_identity(
+            commit.clone(),
+            task_id,
+            &format!("event-{request_id}"),
+            request_id,
+        );
+        assert!(
+            matches!(store.create_task(candidate), Err(StoreError::NotFound)),
+            "a reply from another Conversation or Workspace must not create a Task"
+        );
+        let restore_source =
+            Connection::open(state_database(&directory)).expect("restore source Conversation");
+        restore_source
+            .execute(
+                "UPDATE conversation_messages SET conversation_id=?1 WHERE message_id=?2",
+                rusqlite::params![CONVERSATION, AGENT_MESSAGE],
+            )
+            .expect("restore the source reply Conversation");
+        drop(restore_source);
+    }
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect rejected Tasks");
+    let rejected_tasks: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE task_id LIKE 'task-from-%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count rejected promotion Tasks");
+    assert_eq!(
+        rejected_tasks, 0,
+        "every invalid source lineage must roll back Task creation"
+    );
+    drop(connection);
+
     let created = store
         .create_task(commit.clone())
         .expect("completed committed reply promotes to READY Task");

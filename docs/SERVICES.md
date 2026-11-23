@@ -1043,6 +1043,16 @@ reference is not retained for later reconciliation. Unix child cleanup uses a pr
 group, not the accepted cgroup contract. The T03/T04 ownership clarification above is
 TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed retention and daemon-restart host reconciliation remain open; no integration or qualification is inferred.
 
+**Dispatch-claim acknowledgement recovery (rechecked 2026-11-23):** the supervisor now
+reconciles a false/error claim acknowledgement by reading only the exact durable
+`(turn_id, retry_ordinal)` row. `CLAIMED` by the local Runtime incarnation is the sole
+continuation proof; another owner/`SETTLED` returns without preflight. Exact `UNCLAIMED`
+and transient point-read failures retry the same pre-provider claim with capped backoff,
+while missing/malformed ownership closes with a typed diagnostic. The coordinator never
+retries provider execution. This A-116 USER-DELEGATED direction adds an internal Storage
+read only, with no public route, event, schema or migration. Test evidence and remaining
+integration gates are recorded in `CURRENT-RUN.md` and Feature 001 T20.
+
 On the startup cleanup error path, if persisting READY fails and the LiteCowork-owned
 child cannot be confirmed stopped, the helper re-reads the durable host row and
 best-effort transitions any extant STARTING/READY/BUSY state to DEGRADED. This also

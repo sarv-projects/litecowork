@@ -8,7 +8,7 @@
 //! before host/binding preflight or session reservation. A losing or ambiguous claim
 //! cannot settle the turn; startup recovery owns any durable intent left behind (AC-022).
 
-use std::{io::Write, sync::Arc};
+use std::{future::Future, io::Write, sync::Arc, time::Duration};
 
 use storage_core::conversation::ConversationTurn;
 
@@ -25,8 +25,9 @@ impl AgentTurnCoordinator {
     }
 
     /// Starts dispatch for an admitted (or retried) turn without blocking the caller.
-    /// A dispatch error is a closed class. The supervisor settles the turn or leaves its
-    /// durable intent for startup recovery; this layer reports no error detail.
+    /// A transient exact-claim/storage uncertainty is retried before any session/provider
+    /// work. Other dispatch errors are a closed class; the supervisor settles the turn or
+    /// leaves its durable intent for startup recovery. No error detail is reported.
     pub(crate) fn dispatch_admitted_turn(
         &self,
         local_incarnation_id: &str,
@@ -44,21 +45,60 @@ impl AgentTurnCoordinator {
         let correlation_id = correlation_id.to_owned();
         let turn_id = turn.turn_id.clone();
         tokio::spawn(async move {
-            if let Err(error) = supervisor
-                .dispatch_turn(
-                    &local_incarnation_id,
-                    &principal_id,
-                    &workspace_id,
-                    &conversation_id,
-                    turn,
-                    &correlation_id,
-                )
-                .await
-            {
+            let result = dispatch_with_claim_retry(|| {
+                let supervisor = Arc::clone(&supervisor);
+                let local_incarnation_id = local_incarnation_id.clone();
+                let principal_id = principal_id.clone();
+                let workspace_id = workspace_id.clone();
+                let conversation_id = conversation_id.clone();
+                let turn = turn.clone();
+                let correlation_id = correlation_id.clone();
+                async move {
+                    supervisor
+                        .dispatch_turn(
+                            &local_incarnation_id,
+                            &principal_id,
+                            &workspace_id,
+                            &conversation_id,
+                            turn,
+                            &correlation_id,
+                        )
+                        .await
+                }
+            })
+            .await;
+            if let Err(error) = result {
                 let mut stderr = std::io::stderr().lock();
                 let _ = write_dispatch_diagnostic(&mut stderr, &turn_id, &correlation_id, error);
             }
         });
+    }
+}
+
+const DISPATCH_CLAIM_RETRY_BASE: Duration = Duration::from_millis(100);
+const DISPATCH_CLAIM_RETRY_MAX: Duration = Duration::from_secs(5);
+
+fn dispatch_claim_retry_delay(retry_index: u32) -> Duration {
+    let multiplier = 1_u32.checked_shl(retry_index.min(6)).unwrap_or(64);
+    DISPATCH_CLAIM_RETRY_BASE
+        .saturating_mul(multiplier)
+        .min(DISPATCH_CLAIM_RETRY_MAX)
+}
+
+async fn dispatch_with_claim_retry<F, Fut>(mut dispatch: F) -> Result<(), DispatchFailureClass>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), DispatchFailureClass>>,
+{
+    let mut retry_index = 0_u32;
+    loop {
+        match dispatch().await {
+            Err(DispatchFailureClass::DispatchIntentClaim) => {
+                tokio::time::sleep(dispatch_claim_retry_delay(retry_index)).await;
+                retry_index = retry_index.saturating_add(1);
+            }
+            result => return result,
+        }
     }
 }
 
@@ -92,7 +132,10 @@ fn write_dispatch_diagnostic(
 
 #[cfg(test)]
 mod tests {
-    use super::{DispatchFailureClass, dispatch_diagnostic, write_dispatch_diagnostic};
+    use super::{
+        DispatchFailureClass, dispatch_claim_retry_delay, dispatch_diagnostic,
+        dispatch_with_claim_retry, write_dispatch_diagnostic,
+    };
 
     #[test]
     fn conversation_turn_dispatch_diagnostic_carries_ids_and_class_but_no_detail() {
@@ -140,5 +183,45 @@ mod tests {
         );
         assert!(!captured.contains(provider_detail));
         assert!(!captured.contains("never-log-this"));
+    }
+
+    #[test]
+    fn conversation_dispatch_claim_retry_is_backed_off_and_does_not_retry_provider_failures() {
+        use std::{future, time::Duration};
+
+        assert_eq!(dispatch_claim_retry_delay(0), Duration::from_millis(100));
+        assert_eq!(dispatch_claim_retry_delay(1), Duration::from_millis(200));
+        assert_eq!(dispatch_claim_retry_delay(5), Duration::from_millis(3_200));
+        assert_eq!(dispatch_claim_retry_delay(12), Duration::from_secs(5));
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build test timer runtime");
+        let mut claim_attempts = 0;
+        let recovered = runtime.block_on(dispatch_with_claim_retry(|| {
+            claim_attempts += 1;
+            future::ready(if claim_attempts == 1 {
+                Err(DispatchFailureClass::DispatchIntentClaim)
+            } else {
+                Ok(())
+            })
+        }));
+        assert_eq!(recovered, Ok(()));
+        assert_eq!(claim_attempts, 2);
+
+        let mut provider_attempts = 0;
+        let provider_failure = runtime.block_on(dispatch_with_claim_retry(|| {
+            provider_attempts += 1;
+            future::ready(Err(DispatchFailureClass::ProviderExecution))
+        }));
+        assert_eq!(
+            provider_failure,
+            Err(DispatchFailureClass::ProviderExecution)
+        );
+        assert_eq!(
+            provider_attempts, 1,
+            "provider failures are never auto-retried"
+        );
     }
 }

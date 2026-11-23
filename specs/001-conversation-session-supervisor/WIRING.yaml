@@ -157,7 +157,7 @@ edges:
     to: "turn-coordinator"
     kind: "post-commit dispatch handoff"
     implementation_status: "PARTIAL CODE: submit and retry invoke dispatch_admitted_turn after the durable storage commit; exact same-Runtime attempt replays are suppressed before setup by the supervisor owner guard"
-    contract: "admitted turn, correlation ID and local Runtime incarnation; per-Runtime exact-attempt owner suppresses duplicates; durable intent CAS precedes host/binding/profile preflight; only the confirmed claimant may settle setup failures, and a losing/ambiguous claim is left for recovery. First-send reaches this existing post-commit edge only after the atomic first-turn transaction commits"
+    contract: "admitted turn, correlation ID and local Runtime incarnation; per-Runtime exact-attempt owner suppresses duplicates; durable intent CAS precedes host/binding/profile preflight; after CAS false/error, the exact turn/retry intent read may continue only for CLAIMED by this Runtime, treats another owner/SETTLED as a no-op, and retries exact UNCLAIMED/unreadable state with capped pre-provider backoff; missing/malformed ownership fails closed. Only confirmed local ownership may settle setup failures. First-send reaches this existing post-commit edge only after the atomic first-turn transaction commits. Internal exact-read/backoff is USER-DELEGATED A-116 implementation direction, not cross-owner acceptance or provider qualification"
   - id: "e23"
     from: "desktop-ui"
     to: "operator"

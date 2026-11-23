@@ -270,3 +270,9 @@ whether arbitrary failures committed.
 Focused native-Windows source tests, their exact results and the remaining CODE/SERVED versus
 INTEGRATED/QUALIFIED boundary are recorded in `CURRENT-RUN.md` and the T30 task evidence.
 
+## 9. 2026-11-23 exact dispatch-claim recovery source check (A-116)
+
+The active `ConversationTurnStore::claim_conversation_dispatch_intent` returns `Result<bool, StoreError>` and SQLite's compare-and-set updates only the exact `(turn_id, retry_ordinal)` row from `UNCLAIMED` to `CLAIMED`, recording the Runtime incarnation. `list_conversation_dispatch_intents` is a bounded global state page for startup recovery; it is not an exact ownership lookup and must not be searched to resolve an individual ambiguous claim. The Supervisor currently calls claim before host/binding/profile preflight, but maps a storage error directly to `DispatchIntentClaim` and returns; exact-replay ownership is local-process fenced and startup recovery handles prior-incarnation intents.
+
+**USER-DELEGATED implementation direction:** use an exact primary-key point read after false/error. Only a row proving `CLAIMED` by the current Runtime incarnation permits this serialized local worker to proceed. Another Runtime or SETTLED means no-op; UNCLAIMED/unreadable means retry only the pre-provider claim using capped backoff. Missing/malformed rows fail closed. This repairs ambiguous local storage acknowledgement without inferring provider acceptance or changing protocol behavior, public contract, migration, or event model. The decision is not domain-owner ratification; T20 CODE and packaged/USER qualification are separate evidence gates.
+

@@ -786,6 +786,12 @@ occurs before session lookup or Task mutation. This fail-closed statement applie
 TASK_PLANNING only. Conversation turn admission now atomically writes the USER message,
 OPEN turn, durable UNCLAIMED dispatch intent, and request receipt, with a transactional
 single-flight guard; SQLite also exposes compare-and-swap intent claiming and settlement.
+For an ambiguous compare-and-swap acknowledgement, storage also exposes a bounded exact
+read by `(turn_id, retry_ordinal)`. It validates the intent's linked Conversation and
+ownership/lifecycle fields; callers must not infer ownership from the startup list. The
+daemon may proceed only when that read confirms `CLAIMED` by its exact Runtime incarnation.
+This internal read adds no migration or public API and is tracked as USER-DELEGATED A-116
+implementation direction in Feature 001 T20; it is not cross-owner acceptance.
 The exact existing-turn receipt lookup is the idempotency boundary for desktop recovery:
 after owner/Workspace/Conversation authorization and request canonicalization, the Operator
 checks the receipt before mutable Resource admission checks. A matching receipt is returned

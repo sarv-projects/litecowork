@@ -1111,6 +1111,96 @@ impl ConversationTurnStore for SqliteConversationStore {
         })
     }
 
+    fn get_conversation_dispatch_intent(
+        &self,
+        turn_id: &str,
+        retry_ordinal: u32,
+    ) -> Result<Option<ConversationDispatchIntent>, StoreError> {
+        if turn_id.trim().is_empty() || turn_id.len() > 256 || turn_id.chars().any(char::is_control)
+        {
+            return Err(StoreError::Invalid(
+                "Conversation dispatch intent identity is invalid".to_owned(),
+            ));
+        }
+        let turn_id = turn_id.to_owned();
+        self.run(move |connection| {
+            let row = connection
+                .query_row(
+                    "SELECT c.workspace_id,i.conversation_id,i.turn_id,i.retry_ordinal,i.state,i.claimed_by_runtime_incarnation,i.claimed_at,i.settled_at,i.created_at FROM conversation_dispatch_intents i JOIN conversation_turns t ON t.turn_id=i.turn_id AND t.conversation_id=i.conversation_id JOIN conversations c ON c.conversation_id=t.conversation_id WHERE i.turn_id=?1 AND i.retry_ordinal=?2",
+                    params![turn_id, i64::from(retry_ordinal)],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                            row.get::<_, Option<String>>(6)?,
+                            row.get::<_, Option<String>>(7)?,
+                            row.get::<_, String>(8)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let Some((workspace_id, conversation_id, stored_turn_id, ordinal, state, owner, claimed_at, settled_at, created_at)) = row else {
+                return Ok(None);
+            };
+            let retry_ordinal = u32::try_from(ordinal).map_err(|_| {
+                StoreError::Integrity("Conversation dispatch retry ordinal is invalid".to_owned())
+            })?;
+            let state = match state.as_str() {
+                "UNCLAIMED" => ConversationDispatchState::Unclaimed,
+                "CLAIMED" => ConversationDispatchState::Claimed,
+                "SETTLED" => ConversationDispatchState::Settled,
+                _ => {
+                    return Err(StoreError::Integrity(
+                        "Conversation dispatch state is invalid".to_owned(),
+                    ));
+                }
+            };
+            let valid_identity = |value: &str| {
+                !value.trim().is_empty()
+                    && value.len() <= 256
+                    && !value.chars().any(char::is_control)
+            };
+            let valid_lifecycle = match state {
+                ConversationDispatchState::Unclaimed => {
+                    owner.is_none() && claimed_at.is_none() && settled_at.is_none()
+                }
+                ConversationDispatchState::Claimed => {
+                    owner.as_deref().is_some_and(valid_identity)
+                        && claimed_at.is_some()
+                        && settled_at.is_none()
+                }
+                // The canonical v29 CHECK permits settlement from UNCLAIMED (for
+                // undispatched cancellation/recovery), so SETTLED does not prove an
+                // earlier claim and must be classified as a non-owner by the caller.
+                ConversationDispatchState::Settled => settled_at.is_some(),
+            };
+            if !valid_identity(&workspace_id)
+                || !valid_identity(&conversation_id)
+                || stored_turn_id != turn_id
+                || !valid_identity(&created_at)
+                || !valid_lifecycle
+            {
+                return Err(StoreError::Integrity(
+                    "Conversation dispatch intent record is inconsistent".to_owned(),
+                ));
+            }
+            Ok(Some(ConversationDispatchIntent {
+                workspace_id,
+                conversation_id,
+                turn_id: stored_turn_id,
+                retry_ordinal,
+                state,
+                claimed_by_runtime_incarnation: owner,
+                created_at,
+            }))
+        })
+    }
+
     fn release_conversation_dispatch_intent(
         &self,
         turn_id: &str,

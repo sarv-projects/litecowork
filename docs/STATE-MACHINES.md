@@ -296,6 +296,16 @@ provider-aware continuation/cancel contract. The pinned provider event and permi
 and the packaged send/stop/retry/restart/recovery journey, remain unqualified. See
 `specs/001-conversation-session-supervisor/TASKS.md` for task-level evidence.
 
+**Dispatch-claim acknowledgement recovery (2026-11-23, CODE):** after a claim compare-and-
+set returns false or an ambiguous storage error, the supervisor performs an exact read of
+the `(turn_id, retry_ordinal)` row. It proceeds only when the durable state proves the
+current Runtime incarnation owns `CLAIMED`; another owner or `SETTLED` is a no-op. An exact
+`UNCLAIMED` row or unreadable point read is retried before provider work with capped
+backoff. Missing or malformed records fail closed. Runtime shutdown stops the in-process
+retry; startup recovery remains responsible for prior-incarnation attempts and never
+resends an ambiguous prompt. This is the USER-DELEGATED A-116 behavior implemented under
+Feature 001 T20; it is CODE evidence only, not packaged restart or provider qualification.
+
 ```text
 OPEN -> RUNNING -> WAITING_USER -> WAITING_DEPENDENCY -> RUNNING
           |  |          |                 |              +-> WAITING_USER

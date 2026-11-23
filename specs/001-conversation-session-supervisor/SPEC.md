@@ -287,6 +287,14 @@ The Tauri journal is not a second transcript or idempotency authority. It retain
 
 If a saved retry receives such a typed refusal after process restart, the desktop restores its saved text and removable attachment chips into that Conversation's composer before permitting a corrected Send. It preserves the saved display labels and originally pinned Resource revisions; a newer picker revision is never substituted silently. A missing/revoked Resource may remain as a removable recovery chip, but only the Operator can authorize a newly submitted reference. The supported attachment limit remains the existing 16 ResourceRefs per message.
 
+### 7.9 Dispatch-intent claim acknowledgement recovery (user-delegated direction, 2026-11-23; A-116)
+
+The atomic admission transaction creates one durable `UNCLAIMED` dispatch intent keyed by exact `(turn_id, retry_ordinal)`. The Runtime-incarnation compare-and-set remains the cross-Runtime ownership fence and must still happen before host, binding or profile preflight, session reservation, provider invocation or settlement. Because the current `Result<bool>` may lose its storage acknowledgement, a false/error result is followed by an exact Storage read of that key; the bounded global intent list is never used to infer claim ownership.
+
+The supervisor may proceed after that reconciliation only when the durable row is `CLAIMED` by the exact local Runtime incarnation. `CLAIMED` by another incarnation or `SETTLED` is a no-op for this dispatcher. An exact `UNCLAIMED` row or an unreadable exact read is retryable; `AgentTurnCoordinator` retries the same admitted turn/retry ordinal with a 100 ms exponential delay capped at five seconds while its daemon Runtime task remains active. It never retries a provider/session operation or an ambiguous prompt. A missing row or malformed ownership record produces a closed diagnostic and no preflight, settlement or provider action. Runtime shutdown ends this in-process retry; existing startup recovery settles prior-incarnation durable work without resending a prompt.
+
+This is USER-DELEGATED implementation direction, not Conversation/Storage owner ratification or acceptance of Feature 001 revision 1.2. It adds an internal exact-read operation only; no public route, API/event/schema, state, migration or UI capability is introduced. Code/tests are tracked under T20, and remain CODE evidence until the packaged claim-failure/recovery journey and release qualification are completed.
+
 ## 8. Security, trust and privacy
 
 - Authenticate every write and scope it to the owner and Workspace.

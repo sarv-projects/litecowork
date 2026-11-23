@@ -20,14 +20,15 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use storage_core::conversation::{
-    CommitConversationAgentResponse, ConversationMessageRecord, ConversationSessionEnd,
-    ConversationTurn, ConversationTurnStatus, ConversationTurnStore, ConversationTurnUsage,
-    SettleConversationSession, SettleConversationTurn, TurnCommand, UsageAttributionSource,
+    CommitConversationAgentResponse, ConversationDispatchIntent, ConversationDispatchState,
+    ConversationMessageRecord, ConversationSessionEnd, ConversationTurn, ConversationTurnStatus,
+    ConversationTurnStore, ConversationTurnUsage, SettleConversationSession,
+    SettleConversationTurn, TurnCommand, UsageAttributionSource,
 };
 use storage_core::{
     ActivateConversationAgentSession, AgentCatalogStore, AgentHostInstanceRecord, AgentHostStore,
     AgentSessionRecord, AgentSessionStore, ConversationAgentSessionStart, EventDraft,
-    MarkStartingConversationAgentSessionLost, WorkspaceCreateRequest,
+    MarkStartingConversationAgentSessionLost, StoreError, WorkspaceCreateRequest,
 };
 use storage_sqlite::{SqliteConversationStore, SqliteWorkspaceStore};
 
@@ -1057,6 +1058,7 @@ pub(crate) enum DispatchFailureClass {
     BindingLookup,
     ProfileLookup,
     DispatchIntentClaim,
+    DispatchIntentMissing,
     SessionReservation,
     ProviderExecution,
     Settlement,
@@ -1070,11 +1072,51 @@ impl DispatchFailureClass {
             Self::BindingLookup => "BINDING_LOOKUP",
             Self::ProfileLookup => "PROFILE_LOOKUP",
             Self::DispatchIntentClaim => "DISPATCH_INTENT_CLAIM",
+            Self::DispatchIntentMissing => "DISPATCH_INTENT_MISSING",
             Self::SessionReservation => "SESSION_RESERVATION",
             Self::ProviderExecution => "PROVIDER_EXECUTION",
             Self::Settlement => "SETTLEMENT",
             Self::BlockingTask => "BLOCKING_TASK",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DispatchClaimReconciliation {
+    Owned,
+    NotOwned,
+    Retry,
+    MissingOrMalformed,
+}
+
+fn reconcile_dispatch_claim(
+    intent: Option<&ConversationDispatchIntent>,
+    local_incarnation_id: &str,
+) -> DispatchClaimReconciliation {
+    let Some(intent) = intent else {
+        return DispatchClaimReconciliation::MissingOrMalformed;
+    };
+    if local_incarnation_id.trim().is_empty() {
+        return DispatchClaimReconciliation::MissingOrMalformed;
+    }
+    match intent.state {
+        ConversationDispatchState::Unclaimed => {
+            if intent.claimed_by_runtime_incarnation.is_none() {
+                DispatchClaimReconciliation::Retry
+            } else {
+                DispatchClaimReconciliation::MissingOrMalformed
+            }
+        }
+        ConversationDispatchState::Claimed => match intent
+            .claimed_by_runtime_incarnation
+            .as_deref()
+            .filter(|owner| !owner.trim().is_empty())
+        {
+            Some(owner) if owner == local_incarnation_id => DispatchClaimReconciliation::Owned,
+            Some(_) => DispatchClaimReconciliation::NotOwned,
+            None => DispatchClaimReconciliation::MissingOrMalformed,
+        },
+        ConversationDispatchState::Settled => DispatchClaimReconciliation::NotOwned,
     }
 }
 
@@ -1478,16 +1520,37 @@ impl AgentSessionSupervisor {
                 // before any preflight lookup can fail and settle the attempt. A losing
                 // dispatcher must leave the winning Runtime's live turn untouched.
                 let now = now_utc_rfc3339();
-                let claimed = conv_store
-                    .claim_conversation_dispatch_intent(
-                        &turn_id,
-                        turn.retry_ordinal,
-                        &local_incarnation_id,
-                        &now,
-                    )
-                    .map_err(|_| DispatchFailureClass::DispatchIntentClaim)?;
-                if !claimed {
-                    return Ok(());
+                let claim_result = conv_store.claim_conversation_dispatch_intent(
+                    &turn_id,
+                    turn.retry_ordinal,
+                    &local_incarnation_id,
+                    &now,
+                );
+                let claim_resolution = match claim_result {
+                    Ok(true) => DispatchClaimReconciliation::Owned,
+                    Ok(false) | Err(_) => {
+                        match conv_store
+                            .get_conversation_dispatch_intent(&turn_id, turn.retry_ordinal)
+                        {
+                            Ok(intent) => {
+                                reconcile_dispatch_claim(intent.as_ref(), &local_incarnation_id)
+                            }
+                            Err(StoreError::Integrity(_) | StoreError::Invalid(_)) => {
+                                DispatchClaimReconciliation::MissingOrMalformed
+                            }
+                            Err(_) => DispatchClaimReconciliation::Retry,
+                        }
+                    }
+                };
+                match claim_resolution {
+                    DispatchClaimReconciliation::Owned => {}
+                    DispatchClaimReconciliation::NotOwned => return Ok(()),
+                    DispatchClaimReconciliation::Retry => {
+                        return Err(DispatchFailureClass::DispatchIntentClaim);
+                    }
+                    DispatchClaimReconciliation::MissingOrMalformed => {
+                        return Err(DispatchFailureClass::DispatchIntentMissing);
+                    }
                 }
                 owns_dispatch_intent = true;
                 let _ = worker_recovery_claimed.set(());
@@ -4262,6 +4325,51 @@ mod tests {
             .register(key)
             .expect("a settled worker releases local ownership for recovery/retry");
         drop((after_worker_exit, another_retry, another_conversation));
+    }
+
+    #[test]
+    fn conversation_dispatch_claim_reconciliation_requires_exact_local_durable_owner() {
+        use storage_core::conversation::{ConversationDispatchIntent, ConversationDispatchState};
+
+        let intent = |state, owner: Option<&str>| ConversationDispatchIntent {
+            workspace_id: "workspace-1".to_owned(),
+            conversation_id: "conversation-1".to_owned(),
+            turn_id: "turn-1".to_owned(),
+            retry_ordinal: 2,
+            state,
+            claimed_by_runtime_incarnation: owner.map(str::to_owned),
+            created_at: "2026-11-23T00:00:00Z".to_owned(),
+        };
+        let local_claim = intent(ConversationDispatchState::Claimed, Some("runtime-local"));
+        let remote_claim = intent(ConversationDispatchState::Claimed, Some("runtime-other"));
+        let unclaimed = intent(ConversationDispatchState::Unclaimed, None);
+        let malformed_claim = intent(ConversationDispatchState::Claimed, None);
+        let settled = intent(ConversationDispatchState::Settled, Some("runtime-local"));
+
+        assert_eq!(
+            reconcile_dispatch_claim(Some(&local_claim), "runtime-local"),
+            DispatchClaimReconciliation::Owned
+        );
+        assert_eq!(
+            reconcile_dispatch_claim(Some(&remote_claim), "runtime-local"),
+            DispatchClaimReconciliation::NotOwned
+        );
+        assert_eq!(
+            reconcile_dispatch_claim(Some(&unclaimed), "runtime-local"),
+            DispatchClaimReconciliation::Retry
+        );
+        assert_eq!(
+            reconcile_dispatch_claim(Some(&malformed_claim), "runtime-local"),
+            DispatchClaimReconciliation::MissingOrMalformed
+        );
+        assert_eq!(
+            reconcile_dispatch_claim(Some(&settled), "runtime-local"),
+            DispatchClaimReconciliation::NotOwned
+        );
+        assert_eq!(
+            reconcile_dispatch_claim(None, "runtime-local"),
+            DispatchClaimReconciliation::MissingOrMalformed
+        );
     }
 
     #[test]

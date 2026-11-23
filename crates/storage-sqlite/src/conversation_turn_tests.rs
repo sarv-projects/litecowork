@@ -7,9 +7,142 @@ use storage_core::{
     CreateConversationCommit, CreateConversationTurnCommit, WorkspaceCreateRequest,
 };
 
-use storage_core::conversation::{CONVERSATION_TURN_IN_PROGRESS, CommitConversationAgentResponse};
+use storage_core::conversation::{
+    CONVERSATION_TURN_IN_PROGRESS, CommitConversationAgentResponse, ConversationDispatchState,
+};
 
 const AT: &str = "2026-10-09T12:00:00Z";
+
+#[test]
+fn conversation_dispatch_intent_exact_read_returns_exact_state_and_owner() {
+    let (directory, store, commit) = fixture();
+    let adapter = SqliteConversationStore::new(store);
+
+    assert_eq!(
+        adapter
+            .get_conversation_dispatch_intent("turn-one", 0)
+            .expect("read absent exact intent"),
+        None
+    );
+    adapter
+        .create_conversation_turn(commit)
+        .expect("admit Conversation turn and outbox intent atomically");
+
+    let unclaimed = adapter
+        .get_conversation_dispatch_intent("turn-one", 0)
+        .expect("read exact unclaimed intent")
+        .expect("admission created the exact intent");
+    assert_eq!(unclaimed.workspace_id, "workspace-turn");
+    assert_eq!(unclaimed.conversation_id, "conversation-turn");
+    assert_eq!(unclaimed.state, ConversationDispatchState::Unclaimed);
+    assert_eq!(unclaimed.claimed_by_runtime_incarnation, None);
+    assert_eq!(
+        adapter
+            .get_conversation_dispatch_intent("turn-one", 1)
+            .expect("read different retry ordinal"),
+        None,
+        "the point read must not return a different attempt"
+    );
+
+    assert!(
+        adapter
+            .claim_conversation_dispatch_intent("turn-one", 0, "runtime-inc-1", AT)
+            .expect("claim exact intent")
+    );
+    let claimed = adapter
+        .get_conversation_dispatch_intent("turn-one", 0)
+        .expect("read exact claimed intent")
+        .expect("claimed intent remains durable");
+    assert_eq!(claimed.state, ConversationDispatchState::Claimed);
+    assert_eq!(
+        claimed.claimed_by_runtime_incarnation.as_deref(),
+        Some("runtime-inc-1")
+    );
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect intent");
+    connection
+        .execute(
+            "UPDATE conversation_dispatch_intents SET state='SETTLED',settled_at=?1 WHERE turn_id=?2 AND retry_ordinal=0",
+            rusqlite::params![AT, "turn-one"],
+        )
+        .expect("seed legal settled row for read contract");
+    drop(connection);
+    let settled = adapter
+        .get_conversation_dispatch_intent("turn-one", 0)
+        .expect("read exact settled intent")
+        .expect("settled intent remains durable");
+    assert_eq!(settled.state, ConversationDispatchState::Settled);
+}
+
+#[test]
+fn conversation_dispatch_intent_exact_read_rejects_cross_conversation_linkage() {
+    let (directory, store, commit) = fixture();
+    let adapter = SqliteConversationStore::new(store);
+    adapter
+        .create_conversation_turn(commit)
+        .expect("admit Conversation turn and outbox intent atomically");
+
+    let conversation = ConversationRecord {
+        conversation_id: "conversation-other".into(),
+        workspace_id: "workspace-turn".into(),
+        title: None,
+        active_agent_binding_id: None,
+        version: 1,
+        created_at: AT.into(),
+    };
+    let event_context = context("event-conversation-other", 8);
+    adapter
+        .create_conversation(CreateConversationCommit {
+            request: WorkspaceCreateRequest {
+                principal_id: "owner-local".into(),
+                request_id: "conversation-create-other".into(),
+                request_payload: serde_json::json!({
+                    "operation": "conversation.create.v1",
+                    "workspace_id": "workspace-turn",
+                    "title": null
+                }),
+            },
+            event: EventDraft {
+                event_id: event_context.event_id,
+                workspace_id: conversation.workspace_id.clone(),
+                entity_type: "Conversation".into(),
+                entity_id: conversation.conversation_id.clone(),
+                origin_runtime_id: event_context.origin_runtime_id,
+                entity_revision: 1,
+                hlc_timestamp: event_context.hlc_timestamp,
+                correlation_id: event_context.correlation_id,
+                causation_id: None,
+                schema_version: 1,
+                event_type: "conversation.created.v1".into(),
+                payload: serde_json::json!({
+                    "conversation_id": "conversation-other",
+                    "created_by": {"kind": "USER", "principal_id": "owner-local"}
+                }),
+                recorded_at: event_context.recorded_at,
+            },
+            conversation,
+        })
+        .expect("second Conversation persists in the same Workspace");
+
+    let connection = Connection::open(state_database(&directory)).expect("corrupt test row");
+    connection
+        .execute_batch("DROP TRIGGER conversation_dispatch_intent_state_guard;")
+        .expect("allow test-only identity corruption");
+    connection
+        .execute(
+            "UPDATE conversation_dispatch_intents SET conversation_id='conversation-other' WHERE turn_id='turn-one' AND retry_ordinal=0",
+            [],
+        )
+        .expect("seed cross-Conversation intent linkage");
+    drop(connection);
+
+    assert_eq!(
+        adapter
+            .get_conversation_dispatch_intent("turn-one", 0)
+            .expect("malformed linkage is a closed missing exact intent"),
+        None
+    );
+}
 
 pub(super) fn fixture() -> (
     tempfile::TempDir,
