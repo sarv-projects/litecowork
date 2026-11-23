@@ -5,8 +5,8 @@ hashes their bytes and checks literal relative Markdown links. It does not estab
 semantic correctness, implementation, integration or release qualification.
 
 - Files read: 369
-- Lines read: 80351
-- Bytes read: 8676725
+- Lines read: 80353
+- Bytes read: 8677948
 - Broken relative targets: 0
 - Excluded: archives, reference clones, local `audit-output/`, generated audit reports, dependency/build/cache directories and local run worktrees.
 - Per-file SHA-256 values: V1-MARKDOWN-INVENTORY.csv
@@ -25,7 +25,7 @@ semantic correctness, implementation, integration or release qualification.
 | AGENTS.md | 137 | fd0e6cda071b | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | ARCHITECTURE.md | 824 | 45248d5f5a1a | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | CONTRIBUTING.md | 86 | fa3269ba41ee | agent/composer;browser/computer;rendering;workflow/recovery;trust/security |
-| CURRENT-RUN.md | 1467 | 3f3c3265618c | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| CURRENT-RUN.md | 1467 | c48f5912edbf | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | GLOSSARY.md | 292 | bd9ffa34cb5e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | README.md | 93 | 3727827fd285 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | apps/litecowork-ui/README.md | 77 | c47d822925a4 | browser/computer;shell/settings/motion;workflow/recovery |
@@ -75,8 +75,8 @@ semantic correctness, implementation, integration or release qualification.
 | docs/FLOWS.md | 4514 | 152ec91b456d | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/HANDOFF-NEXT-AGENT-2026-11.md | 841 | 4d18924863b3 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/HOST-GUIDANCE.md | 138 | c2a6b6814665 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| docs/IMPLEMENTATION-MASTER-PLAN.md | 181 | 3c3d204f5387 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| docs/IMPLEMENTATION-STATUS.md | 482 | 19a80af125bc | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/IMPLEMENTATION-MASTER-PLAN.md | 181 | f307a51d2e5f | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/IMPLEMENTATION-STATUS.md | 484 | 2de38449372e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/IMPLEMENTATION.md | 232 | c9dbf532b894 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md | 73 | d0b5d00b65bd | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery |
 | docs/INTERACTIVE-ARTIFACT-RUNTIME.md | 135 | 6d5d6bd44fb9 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
@@ -186,7 +186,7 @@ semantic correctness, implementation, integration or release qualification.
 | specs/001-conversation-session-supervisor/README.md | 41 | fd1d6220fae8 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/RESEARCH.md | 278 | fc0f93dafd77 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/SPEC.md | 430 | 2ff6d645c6fc | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| specs/001-conversation-session-supervisor/TASKS.md | 674 | 7bb9ce4ef8db | agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| specs/001-conversation-session-supervisor/TASKS.md | 674 | 6594e152c277 | agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/contracts/README.md | 13 | 7f57261a13d1 | agent/composer;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/contracts/api-events.md | 109 | c06e868ce4ed | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | specs/001-conversation-session-supervisor/contracts/errors-recovery.md | 92 | a9fa77c0873b | agent/composer;workflow/recovery;trust/security |

@@ -2948,6 +2948,110 @@ async fn conversation_dispatch_intent_claim_error_leaves_attempt_for_reconciliat
 }
 
 #[tokio::test]
+async fn conversation_dispatch_coordinator_retries_sqlite_claim_after_store_recovers() {
+    let fixture = turn_command_fixture("turn-dispatch-claim-coordinator-retry");
+    let (turn, turn_id) =
+        admitted_turn_for_dispatch_fixture(&fixture, "turn-dispatch-claim-coordinator-retry").await;
+
+    fixture
+        .connection()
+        .execute_batch(
+            "CREATE TABLE dispatch_claim_fault (attempts INTEGER NOT NULL);
+             INSERT INTO dispatch_claim_fault VALUES (0);
+             CREATE TRIGGER defer_conversation_dispatch_claim BEFORE UPDATE OF state ON conversation_dispatch_intents
+             WHEN NEW.state='CLAIMED'
+             BEGIN
+               UPDATE dispatch_claim_fault SET attempts=attempts+1;
+               SELECT RAISE(IGNORE);
+             END;
+             CREATE TRIGGER reject_starting_conversation_session BEFORE INSERT ON agent_sessions
+             WHEN NEW.status='STARTING'
+             BEGIN SELECT RAISE(ABORT, 'injected session reservation refusal'); END;",
+        )
+        .expect("inject one retryable claim miss and a pre-provider session denial");
+
+    let coordinator =
+        crate::agents::turn_coordinator::AgentTurnCoordinator::new(Arc::clone(&fixture.supervisor));
+    coordinator.dispatch_admitted_turn(
+        DISPATCHER_INCARNATION,
+        OWNER,
+        WORKSPACE_A,
+        fixture.conversation_id,
+        turn,
+        "turn-dispatch-claim-coordinator-retry-correlation",
+    );
+
+    let connection = fixture.connection();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let attempts: i64 = connection
+                .query_row("SELECT attempts FROM dispatch_claim_fault", [], |row| {
+                    row.get(0)
+                })
+                .expect("read the injected claim count");
+            if attempts > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("coordinator reaches the transient SQLite claim miss");
+    assert_eq!(fixture.turn_row(&turn_id).0, "OPEN");
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "UNCLAIMED".to_owned())]);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+                [&turn_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count sessions before claim recovers"),
+        0,
+        "no session/provider work starts while the intent remains unclaimed"
+    );
+
+    connection
+        .execute_batch("DROP TRIGGER defer_conversation_dispatch_claim;")
+        .expect("restore the dispatch claim store");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if fixture.turn_row(&turn_id).0 == "FAILED" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("coordinator retries the exact claim after storage recovers");
+
+    assert_eq!(fixture.intents(&turn_id), vec![(0, "SETTLED".to_owned())]);
+    assert_eq!(
+        connection
+            .query_row("SELECT attempts FROM dispatch_claim_fault", [], |row| row
+                .get::<_, i64>(
+                0
+            ),)
+            .expect("read final claim count"),
+        1,
+        "the successful retry proceeds once without replaying a provider prompt"
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_sessions WHERE conversation_turn_id=?1",
+                [&turn_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("confirm the provider path was never opened"),
+        0
+    );
+    connection
+        .execute_batch("DROP TRIGGER reject_starting_conversation_session;")
+        .expect("remove the test-only session denial");
+}
+
+#[tokio::test]
 async fn conversation_dispatch_settlement_failure_stays_fenced_until_startup_recovery() {
     let fixture = turn_command_fixture("turn-dispatch-settlement-recovery");
     let (turn, turn_id) =

@@ -20,7 +20,9 @@ claim/settlement lifecycle consistency. The supervisor continues only on durable
 by its exact Runtime incarnation; a competing owner or SETTLED is a no-op; exact
 UNCLAIMED and transient point-read failures return the claim-only retry class; missing or
 malformed ownership fails closed. The coordinator retries only that pre-provider claim
-class with capped exponential delay; provider/session failures are never retried. This
+class with capped exponential delay; provider/session failures are never retried. A
+coordinator-to-SQLite fault-injection regression proves a transient CAS miss is retried only
+after the claim store recovers and no AgentSession opens while ownership is UNCLAIMED. This
 adds no migration, public route, event, schema or UI state. Current focused tests and exact
 command results are in CURRENT-RUN. T20 remains PARTIAL and CODE only: packaged dispatch,
 crash and recovery behavior, native provider integration, the full setup fault matrix and
