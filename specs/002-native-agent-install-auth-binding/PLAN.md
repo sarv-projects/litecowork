@@ -31,7 +31,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-The implementation uses the existing `agent_control_descriptors` table (created by migration 16) and does not create duplicate descriptor DDL. Under user-delegated internal direction A-120, migration v35 now adds exact-scope, Runtime-local durable auth observations; see the current migration allocation and Feature 002 T07. Credential-submission replay receipts remain unimplemented: v36 is only provisional for T08 if the user-delegated SecretStore crash-reconciliation decision requires DDL. Any further migration remains immutable once wired and lands with its owner document, schema and tests in one change. Rollback is forward-only in production; a prior binary refuses an unsupported newer schema and explicit recovery is required.
+The implementation uses the existing `agent_control_descriptors` table (created by migration 16) and does not create duplicate descriptor DDL. Under user-delegated internal direction A-120, migration v35 adds exact-scope, Runtime-local durable auth observations; see the current migration allocation and Feature 002 T07. Under user-delegated A-67, v36 now adds Runtime-local credential-submission recovery receipts and is excluded from Workspace backups. The receipt store and keyring primitive have focused CODE evidence, but the daemon credential route still returns 503 and does not call them. Any further migration remains immutable once wired and lands with its owner document, schema and tests in one change. Rollback is forward-only in production; a prior binary refuses an unsupported newer schema and explicit recovery is required.
 
 ## Risks
 

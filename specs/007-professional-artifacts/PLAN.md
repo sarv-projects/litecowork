@@ -25,7 +25,7 @@ Owners: Artifacts, Presentation, Storage, Desktop UI. Allowed implementation pat
 
 ## Migration, rollout, rollback
 
-T01 adds `artifact_export_receipts` and nullable `source_conversation_id` / `source_message_id` columns on artifacts (accepted target interface, not yet in source) in the immutable `docs/schemas/sqlite-v38.sql` (allocation in docs/LITECOWORK-BUILD-TASKS.md; v34 was wired in the 2026-11-20 checkout and v35 is now wired; take the next free number if another package merges first and update that table). The migration is additive. Rollback is revert to the previous committed revision and refuse create/export admission that needs the new fields; committed receipts and versions are never rewritten.
+T01 adds `artifact_export_receipts` and nullable `source_conversation_id` / `source_message_id` columns on artifacts (accepted target interface, not yet in source) in the immutable `docs/schemas/sqlite-v38.sql` (allocation in docs/LITECOWORK-BUILD-TASKS.md; v34 was wired in the 2026-11-20 checkout and v35-v36 are now wired; take the next free number if another package merges first and update that table). The migration is additive. Rollback is revert to the previous committed revision and refuse create/export admission that needs the new fields; committed receipts and versions are never rewritten.
 
 Rollout: the capability matrix ships first so the UI can hide unsupported controls before new write paths exist.
 

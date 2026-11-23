@@ -30,7 +30,7 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 
 ## Migration
 
-No migration is authorized by this file. B-15 and B-16 are accepted; the portable package is derived and producer fields already exist. A durable truncation/refusal receipt may require a migration, but A-66 leaves its storage placement open. If a T01 decision adds a table, allocate the then-next free migration after the currently wired v35 and the provisional v36-v47 reservations recorded in `docs/LITECOWORK-BUILD-TASKS.md`; v48 is only a candidate if it remains free at that time.
+No migration is authorized by this file. B-15 and B-16 are accepted; the portable package is derived and producer fields already exist. A durable truncation/refusal receipt may require a migration, but A-66 leaves its storage placement open. If a T01 decision adds a table, allocate the then-next free migration after the currently wired v36 and the provisional v37-v47 reservations recorded in `docs/LITECOWORK-BUILD-TASKS.md`; v48 is only a candidate if it remains free at that time.
 
 ## Historical source snapshot (2026-11-06; superseded by the current cross-check below)
 

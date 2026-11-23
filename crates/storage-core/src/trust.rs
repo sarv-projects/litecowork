@@ -310,6 +310,19 @@ pub trait SecretStore: Send + Sync {
         secret_kind: SecretKind,
         secret_bytes: &mut [u8],
     ) -> Result<SecretRef, StoreError>;
+
+    /// Writes to a caller-preallocated reference so a durable operation receipt can
+    /// reconcile an ambiguous OS credential-store result. Implementations must never
+    /// overwrite different bytes at an existing ref and must consume/zeroize the input
+    /// on every path. This remains write-only: existing values are compared only inside
+    /// the implementation and their bytes are never returned to the caller.
+    fn write_idempotent(
+        &self,
+        workspace_id: &str,
+        secret_kind: SecretKind,
+        secret_ref_id: &str,
+        secret_bytes: &mut [u8],
+    ) -> Result<SecretRef, StoreError>;
 }
 
 /// Attempt-scoped, expiring permission for a provider boundary to use one secret.

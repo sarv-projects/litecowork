@@ -70,7 +70,7 @@ Host compatibility profile rows (filled by T05 and T18):
 
 ## 5. Persistence, migration, rollout
 
-- One forward-only migration (allocated v40 in docs/LITECOWORK-BUILD-TASKS.md; the 2026-11-20 checkpoint ended at v34 and the current 2026-11-23 chain ends at `sqlite-v35.sql`; DEFERRED with the whole package, see TASKS.md) adds the three tables in DATA-MODEL; no earlier migration changes.
+- One forward-only migration (allocated v40 in docs/LITECOWORK-BUILD-TASKS.md; the 2026-11-20 checkpoint ended at v34 and the current 2026-11-23 chain ends at `sqlite-v36.sql`; DEFERRED with the whole package, see TASKS.md) adds the three tables in DATA-MODEL; no earlier migration changes.
 - Rollout is per release row and per verb. A verb is enabled only when its profile row has CODE, SYSTEM and USER evidence.
 - No feature flag may enable a verb whose server-side route is missing or not advertised by the pinned LiteSPM.
 

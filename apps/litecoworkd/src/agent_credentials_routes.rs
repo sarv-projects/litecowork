@@ -368,6 +368,17 @@ mod tests {
                 placement: SecretPlacement::LocalOnly,
             })
         }
+
+        fn write_idempotent(
+            &self,
+            _workspace_id: &str,
+            _kind: SecretKind,
+            _secret_ref_id: &str,
+            secret: &mut [u8],
+        ) -> Result<SecretRef, StoreError> {
+            secret.fill(0);
+            Err(StoreError::Busy)
+        }
     }
 
     struct NoDescriptor;

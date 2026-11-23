@@ -1069,7 +1069,8 @@ SQLite database. It excludes pairing challenges, Environment provision previews,
 observations, AgentEndpoint bindings, Agent/Capability host instances and bindings,
 CapabilityInvocation provider bindings, ProviderInputBindings, AutomationTriggerBindings,
 Environment provider bindings, Environment checkpoint provider bindings,
-ResourceLocation/FileIdentity bindings, transient upload chunk bytes, active resumable
+ResourceLocation/FileIdentity bindings, Runtime-local AgentCredentialSubmission receipts,
+transient upload chunk bytes, active resumable
 uploads, active leases, and other Runtime-local process/provider handles. It includes
 durable Environment and checkpoint metadata only. Portable checkpoint blobs are selected only if both the
 Environment's `INCLUDE_CHECKPOINTS` policy and Workspace replication policy permit them.
@@ -1081,7 +1082,7 @@ creation before an archive is published. Installation metadata is limited to
 `schema_migrations`, `runtimes`, and `runtime_incarnations`; generic `request_dedup` is
 excluded because its opaque responses have no Workspace identity. Blob discovery reads
 the selected Workspace's rows from the excluded local `resource_content_blob_registry` in the same `VACUUM INTO` copy, derives blob candidates from that consistent copy, then removes the registry before the final archive snapshot is validated.
-The code map currently covers 98 Workspace-scoped tables, 3 installation tables and 41
+The code map currently covers 98 Workspace-scoped tables, 3 installation tables and 42
 excluded tables; these counts are source evidence at the current schema revision, not a
 second normative list.
 For this storage CODE path, removal of excluded local/authority rows, unfinished upload
@@ -1222,12 +1223,20 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   native launch occurs after commit, and only a matching current generation may settle. Missing,
   expired, mismatched or new-incarnation rows project as UNKNOWN. The table contains no credential
   bytes, native handles, provider transcripts, Workspace events or backup state.
+- migration 36 (`schemas/sqlite-v36.sql`, Feature 002 T08; USER-DELEGATED internal direction)
+  adds Runtime-local `agent_credential_submission_receipts` for cross-store replay recovery. It
+  stores the Workspace/principal/profile/slot scope, digest of the idempotency key, request
+  fingerprint field, SecretKind, preallocated SecretRef ID, PENDING/COMMITTED state, opaque provider
+  reference and timestamps. It contains no secret bytes and is explicitly excluded from Workspace
+  backups and domain events. CODE currently includes the store/migration and private idempotent
+  keyring primitive; the daemon route still returns 503 and does not call them. Do not treat the
+  target reserve/write/settle protocol as served or integrated behavior.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
   the schema-object fingerprint at that migration boundary. Reopening verifies every
   recorded migration name/source checksum and compares the active schema version's
   fingerprint with the current non-internal `sqlite_master` objects; historical
   fingerprints are retained because later migrations intentionally add schema objects.
-  The current wired schema version is 35, so the v35 fingerprint is checked against the full
+  The current wired schema version is 36, so the v36 fingerprint is checked against the full
   current schema. Missing migration records, changed
   source checksums, or changed current schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances

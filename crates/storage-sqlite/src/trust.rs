@@ -38,6 +38,7 @@ const FILE_WRITE_GRANT_TTL_SECONDS: i64 = 300;
 const CORE_TRUST_PRINCIPAL_ID: &str = "litecowork.core.trust";
 
 trait SecretCredentialBackend: Send + Sync {
+    fn get_secret(&self, account: &str) -> Result<Option<Zeroizing<String>>, StoreError>;
     fn set_secret(&self, account: &str, secret: &str) -> Result<(), StoreError>;
     fn remove_secret(&self, account: &str) -> Result<(), StoreError>;
 }
@@ -46,6 +47,15 @@ trait SecretCredentialBackend: Send + Sync {
 struct OsSecretCredentialBackend;
 
 impl SecretCredentialBackend for OsSecretCredentialBackend {
+    fn get_secret(&self, account: &str) -> Result<Option<Zeroizing<String>>, StoreError> {
+        let entry = secret_keyring_entry(account).map_err(|_| secret_store_error())?;
+        match entry.get_password() {
+            Ok(secret) => Ok(Some(Zeroizing::new(secret))),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(secret_store_error()),
+        }
+    }
+
     fn set_secret(&self, account: &str, secret: &str) -> Result<(), StoreError> {
         let entry = secret_keyring_entry(account).map_err(|_| secret_store_error())?;
         entry.set_password(secret).map_err(|_| secret_store_error())
@@ -79,6 +89,22 @@ impl SecretStore for OsSecretStore {
             secret_bytes,
         )
     }
+
+    fn write_idempotent(
+        &self,
+        workspace_id: &str,
+        secret_kind: SecretKind,
+        secret_ref_id: &str,
+        secret_bytes: &mut [u8],
+    ) -> Result<SecretRef, StoreError> {
+        write_secret_at_with(
+            &OsSecretCredentialBackend,
+            workspace_id,
+            secret_kind,
+            secret_ref_id,
+            secret_bytes,
+        )
+    }
 }
 
 fn write_secret_with(
@@ -107,6 +133,47 @@ fn write_secret_with(
     }
     Ok(SecretRef {
         secret_ref_id,
+        provider_ref,
+        placement: SecretPlacement::LocalOnly,
+    })
+}
+
+fn write_secret_at_with(
+    backend: &impl SecretCredentialBackend,
+    workspace_id: &str,
+    secret_kind: SecretKind,
+    secret_ref_id: &str,
+    secret_bytes: &mut [u8],
+) -> Result<SecretRef, StoreError> {
+    let secret = Zeroizing::new(secret_bytes.to_vec());
+    secret_bytes.zeroize();
+    validate_secret_scope(workspace_id, secret.len())?;
+    storage_core::validate_secret_ref_id(secret_ref_id)?;
+    let account_hash = secret_account_hash(workspace_id, secret_kind, secret_ref_id);
+    let account = format!("v1:{account_hash}");
+    let provider_ref = format!("os-keyring:v1:{account_hash}");
+    let encoded = Zeroizing::new(URL_SAFE_NO_PAD.encode(secret.as_slice()));
+    match backend.get_secret(&account)? {
+        Some(existing) if existing.as_str() == encoded.as_str() => {
+            return Ok(SecretRef {
+                secret_ref_id: secret_ref_id.to_owned(),
+                provider_ref,
+                placement: SecretPlacement::LocalOnly,
+            });
+        }
+        Some(_) => {
+            return Err(StoreError::Integrity(
+                "preallocated SecretRef already contains different keyring content".to_owned(),
+            ));
+        }
+        None => {}
+    }
+    // Do not delete after an error. OS keyring APIs can report failure after the
+    // entry was committed; the durable caller receipt will retry this exact ref,
+    // and the next get_secret comparison will reconcile the ambiguous result.
+    backend.set_secret(&account, encoded.as_str())?;
+    Ok(SecretRef {
+        secret_ref_id: secret_ref_id.to_owned(),
         provider_ref,
         placement: SecretPlacement::LocalOnly,
     })
@@ -3762,6 +3829,15 @@ mod tests {
     }
 
     impl SecretCredentialBackend for MemorySecretCredentialBackend {
+        fn get_secret(&self, account: &str) -> Result<Option<Zeroizing<String>>, StoreError> {
+            Ok(self
+                .values
+                .lock()
+                .expect("secret test backend lock")
+                .get(account)
+                .map(|secret| Zeroizing::new(secret.to_string())))
+        }
+
         fn set_secret(&self, account: &str, secret: &str) -> Result<(), StoreError> {
             self.values
                 .lock()
@@ -3850,6 +3926,71 @@ mod tests {
                 .lock()
                 .expect("secret test backend lock")
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn idempotent_secret_write_reconciles_an_ambiguous_keyring_success_at_the_same_ref() {
+        let backend = MemorySecretCredentialBackend {
+            values: Mutex::new(HashMap::new()),
+            fail_after_write: true,
+        };
+        let secret_ref_id = format!("secret_{}", "a".repeat(64));
+        let mut first = b"reconcile-this-secret".to_vec();
+        assert!(
+            write_secret_at_with(
+                &backend,
+                "workspace-secret-test",
+                SecretKind::ApiKey,
+                &secret_ref_id,
+                &mut first,
+            )
+            .is_err()
+        );
+        assert!(first.iter().all(|byte| *byte == 0));
+        assert_eq!(
+            backend
+                .values
+                .lock()
+                .expect("secret test backend lock")
+                .len(),
+            1,
+            "ambiguous idempotent writes preserve the keyring entry for reconciliation"
+        );
+
+        let mut retry = b"reconcile-this-secret".to_vec();
+        let reconciled = write_secret_at_with(
+            &backend,
+            "workspace-secret-test",
+            SecretKind::ApiKey,
+            &secret_ref_id,
+            &mut retry,
+        )
+        .expect("retry compares and accepts the exact existing keyring content");
+        assert!(retry.iter().all(|byte| *byte == 0));
+        assert_eq!(reconciled.secret_ref_id, secret_ref_id);
+        assert!(reconciled.provider_ref.starts_with("os-keyring:v1:"));
+
+        let mut changed = b"different-secret".to_vec();
+        assert!(matches!(
+            write_secret_at_with(
+                &backend,
+                "workspace-secret-test",
+                SecretKind::ApiKey,
+                &secret_ref_id,
+                &mut changed,
+            ),
+            Err(StoreError::Integrity(_))
+        ));
+        assert!(changed.iter().all(|byte| *byte == 0));
+        assert_eq!(
+            backend
+                .values
+                .lock()
+                .expect("secret test backend lock")
+                .len(),
+            1,
+            "a changed body cannot overwrite a preallocated SecretRef"
         );
     }
 

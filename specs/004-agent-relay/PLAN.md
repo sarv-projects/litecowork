@@ -29,7 +29,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-No migration is authorized by the current design crosswalk: the portable package is derived, and producer fields already exist on Conversation messages. A-66/A-96 leave the durable refusal/truncation receipt's record and storage placement for resolution in T01/T09. Only if that decision requires new persistence should a migration be allocated after the then-current highest wired schema (v34 in the 2026-11-20 checkout; v35 is now wired, with v36-v47 still provisional in `docs/LITECOWORK-BUILD-TASKS.md`). Rollback is revert to the previous committed revision and refuse new admission that needs any newly promoted field.
+No migration is authorized by the current design crosswalk: the portable package is derived, and producer fields already exist on Conversation messages. A-66/A-96 leave the durable refusal/truncation receipt's record and storage placement for resolution in T01/T09. Only if that decision requires new persistence should a migration be allocated after the then-current highest wired schema (v34 in the 2026-11-20 checkout; v35 and v36 are now wired, with v37-v47 still provisional in `docs/LITECOWORK-BUILD-TASKS.md`). Rollback is revert to the previous committed revision and refuse new admission that needs any newly promoted field.
 
 ## Risks
 

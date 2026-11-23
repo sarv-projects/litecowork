@@ -82,6 +82,7 @@ pub const BACKUP_EXCLUDED_TABLES: &[&str] = &[
     "agent_host_instances",
     "agent_control_descriptors",
     "agent_auth_observations",
+    "agent_credential_submission_receipts",
     "agent_installation_observations",
     "agent_lifecycle_operations",
     "agent_registry_cache",

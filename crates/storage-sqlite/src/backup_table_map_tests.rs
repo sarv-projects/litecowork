@@ -30,3 +30,26 @@ fn backup_table_map_rejects_a_new_unclassified_application_table() {
         "the error identifies the table that needs an explicit classification: {error}"
     );
 }
+
+#[test]
+fn credential_submission_recovery_receipts_are_excluded_from_workspace_backups() {
+    let connection = migrated_connection();
+
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_credential_submission_receipts'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect the migrated credential receipt table");
+    assert_eq!(count, 1, "v36 must create the durable replay receipt");
+
+    validate_backup_table_map(&connection)
+        .expect("the Runtime-local receipt has an explicit backup classification");
+    assert!(storage_core::BACKUP_EXCLUDED_TABLES.contains(&"agent_credential_submission_receipts"));
+    assert!(
+        !storage_core::BACKUP_WORKSPACE_SCOPED_TABLES
+            .iter()
+            .any(|table| table.table == "agent_credential_submission_receipts")
+    );
+}

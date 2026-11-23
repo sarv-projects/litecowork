@@ -25,6 +25,16 @@ pub use agent_auth_observations::{
     AgentAuthObservationScope, AgentAuthObservationState, AgentAuthObservationStore,
     validate_agent_auth_observation_key, validate_agent_auth_observation_scope,
 };
+mod agent_credential_submissions;
+pub use agent_credential_submissions::{
+    AGENT_CREDENTIAL_IDEMPOTENCY_DIGEST_PREFIX, AGENT_CREDENTIAL_RECEIPT_ID_MAX_BYTES,
+    AGENT_CREDENTIAL_RECEIPT_SLOT_MAX_BYTES, AGENT_CREDENTIAL_REQUEST_FINGERPRINT_PREFIX,
+    AGENT_CREDENTIAL_SECRET_REF_PREFIX, AgentCredentialSubmissionKey,
+    AgentCredentialSubmissionReceipt, AgentCredentialSubmissionReservation,
+    AgentCredentialSubmissionState, AgentCredentialSubmissionStore,
+    validate_agent_credential_submission_key, validate_agent_credential_submission_reservation,
+    validate_agent_credential_submission_settlement, validate_secret_ref_id,
+};
 
 mod agent_registry_cache;
 pub use agent_registry_cache::{

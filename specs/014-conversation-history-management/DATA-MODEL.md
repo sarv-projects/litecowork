@@ -3,7 +3,7 @@
 **Status:** IN_REVIEW - not owner-accepted; does not authorize implementation; not a claim of implementation or qualification.
 **Feature:** 014 | **Authority:** DATA-MODEL.md, STATE-MACHINES.md, STORAGE.md, EVENTS.md, SCHEMAS.md.
 
-This feature extends the canonical Conversation record. It must not create a second Conversation catalog or a second deletion framework. Only the `conversation_history_state` side table exists in source (migration v31, `docs/schemas/sqlite-v31.sql`, 014-T03 storage layer, 2026-11-10); every other record below (search index, purge plans, purge receipts) is still target and takes a later number than the current v35 chain. The 2026-11-20 migration chain ended at `sqlite-v34.sql`; v35 was wired on 2026-11-23 for Feature 002 Runtime-local auth observations.
+This feature extends the canonical Conversation record. It must not create a second Conversation catalog or a second deletion framework. Only the `conversation_history_state` side table exists in source (migration v31, `docs/schemas/sqlite-v31.sql`, 014-T03 storage layer, 2026-11-10); every other record below (search index, purge plans, purge receipts) is still target and takes a later number than the current v36 chain. The 2026-11-20 migration chain ended at `sqlite-v34.sql`; v35 and v36 were wired on 2026-11-23 for Feature 002 Runtime-local auth observations and credential submission recovery receipts.
 
 ## 1. Existing records
 

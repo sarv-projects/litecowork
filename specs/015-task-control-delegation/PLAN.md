@@ -72,7 +72,7 @@ flowchart LR
 
 ## 5. Persistence, migration, rollout
 
-One forward-only migration (allocated v43 in docs/LITECOWORK-BUILD-TASKS.md; chain currently ends at `sqlite-v35.sql`) adds `task_control_requests` and `task_resume_packets`. Any persistence of `on_exhaustion` must preserve the accepted A-37 TARGET-not-yet-wired posture until its dispatcher owner lands; Feature 015 must not remove that label or treat a stored target field as producer support. No existing column changes type; `tasks.status` stays text and is parsed by the new enum. Rollout is behind the Task projection's `allowed_commands`: a control is invisible to the UI until its route and owner path are served.
+One forward-only migration (allocated v43 in docs/LITECOWORK-BUILD-TASKS.md; chain currently ends at `sqlite-v36.sql`) adds `task_control_requests` and `task_resume_packets`. Any persistence of `on_exhaustion` must preserve the accepted A-37 TARGET-not-yet-wired posture until its dispatcher owner lands; Feature 015 must not remove that label or treat a stored target field as producer support. No existing column changes type; `tasks.status` stays text and is parsed by the new enum. Rollout is behind the Task projection's `allowed_commands`: a control is invisible to the UI until its route and owner path are served.
 
 ## 6. Operational risks
 

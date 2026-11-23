@@ -185,6 +185,18 @@ pub trait CredentialBroker: Send + Sync {
     ) -> Result<SecretRef, CredentialError>;   // same key + changed body => conflict
 }
 
+### 7.2.1 Replay-safe secret submission (A-67 USER-DELEGATED DIRECTION)
+
+SQLite and an OS credential manager have no shared commit transaction. T08 therefore uses a durable recovery receipt and a SecretStore operation addressed by a preallocated SecretRef ID; it does not claim atomicity across the stores.
+
+1. Authenticate the local Operator peer, parse the Workspace and printable 1–200-byte Idempotency-Key, validate the bounded request shape, and decode the credential into zeroizing memory. Compute `key_digest = SHA-256(idempotency_key)` and `request_fingerprint = HMAC-SHA-256(RuntimeOsPrincipalIdentity key, length_prefixed(descriptor_digest, decoded_secret))` under domain `agent-credential-request-v1`. The HMAC key is Runtime-installation-local and stored in the OS credential store. Store neither the raw key nor an unkeyed digest of credential bytes.
+2. Look up `(workspace_id, principal_id, agent_profile_id, credential_slot_id, key_digest)` before re-reading mutable profile or descriptor state. The query verifies the authenticated owner identity, returns only a same-fingerprint receipt, and rejects a different fingerprint as `IDEMPOTENCY_CONFLICT`. A committed receipt returns the original binding. A pending receipt resumes the exact operation.
+3. For a new key only, require an active Workspace owner, an existing profile, a current trusted descriptor whose digest matches the body, and one unique slot owned by `LITECOWORK_SECRET_STORE`. Reserve a random `secret_<64 lowercase hex>` reference plus a `PENDING` row in a short IMMEDIATE transaction. The unique operation key resolves concurrent exact submissions; a different request under the same key conflicts.
+4. Outside SQLite, call `SecretStore::write_idempotent(workspace, kind, secret_ref_id, bytes)`. The public trait stays write-only. The OS adapter derives the same keyring account for each retry, privately reads only to compare existing encoded contents, returns the same SecretRef on exact match, and fails without overwriting different contents. It does not delete an entry after an ambiguous keyring error.
+5. In a second short transaction, mark the receipt `COMMITTED`, save only its opaque provider reference and settlement time, and insert one audit record containing slot and SecretRef metadata only. If keyring succeeded but this transaction failed or the process crashed, the PENDING row remains and exact retry verifies the same keyring entry before settling. No provider call occurs inside either transaction.
+
+The active-owner check when reserving a new operation is its authorization linearization point. Completing that already-reserved operation reconciles the accepted local effect and must not hold a transaction across the OS call. Runtime-local receipts are never domain events or Workspace backup data. There is no automatic TTL: expiry could let a delayed exact retry create a second entry. Loss of the installation HMAC key or OS keyring access fails closed. These are user-delegated implementation choices for Feature 002 T08; they are not formal Security/Storage owner ratification or native OS qualification. Neither OpenCode v2.0.32 nor Claude Code CLI declares a LiteCowork-owned secret slot in the pinned V1 descriptors, so no provider sign-in path or UI control is enabled by this storage capability.
+
 // Accepted target; OpenCode manifest declares 900 s TTL and a three-per-minute probe budget (B-12).
 pub struct AgentControlDescriptorFreshness {
     pub module_version: String,

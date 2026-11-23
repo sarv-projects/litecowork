@@ -19,6 +19,9 @@ nodes:
   - id: "auth-observation"
     owner: Runtime-local AgentAuthObservationStore
     kind: store
+  - id: "credential-submission-receipt"
+    owner: Runtime-local AgentCredentialSubmissionStore (v36)
+    kind: store
   - id: "binding"
     owner: AgentBindingService
     kind: service
@@ -30,6 +33,9 @@ nodes:
     kind: external
   - id: "os-auth"
     owner: native agent auth / OS credential broker
+    kind: external
+  - id: "os-secret-store"
+    owner: local OS keyring through write-only SecretStore
     kind: external
   - id: "conversation"
     owner: Feature 001 Conversation supervisor
@@ -83,6 +89,18 @@ edges:
     from: "auth-observation"
     to: "profile"
     kind: exact-scope-unexpired-generation-fenced-descriptor-overlay
+  - id: "e-credential-reservation"
+    from: "operator"
+    to: "credential-submission-receipt"
+    kind: owner-scoped-exact-replay-and-pending-reservation-before-descriptor-side-effect
+  - id: "e-credential-keyring"
+    from: "operator"
+    to: "os-secret-store"
+    kind: idempotent-write-to-preallocated-secret-ref-outside-sqlite
+  - id: "e-credential-settlement"
+    from: "credential-submission-receipt"
+    to: "storage"
+    kind: v36-pending-to-committed-receipt-and-metadata-audit-transaction
   - id: "e-op-binding"
     from: "operator"
     to: "binding"
@@ -116,6 +134,14 @@ transactions:
     owner: Agent Runtime
     atomic_records: ["agent_auth_observation: exact profile/runtime/incarnation/module/version/method scope, generation, AUTHENTICATING, observed_at, expires_at"]
     external_calls_inside: false
+  - id: "tx-credential-reservation"
+    owner: AgentCredentialSubmissionStore
+    atomic_records: ["agent_credential_submission_receipts: operation scope, key digest, keyed request fingerprint, SecretKind, preallocated SecretRef ID, PENDING, created_at"]
+    external_calls_inside: false
+  - id: "tx-credential-settlement"
+    owner: AgentCredentialSubmissionStore
+    atomic_records: ["agent_credential_submission_receipts: provider_ref, COMMITTED, committed_at", "audit_records: slot and opaque SecretRef metadata only"]
+    external_calls_inside: false
   - id: "tx-binding"
     owner: AgentBindingService
     atomic_records: ["agent_binding", "domain_event", "idempotency_receipt", "audit_record"]
@@ -131,10 +157,15 @@ external_boundaries:
     input_trust: descriptor-declared-method-and-slot-only
     timeout: bounded
     retry: never-replay-secret; reconcile-auth-observation
+  - id: "credential-keyring"
+    owner: local OS keyring
+    input_trust: authenticated-owner-and-fresh-LITECOWORK_SECRET_STORE-slot
+    timeout: operating-system-credential-store-boundary
+    retry: same-preallocated-secret-ref; compare-existing-content-in-private-adapter; never-overwrite-different-content
 recovery:
   owner: Agent Runtime and Workspace binding owners
-  source_of_truth: last-committed-runtime-observation-and-workspace-binding-receipt
-  restart_action: re-probe-runtime-incarnation-and-install-auth-descriptor-independently; preserve-binding; reconcile-in-flight-lifecycle-before-new-side-effect
+  source_of_truth: last-committed-runtime-observation-workspace-binding-receipt-and-credential-submission-receipt
+  restart_action: re-probe-runtime-incarnation-and-install-auth-descriptor-independently; preserve-binding; reconcile-in-flight-lifecycle-before-new-side-effect; exact credential retry resumes PENDING v36 receipt through same keyring account before descriptor reread
 
 # Status note (updated 2026-11-23): this graph remains accepted TARGET wiring, with A-120 USER-DELEGATED
 # direction recorded for durable auth observations; it is not Agent Runtime/Storage/Security owner ratification or evidence that
@@ -150,8 +181,11 @@ recovery:
 # - Auth-begin/native-config routes and ID-only bridges exist, but the production launcher/opener fail closed;
 #   OpenCode declares no method/target. T07 now owns the exact-scope persistent observation path, while provider
 #   login, module-reported completion/re-probe and packaged qualification remain unavailable (002-T07/T10).
-# - Credential submit uses `StoredAgentDescriptorSource` but still returns 503 before SecretStore mutation;
-#   durable replay/reconciliation is not implemented (002-T08).
+# - CODE includes the v36 receipt store/migration and private idempotent keyring primitive. The
+#   `agent_credentials_routes.rs::submit_credential` handler still returns 503 after descriptor lookup
+#   and has no receipt-store, fingerprint, keyring-write or settlement caller. The edges above are
+#   TARGET only until route integration and restart/recovery tests are complete. OpenCode/Claude Code
+#   declare no LiteCowork slot, so this is not a provider sign-in or visible UI journey (002-T08).
 # - The ACP client and Matchmaker are code-level components but are not wired to a qualified provider flow
 #   (002-T17/T18). Install/update remain target-only; model-option and harness-capability projections are served,
 #   but the Tauri picker bridge and Conversation admission consumer remain absent.

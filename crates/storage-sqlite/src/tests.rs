@@ -3192,8 +3192,10 @@ fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() 
         .expect("verify historical v33 receipt");
     verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
         .expect("verify historical v34 receipt");
-    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
-        .expect("verify latest v35 receipt");
+    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, false)
+        .expect("verify v35 receipt");
+    verify_migration_record(&connection, 36, V36_MIGRATION_NAME, SQLITE_V36_DDL, true)
+        .expect("verify latest v36 receipt");
 }
 
 #[test]
@@ -3472,8 +3474,10 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
         .expect("verify historical v33 receipt");
     verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
         .expect("verify historical v34 receipt");
-    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
-        .expect("verify latest v35 receipt");
+    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, false)
+        .expect("verify v35 receipt");
+    verify_migration_record(&connection, 36, V36_MIGRATION_NAME, SQLITE_V36_DDL, true)
+        .expect("verify latest v36 receipt");
 
     let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
         .query_row(
@@ -4333,12 +4337,14 @@ fn v27_test_run_migration_rolls_back_and_replays() {
         .expect("verify historical v33 receipt");
     verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
         .expect("verify historical v34 receipt");
-    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
-        .expect("verify latest v35 receipt");
+    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, false)
+        .expect("verify v35 receipt");
+    verify_migration_record(&connection, 36, V36_MIGRATION_NAME, SQLITE_V36_DDL, true)
+        .expect("verify latest v36 receipt");
 }
 
 #[test]
-fn v28_to_v35_migrations_roll_back_and_replay() {
+fn v28_to_v36_migrations_roll_back_and_replay() {
     for (failpoint, expected_version, name) in [
         (Failpoint::DuringV28Migration, V27_SCHEMA_VERSION, "v28"),
         (Failpoint::DuringV29Migration, V28_SCHEMA_VERSION, "v29"),
@@ -4348,6 +4354,7 @@ fn v28_to_v35_migrations_roll_back_and_replay() {
         (Failpoint::DuringV33Migration, V32_SCHEMA_VERSION, "v33"),
         (Failpoint::DuringV34Migration, V33_SCHEMA_VERSION, "v34"),
         (Failpoint::DuringV35Migration, V34_SCHEMA_VERSION, "v35"),
+        (Failpoint::DuringV36Migration, V35_SCHEMA_VERSION, "v36"),
     ] {
         let directory = tempfile::tempdir().expect("temporary directory");
         let mut connection = Connection::open(directory.path().join("migration.sqlite3"))
@@ -4390,8 +4397,10 @@ fn v28_to_v35_migrations_roll_back_and_replay() {
             .expect("verify historical v33 receipt");
         verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
             .expect("verify historical v34 receipt");
-        verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
-            .expect("verify latest v35 receipt");
+        verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, false)
+            .expect("verify v35 receipt");
+        verify_migration_record(&connection, 36, V36_MIGRATION_NAME, SQLITE_V36_DDL, true)
+            .expect("verify latest v36 receipt");
     }
 }
 

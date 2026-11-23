@@ -286,6 +286,17 @@ mod tests {
                 placement: SecretPlacement::LocalOnly,
             })
         }
+
+        fn write_idempotent(
+            &self,
+            _workspace_id: &str,
+            _secret_kind: SecretKind,
+            _secret_ref_id: &str,
+            secret_bytes: &mut [u8],
+        ) -> Result<SecretRef, StoreError> {
+            secret_bytes.fill(0);
+            Err(StoreError::Busy)
+        }
     }
 
     struct FailingSecretStore;
@@ -295,6 +306,17 @@ mod tests {
             &self,
             _workspace_id: &str,
             _secret_kind: SecretKind,
+            secret_bytes: &mut [u8],
+        ) -> Result<SecretRef, StoreError> {
+            secret_bytes.fill(0);
+            Err(StoreError::Busy)
+        }
+
+        fn write_idempotent(
+            &self,
+            _workspace_id: &str,
+            _secret_kind: SecretKind,
+            _secret_ref_id: &str,
             secret_bytes: &mut [u8],
         ) -> Result<SecretRef, StoreError> {
             secret_bytes.fill(0);
