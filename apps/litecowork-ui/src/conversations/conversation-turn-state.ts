@@ -45,6 +45,7 @@ export type SendEligibilityInput = TurnFenceInput & {
   draft: string;
   hasWorkspace: boolean;
   operatorReady: boolean;
+  executionReady: boolean;
   bindingEligible: boolean;
 };
 
@@ -52,6 +53,7 @@ export function isSendEligible(input: SendEligibilityInput): boolean {
   return input.draft.trim().length > 0
     && input.hasWorkspace
     && input.operatorReady
+    && input.executionReady
     && input.bindingEligible
     && !isTurnOccupyingComposer(input);
 }
@@ -88,6 +90,14 @@ export function retryTarget(
 ): RetryableTurnView | null {
   if (!retryable || submitting || isNonterminalTurnStatus(activeTurn?.status)) return null;
   return retryable;
+}
+
+export function canRetryTurn(
+  target: RetryableTurnView | null | undefined,
+  pending: boolean,
+  executionReady: boolean,
+): boolean {
+  return target !== null && target !== undefined && !pending && executionReady;
 }
 
 /** A safe, human reading of a typed settlement reason code. Unknown codes never leak raw text. */

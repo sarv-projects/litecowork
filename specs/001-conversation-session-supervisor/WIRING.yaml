@@ -308,7 +308,7 @@ edges:
     from: "operator"
     to: "sqlite-store"
     kind: "transaction-bound-runtime-readiness-fence"
-    implementation_status: "USER-DELEGATED A-119 / T32: planned; authenticated Operator supplies process-owned Runtime/incarnation identity; SQLite must check current ONLINE/READY inside the admission/retry IMMEDIATE transaction after exact replay. This is operational readiness, not provider qualification."
+    implementation_status: "USER-DELEGATED A-119 / T32 CODE/SERVED: authenticated Operator supplies process-owned Runtime/incarnation identity; SQLite checks exact current ONLINE/READY plus ready_at-present/stopped_at-absent lifecycle consistency inside the admission/retry IMMEDIATE transaction after exact replay and read-only validation, before the first durable/blob effect. This is operational readiness, not provider qualification. Focused native-Windows code evidence is recorded in TASKS.md and CURRENT-RUN; T09 packaged/provider qualification remains open."
     contract: "RuntimeExecutionFence { runtime_id, runtime_incarnation_id }; never caller body data; no persisted or public record"
 transactions:
   - id: "tx-conversation-create"
@@ -320,17 +320,17 @@ transactions:
     owner: "Operator route via SQLite storage (target owner: ConversationService)"
     atomic_records: ["Conversation revision 1 and conversation.created.v1", "USER ConversationMessage", "OPEN ConversationTurn", "UNCLAIMED v29 dispatch intent", "Conversation revision 2 and conversation.message.added.v1", "conversation.turn.created.v2", "Conversation snapshots", "composite idempotency receipt"]
     external_calls_inside: false
-    implementation_status: "CODE/SERVED: one IMMEDIATE transaction validates/replays the exact request and stores the new Conversation, first message, OPEN turn, events, snapshots, intent and receipt. USER-DELEGATED A-119 / T32 adds a pending requirement: after exact replay and before any insert, the same transaction must verify the exact process-owned Runtime incarnation remains current with ONLINE/READY state. Post-commit dispatch is separate; real provider, packaged UI and restart qualification remain open"
+    implementation_status: "CODE/SERVED: one IMMEDIATE transaction validates/replays the exact request and stores the new Conversation, first message, OPEN turn, events, snapshots, intent and receipt. USER-DELEGATED A-119 / T32 checks the exact process-owned current Runtime lifecycle after read-only admission/binding checks and immediately before the first durable/blob effect; exact replay still precedes readiness. Post-commit dispatch is separate; real provider, packaged UI and restart qualification remain open"
   - id: "tx-turn-admission"
     owner: "Operator route via Storage (target owner: ConversationService)"
     atomic_records: ["USER ConversationMessage", "OPEN ConversationTurn", "conversation.message.added.v1", "conversation.turn.created.v2", "request receipt", "snapshot/projection", "v29 dispatch intent"]
     external_calls_inside: false
-    implementation_status: "CODE/SERVED: same-Conversation single-flight guard and v29 durable intent are implemented in the mounted Operator/storage path. USER-DELEGATED A-119 / T32 adds the pending transaction-bound current Runtime ONLINE/READY fence after exact receipt replay. Provider dispatch and live qualification remain separate"
+    implementation_status: "CODE/SERVED: same-Conversation single-flight guard and v29 durable intent are implemented in the mounted Operator/storage path. USER-DELEGATED A-119 / T32 enforces a transaction-bound exact current Runtime ONLINE/READY lifecycle fence after exact receipt replay and read-only validation, before the first durable/blob effect. Provider dispatch and live qualification remain separate"
   - id: "tx-turn-retry"
     owner: "Operator route via SQLite storage (target owner: ConversationService)"
     atomic_records: ["FAILED -> OPEN retry transition", "retry ordinal increment", "conversation.turn.retried.v1", "UNCLAIMED v29 dispatch intent"]
     external_calls_inside: false
-    implementation_status: "USER-DELEGATED A-119 / T32: exact command replay precedes a pending current Runtime ONLINE/READY check inside the Retry write transaction; no new ordinal or intent may be written when the fence fails"
+    implementation_status: "USER-DELEGATED A-119 / T32 CODE/SERVED: exact command replay and read-only transition validation precede the current Runtime ONLINE/READY + lifecycle timestamp check inside the Retry write transaction; no new ordinal or intent may be written when the fence fails"
   - id: "tx-session-reservation"
     owner: "AgentSessionStore"
     atomic_records: ["STARTING AgentSession", "agent.session.starting.v1", "idempotency receipt"]

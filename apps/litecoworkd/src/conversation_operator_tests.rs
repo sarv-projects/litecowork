@@ -998,6 +998,99 @@ async fn new_chat_first_send_commits_and_replays_conversation_and_turn_atomicall
 }
 
 #[tokio::test]
+async fn new_chat_first_turn_requires_ready_runtime() {
+    let directory = tempfile::tempdir().expect("temporary first-turn readiness directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private first-turn readiness directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "first-turn-readiness");
+    seed_agent_binding(
+        &database,
+        WORKSPACE_A,
+        "first-turn-readiness-binding",
+        true,
+        true,
+    );
+    set_workspace_default_agent(&database, WORKSPACE_A, "first-turn-readiness-binding");
+    let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
+    let local_incarnation_id = format!("{RUNTIME}-test-incarnation");
+    let request_id = "first-turn-runtime-not-ready";
+    let body = serde_json::json!({
+        "workspace_id": WORKSPACE_A,
+        "title": "Do not admit until the local Runtime is ready.",
+        "content": [{"kind":"TEXT","text":"Check Runtime admission."}],
+        "resource_refs": [],
+        "agent_binding_id": "first-turn-readiness-binding",
+        "presentation_preference": "AUTO"
+    });
+    let mut connection =
+        rusqlite::Connection::open(&database).expect("open local Runtime readiness fixture");
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .expect("enable readiness fixture constraints");
+    let tx = connection
+        .transaction()
+        .expect("begin Runtime degradation transition");
+    tx.execute(
+        "UPDATE runtimes SET availability='DEGRADED',version=version+1 WHERE runtime_id=?1",
+        [RUNTIME],
+    )
+    .expect("degrade local Runtime");
+    tx.execute(
+        "UPDATE runtime_incarnations SET recovery_state='DEGRADED',version=version+1 WHERE runtime_id=?1 AND runtime_incarnation_id=?2",
+        rusqlite::params![RUNTIME, local_incarnation_id],
+    )
+    .expect("degrade local Runtime incarnation");
+    tx.commit().expect("commit local Runtime degradation");
+    drop(connection);
+
+    let mut request = Request::post("/v1/conversations/first-turn")
+        .header("x-workspace-id", WORKSPACE_A)
+        .header("idempotency-key", request_id)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("first-turn request is valid");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("first-turn route responds");
+    let (status, error) = read_operator_error(response).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(error["code"], "RUNTIME_UNAVAILABLE");
+
+    let connection =
+        rusqlite::Connection::open(&database).expect("inspect rejected first-turn admission");
+    let counts: (i64, i64, i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM conversations WHERE workspace_id=?1),
+                (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id IN (SELECT conversation_id FROM conversations WHERE workspace_id=?1)),
+                (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id IN (SELECT conversation_id FROM conversations WHERE workspace_id=?1)),
+                (SELECT COUNT(*) FROM request_dedup WHERE principal_id=?2 AND request_id=?3),
+                (SELECT COUNT(*) FROM conversation_dispatch_intents WHERE conversation_id IN (SELECT conversation_id FROM conversations WHERE workspace_id=?1)),
+                (SELECT COUNT(*) FROM domain_events WHERE workspace_id=?1 AND type IN ('conversation.created.v1','conversation.message.added.v1','conversation.turn.created.v2'))",
+            rusqlite::params![WORKSPACE_A, OWNER, request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        )
+        .expect("read rejected first-turn side effects");
+    assert_eq!(counts, (0, 0, 0, 0, 0, 0));
+}
+
+#[tokio::test]
 async fn concurrent_conversation_create_retries_commit_only_one_identity() {
     let directory = tempfile::tempdir().expect("temporary concurrent Conversation directory");
     #[cfg(unix)]
@@ -2165,6 +2258,29 @@ fn turn_command_fixture(suffix: &str) -> TurnCommandFixture {
     );
     bind_conversation_agent(&database, WORKSPACE_A, conversation_id, binding_id);
     seed_ready_runtime_for_conversation(&database, WORKSPACE_A, binding_id);
+    let mut local_runtime =
+        rusqlite::Connection::open(&database).expect("open daemon Runtime fence fixture");
+    local_runtime
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .expect("enable daemon Runtime fence fixture constraints");
+    let local_runtime_tx = local_runtime
+        .transaction()
+        .expect("begin daemon Runtime fence fixture");
+    local_runtime_tx
+        .execute(
+            "INSERT INTO runtimes(runtime_id,device_identity_json,runtime_version,platform,architecture,roles_json,trust_zone,availability,startup_policy,current_incarnation_id,resource_capacity_json,last_seen,version) VALUES(?1,'{}','0.1.0','linux','x86_64','[]','LOCAL','ONLINE','MANUAL',?2,'{}','2026-10-15T12:00:00.000000000Z',1)",
+            rusqlite::params![RUNTIME, "turn-command-binding-incarnation"],
+        )
+        .expect("seed online daemon Runtime");
+    local_runtime_tx
+        .execute(
+            "INSERT INTO runtime_incarnations(runtime_incarnation_id,runtime_id,process_started_at,litecowork_version,recovered_from_unclean_shutdown,recovery_state,ready_at,stopped_at,version) VALUES(?1,?2,'2026-10-15T12:00:00.000000000Z','0.1.0',0,'READY','2026-10-15T12:00:00.000000000Z',NULL,1)",
+            rusqlite::params!["turn-command-binding-incarnation", RUNTIME],
+        )
+        .expect("seed ready daemon Runtime incarnation");
+    local_runtime_tx
+        .commit()
+        .expect("commit daemon Runtime fence fixture");
     let supervisor = Arc::new(crate::agents::AgentSessionSupervisor::new(
         store.clone(),
         RUNTIME.to_owned(),
@@ -2192,6 +2308,7 @@ async fn admitted_turn_for_dispatch_fixture(
     fixture: &TurnCommandFixture,
     request_id: &str,
 ) -> (storage_core::conversation::ConversationTurn, String) {
+    use storage_core::conversation::RuntimeExecutionFence;
     use storage_core::{
         AgentHostInstanceRecord, AgentHostStore, ConversationMessageRecord,
         CreateConversationTurnCommit,
@@ -2256,6 +2373,10 @@ async fn admitted_turn_for_dispatch_fixture(
             },
             principal_id: OWNER.to_owned(),
             workspace_id: WORKSPACE_A.to_owned(),
+            runtime_fence: RuntimeExecutionFence {
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: "turn-command-binding-incarnation".to_owned(),
+            },
             message,
             turn,
             message_event: EventDraft {
@@ -2345,6 +2466,7 @@ async fn admitted_turn_for_dispatch_fixture(
 
 #[tokio::test]
 async fn conversation_dispatch_host_resolution_error_settles_the_admitted_attempt() {
+    use storage_core::conversation::RuntimeExecutionFence;
     use storage_core::{
         ConversationMessageRecord, CreateConversationTurnCommit, WorkspaceCreateRequest,
     };
@@ -2402,6 +2524,10 @@ async fn conversation_dispatch_host_resolution_error_settles_the_admitted_attemp
         },
         principal_id: OWNER.to_owned(),
         workspace_id: WORKSPACE_A.to_owned(),
+        runtime_fence: RuntimeExecutionFence {
+            runtime_id: RUNTIME.to_owned(),
+            runtime_incarnation_id: "turn-command-binding-incarnation".to_owned(),
+        },
         message,
         turn,
         message_event: EventDraft {

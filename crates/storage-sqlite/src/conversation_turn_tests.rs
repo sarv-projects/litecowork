@@ -9,6 +9,7 @@ use storage_core::{
 
 use storage_core::conversation::{
     CONVERSATION_TURN_IN_PROGRESS, CommitConversationAgentResponse, ConversationDispatchState,
+    RuntimeExecutionFence,
 };
 
 const AT: &str = "2026-10-09T12:00:00Z";
@@ -206,6 +207,23 @@ pub(super) fn fixture() -> (
     ).unwrap();
     drop(connection);
 
+    let connection = Connection::open(state_database(&directory)).expect("seed local Runtime");
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;")
+        .expect("begin Runtime fixture transaction");
+    connection.execute(
+        "INSERT INTO runtimes(runtime_id,device_identity_json,runtime_version,platform,architecture,roles_json,trust_zone,availability,startup_policy,current_incarnation_id,resource_capacity_json,last_seen,version) VALUES('runtime-local','{}','0.1.0','windows','x86_64','[]','LOCAL','ONLINE','MANUAL','incarnation-local','{}',?1,1)",
+        [AT],
+    ).expect("seed Runtime");
+    connection.execute(
+        "INSERT INTO runtime_incarnations(runtime_incarnation_id,runtime_id,process_started_at,litecowork_version,recovered_from_unclean_shutdown,recovery_state,ready_at,version) VALUES('incarnation-local','runtime-local',?1,'0.1.0',0,'READY',?1,1)",
+        [AT],
+    ).expect("seed ready Runtime incarnation");
+    connection
+        .execute_batch("COMMIT;")
+        .expect("commit Runtime fixture");
+    drop(connection);
+
     let message = ConversationMessageRecord {
         message_id: "message-turn".into(),
         conversation_id: "conversation-turn".into(),
@@ -251,6 +269,10 @@ pub(super) fn fixture() -> (
         },
         principal_id: "owner-local".into(),
         workspace_id: "workspace-turn".into(),
+        runtime_fence: RuntimeExecutionFence {
+            runtime_id: "runtime-local".into(),
+            runtime_incarnation_id: "incarnation-local".into(),
+        },
         message: message.clone(),
         turn: turn.clone(),
         message_event: EventDraft {
@@ -292,6 +314,144 @@ pub(super) fn fixture() -> (
         },
     };
     (directory, store, commit)
+}
+
+#[test]
+fn fresh_existing_conversation_turn_requires_ready_runtime() {
+    let (directory, store, commit) = fixture();
+    store
+        .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+            runtime_id: "runtime-local".into(),
+            runtime_incarnation_id: "incarnation-local".into(),
+            expected_version: 1,
+            recovery_state: "DEGRADED".into(),
+            availability: "DEGRADED".into(),
+            observed_at: AT.into(),
+            stopped_at: None,
+        })
+        .expect("degrade the current Runtime in its owning lifecycle store");
+    let result = SqliteConversationStore::new(store).create_conversation_turn(commit.clone());
+
+    let connection =
+        Connection::open(state_database(&directory)).expect("inspect denied admission");
+    let counts: (i64, i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages WHERE message_id=?1),
+               (SELECT COUNT(*) FROM conversation_turns WHERE turn_id=?2),
+               (SELECT COUNT(*) FROM conversation_dispatch_intents WHERE turn_id=?2),
+               (SELECT COUNT(*) FROM domain_events WHERE event_id IN (?3,?4)),
+               (SELECT COUNT(*) FROM request_dedup WHERE request_id=?5)",
+            rusqlite::params![
+                commit.message.message_id,
+                commit.turn.turn_id,
+                commit.message_event.event_id,
+                commit.turn_event.event_id,
+                commit.request.request_id,
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("read failed-admission side effects");
+
+    assert!(
+        matches!(result, Err(StoreError::Invalid(code)) if code == "RUNTIME_UNAVAILABLE"),
+        "a new turn without an attested ready Runtime must be refused"
+    );
+    assert_eq!(counts, (0, 0, 0, 0, 0), "readiness refusal writes nothing");
+}
+
+#[test]
+fn fresh_existing_conversation_turn_rejects_malformed_ready_lifecycle() {
+    let (directory, store, commit) = fixture();
+    let connection = Connection::open(state_database(&directory)).expect("open Runtime state");
+    connection
+        .execute(
+            "UPDATE runtime_incarnations SET ready_at=NULL WHERE runtime_incarnation_id='incarnation-local'",
+            [],
+        )
+        .expect("inject a malformed READY lifecycle projection");
+    drop(connection);
+
+    let result = SqliteConversationStore::new(store).create_conversation_turn(commit.clone());
+    let connection =
+        Connection::open(state_database(&directory)).expect("inspect denied admission");
+    let counts: (i64, i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages WHERE message_id=?1),
+               (SELECT COUNT(*) FROM conversation_turns WHERE turn_id=?2),
+               (SELECT COUNT(*) FROM conversation_dispatch_intents WHERE turn_id=?2),
+               (SELECT COUNT(*) FROM domain_events WHERE event_id IN (?3,?4)),
+               (SELECT COUNT(*) FROM request_dedup WHERE request_id=?5)",
+            rusqlite::params![
+                commit.message.message_id,
+                commit.turn.turn_id,
+                commit.message_event.event_id,
+                commit.turn_event.event_id,
+                commit.request.request_id,
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("read failed-admission side effects");
+
+    assert!(
+        matches!(result, Err(StoreError::Invalid(code)) if code == "RUNTIME_UNAVAILABLE"),
+        "malformed Runtime readiness must fail closed"
+    );
+    assert_eq!(counts, (0, 0, 0, 0, 0), "readiness refusal writes nothing");
+}
+
+#[test]
+fn exact_existing_conversation_turn_replay_survives_runtime_degradation() {
+    let (directory, store, commit) = fixture();
+    let adapter = SqliteConversationStore::new(store.clone());
+    let accepted = adapter
+        .create_conversation_turn(commit.clone())
+        .expect("admit with exact Runtime ready");
+    store
+        .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+            runtime_id: "runtime-local".into(),
+            runtime_incarnation_id: "incarnation-local".into(),
+            expected_version: 1,
+            recovery_state: "DEGRADED".into(),
+            availability: "DEGRADED".into(),
+            observed_at: AT.into(),
+            stopped_at: None,
+        })
+        .expect("degrade the current Runtime after commit");
+
+    let replay = adapter
+        .create_conversation_turn(commit)
+        .expect("exact committed receipt remains replayable");
+    assert_eq!(replay.turn, accepted.turn);
+    let connection = Connection::open(state_database(&directory)).expect("inspect replay counts");
+    let counts: (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages WHERE turn_id='turn-one'),
+               (SELECT COUNT(*) FROM conversation_turns WHERE turn_id='turn-one'),
+               (SELECT COUNT(*) FROM conversation_dispatch_intents WHERE turn_id='turn-one')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read exact replay counts");
+    assert_eq!(counts, (1, 1, 1), "exact replay creates no duplicate work");
 }
 
 fn seed_binding(
@@ -370,6 +530,21 @@ fn workspace_default_fixture() -> (
     ).unwrap();
     drop(connection);
 
+    let connection = Connection::open(state_database(&directory)).expect("seed default Runtime");
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;")
+        .unwrap();
+    connection.execute(
+        "INSERT INTO runtimes(runtime_id,device_identity_json,runtime_version,platform,architecture,roles_json,trust_zone,availability,startup_policy,current_incarnation_id,resource_capacity_json,last_seen,version) VALUES('runtime-local','{}','0.1.0','windows','x86_64','[]','LOCAL','ONLINE','MANUAL','incarnation-local','{}',?1,1)",
+        [AT],
+    ).unwrap();
+    connection.execute(
+        "INSERT INTO runtime_incarnations(runtime_incarnation_id,runtime_id,process_started_at,litecowork_version,recovered_from_unclean_shutdown,recovery_state,ready_at,version) VALUES('incarnation-local','runtime-local',?1,'0.1.0',0,'READY',?1,1)",
+        [AT],
+    ).unwrap();
+    connection.execute_batch("COMMIT;").unwrap();
+    drop(connection);
+
     let message = ConversationMessageRecord {
         message_id: "message-turn".into(),
         conversation_id: "conversation-turn".into(),
@@ -415,6 +590,10 @@ fn workspace_default_fixture() -> (
         },
         principal_id: "owner-local".into(),
         workspace_id: "workspace-turn".into(),
+        runtime_fence: RuntimeExecutionFence {
+            runtime_id: "runtime-local".into(),
+            runtime_incarnation_id: "incarnation-local".into(),
+        },
         message: message.clone(),
         turn: turn.clone(),
         message_event: EventDraft {
@@ -544,9 +723,10 @@ fn conversation_turn_creation_refuses_an_ineligible_conversation_override_withou
 }
 
 #[test]
-fn conversation_turn_creation_refuses_a_missing_selection_without_persisting_anything() {
-    let (directory, store, mut commit) = workspace_default_fixture();
-    // No Workspace default and no Conversation override.
+fn conversation_turn_creation_honors_explicit_turn_binding_after_workspace_default_changes() {
+    let (directory, store, commit) = workspace_default_fixture();
+    // The request explicitly selected binding-default. Clearing the mutable Workspace
+    // default afterward must not rewrite that pinned per-turn selection.
     let connection = Connection::open(state_database(&directory)).expect("clear the default");
     connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     connection.execute(
@@ -554,14 +734,15 @@ fn conversation_turn_creation_refuses_a_missing_selection_without_persisting_any
         [],
     ).unwrap();
     drop(connection);
-    commit.turn_event.payload["agent_binding_id"] = serde_json::json!("binding-default");
+    let accepted = SqliteConversationStore::new(store)
+        .create_conversation_turn(commit)
+        .expect("explicit eligible per-turn selection remains valid");
+    assert_eq!(
+        accepted.events[1].payload["agent_binding_id"], "binding-default",
+        "the immutable creation event pins the exact selected binding"
+    );
 
-    assert!(matches!(
-        SqliteConversationStore::new(store).create_conversation_turn(commit),
-        Err(StoreError::Invalid(reason)) if reason == "AGENT_UNAVAILABLE"
-    ));
-
-    let connection = Connection::open(state_database(&directory)).expect("inspect the refusal");
+    let connection = Connection::open(state_database(&directory)).expect("inspect admission");
     let (messages, turns, receipts): (i64, i64, i64) = connection
         .query_row(
             "SELECT
@@ -572,7 +753,11 @@ fn conversation_turn_creation_refuses_a_missing_selection_without_persisting_any
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("read durable turn counts");
-    assert_eq!((messages, turns, receipts), (0, 0, 0));
+    assert_eq!(
+        (messages, turns, receipts),
+        (1, 1, 1),
+        "an explicit eligible binding is admitted even when the Workspace default changes"
+    );
 }
 
 #[test]

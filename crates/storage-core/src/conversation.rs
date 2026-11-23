@@ -24,6 +24,10 @@ pub const CONVERSATION_TURN_EVENT_REVISION_MISMATCH: &str =
 /// WAITING_USER, WAITING_DEPENDENCY or CANCEL_REQUESTED. Surfaces as HTTP 409.
 pub const CONVERSATION_TURN_IN_PROGRESS: &str = "CONVERSATION_TURN_IN_PROGRESS";
 
+/// Fresh Conversation dispatch is refused unless the exact process-owned Runtime
+/// incarnation is still current, ONLINE and READY at the admission transaction.
+pub const CONVERSATION_RUNTIME_UNAVAILABLE: &str = "RUNTIME_UNAVAILABLE";
+
 /// Another response with a different provider identity, content or author was already
 /// committed for this turn and retry ordinal (B-04).
 pub const CONVERSATION_RESPONSE_IDENTITY_CONFLICT: &str = "CONVERSATION_RESPONSE_IDENTITY_CONFLICT";
@@ -44,6 +48,14 @@ pub struct CreateConversationCommit {
     pub request: WorkspaceCreateRequest,
     pub conversation: ConversationRecord,
     pub event: EventDraft,
+}
+
+/// Ephemeral internal admission metadata. Values come from the authenticated daemon
+/// process, are never accepted from a desktop request, and are never persisted.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeExecutionFence {
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
 }
 
 /// Version-fenced Conversation AgentBinding override mutation. A null binding clears
@@ -261,6 +273,7 @@ pub struct CreateConversationTurnCommit {
     pub request: WorkspaceCreateRequest,
     pub principal_id: String,
     pub workspace_id: String,
+    pub runtime_fence: RuntimeExecutionFence,
     pub message: ConversationMessageRecord,
     pub turn: ConversationTurn,
     pub message_event: EventDraft,
@@ -274,6 +287,7 @@ pub struct CreateConversationWithFirstTurnCommit {
     pub request: WorkspaceCreateRequest,
     pub principal_id: String,
     pub workspace_id: String,
+    pub runtime_fence: RuntimeExecutionFence,
     pub conversation: ConversationRecord,
     pub conversation_event: EventDraft,
     pub message: ConversationMessageRecord,
@@ -432,6 +446,21 @@ pub trait ConversationTurnStore: Send + Sync {
         expected_version: u64,
         command: TurnCommand,
         event: EventDraft,
+    ) -> Result<ConversationTurn, StoreError>;
+
+    /// Retry uses the same state transition but requires an ephemeral current-Runtime
+    /// fence. Other lifecycle transitions continue through `transition_conversation_turn`.
+    #[allow(clippy::too_many_arguments)]
+    fn transition_conversation_turn_with_runtime_fence(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        expected_version: u64,
+        command: TurnCommand,
+        event: EventDraft,
+        runtime_fence: Option<RuntimeExecutionFence>,
     ) -> Result<ConversationTurn, StoreError>;
 
     /// Settles a turn without a final answer together with its AgentSession; see

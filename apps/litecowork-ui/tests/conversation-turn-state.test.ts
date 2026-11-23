@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AT_BOTTOM_THRESHOLD_PX,
+  canRetryTurn,
   contentSignature,
   conversationTitle,
   defaultAgentOptionLabel,
@@ -17,7 +18,7 @@ import {
 import { parseConversationSnapshot } from "../src/conversations/conversation-view.ts";
 
 const idle = { activeTurn: null, transientStreaming: false, submitting: false };
-const ready = { ...idle, draft: "hello", hasWorkspace: true, operatorReady: true, bindingEligible: true };
+const ready = { ...idle, draft: "hello", hasWorkspace: true, operatorReady: true, executionReady: true, bindingEligible: true };
 
 test("send is fenced for every nonterminal turn status and the gap after the 202", () => {
   assert.equal(isSendEligible(ready), true);
@@ -36,6 +37,7 @@ test("send requires a draft, a Workspace, a ready Operator and a dispatch-eligib
   assert.equal(isSendEligible({ ...ready, draft: "   " }), false);
   assert.equal(isSendEligible({ ...ready, hasWorkspace: false }), false);
   assert.equal(isSendEligible({ ...ready, operatorReady: false }), false);
+  assert.equal(isSendEligible({ ...ready, executionReady: false }), false, "Runtime is not ONLINE and READY");
   assert.equal(isSendEligible({ ...ready, bindingEligible: false }), false);
 });
 
@@ -56,6 +58,9 @@ test("Retry appears only for the latest FAILED turn with no turn in flight", () 
   assert.equal(retryTarget(null, null, false), null);
   assert.equal(retryTarget({ status: "OPEN" }, failed, false), null, "a retry already reopened the turn");
   assert.equal(retryTarget(null, failed, true), null, "double click while pending");
+  assert.equal(canRetryTurn(failed, false, true), true);
+  assert.equal(canRetryTurn(failed, false, false), false, "Runtime is not ONLINE and READY");
+  assert.equal(canRetryTurn(failed, true, true), false, "retry request already pending");
 });
 
 test("retry reasons are fixed safe text and unknown codes never leak raw strings", () => {

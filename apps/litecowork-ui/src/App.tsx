@@ -70,6 +70,7 @@ import {
   type TaskPlanningReadinessView,
 } from "./tasks/planning-readiness";
 import { canOfferLocalRuntimeStart } from "./runtime/runtime-start-readiness";
+import { isRuntimeExecutionReady } from "./runtime/runtime-health";
 import type { RuntimeStopPreviewView, StopPreviewState } from "./runtime/runtime-stop-state.ts";
 import { RuntimeInventoryStreamController, type RuntimeInventoryStreamStatus } from "./runtime/runtime-inventory-stream.ts";
 import { desktopRuntimeInventoryStreamDriver } from "./runtime/desktop-runtime-inventory-stream.ts";
@@ -2643,6 +2644,18 @@ function App() {
             workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"}
             workspaceDefaultAgentBindingId={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.defaultAgentBindingId ?? null}
             operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)}
+            executionReady={isRuntimeExecutionReady({
+              operatorReady: runtime?.operatorReady === true && Boolean(selectedWorkspaceId),
+              runtimeId: runtime?.runtimeId,
+              incarnationId: runtime?.localIncarnationId,
+              lifecycleIdentity: runtimeLifecycle?.identity,
+              lifecycleRuntimeId: runtimeLifecycle?.view.runtimeId,
+              lifecycleIncarnationId: runtimeLifecycle?.view.incarnation.runtimeIncarnationId,
+              availability: runtimeLifecycle?.view.availability,
+              recoveryState: runtimeLifecycle?.view.incarnation.recoveryState,
+            })}
+            runtimeLifecycleLoading={runtimeLifecycleLoading}
+            onRefreshRuntimeStatus={refreshRuntime}
             draft={conversationDrafts[selectedWorkspaceId] ?? ""}
             onDraftChange={value => setConversationDrafts(current => ({ ...current, [selectedWorkspaceId]: value }))}
             onOpenAgentSettings={() => requestPageNavigation("Settings")}

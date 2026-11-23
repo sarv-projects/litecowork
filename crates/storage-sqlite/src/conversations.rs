@@ -514,6 +514,11 @@ impl ConversationTurnStore for SqliteConversationStore {
             // Conversation revision, even if its request was prepared from an older read.
             message_event.entity_revision = u64::try_from(next_conversation_version)
                 .map_err(|_| StoreError::Invalid("Conversation version is invalid".to_owned()))?;
+            // Complete read-only request validation first so existing typed errors (for
+            // example, an unavailable selected agent) retain their established meaning.
+            // The readiness fence still runs under this IMMEDIATE transaction, directly
+            // before the first durable effect.
+            require_runtime_execution_ready(&tx, &commit.runtime_fence)?;
             tx.execute(
                 "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,agent_session_id,agent_binding_id,turn_id,content_json,resource_refs_json,source_channel_ref_json,created_at) VALUES(?1,?2,?3,'USER',NULL,NULL,?4,?5,?6,NULL,?7)",
                 params![
@@ -630,6 +635,7 @@ impl ConversationTurnStore for SqliteConversationStore {
             request: commit.request.clone(),
             principal_id: commit.principal_id.clone(),
             workspace_id: commit.workspace_id.clone(),
+            runtime_fence: commit.runtime_fence.clone(),
             message: commit.message.clone(),
             turn: commit.turn.clone(),
             message_event: commit.message_event.clone(),
@@ -733,6 +739,10 @@ impl ConversationTurnStore for SqliteConversationStore {
             if !binding_eligible {
                 return Err(StoreError::Invalid("AGENT_UNAVAILABLE".to_owned()));
             }
+
+            // Resolve all read-only selection failures before checking execution
+            // readiness, then fence immediately before the first durable/blob effect.
+            require_runtime_execution_ready(&tx, &commit.runtime_fence)?;
 
             let initial_bytes = canonical_json(&commit.conversation)?;
             let initial_blob = blobs.put(
@@ -2007,6 +2017,29 @@ impl ConversationTurnStore for SqliteConversationStore {
         command: TurnCommand,
         event: EventDraft,
     ) -> Result<ConversationTurn, StoreError> {
+        self.transition_conversation_turn_with_runtime_fence(
+            principal_id,
+            workspace_id,
+            conversation_id,
+            turn_id,
+            expected_version,
+            command,
+            event,
+            None,
+        )
+    }
+
+    fn transition_conversation_turn_with_runtime_fence(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        expected_version: u64,
+        command: TurnCommand,
+        event: EventDraft,
+        runtime_fence: Option<RuntimeExecutionFence>,
+    ) -> Result<ConversationTurn, StoreError> {
         let principal = principal_id.to_owned();
         let workspace = workspace_id.to_owned();
         let conversation = conversation_id.to_owned();
@@ -2021,6 +2054,30 @@ impl ConversationTurnStore for SqliteConversationStore {
                 params![workspace, principal], |row| row.get(0),
             ).map_err(map_database_error)?;
             if !allowed { return Err(StoreError::NotFound); }
+            let retry_fence = if matches!(command, TurnCommand::Retry) {
+                if let Some(request_id) = event.causation_id.as_deref() {
+                    let already_retried: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM domain_events WHERE workspace_id=?1 AND entity_type='ConversationTurn' AND entity_id=?2 AND causation_id=?3 AND type='conversation.turn.retried.v1')",
+                        params![workspace, id, request_id],
+                        |row| row.get(0),
+                    ).map_err(map_database_error)?;
+                    if already_retried {
+                        let replay = load_turn(&tx, &workspace, &conversation, &id)?
+                            .ok_or_else(|| StoreError::Integrity("Conversation Retry receipt has no current turn".to_owned()))?;
+                        tx.commit().map_err(map_database_error)?;
+                        return Ok(replay);
+                    }
+                }
+                Some(runtime_fence.as_ref().ok_or_else(|| {
+                    StoreError::Invalid(CONVERSATION_RUNTIME_UNAVAILABLE.to_owned())
+                })?)
+            } else if runtime_fence.is_some() {
+                return Err(StoreError::Invalid(
+                    "Runtime execution fence is only valid for Retry".to_owned(),
+                ));
+            } else {
+                None
+            };
             let current = load_turn(&tx, &workspace, &conversation, &id)?
                 .ok_or(StoreError::NotFound)?;
             if current.version != expected_version {
@@ -2051,6 +2108,20 @@ impl ConversationTurnStore for SqliteConversationStore {
                     return Err(StoreError::Invalid("CONVERSATION_SESSION_NOT_READY".to_owned()));
                 }
             }
+            if matches!(command, TurnCommand::Retry) {
+                let other_in_flight: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM conversation_turns WHERE conversation_id=?1 AND turn_id<>?2 AND status IN ('OPEN','RUNNING','WAITING_USER','WAITING_DEPENDENCY','CANCEL_REQUESTED'))",
+                    params![conversation, id], |row| row.get(0),
+                ).map_err(map_database_error)?;
+                if other_in_flight {
+                    return Err(StoreError::Invalid(CONVERSATION_TURN_IN_PROGRESS.to_owned()));
+                }
+            }
+            if let Some(fence) = retry_fence {
+                // Exact replay and all non-mutating transition checks are complete. The
+                // readiness fence is atomic with Retry and precedes blob/database effects.
+                require_runtime_execution_ready(&tx, fence)?;
+            }
             let state_bytes = canonical_json(&next)?;
             let blob = blobs.put(&workspace, BlobPurpose::AggregateState, &state_bytes, super::STATE_MEDIA_TYPE)?;
             let state_ref = AggregateStateRef { blob, entity_revision: next.version, record_schema_version: 1 };
@@ -2063,13 +2134,6 @@ impl ConversationTurnStore for SqliteConversationStore {
                 return Err(StoreError::Conflict { expected: Some(expected_version), actual: None });
             }
             if matches!(command, TurnCommand::Retry) {
-                let other_in_flight: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM conversation_turns WHERE conversation_id=?1 AND turn_id<>?2 AND status IN ('OPEN','RUNNING','WAITING_USER','WAITING_DEPENDENCY','CANCEL_REQUESTED'))",
-                    params![conversation, id], |row| row.get(0),
-                ).map_err(map_database_error)?;
-                if other_in_flight {
-                    return Err(StoreError::Invalid(CONVERSATION_TURN_IN_PROGRESS.to_owned()));
-                }
                 // The new attempt owes a dispatch; the same transaction that reopens the
                 // turn records it so a crash cannot strand an OPEN turn without an intent.
                 tx.execute(
@@ -2139,6 +2203,35 @@ impl ConversationTurnStore for SqliteConversationStore {
                 &now,
             )
         })
+    }
+}
+
+fn require_runtime_execution_ready(
+    connection: &Connection,
+    fence: &RuntimeExecutionFence,
+) -> Result<(), StoreError> {
+    if fence.runtime_id.trim().is_empty()
+        || fence.runtime_incarnation_id.trim().is_empty()
+        || fence.runtime_id.len() > 256
+        || fence.runtime_incarnation_id.len() > 256
+    {
+        return Err(StoreError::Invalid(
+            CONVERSATION_RUNTIME_UNAVAILABLE.to_owned(),
+        ));
+    }
+    let ready: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtimes r JOIN runtime_incarnations i ON i.runtime_id=r.runtime_id AND i.runtime_incarnation_id=?2 WHERE r.runtime_id=?1 AND r.current_incarnation_id=?2 AND r.availability='ONLINE' AND i.recovery_state='READY' AND i.ready_at IS NOT NULL AND i.stopped_at IS NULL)",
+            params![fence.runtime_id, fence.runtime_incarnation_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if ready {
+        Ok(())
+    } else {
+        Err(StoreError::Invalid(
+            CONVERSATION_RUNTIME_UNAVAILABLE.to_owned(),
+        ))
     }
 }
 

@@ -339,12 +339,11 @@ WAITING_USER/WAITING_DEPENDENCY continuation and cancellation remain unsupported
 provider evidence. Some pre-dispatch errors can still leave the claimed intent
 unsettled until restart recovery. Only OpenCode has a dispatch
 branch; no exact Windows/provider/auth/UI route is qualified. Conversation usage accounting
-and a complete correlated native token-stream projection are not wired. Keep Send/API
-eligibility fail-closed until the remaining lifecycle and CODE/SYSTEM/owner USER gates are
-closed. The current UI's dispatch-branch predicate does not enforce this target gate and can
-enable Send before exact-route qualification; track that as a release blocker, not as current
-fail-closed behavior. See `specs/001-conversation-session-supervisor/` for the detailed
-source audit.
+and a complete correlated native token-stream projection are not wired. T32 enforces the
+local Runtime execution-readiness prerequisite in storage and the desktop; remaining
+provider, package, OS, authentication and owner USER evidence still blocks release
+qualification. See `specs/001-conversation-session-supervisor/` for the detailed source
+audit.
 
 **Single-flight:** the Conversation turn creation transaction rejects a second active
 turn with `CONVERSATION_TURN_IN_PROGRESS`; v29 database triggers backstop the same lane.
@@ -370,6 +369,20 @@ and UNCLAIMED dispatch intent. The `202` response is `{conversation, turn}` with
 version 2. Exact retry returns the original composite receipt; a changed payload under the
 same key conflicts. Provider dispatch occurs only after commit. This is CODE/SERVED evidence
 for atomic admission, not proof of a working native provider or packaged first-send journey.
+As of 001-T32, a fresh first-send also requires the authenticated daemon's exact
+`{runtime_id, runtime_incarnation_id}` to remain the current ONLINE/READY incarnation
+inside that same SQLite write transaction, with `ready_at` present and `stopped_at`
+absent. Exact committed receipt replay happens first; existing read-only owner, admission,
+version, Resource and AgentBinding checks follow; lifecycle readiness is checked directly
+before the first durable/blob effect. A missing, stale, superseded, offline, degraded,
+recovering, draining, stopping, stopped, inconsistent or unknown incarnation returns
+`503 RUNTIME_UNAVAILABLE` without a partial Conversation, message, turn, dispatch intent,
+event, aggregate snapshot, or request receipt. Existing turn Send and a new Retry use the
+same admission fence. Stop/cancel, settlement, reads, and exact saved-send or Retry
+receipt replay keep their existing paths. The desktop uses an identity-matched lifecycle
+projection to disable fresh Send/Retry while status is absent, loading, mismatched or not
+ONLINE/READY, and offers Refresh Runtime status. This is CODE/SERVED readiness enforcement;
+it is not provider authentication or QUALIFIED evidence.
 `PATCH /v1/conversations/{id}/agent-binding` requires the selected Workspace,
 `If-Match` with the observed Conversation version, and `Idempotency-Key`; its body is
 `{ "agent_binding_id": "..." }` or `{ "agent_binding_id": null }`. The atomic

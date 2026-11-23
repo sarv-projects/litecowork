@@ -3,7 +3,7 @@
 use super::*;
 use storage_core::conversation::{
     CommitConversationAgentResponse, ConversationDispatchState, ConversationMessageRecord,
-    ConversationSessionEnd, ConversationTurnStatus, ConversationTurnStore,
+    ConversationSessionEnd, ConversationTurnStatus, ConversationTurnStore, RuntimeExecutionFence,
     SettleConversationSession, SettleConversationTurn, TurnCommand,
 };
 use storage_core::{ActivateConversationAgentSession, AgentSessionStore, WorkspaceCreateRequest};
@@ -75,6 +75,28 @@ fn activated() -> Activated {
         turn_id,
         session_id,
     }
+}
+
+fn retry_with_runtime_fence(
+    activated: &Activated,
+    expected_version: u64,
+    event: EventDraft,
+) -> Result<storage_core::conversation::ConversationTurn, StoreError> {
+    activated
+        .store
+        .transition_conversation_turn_with_runtime_fence(
+            OWNER_ID,
+            WORKSPACE_ID,
+            &activated.conversation_id,
+            &activated.turn_id,
+            expected_version,
+            TurnCommand::Retry,
+            event,
+            Some(RuntimeExecutionFence {
+                runtime_id: RUNTIME_ID.to_owned(),
+                runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            }),
+        )
 }
 
 impl Activated {
@@ -633,46 +655,12 @@ fn conversation_retry_reopens_failed_turn_with_new_ordinal_intent_and_single_fli
         )
     };
     // Stale version and a payload that still carries a session are refused.
-    assert!(
-        a.store
-            .transition_conversation_turn(
-                OWNER_ID,
-                WORKSPACE_ID,
-                &a.conversation_id,
-                &a.turn_id,
-                2,
-                TurnCommand::Retry,
-                retry_event(4, 1, "event-retry-stale")
-            )
-            .is_err()
-    );
+    assert!(retry_with_runtime_fence(&a, 2, retry_event(4, 1, "event-retry-stale")).is_err());
     let mut with_session = retry_event(4, 1, "event-retry-session");
     with_session.payload["agent_session_id"] = serde_json::json!("fresh-session");
-    assert!(
-        a.store
-            .transition_conversation_turn(
-                OWNER_ID,
-                WORKSPACE_ID,
-                &a.conversation_id,
-                &a.turn_id,
-                3,
-                TurnCommand::Retry,
-                with_session
-            )
-            .is_err()
-    );
+    assert!(retry_with_runtime_fence(&a, 3, with_session).is_err());
 
-    let retried = a
-        .store
-        .transition_conversation_turn(
-            OWNER_ID,
-            WORKSPACE_ID,
-            &a.conversation_id,
-            &a.turn_id,
-            3,
-            TurnCommand::Retry,
-            retry_event(4, 1, "event-retry-ok"),
-        )
+    let retried = retry_with_runtime_fence(&a, 3, retry_event(4, 1, "event-retry-ok"))
         .expect("retry reopens the failed turn");
     assert_eq!(retried.status, ConversationTurnStatus::Open);
     assert_eq!(retried.retry_ordinal, 1);
@@ -692,19 +680,7 @@ fn conversation_retry_reopens_failed_turn_with_new_ordinal_intent_and_single_fli
 
     // Retry of a non-FAILED turn is rejected, and single-flight blocks a re-open while
     // another turn is in flight.
-    assert!(
-        a.store
-            .transition_conversation_turn(
-                OWNER_ID,
-                WORKSPACE_ID,
-                &a.conversation_id,
-                &a.turn_id,
-                4,
-                TurnCommand::Retry,
-                retry_event(5, 2, "event-retry-open")
-            )
-            .is_err()
-    );
+    assert!(retry_with_runtime_fence(&a, 4, retry_event(5, 2, "event-retry-open")).is_err());
     let replay = a
         .store
         .find_conversation_turn_command_replay(
@@ -715,6 +691,153 @@ fn conversation_retry_reopens_failed_turn_with_new_ordinal_intent_and_single_fli
         )
         .expect("replay lookup");
     assert!(replay.is_none());
+}
+
+#[test]
+fn retry_conversation_turn_requires_ready_runtime_and_replays_exact_receipt_after_degradation() {
+    let a = activated();
+    a.settle(
+        2,
+        TurnCommand::Fail {
+            settled_at: NOW.to_owned(),
+        },
+        "FAILED",
+        ConversationSessionEnd::Lost,
+        2,
+    )
+    .expect("failure settlement");
+    let mut retry = draft(
+        "event-retry-runtime-fence",
+        WORKSPACE_ID,
+        "ConversationTurn",
+        &a.turn_id,
+        4,
+        "conversation.turn.retried.v1",
+        serde_json::json!({
+            "turn_id": a.turn_id,
+            "prior_agent_session_id": a.session_id,
+            "retry_ordinal": 1,
+            "aggregate_version": 4
+        }),
+    );
+    retry.causation_id = Some("retry-runtime-fence-request".to_owned());
+    let retried =
+        retry_with_runtime_fence(&a, 3, retry.clone()).expect("ready Runtime admits Retry");
+    assert_eq!(retried.status, ConversationTurnStatus::Open);
+    let event_count_after_retry = a.row(
+        "SELECT CAST(COUNT(*) AS TEXT) FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1",
+        &a.turn_id,
+    );
+    let intent_count_after_retry = a.row(
+        "SELECT CAST(COUNT(*) AS TEXT) FROM conversation_dispatch_intents WHERE turn_id=?1",
+        &a.turn_id,
+    );
+
+    let current = a
+        .fixture
+        .store
+        .read_local_lifecycle_snapshot(RUNTIME_ID, INCARNATION_ID)
+        .expect("read the exact local Runtime lifecycle")
+        .expect("local Runtime incarnation is current");
+    a.fixture
+        .store
+        .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+            runtime_id: RUNTIME_ID.to_owned(),
+            runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            expected_version: current.incarnation.version,
+            recovery_state: "DEGRADED".to_owned(),
+            availability: "DEGRADED".to_owned(),
+            observed_at: NOW.to_owned(),
+            stopped_at: None,
+        })
+        .expect("degrade the current local Runtime");
+
+    let replay = retry_with_runtime_fence(&a, 3, retry)
+        .expect("the exact Retry receipt replays before readiness is checked");
+    assert_eq!(replay, retried);
+    assert_eq!(
+        a.row(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1",
+            &a.turn_id,
+        ),
+        event_count_after_retry
+    );
+    assert_eq!(
+        a.row(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM conversation_dispatch_intents WHERE turn_id=?1",
+            &a.turn_id,
+        ),
+        intent_count_after_retry
+    );
+
+    // A separate failed turn proves a new Retry is refused while degraded, before
+    // it can append an event or dispatch intent.
+    let b = activated();
+    b.settle(
+        2,
+        TurnCommand::Fail {
+            settled_at: NOW.to_owned(),
+        },
+        "FAILED",
+        ConversationSessionEnd::Lost,
+        2,
+    )
+    .expect("failure settlement");
+    let current = b
+        .fixture
+        .store
+        .read_local_lifecycle_snapshot(RUNTIME_ID, INCARNATION_ID)
+        .expect("read the exact local Runtime lifecycle")
+        .expect("local Runtime incarnation is current");
+    b.fixture
+        .store
+        .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+            runtime_id: RUNTIME_ID.to_owned(),
+            runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            expected_version: current.incarnation.version,
+            recovery_state: "DEGRADED".to_owned(),
+            availability: "DEGRADED".to_owned(),
+            observed_at: NOW.to_owned(),
+            stopped_at: None,
+        })
+        .expect("degrade the current local Runtime");
+    let before_refused_retry = b.row(
+        "SELECT CAST(COUNT(*) AS TEXT) FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1",
+        &b.turn_id,
+    );
+    let mut distinct_retry = draft(
+        "event-retry-runtime-refused",
+        WORKSPACE_ID,
+        "ConversationTurn",
+        &a.turn_id,
+        4,
+        "conversation.turn.retried.v1",
+        serde_json::json!({
+            "turn_id": b.turn_id,
+            "prior_agent_session_id": b.session_id,
+            "retry_ordinal": 1,
+            "aggregate_version": 4
+        }),
+    );
+    distinct_retry.causation_id = Some("retry-runtime-fence-new-request".to_owned());
+    assert!(matches!(
+        retry_with_runtime_fence(&b, 3, distinct_retry),
+        Err(StoreError::Invalid(code)) if code == "RUNTIME_UNAVAILABLE"
+    ));
+    assert_eq!(
+        b.row(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1",
+            &b.turn_id,
+        ),
+        before_refused_retry
+    );
+    assert_eq!(
+        b.row(
+            "SELECT CAST(COUNT(*) AS TEXT) FROM conversation_dispatch_intents WHERE turn_id=?1",
+            &b.turn_id,
+        ),
+        "1"
+    );
 }
 
 #[test]

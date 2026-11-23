@@ -9,6 +9,7 @@ import { ConversationStreamController, type ConversationStreamDriver, type Strea
 import { buildConversationAgentChoices, type ConversationAgentBindingOption, type ConversationAgentProfileOption } from "./conversation-agent-selection";
 import {
   COMPOSER_PLACEHOLDER,
+  canRetryTurn,
   contentSignature,
   conversationTitle,
   defaultAgentOptionLabel,
@@ -369,6 +370,9 @@ export function ConversationsPage({
   workspaceId,
   workspaceName,
   operatorReady,
+  executionReady,
+  runtimeLifecycleLoading,
+  onRefreshRuntimeStatus,
   draft,
   onDraftChange,
   onOpenAgentSettings: _onOpenAgentSettings,
@@ -385,6 +389,9 @@ export function ConversationsPage({
   workspaceId: string;
   workspaceName: string;
   operatorReady: boolean;
+  executionReady: boolean;
+  runtimeLifecycleLoading: boolean;
+  onRefreshRuntimeStatus: () => Promise<void>;
   draft: string;
   onDraftChange: (value: string) => void;
   onOpenAgentSettings: () => void;
@@ -1233,6 +1240,7 @@ export function ConversationsPage({
     draft: composerDraft,
     hasWorkspace: Boolean(workspaceId),
     operatorReady,
+    executionReady,
     bindingEligible: bindingEligibleForSend,
   });
 
@@ -1418,7 +1426,7 @@ export function ConversationsPage({
       return;
     }
     const text = composerDraft.trim();
-    if (!text || !workspaceId || !operatorReady || sendingTurn || isTurnRunning) return;
+    if (!text || !workspaceId || !operatorReady || !executionReady || sendingTurn || isTurnRunning) return;
     if (!bindingEligibleForSend || (selectedId && sendJournalStatus !== "READY")) return;
     if (!selectedId) {
       if (busy || createJournalStatus !== "READY" || !attachmentDraftKey) return;
@@ -1545,7 +1553,7 @@ export function ConversationsPage({
     }
   };
   const retryTurn = async () => {
-    if (!selectedId || !workspaceId || !operatorReady || !retrying || retryPending) return;
+    if (!selectedId || !workspaceId || !operatorReady || !executionReady || !retrying || retryPending) return;
     const reqId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `retry-req-${Date.now()}`;
     setRetryPending(true);
     setTurnError(null);
@@ -1840,11 +1848,12 @@ export function ConversationsPage({
                   <div className="message-assistant-wrap">
                     <div className="message-assistant-body turn-failed-card">
                       <p><strong>This turn failed.</strong> {retryReasonLabel(retrying.reason_code)} Your message was kept.</p>
+                      {!executionReady && <p role="status">Retry is paused until the current Runtime is online and ready.</p>}
                       <TurnActivityView entries={activityEntries} />
                       <button
                         className="quiet-button"
                         type="button"
-                        disabled={!operatorReady || retryPending}
+                        disabled={!canRetryTurn(retrying, retryPending || !operatorReady, executionReady)}
                         aria-label={`Retry turn. ${retryReasonLabel(retrying.reason_code)}`}
                         onClick={() => void retryTurn()}
                       >
@@ -1901,6 +1910,14 @@ export function ConversationsPage({
       <div className="floating-composer-card">
         {turnError && <p className="composer-turn-error" role="alert">{turnError}</p>}
         {visibleAgentMutationNotice && <p className="composer-notice">{visibleAgentMutationNotice.message}</p>}
+        {!executionReady && !pendingSendForSelection && !isTurnRunning && (
+          <p className="composer-notice" role="status">
+            {runtimeLifecycleLoading
+              ? "Checking Runtime recovery status. Fresh sends and retries are paused."
+              : "Fresh sends and retries are paused until the current Runtime is online and ready."}{" "}
+            <button className="text-button" type="button" onClick={() => void onRefreshRuntimeStatus()}>Refresh Runtime status</button>
+          </p>
+        )}
         <textarea
           className="composer-textarea"
           aria-label="Message draft"
@@ -2014,6 +2031,8 @@ export function ConversationsPage({
                       ? "Checking pending send recovery"
                       : !operatorReady
                       ? "Operator is not ready"
+                      : !executionReady
+                        ? "Runtime must be online and ready before starting new work"
                       : !bindingEligibleForSend
                         ? "Select an available agent to send"
                         : sendingTurn

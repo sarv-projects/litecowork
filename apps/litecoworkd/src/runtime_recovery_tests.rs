@@ -16,7 +16,7 @@ use storage_core::{
     DeviceIdentityRecord, EventDraft, RuntimeIncarnationRecord, StoreError, WorkspaceCreateRequest,
     conversation::{
         CommitConversationAgentResponse, ConversationTurn, ConversationTurnStatus,
-        PresentationPreference, request_payload_value,
+        PresentationPreference, RuntimeExecutionFence, request_payload_value,
     },
 };
 use storage_sqlite::{
@@ -106,6 +106,24 @@ fn register_from_bootstrap(
 ) -> RuntimeIncarnationRecord {
     register_runtime_incarnation(store, state, test_device_identity(), NOW)
         .expect("Runtime bootstrap registers its incarnation")
+}
+
+fn mark_registered_runtime_ready(database: &Path, runtime_id: &str, incarnation_id: &str) {
+    let mut connection = Connection::open(database).expect("open registered Runtime fixture");
+    let tx = connection
+        .transaction()
+        .expect("begin Runtime readiness fixture transition");
+    tx.execute(
+        "UPDATE runtimes SET availability='ONLINE', current_incarnation_id=?1, version=version+1 WHERE runtime_id=?2",
+        params![incarnation_id, runtime_id],
+    )
+    .expect("mark local Runtime online for prior Conversation admission");
+    tx.execute(
+        "UPDATE runtime_incarnations SET recovery_state='READY', ready_at=?1, stopped_at=NULL, version=version+1 WHERE runtime_incarnation_id=?2 AND runtime_id=?3",
+        params![NOW, incarnation_id, runtime_id],
+    )
+    .expect("mark current Runtime incarnation ready for prior Conversation admission");
+    tx.commit().expect("commit Runtime readiness fixture");
 }
 
 #[test]
@@ -595,6 +613,11 @@ fn conversation_session_recovery_releases_orphan_starting_session_idempotently()
     let old = local_state(OLD_INCARNATION_ID, true);
     persist_state(directory.path(), &old).expect("persist the previous Runtime incarnation");
     register_from_bootstrap(&store, &old);
+    mark_registered_runtime_ready(
+        &directory.path().join("litecowork.sqlite3"),
+        RUNTIME_ID,
+        OLD_INCARNATION_ID,
+    );
 
     WorkspaceService::new(store.clone())
         .create(CreateWorkspace {
@@ -720,6 +743,10 @@ fn conversation_session_recovery_releases_orphan_starting_session_idempotently()
             },
             principal_id: OWNER.to_owned(),
             workspace_id: WORKSPACE.to_owned(),
+            runtime_fence: RuntimeExecutionFence {
+                runtime_id: RUNTIME_ID.to_owned(),
+                runtime_incarnation_id: OLD_INCARNATION_ID.to_owned(),
+            },
             message: ConversationMessageRecord {
                 message_id: message_id.clone(),
                 conversation_id: CONVERSATION.to_owned(),
@@ -936,6 +963,11 @@ fn conversation_session_recovery_fails_active_session_after_prior_incarnation() 
     let old = local_state(OLD_INCARNATION_ID, true);
     persist_state(directory.path(), &old).expect("persist the previous Runtime incarnation");
     register_from_bootstrap(&store, &old);
+    mark_registered_runtime_ready(
+        &directory.path().join("litecowork.sqlite3"),
+        RUNTIME_ID,
+        OLD_INCARNATION_ID,
+    );
 
     WorkspaceService::new(store.clone())
         .create(CreateWorkspace {
@@ -1060,6 +1092,10 @@ fn conversation_session_recovery_fails_active_session_after_prior_incarnation() 
             },
             principal_id: OWNER.to_owned(),
             workspace_id: WORKSPACE.to_owned(),
+            runtime_fence: RuntimeExecutionFence {
+                runtime_id: RUNTIME_ID.to_owned(),
+                runtime_incarnation_id: OLD_INCARNATION_ID.to_owned(),
+            },
             message: ConversationMessageRecord {
                 message_id: MESSAGE.to_owned(),
                 conversation_id: CONVERSATION.to_owned(),
@@ -1254,6 +1290,11 @@ fn conversation_session_recovery_preserves_final_response_and_receipt() {
     persist_state(directory.path(), &old).expect("persist the unclean prior Runtime incarnation");
     let store = store(directory.path());
     register_from_bootstrap(&store, &old);
+    mark_registered_runtime_ready(
+        &directory.path().join("litecowork.sqlite3"),
+        RUNTIME_ID,
+        OLD_INCARNATION_ID,
+    );
 
     WorkspaceService::new(store.clone())
         .create(CreateWorkspace {
@@ -1378,6 +1419,10 @@ fn conversation_session_recovery_preserves_final_response_and_receipt() {
             },
             principal_id: OWNER.to_owned(),
             workspace_id: WORKSPACE.to_owned(),
+            runtime_fence: RuntimeExecutionFence {
+                runtime_id: RUNTIME_ID.to_owned(),
+                runtime_incarnation_id: OLD_INCARNATION_ID.to_owned(),
+            },
             message: ConversationMessageRecord {
                 message_id: USER_MESSAGE.to_owned(),
                 conversation_id: CONVERSATION.to_owned(),

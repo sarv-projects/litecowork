@@ -547,6 +547,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description An already applied Retry command is replayed from durable turn state before readiness checks. After read-only transition/version/single-flight validation, a new Retry requires the authenticated daemon's exact current Runtime incarnation to be ONLINE and READY with ready_at present and stopped_at absent in the same SQLite write transaction immediately before the first durable/blob effect; otherwise return 503 RUNTIME_UNAVAILABLE without creating a new retry ordinal, dispatch intent, event, or request receipt. */
         post: operations["retryConversationTurn"];
         delete?: never;
         options?: never;
@@ -8461,13 +8462,22 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Conversation creation and first-turn admission were committed atomically; exact retries replay the same composite receipt */
+            /** @description Conversation creation and first-turn admission were committed atomically. An exact committed receipt replays before Runtime readiness is checked. After read-only owner and binding validation, a fresh admission requires the authenticated daemon's exact current Runtime incarnation to be ONLINE and READY with ready_at present and stopped_at absent in the same SQLite write transaction immediately before the first durable/blob effect; otherwise return 503 RUNTIME_UNAVAILABLE without a partial Conversation, message, turn, intent, event, aggregate snapshot, or request receipt. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationFirstTurnAdmission"];
+                };
+            };
+            /** @description Includes RUNTIME_UNAVAILABLE when the fresh admission fence finds the exact daemon Runtime incarnation missing, stale, or not ONLINE and READY; that refusal commits no first-turn write or receipt. Other 503 causes retain this operation's existing admission and recovery semantics. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];
@@ -8702,13 +8712,22 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Durable user turn accepted; agent reply is streamed separately */
+            /** @description Durable user turn accepted; agent reply is streamed separately. Exact committed request replay is returned first. After read-only owner, version, Resource, and AgentBinding validation, a fresh admission requires the authenticated daemon's exact current Runtime incarnation to be ONLINE and READY with ready_at present and stopped_at absent in the same SQLite write transaction immediately before the first durable/blob effect; otherwise return 503 RUNTIME_UNAVAILABLE without a partial message, turn, intent, event, aggregate snapshot, or request receipt. */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationTurnReceipt"];
+                };
+            };
+            /** @description Includes RUNTIME_UNAVAILABLE when the fresh admission fence finds the exact daemon Runtime incarnation missing, stale, or not ONLINE and READY; that refusal commits no new turn admission or receipt. Other 503 causes retain this operation's existing admission and recovery semantics. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];
@@ -8866,6 +8885,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationTurnReceipt"];
+                };
+            };
+            /** @description Includes RUNTIME_UNAVAILABLE when a new Retry is refused because the exact daemon Runtime incarnation is missing, stale, or not ONLINE and READY; that refusal commits no new retry ordinal, intent, event, or receipt. Other 503 causes retain this operation's existing admission and recovery semantics. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];

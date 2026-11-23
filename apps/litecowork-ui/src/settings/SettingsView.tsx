@@ -110,6 +110,7 @@ export function SettingsView(props: SettingsViewProps) {
   const runtimeHealth = deriveRuntimeHealthRows(
     {
       operatorReady: props.runtime?.operatorReady ?? false,
+      availability: props.runtimeLifecycle?.availability ?? null,
       recoveryState: props.runtimeLifecycle?.incarnation?.recoveryState ?? null,
     },
     typeof navigator === "undefined" ? "" : navigator.platform,

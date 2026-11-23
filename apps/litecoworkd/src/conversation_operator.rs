@@ -11,7 +11,7 @@ use storage_core::conversation::{
     CONVERSATION_ARCHIVED, CONVERSATION_DELETED, CONVERSATION_NOT_QUIESCENT,
     CONVERSATION_SESSION_ADMISSION_UNAVAILABLE, CONVERSATION_TURN_IN_PROGRESS, ConversationStatus,
     ConversationTurn, ConversationTurnStatus, PresentationPreference, RenameConversation,
-    SetConversationArchived, TurnCommand, request_payload_value,
+    RuntimeExecutionFence, SetConversationArchived, TurnCommand, request_payload_value,
 };
 use storage_core::{
     AgentSessionRecord, AgentSessionStore, CommittedConversation, CommittedConversationFirstTurn,
@@ -214,15 +214,91 @@ pub(super) fn test_router(
     principal_id: String,
     runtime_id: String,
 ) -> Router {
+    let local_incarnation_id = ensure_test_local_runtime_ready(&store, &runtime_id);
     routes_with_state::<ConversationApiState>()
         .route_layer(middleware::from_fn(authenticate))
         .with_state(ConversationApiState {
             store,
             principal_id,
             runtime_id,
-            local_incarnation_id: String::new(),
+            local_incarnation_id,
             supervisor: None,
         })
+}
+
+#[cfg(test)]
+fn ensure_test_local_runtime_ready(store: &SqliteWorkspaceStore, runtime_id: &str) -> String {
+    use sha2::Digest;
+    use storage_core::{
+        DeviceIdentityRecord, RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+        RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
+    };
+
+    const NOW: &str = "2026-10-15T12:00:00.000000000Z";
+    let incarnation_id = format!("{runtime_id}-test-incarnation");
+    if store
+        .read_local_lifecycle_snapshot(runtime_id, &incarnation_id)
+        .expect("read test Runtime lifecycle")
+        .is_none()
+    {
+        let public_key: [u8; 32] = sha2::Sha256::digest(runtime_id.as_bytes()).into();
+        let device_id = format!(
+            "ed25519-sha256:{}",
+            hex::encode(sha2::Sha256::digest(public_key))
+        );
+        let registered = store
+            .register_local_incarnation(
+                RuntimeRecord {
+                    runtime_id: runtime_id.to_owned(),
+                    device_identity: DeviceIdentityRecord {
+                        device_id,
+                        public_key: format!("ed25519:{}", hex::encode(public_key)),
+                        key_version: 1,
+                        issued_at: NOW.to_owned(),
+                        display_name: None,
+                    },
+                    runtime_version: "0.1.0-test".to_owned(),
+                    platform: std::env::consts::OS.to_owned(),
+                    architecture: std::env::consts::ARCH.to_owned(),
+                    roles: vec!["OPERATOR_ENDPOINT".to_owned()],
+                    trust_zone: "PERSONAL_DEVICE".to_owned(),
+                    availability: "RECOVERING".to_owned(),
+                    startup_policy: "MANUAL".to_owned(),
+                    current_incarnation_id: incarnation_id.clone(),
+                    resource_capacity: serde_json::json!({"sampled_at": NOW}),
+                    last_seen: NOW.to_owned(),
+                },
+                RuntimeIncarnationRecord {
+                    runtime_incarnation_id: incarnation_id.clone(),
+                    runtime_id: runtime_id.to_owned(),
+                    process_started_at: NOW.to_owned(),
+                    litecowork_version: "0.1.0-test".to_owned(),
+                    recovered_from_unclean_shutdown: false,
+                    recovery_state: "RECOVERING".to_owned(),
+                    ready_at: None,
+                    stopped_at: None,
+                    version: 1,
+                },
+                RuntimeIncarnationLocalObservationRecord {
+                    runtime_incarnation_id: incarnation_id.clone(),
+                    os_boot_id: Some("test-boot".to_owned()),
+                    observed_at: NOW.to_owned(),
+                },
+            )
+            .expect("register test daemon Runtime");
+        store
+            .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+                runtime_id: runtime_id.to_owned(),
+                runtime_incarnation_id: incarnation_id.clone(),
+                expected_version: registered.version,
+                recovery_state: "READY".to_owned(),
+                availability: "ONLINE".to_owned(),
+                observed_at: NOW.to_owned(),
+                stopped_at: None,
+            })
+            .expect("mark test daemon Runtime READY");
+    }
+    incarnation_id
 }
 
 #[cfg(test)]
@@ -465,6 +541,10 @@ async fn create_conversation_with_first_turn(
         },
         principal_id: principal_id.clone(),
         workspace_id: workspace_id.clone(),
+        runtime_fence: RuntimeExecutionFence {
+            runtime_id: state.runtime_id.clone(),
+            runtime_incarnation_id: state.local_incarnation_id.clone(),
+        },
         conversation,
         conversation_event: EventDraft {
             event_id: created.event_id,
@@ -647,6 +727,7 @@ async fn settle_unavailable_first_turn(
         current.version,
         TurnCommand::Fail { settled_at },
         event,
+        None,
     )
     .await
     {
@@ -1462,6 +1543,10 @@ async fn submit_conversation_turn(
         },
         principal_id: principal_id.clone(),
         workspace_id: workspace_id.clone(),
+        runtime_fence: RuntimeExecutionFence {
+            runtime_id: state.runtime_id.clone(),
+            runtime_incarnation_id: state.local_incarnation_id.clone(),
+        },
         message,
         turn,
         message_event: EventDraft {
@@ -1594,6 +1679,7 @@ async fn submit_conversation_turn(
         expected_turn_version,
         TurnCommand::Fail { settled_at },
         settled_event,
+        None,
     )
     .await;
     match settled {
@@ -1626,9 +1712,10 @@ async fn run_turn_transition(
     expected_version: u64,
     command: TurnCommand,
     event: EventDraft,
+    runtime_fence: Option<RuntimeExecutionFence>,
 ) -> Result<ConversationTurn, StoreError> {
     tokio::task::spawn_blocking(move || {
-        SqliteConversationStore::new(store).transition_conversation_turn(
+        SqliteConversationStore::new(store).transition_conversation_turn_with_runtime_fence(
             &principal_id,
             &workspace_id,
             &conversation_id,
@@ -1636,6 +1723,7 @@ async fn run_turn_transition(
             expected_version,
             command,
             event,
+            runtime_fence,
         )
     })
     .await
@@ -1736,6 +1824,10 @@ async fn retry_conversation_turn(
         turn.version,
         TurnCommand::Retry,
         event,
+        Some(RuntimeExecutionFence {
+            runtime_id: state.runtime_id.clone(),
+            runtime_incarnation_id: state.local_incarnation_id.clone(),
+        }),
     )
     .await
     .map_err(map_store_error)?;
@@ -1875,6 +1967,7 @@ async fn cancel_conversation_turn(
                 turn.version,
                 TurnCommand::RequestCancel,
                 req_event,
+                None,
             )
             .await
             .map_err(map_store_error)?;
@@ -1917,6 +2010,7 @@ async fn cancel_conversation_turn(
                     settled_at: ctx.recorded_at.clone(),
                 },
                 fail_event,
+                None,
             )
             .await
             .map_err(map_store_error)?
@@ -2388,6 +2482,15 @@ fn map_store_error(error_value: StoreError) -> Response {
             "Another message in this Conversation is still being answered; wait for it to finish or stop it",
         ),
         StoreError::Invalid(message) if message == "AGENT_UNAVAILABLE" => agent_unavailable(),
+        StoreError::Invalid(message)
+            if message == storage_core::conversation::CONVERSATION_RUNTIME_UNAVAILABLE =>
+        {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                storage_core::conversation::CONVERSATION_RUNTIME_UNAVAILABLE,
+                "Local Runtime is recovering or unavailable; refresh Runtime status before starting new Conversation work",
+            )
+        }
         StoreError::Invalid(message) if message == "AGENT_NOT_LEAD_ELIGIBLE" => error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "AGENT_NOT_LEAD_ELIGIBLE",

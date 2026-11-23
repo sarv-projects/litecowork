@@ -2067,7 +2067,7 @@ fn conversation_activation_fixture() -> (
     use storage_core::conversation::{
         ConversationMessageRecord, ConversationRecord, ConversationStore, ConversationTurn,
         ConversationTurnStatus, ConversationTurnStore, CreateConversationCommit,
-        CreateConversationTurnCommit, PresentationPreference,
+        CreateConversationTurnCommit, PresentationPreference, RuntimeExecutionFence,
     };
     use storage_core::{AgentHostInstanceRecord, AgentHostStore};
 
@@ -2079,21 +2079,23 @@ fn conversation_activation_fixture() -> (
     let host_id = "host-activation";
     let conversation_store = crate::SqliteConversationStore::new(fixture.store.clone());
 
-    let connection =
-        Connection::open(database_path(&fixture.directory)).expect("open activation fixture");
-    connection
-        .execute(
-            "UPDATE runtimes SET availability='ONLINE' WHERE runtime_id=?1",
-            [RUNTIME_ID],
-        )
-        .expect("Runtime is online");
-    connection
-        .execute(
-            "UPDATE runtime_incarnations SET recovery_state='READY' WHERE runtime_id=?1 AND runtime_incarnation_id=?2",
-            params![RUNTIME_ID, INCARNATION_ID],
-        )
-        .expect("Runtime incarnation is ready");
-    drop(connection);
+    let current = fixture
+        .store
+        .read_local_lifecycle_snapshot(RUNTIME_ID, INCARNATION_ID)
+        .expect("read the registered Runtime lifecycle")
+        .expect("the current local Runtime incarnation exists");
+    fixture
+        .store
+        .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+            runtime_id: RUNTIME_ID.to_owned(),
+            runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            expected_version: current.incarnation.version,
+            recovery_state: "READY".to_owned(),
+            availability: "ONLINE".to_owned(),
+            observed_at: NOW.to_owned(),
+            stopped_at: None,
+        })
+        .expect("Runtime lifecycle owner marks its incarnation ready");
 
     set_default(&fixture, Some(BINDING_ID), "request-activation-default", 2);
     let conversation = ConversationRecord {
@@ -2179,6 +2181,10 @@ fn conversation_activation_fixture() -> (
             },
             principal_id: OWNER_ID.to_owned(),
             workspace_id: WORKSPACE_ID.to_owned(),
+            runtime_fence: RuntimeExecutionFence {
+                runtime_id: RUNTIME_ID.to_owned(),
+                runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            },
             message,
             turn,
             message_event: draft(
@@ -3137,25 +3143,27 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
         CommittedConversationTurn, ConversationMessageRecord, ConversationRecord,
         ConversationStore, ConversationTurn, ConversationTurnStatus, ConversationTurnStore,
         CreateConversationCommit, CreateConversationTurnCommit, PresentationPreference,
-        ResolvedConversationHost, SetConversationAgentBinding,
+        ResolvedConversationHost, RuntimeExecutionFence, SetConversationAgentBinding,
     };
 
     let fixture = setup();
-    let connection =
-        Connection::open(database_path(&fixture.directory)).expect("open host-resolution fixture");
-    connection
-        .execute(
-            "UPDATE runtimes SET availability='ONLINE' WHERE runtime_id=?1",
-            [RUNTIME_ID],
-        )
-        .expect("Runtime is online");
-    connection
-        .execute(
-            "UPDATE runtime_incarnations SET recovery_state='READY' WHERE runtime_id=?1 AND runtime_incarnation_id=?2",
-            params![RUNTIME_ID, INCARNATION_ID],
-        )
-        .expect("Runtime incarnation is ready");
-    drop(connection);
+    let current = fixture
+        .store
+        .read_local_lifecycle_snapshot(RUNTIME_ID, INCARNATION_ID)
+        .expect("read the registered Runtime lifecycle")
+        .expect("the current local Runtime incarnation exists");
+    fixture
+        .store
+        .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+            runtime_id: RUNTIME_ID.to_owned(),
+            runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            expected_version: current.incarnation.version,
+            recovery_state: "READY".to_owned(),
+            availability: "ONLINE".to_owned(),
+            observed_at: NOW.to_owned(),
+            stopped_at: None,
+        })
+        .expect("Runtime lifecycle owner marks its incarnation ready");
 
     let conversation_id = "conversation-host-resolution";
     let conversation_store = crate::SqliteConversationStore::new(fixture.store.clone());
@@ -3275,6 +3283,10 @@ fn conversation_host_resolution_uses_turn_pinned_binding_after_selection_changes
             },
             principal_id: OWNER_ID.to_owned(),
             workspace_id: WORKSPACE_ID.to_owned(),
+            runtime_fence: RuntimeExecutionFence {
+                runtime_id: RUNTIME_ID.to_owned(),
+                runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            },
             message,
             turn,
             message_event: draft(
