@@ -1,5 +1,13 @@
 # Current engineering handoff — 2026-11-23
 
+## 2026-11-23 continuation — Feature 001-T32 readiness design checkpoint
+
+- **Checkout before this design checkpoint:** branch `main`, HEAD `47b50310d9bea9e60392e2c2c9daa6eb7f04e0b1`, clean at the start of this slice; one worktree. No code implementation has been made yet.
+- **Decision:** the user delegates the internal A-119 choice. The design requires new first-send, existing-Conversation send and Retry to use a daemon-owned exact Runtime/incarnation fence, checked as `ONLINE`/`READY` inside the same SQLite IMMEDIATE transaction after exact receipt replay. Exact saved-send and command replay remain available after degradation; fresh writes fail with existing `503 RUNTIME_UNAVAILABLE`. UI lifecycle state is explanatory preflight, not the authority boundary. Stop, settlement and reads are not gated. This is an implementation direction, not package approval, provider authentication, USER evidence or qualification.
+- **Design checkpoint paths:** A-119 in the alignment register; Feature 001 README/SPEC/TASKS/DATA-MODEL/WIRING/API and UI behavior contracts; design and execution plan under `docs/superpowers/`. Feature 001-T32 is IN PROGRESS; revision 1.2 remains IN_REVIEW and T09 remains open. The WIRING edge was corrected after the first validator run found a duplicate edge ID and a nonexistent source node; the task's placeholder wildcard commands were changed to literal test-name filters.
+- **Validation before implementation:** `python .specify/scripts/validate_feature_package.py` passed 20/20 packages (structural validation only). `git -c core.whitespace=cr-at-eol diff --check` passed. The initial package-validator failure was corrected before this checkpoint; no runtime behavior or code evidence is claimed.
+- **Next:** add the failing SQLite and UI tests specified by T32, verify they fail for the missing readiness guard, then implement within T32's allowed paths. Preserve exact receipt replay ahead of readiness and verify no partial writes. Continue to keep T09's real provider, packaged Windows/Linux and USER qualification separate.
+
 ## 2026-11-23 latest continuation — Feature 001-T03 StopUnconfirmed process retention
 
 - **Checkout and scope:** started from clean `main` at `12d127a4bd4c8ea77a81bf48dd1d9b983a4c1f76`, matched to `origin/main`, with one worktree. This change is limited to Feature 001 T03/T04 adapter host ownership and its owner/current-status documentation. It adds no public API, event, schema, migration or UI state.

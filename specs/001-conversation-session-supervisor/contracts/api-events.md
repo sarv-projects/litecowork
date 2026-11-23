@@ -105,5 +105,9 @@ Known, correlated events without a LiteCowork projection are ignored; unknown ev
 
 OpenCode documents `/api/event` as volatile: events may be missed during disconnection or when a consumer falls behind. The adapter therefore establishes a successful event subscription before dispatching the prompt and passes that same stream to the turn driver. If subscription fails, do not send the prompt. If prompt dispatch fails, drop the stream. Timeout-after-prompt ambiguity remains governed by dispatch reconciliation; this ordering change does not authorize a prompt retry.
 
+### A-119 / 001-T32 fresh dispatch readiness
+
+Existing first-send (`POST /v1/conversations/first-turn`), existing-turn admission (`POST /v1/conversations/{conversationId}/turns`) and Retry (`POST /v1/conversations/{conversationId}/turns/{turnId}/retry`) continue to use their current request bodies, idempotency keys and events. The authenticated Operator supplies its own Runtime/incarnation identity as internal storage metadata. For a fresh admission/retry, SQLite checks in the same IMMEDIATE transaction that this exact incarnation remains current, Runtime availability is `ONLINE`, and incarnation recovery state is `READY`; exact committed request/command replay is resolved first. A failed/missing/stale/non-ready fence maps to the existing `503 RUNTIME_UNAVAILABLE` and creates no new receipt or domain event. This does not report native authentication or qualification. No new API field, route, event or migration is added.
+
 The fixture `apps/litecoworkd/src/agents/fixtures/opencode_v2_0_32_contract_events.jsonl` is synthetic, schema-derived test data. It is not a captured turn and does not satisfy T23 or qualify a provider journey. Exact pinned source references and the evidence distinction are in [RESEARCH.md §8.2](../RESEARCH.md#82-pinned-opencode-v2032-event-envelope-and-volatile-feed).
 

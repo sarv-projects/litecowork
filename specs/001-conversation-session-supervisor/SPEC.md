@@ -189,6 +189,8 @@ Existing `ConversationTurnStore` operations:
 - `resolve_conversation_session_host_for_turn(principal_id, workspace_id, conversation_id, turn_id)`
 - `transition_conversation_turn(principal_id, workspace_id, conversation_id, turn_id, expected_version, command, event)`
 
+**A-119 / 001-T32 Runtime admission fence (USER-DELEGATED implementation direction):** each fresh first-send, existing-Conversation send and Retry carries an internal `RuntimeExecutionFence { runtime_id, runtime_incarnation_id }` supplied by the authenticated local Operator. Storage validates that the exact incarnation remains the Runtime's current incarnation, the Runtime is `ONLINE`, and the incarnation is `READY` inside the same IMMEDIATE transaction that would write the admission/retry. Exact request or Retry command replay is checked first and returns the existing receipt even if Runtime readiness later changes. The fence is not caller request data, an event, persisted state, or qualification evidence. Missing/unknown/stale/non-ready state returns the existing `503 RUNTIME_UNAVAILABLE` and writes nothing. The UI uses the identity-matched lifecycle projection to close fresh Send/Retry while preserving Stop and exact pending-send reconciliation. This operational admission condition does not establish the separate G-09 exact OS/build/harness/version/auth qualification gate. Feature revision 1.2 remains IN_REVIEW pending cross-owner review.
+
 Generic OPEN->RUNNING through `transition_conversation_turn` remains forbidden; only readiness activation may do it.
 
 ### 7.2 Service contracts
