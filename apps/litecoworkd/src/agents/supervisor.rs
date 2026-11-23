@@ -36,7 +36,7 @@ use super::adapter::{
     AgentAdapter, CancelSignal, ObserverSet, OpenCodeAdapter, StreamBudget, TurnObservation,
     TurnObserver, UsageCollector,
 };
-use super::host_supervisor::{HostStartError, start_host_process};
+use super::host_supervisor::{AgentHostSupervisor, HostStartError, start_host_process};
 use super::native_provider::NativeProviderKey;
 use super::normalizer::NormalizedAgentEvent;
 use super::opencode_server::{
@@ -1326,6 +1326,7 @@ pub struct AgentSessionSupervisor {
     cancels: CancelRegistry,
     dispatches: DispatchRegistry,
     native_permissions: NativePermissionRegistry,
+    host_supervisor: AgentHostSupervisor<OpenCodeServer>,
 }
 
 impl AgentSessionSupervisor {
@@ -1336,6 +1337,7 @@ impl AgentSessionSupervisor {
             cancels: Arc::new(Mutex::new(HashMap::new())),
             dispatches: DispatchRegistry::default(),
             native_permissions: NativePermissionRegistry::default(),
+            host_supervisor: AgentHostSupervisor::default(),
         }
     }
 
@@ -1694,6 +1696,7 @@ impl AgentSessionSupervisor {
                     &correlation,
                     &cancel,
                     &supervisor.native_permissions,
+                    &supervisor.host_supervisor,
                 );
                 // Transient presentation control frame: a committed message supersedes the
                 // transient text; any other end leaves it marked incomplete in the UI.
@@ -1903,6 +1906,13 @@ impl ReadyHostStateGuard {
     fn retain_stopping_pending(&mut self) {
         // STOPPING remains durable when exit is unknown; startup reconciliation
         // owns any later retry and must not infer success from this stack.
+        self.active = false;
+    }
+
+    fn retain_live_session_reference(&mut self) {
+        // StopUnconfirmed leaves the AgentSession and its durable host binding
+        // nonterminal. Keep the host's last confirmed BUSY state; a stack guard
+        // must not mark it DEGRADED merely because this worker returned.
         self.active = false;
     }
 
@@ -2294,6 +2304,7 @@ fn execute_agent_turn(
     correlation_id: &str,
     cancel: &CancelSignal,
     native_permissions: &NativePermissionRegistry,
+    host_supervisor: &AgentHostSupervisor<OpenCodeServer>,
 ) -> Result<TurnOutcome, String> {
     let conv_store = SqliteConversationStore::new(store.clone());
 
@@ -2651,11 +2662,24 @@ fn execute_agent_turn(
                 Ok(TurnObservation::StopUnconfirmed) => {
                     // The interrupt was sent but quiescence was not observed in time.
                     // The turn stays CANCEL_REQUESTED; CANCELLED is never fabricated.
-                    // The live AgentSession reference prevents an orderly STOPPING
-                    // transition. This per-turn adapter still attempts process
-                    // cleanup on Drop; retaining its handle for reconciliation is
-                    // an unresolved shared-host ownership gap, so this path is not
-                    // qualified.
+                    // Keep the durable AgentSessionHostBinding live and transfer the
+                    // native process handle to the Runtime host owner. Dropping the
+                    // per-turn adapter here would kill a process whose session is
+                    // still unresolved and discard the only private wait handle.
+                    let process = adapter.into_server();
+                    match host_supervisor.retain_process(host_instance_id, session_id, process) {
+                        Ok(()) => host_state_guard.retain_live_session_reference(),
+                        Err(mut process) => {
+                            // Host identity is unique per AgentSession. If durable
+                            // corruption or a collision violates that invariant,
+                            // attempt owner cleanup but do not claim cancellation.
+                            let _ = process.stop();
+                            return Err(
+                                "OpenCode host process could not be retained for reconciliation"
+                                    .to_owned(),
+                            );
+                        }
+                    }
                     return Ok(TurnOutcome::StopUnconfirmed);
                 }
                 Ok(TurnObservation::Failed { reason_code }) | Err(reason_code) => {

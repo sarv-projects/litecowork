@@ -1,4 +1,81 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use storage_core::{AgentHostInstanceRecord, AgentHostStore};
+
+/// Runtime-local owner for LiteCowork-started provider processes retained after a
+/// turn cannot prove native-session quiescence. The durable AgentSessionHostBinding
+/// remains the authoritative use reference; this map only keeps the private native
+/// handle alive until the current incarnation reconciles or exits.
+pub(crate) struct AgentHostSupervisor<T> {
+    retained: Arc<Mutex<HashMap<String, RetainedHostProcess<T>>>>,
+}
+
+impl<T> Clone for AgentHostSupervisor<T> {
+    fn clone(&self) -> Self {
+        Self {
+            retained: Arc::clone(&self.retained),
+        }
+    }
+}
+
+impl<T> Default for AgentHostSupervisor<T> {
+    fn default() -> Self {
+        Self {
+            retained: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+struct RetainedHostProcess<T> {
+    session_id: String,
+    process: T,
+}
+
+impl<T> AgentHostSupervisor<T> {
+    /// Transfer process ownership to the Runtime host owner while its durable
+    /// AgentSessionHostBinding remains live. A duplicate host identity is refused
+    /// without dropping the incoming process handle.
+    pub(crate) fn retain_process(
+        &self,
+        host_instance_id: &str,
+        agent_session_id: &str,
+        process: T,
+    ) -> Result<(), T> {
+        let mut retained = self
+            .retained
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if retained.contains_key(host_instance_id) {
+            return Err(process);
+        }
+        retained.insert(
+            host_instance_id.to_owned(),
+            RetainedHostProcess {
+                session_id: agent_session_id.to_owned(),
+                process,
+            },
+        );
+        Ok(())
+    }
+
+    /// Takes the exact retained process only when a reconciliation owner is ready
+    /// to resume native observation or perform bounded cleanup.
+    pub(crate) fn take_process(&self, host_instance_id: &str) -> Option<(String, T)> {
+        self.retained
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(host_instance_id)
+            .map(|retained| (retained.session_id, retained.process))
+    }
+
+    #[cfg(test)]
+    fn retained_process_count(&self) -> usize {
+        self.retained
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+}
 
 /// Failure to make the durable host lifecycle match its native process state.
 #[derive(Debug)]
@@ -300,9 +377,78 @@ pub(crate) fn start_host_process<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::start_host_process;
-    use std::sync::{Arc, Mutex};
+    use super::{AgentHostSupervisor, start_host_process};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
     use storage_core::{AgentHostInstanceRecord, AgentHostStore, StoreError};
+
+    struct DropProbe(Arc<AtomicBool>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn retained_process_owner_survives_per_turn_owner_until_reconciliation() {
+        let supervisor = AgentHostSupervisor::default();
+        let dropped = Arc::new(AtomicBool::new(false));
+
+        {
+            let process = DropProbe(Arc::clone(&dropped));
+            assert!(
+                supervisor
+                    .retain_process("host-1", "session-1", process)
+                    .is_ok(),
+                "first retention should succeed"
+            );
+        }
+
+        assert!(
+            !dropped.load(Ordering::SeqCst),
+            "the host supervisor must keep the process handle alive after the turn owner exits"
+        );
+        assert_eq!(supervisor.retained_process_count(), 1);
+
+        let retained = supervisor
+            .take_process("host-1")
+            .expect("retained host can be claimed by reconciliation");
+        assert_eq!(retained.0, "session-1");
+        drop(retained);
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "reconciliation may release the retained handle only after taking ownership"
+        );
+    }
+
+    #[test]
+    fn duplicate_process_retention_preserves_the_new_handle_for_safe_cleanup() {
+        let supervisor = AgentHostSupervisor::default();
+        let first_dropped = Arc::new(AtomicBool::new(false));
+        let second_dropped = Arc::new(AtomicBool::new(false));
+        assert!(
+            supervisor
+                .retain_process("host-1", "session-1", DropProbe(Arc::clone(&first_dropped)))
+                .is_ok(),
+            "initial process owner"
+        );
+
+        let rejected = supervisor
+            .retain_process(
+                "host-1",
+                "session-2",
+                DropProbe(Arc::clone(&second_dropped)),
+            )
+            .expect_err("duplicate host identity must be refused");
+        assert!(!second_dropped.load(Ordering::SeqCst));
+        drop(rejected);
+        assert!(second_dropped.load(Ordering::SeqCst));
+        assert_eq!(supervisor.retained_process_count(), 1);
+        assert!(!first_dropped.load(Ordering::SeqCst));
+    }
 
     #[derive(Clone, Default)]
     struct RecordingHostStore {

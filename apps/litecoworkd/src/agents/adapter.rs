@@ -554,6 +554,13 @@ impl OpenCodeAdapter {
         }
     }
 
+    /// Transfers the process owner to AgentHostSupervisor when the turn ends
+    /// without a quiescence observation. The per-turn event stream and controls
+    /// are dropped with this adapter; the host handle itself remains Runtime-local.
+    pub(crate) fn into_server(self) -> OpenCodeServer {
+        self.server
+    }
+
     /// Attach the per-turn Stop signal the drive loop observes.
     pub(crate) fn with_cancel(mut self, cancel: CancelSignal) -> Self {
         self.cancel = Some(cancel);

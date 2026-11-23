@@ -1034,14 +1034,19 @@ reserves/activates the Conversation session, loads/sends bounded context and inv
 SQLite final-response writer. A missing host row is now created as STARTING before native
 spawn and becomes READY only after observed OpenCode startup/health. For terminal
 COMPLETED/CANCELLED/FAILED outcomes, durable Conversation/session settlement happens
-before orderly teardown; the normal path persists STOPPING before process shutdown, reaches STOPPED only on observed exit, and leaves unconfirmed exit at STOPPING. StopUnconfirmed and early/error cleanup remain separate gaps.
+before orderly teardown; the normal path persists STOPPING before process shutdown, reaches STOPPED only on observed exit, and leaves unconfirmed exit at STOPPING.
 This removes the former false-READY insertion and premature STOPPED-before-settlement
 paths. It still starts/stops OpenCode inside each turn; no separately wired reusable
-AgentHostSupervisor or retained host-use lease exists. StopUnconfirmed still reaches
-adapter shutdown/drop while the turn remains CANCEL_REQUESTED, so its process/session
-reference is not retained for later reconciliation. Unix child cleanup uses a process
+AgentHostSupervisor or complete retained host-use lease lifecycle exists. StopUnconfirmed
+now transfers the exact OpenCode process handle and AgentSession identity into the
+Runtime-local AgentHostSupervisor registry while the durable AgentSessionHostBinding
+remains live and the host stays BUSY. The per-turn adapter no longer stops/drops the
+server on this path. It does not retain or resume the volatile event stream, reconcile
+same-incarnation quiescence, release the binding, or expose typed recovery detail; the
+retained process is available to future reconciliation and is otherwise cleaned up when
+the Runtime owner is dropped. Unix child cleanup uses a process
 group, not the accepted cgroup contract. The T03/T04 ownership clarification above is
-TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed retention and daemon-restart host reconciliation remain open; no integration or qualification is inferred.
+TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed process-handle retention now has focused CODE coverage, but same-incarnation session reconciliation and daemon-restart host reconciliation remain open; no integration or qualification is inferred.
 
 **Dispatch-claim acknowledgement recovery (rechecked 2026-11-23):** the supervisor now
 reconciles a false/error claim acknowledgement by reading only the exact durable
