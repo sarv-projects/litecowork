@@ -2941,7 +2941,7 @@ fn v33_agent_session_environment_binding_migration_enforces_scope_and_identity()
     let user_version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated user_version");
-    assert_eq!(user_version, V34_SCHEMA_VERSION);
+    assert_eq!(user_version, SCHEMA_VERSION);
     let environment_column: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name = 'environment_id' AND \"notnull\" = 0",
@@ -3190,8 +3190,10 @@ fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() 
         .expect("verify historical v32 receipt");
     verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
         .expect("verify historical v33 receipt");
-    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
-        .expect("verify latest v34 receipt");
+    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
+        .expect("verify historical v34 receipt");
+    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
+        .expect("verify latest v35 receipt");
 }
 
 #[test]
@@ -3468,8 +3470,10 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
         .expect("verify historical v32 receipt");
     verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
         .expect("verify historical v33 receipt");
-    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
-        .expect("verify latest v34 receipt");
+    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
+        .expect("verify historical v34 receipt");
+    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
+        .expect("verify latest v35 receipt");
 
     let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
         .query_row(
@@ -4327,12 +4331,14 @@ fn v27_test_run_migration_rolls_back_and_replays() {
         .expect("verify historical v32 receipt");
     verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
         .expect("verify historical v33 receipt");
-    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
-        .expect("verify latest v34 receipt");
+    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
+        .expect("verify historical v34 receipt");
+    verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
+        .expect("verify latest v35 receipt");
 }
 
 #[test]
-fn v28_to_v34_migrations_roll_back_and_replay() {
+fn v28_to_v35_migrations_roll_back_and_replay() {
     for (failpoint, expected_version, name) in [
         (Failpoint::DuringV28Migration, V27_SCHEMA_VERSION, "v28"),
         (Failpoint::DuringV29Migration, V28_SCHEMA_VERSION, "v29"),
@@ -4341,6 +4347,7 @@ fn v28_to_v34_migrations_roll_back_and_replay() {
         (Failpoint::DuringV32Migration, V31_SCHEMA_VERSION, "v32"),
         (Failpoint::DuringV33Migration, V32_SCHEMA_VERSION, "v33"),
         (Failpoint::DuringV34Migration, V33_SCHEMA_VERSION, "v34"),
+        (Failpoint::DuringV35Migration, V34_SCHEMA_VERSION, "v35"),
     ] {
         let directory = tempfile::tempdir().expect("temporary directory");
         let mut connection = Connection::open(directory.path().join("migration.sqlite3"))
@@ -4381,8 +4388,10 @@ fn v28_to_v34_migrations_roll_back_and_replay() {
             .expect("verify historical v32 receipt");
         verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
             .expect("verify historical v33 receipt");
-        verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
-            .expect("verify latest v34 receipt");
+        verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)
+            .expect("verify historical v34 receipt");
+        verify_migration_record(&connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)
+            .expect("verify latest v35 receipt");
     }
 }
 

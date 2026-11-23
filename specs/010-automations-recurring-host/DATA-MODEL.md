@@ -29,7 +29,7 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 
 ## Migration and existing schema
 
-No migration has shipped for this package; the current migration chain ends at v34. The canonical SQLite v1 schema already defines `notification_deliveries` with every listed status (`PENDING`, `SENDING`, `SENT`, `FAILED`, `AMBIGUOUS`, `SUPPRESSED`), attempt Runtime/host epoch/count, `next_attempt_at`, `last_error_code` and `settled_at`. It also defines the Runtime-local encrypted `automation_trigger_bindings` table for opaque provider cursors. Current source does not yet serve notification claim/settle or CONNECTOR_EVENT hosting, so these existing fields do not count as implemented behavior.
+No migration has shipped for this package; the current migration chain ends at v35. The canonical SQLite v1 schema already defines `notification_deliveries` with every listed status (`PENDING`, `SENDING`, `SENT`, `FAILED`, `AMBIGUOUS`, `SUPPRESSED`), attempt Runtime/host epoch/count, `next_attempt_at`, `last_error_code` and `settled_at`. It also defines the Runtime-local encrypted `automation_trigger_bindings` table for opaque provider cursors. Current source does not yet serve notification claim/settle or CONNECTOR_EVENT hosting, so these existing fields do not count as implemented behavior.
 
 The v45 reservation is provisional. A delivery version/CAS token is absent from the current row shape, while the proposed settle route requires a version fence. T01 must identify the exact owner-approved additive DDL, or release v45 if existing attempt/epoch fields can satisfy the approved contract. Do not re-add existing status or cursor fields. This unresolved contract is tracked as A-98 in the global alignment register.
 

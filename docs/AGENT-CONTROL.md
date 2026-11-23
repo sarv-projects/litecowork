@@ -567,6 +567,15 @@ EXPIRED
 ```
 
 Auth state is operational observation; credentials are not replicated domain state.
+The durable observation is Runtime-local and never proves more than the exact module's
+reported result. The SQLite key is the exact tuple
+`(agent_profile_id, runtime_id, runtime_incarnation_id, module_id, module_version,
+auth_method_id)`. The row stores only a closed non-`UNKNOWN` state, generation, and
+`observed_at`/`expires_at`; a missing, expired, or differently scoped row projects as
+`UNKNOWN`. A new Runtime incarnation cannot inherit the prior incarnation's state.
+Every completion or cancel is fenced by the generation returned to the trusted launcher
+owner; stale callbacks are ignored. This row is not a Workspace aggregate, audit event,
+credential, native handle, or proof that dispatch is ready.
 
 ### 8.3 Descriptor freshness
 
@@ -752,6 +761,38 @@ function configure_binding(request):
         write idempotency receipt
     return projection
 ```
+
+#### 9.4.1 Native auth begin and observation
+
+Native login UI and authentication remain owned by the native harness. LiteCowork may
+launch only a method declared by the fresh trusted module descriptor and may store only
+the normalized observation. The reservation and external launch are separate steps:
+
+```text
+function begin_native_auth(profile, runtime, incarnation, descriptor, method, now):
+    require descriptor is fresh and method is declared as NATIVE_FLOW
+    require qualified_launcher.supports(descriptor.module_id, method.id)
+    in one SQLite IMMEDIATE transaction:
+        if exact scoped observation is unexpired AUTHENTICATING:
+            return IN_FLIGHT(existing_generation, existing_expiry)
+        generation = previous_generation + 1
+        write AUTHENTICATING(exact_scope, generation, now, bounded_expiry)
+    launch the provider-owned flow outside SQLite with exact profile/method identity
+    return STARTED(generation, bounded_expiry)
+
+function record_native_auth_result(exact_scope, generation, module_report, now):
+    require module_report maps to one closed non-UNKNOWN AgentAuthState
+    update only if exact scope and generation still match AUTHENTICATING
+    bound observation expiry; never write credentials or provider transcript
+```
+
+The first transaction is a short single-flight reservation, not an authentication
+claim. Launch success alone remains `AUTHENTICATING`. An internal launch failure may
+settle only its own generation to `ERROR`; only a trusted module result/re-probe may
+establish `AUTHENTICATED`. Unsupported launcher or failed launch fails closed and can
+never manufacture authentication. No external process call may be held inside the
+SQLite transaction. The per-operation generation is internal to the trusted
+launcher/reprobe owner; it is not an agent-supplied authority token.
 
 ### 9.5 Secret submission
 
@@ -1046,6 +1087,9 @@ Target local operational tables/projections:
 - `agent_installation_observations`
 - `agent_control_descriptors`
 - `agent_lifecycle_operations`
+- `agent_auth_observations` (v35; exact profile/Runtime/incarnation/module/version/method
+  scope, closed redacted state, generation and bounded timestamps; excluded from
+  Workspace backups and domain events)
 
 Durable binding configuration remains under the AgentBinding aggregate. Secret bytes stay
 in SecretStore.

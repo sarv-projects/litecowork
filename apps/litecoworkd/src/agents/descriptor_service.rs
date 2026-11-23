@@ -15,6 +15,8 @@ use crate::agents::opencode_profile_probe::OpenCodeProfileProbe;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 use storage_core::{
+    AgentAuthObservationKey, AgentAuthObservationRecord, AgentAuthObservationReservation,
+    AgentAuthObservationScope, AgentAuthObservationState, AgentAuthObservationStore,
     AgentControlDescriptorRecord, AgentDescriptorGate, AgentDescriptorStore, StoreError,
 };
 
@@ -152,10 +154,11 @@ impl AgentDescriptorService {
 
     /// Runs one bounded probe under the module budget and appends the new revision.
     /// The probe runs before any transaction is opened.
-    pub(crate) fn refresh<S: AgentDescriptorStore>(
+    pub(crate) fn refresh<S: AgentDescriptorStore + AgentAuthObservationStore>(
         &self,
         store: &S,
         manifest: &AgentModuleManifest,
+        agent_profile_id: &str,
         runtime_id: &str,
         runtime_incarnation_id: &str,
         now: time::OffsetDateTime,
@@ -178,8 +181,13 @@ impl AgentDescriptorService {
         .map_err(|_| RefreshError::Unavailable)?;
         // Auth state comes only from the module-reported observation (T07).
         self.auth
-            .overlay(&mut descriptor, now.unix_timestamp())
-            .map_err(|_| RefreshError::Unavailable)?;
+            .overlay(
+                store,
+                &mut descriptor,
+                agent_profile_id,
+                now.unix_timestamp(),
+            )
+            .map_err(|_| RefreshError::Store)?;
         let gate = Self::gate(manifest, runtime_id, runtime_incarnation_id);
         let prior = store
             .latest_agent_control_descriptor(&gate)
@@ -278,6 +286,46 @@ pub(crate) mod tests {
         }
     }
 
+    impl AgentAuthObservationStore for MemoryStore {
+        fn reserve_agent_auth_observation(
+            &self,
+            _key: AgentAuthObservationKey,
+            _observed_at: &str,
+            _expires_at: &str,
+        ) -> Result<AgentAuthObservationReservation, StoreError> {
+            Err(StoreError::Invalid(
+                "auth observations unused in this fixture".to_owned(),
+            ))
+        }
+
+        fn settle_agent_auth_observation(
+            &self,
+            _key: AgentAuthObservationKey,
+            _generation: u64,
+            _state: AgentAuthObservationState,
+            _observed_at: &str,
+            _expires_at: &str,
+        ) -> Result<bool, StoreError> {
+            Ok(false)
+        }
+
+        fn current_agent_auth_observation(
+            &self,
+            _key: AgentAuthObservationKey,
+            _now: &str,
+        ) -> Result<Option<AgentAuthObservationRecord>, StoreError> {
+            Ok(None)
+        }
+
+        fn list_agent_auth_observations(
+            &self,
+            _scope: AgentAuthObservationScope,
+            _now: &str,
+        ) -> Result<Vec<AgentAuthObservationRecord>, StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
     fn service(version: Option<&'static str>) -> AgentDescriptorService {
         AgentDescriptorService::new(default_module_registry(), Arc::new(FixtureProbe(version)))
     }
@@ -308,7 +356,7 @@ pub(crate) mod tests {
         let store = MemoryStore::default();
         let manifest = service.module_for_provider("OPENCODE").unwrap().clone();
         let built = service
-            .refresh(&store, &manifest, "rt", "rti", at(0))
+            .refresh(&store, &manifest, "profile", "rt", "rti", at(0))
             .unwrap();
         let fresh = service
             .current(&store, &manifest, "rt", "rti", &rfc(899))
@@ -322,7 +370,7 @@ pub(crate) mod tests {
         );
         // A refresh after expiry appends a new revision against the stale prior digest.
         let again = service
-            .refresh(&store, &manifest, "rt", "rti", at(1000))
+            .refresh(&store, &manifest, "profile", "rt", "rti", at(1000))
             .unwrap();
         assert_ne!(again.descriptor_digest, built.descriptor_digest);
     }
@@ -334,7 +382,7 @@ pub(crate) mod tests {
         let manifest = service.module_for_provider("OPENCODE").unwrap().clone();
         assert_eq!(
             service
-                .refresh(&store, &manifest, "rt", "rti", at(0))
+                .refresh(&store, &manifest, "profile", "rt", "rti", at(0))
                 .unwrap_err(),
             RefreshError::Unavailable
         );
@@ -348,12 +396,12 @@ pub(crate) mod tests {
         let manifest = service.module_for_provider("OPENCODE").unwrap().clone();
         for second in 0..3 {
             service
-                .refresh(&store, &manifest, "rt", "rti", at(second))
+                .refresh(&store, &manifest, "profile", "rt", "rti", at(second))
                 .unwrap();
         }
         assert_eq!(
             service
-                .refresh(&store, &manifest, "rt", "rti", at(10))
+                .refresh(&store, &manifest, "profile", "rt", "rti", at(10))
                 .unwrap_err(),
             RefreshError::Throttled
         );
@@ -365,7 +413,7 @@ pub(crate) mod tests {
         );
         // The window slides after sixty seconds.
         service
-            .refresh(&store, &manifest, "rt", "rti", at(61))
+            .refresh(&store, &manifest, "profile", "rt", "rti", at(61))
             .unwrap();
     }
 
@@ -375,7 +423,7 @@ pub(crate) mod tests {
         let store = MemoryStore::default();
         let manifest = service.module_for_provider("OPENCODE").unwrap().clone();
         service
-            .refresh(&store, &manifest, "rt", "rti", at(0))
+            .refresh(&store, &manifest, "profile", "rt", "rti", at(0))
             .unwrap();
         store
             .rows
@@ -397,7 +445,7 @@ pub(crate) mod tests {
         let store = MemoryStore::default();
         let manifest = service.module_for_provider("OPENCODE").unwrap().clone();
         service
-            .refresh(&store, &manifest, "rt", "incarnation-1", at(0))
+            .refresh(&store, &manifest, "profile", "rt", "incarnation-1", at(0))
             .unwrap();
         // A new RuntimeIncarnation never inherits the previous incarnation's descriptor.
         assert!(
@@ -407,7 +455,7 @@ pub(crate) mod tests {
                 .is_none()
         );
         service
-            .refresh(&store, &manifest, "rt", "incarnation-2", at(2))
+            .refresh(&store, &manifest, "profile", "rt", "incarnation-2", at(2))
             .unwrap();
         assert!(
             service
@@ -422,12 +470,14 @@ pub(crate) mod tests {
         let good = service(Some("2.0.32"));
         let store = MemoryStore::default();
         let manifest = good.module_for_provider("OPENCODE").unwrap().clone();
-        let prior = good.refresh(&store, &manifest, "rt", "rti", at(0)).unwrap();
+        let prior = good
+            .refresh(&store, &manifest, "profile", "rt", "rti", at(0))
+            .unwrap();
         // The probe observes nothing usable (crash, timeout or unpinned version).
         let failing = service(None);
         assert_eq!(
             failing
-                .refresh(&store, &manifest, "rt", "rti", at(5))
+                .refresh(&store, &manifest, "profile", "rt", "rti", at(5))
                 .unwrap_err(),
             RefreshError::Unavailable
         );

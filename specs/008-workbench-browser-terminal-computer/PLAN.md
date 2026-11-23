@@ -30,7 +30,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-Browser session/lease/receipt and terminal session/receipt records need one new immutable SQLite migration (`docs/schemas/sqlite-v42.sql` per the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md; v34 is wired in the 2026-11-20 checkout; take the next free number if another package merges first), promoted by T01 and implemented by T03/T08. Activity and Diff add no tables. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
+Browser session/lease/receipt and terminal session/receipt records need one new immutable SQLite migration (`docs/schemas/sqlite-v42.sql` per the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md; v34 was wired in the 2026-11-20 checkout and v35 is now wired; take the next free number if another package merges first), promoted by T01 and implemented by T03/T08. Activity and Diff add no tables. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
 
 ## Risks
 

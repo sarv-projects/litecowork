@@ -83,7 +83,7 @@ Each `ConversationPresentationMessage` wrapper also carries required nullable `t
 
 ## 8. Migration/compatibility
 
-The active SQLite migration chain is wired through sqlite-v34 (`SCHEMA_VERSION = 34` in `crates/storage-sqlite/src/lib.rs`; v34 is the Feature 015 Task delegation-policy snapshot migration). The Conversation-owned v29 dispatch-intent/receipt structures and v30 activity records remain earlier immutable migrations; later versions are owned by their respective features. Do not edit released migrations. T30 reuses the existing idempotency receipt and does not need a new migration. Any future durable Conversation column/index/table requires a separate owner-reviewed forward-only migration, source checksum/schema fingerprint updates, migration tests and old-binary compatibility assessment.
+The active SQLite migration chain is wired through sqlite-v35 (`SCHEMA_VERSION = 35` in `crates/storage-sqlite/src/lib.rs`; v34 is the Feature 015 Task delegation-policy snapshot migration and v35 is the Feature 002 Runtime-local auth-observation migration). The Conversation-owned v29 dispatch-intent/receipt structures and v30 activity records remain earlier immutable migrations; later versions are owned by their respective features. Do not edit released migrations. T30 reuses the existing idempotency receipt and does not need a new migration. Any future durable Conversation column/index/table requires a separate owner-reviewed forward-only migration after the current global allocator is rechecked, source checksum/schema fingerprint updates, migration tests and old-binary compatibility assessment.
 
 
 ## 9. Atomic first-send transaction (user-delegated direction, 2026-11-19)

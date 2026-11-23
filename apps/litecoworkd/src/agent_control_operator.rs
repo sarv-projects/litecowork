@@ -27,7 +27,7 @@ use storage_core::{AgentBindingRecord, AgentCatalogStore, AgentProfileViewRecord
 
 #[derive(Clone)]
 pub(super) struct AgentControlApiState {
-    store: super::SqliteWorkspaceStore,
+    pub(super) store: super::SqliteWorkspaceStore,
     principal_id: String,
     runtime_id: String,
     local_incarnation_id: String,
@@ -163,11 +163,13 @@ async fn refresh_control_descriptor(
     let store = state.store.clone();
     let runtime_id = state.runtime_id.clone();
     let incarnation_id = state.local_incarnation_id.clone();
+    let profile_id = agent_profile_id.clone();
     // The bounded probe runs on a blocking thread, outside any storage transaction.
     let refreshed = tokio::task::spawn_blocking(move || {
         service.refresh(
             &store,
             &module,
+            &profile_id,
             &runtime_id,
             &incarnation_id,
             time::OffsetDateTime::now_utc(),

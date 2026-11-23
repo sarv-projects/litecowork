@@ -1,3 +1,4 @@
+mod agent_auth_observations;
 mod agent_control_descriptors;
 mod agent_registry_cache;
 mod artifacts;
@@ -229,7 +230,8 @@ const SQLITE_V31_DDL: &str = include_str!("../../../docs/schemas/sqlite-v31.sql"
 const SQLITE_V32_DDL: &str = include_str!("../../../docs/schemas/sqlite-v32.sql");
 const SQLITE_V33_DDL: &str = include_str!("../../../docs/schemas/sqlite-v33.sql");
 const SQLITE_V34_DDL: &str = include_str!("../../../docs/schemas/sqlite-v34.sql");
-const SCHEMA_VERSION: i64 = 34;
+const SQLITE_V35_DDL: &str = include_str!("../../../docs/schemas/sqlite-v35.sql");
+const SCHEMA_VERSION: i64 = 35;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -262,6 +264,7 @@ const V31_SCHEMA_VERSION: i64 = 31;
 const V32_SCHEMA_VERSION: i64 = 32;
 const V33_SCHEMA_VERSION: i64 = 33;
 const V34_SCHEMA_VERSION: i64 = 34;
+const V35_SCHEMA_VERSION: i64 = 35;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -304,6 +307,7 @@ const V31_MIGRATION_NAME: &str = "conversation_history_state_v31";
 const V32_MIGRATION_NAME: &str = "conversation_coedit_v32";
 const V33_MIGRATION_NAME: &str = "task_session_environment_binding_v33";
 const V34_MIGRATION_NAME: &str = "resolved_task_delegation_policy_snapshot_v34";
+const V35_MIGRATION_NAME: &str = "agent_auth_observations_v35";
 #[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
@@ -22126,7 +22130,8 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 31, V31_MIGRATION_NAME, SQLITE_V31_DDL, false)?;
         verify_migration_record(connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)?;
         verify_migration_record(connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)?;
-        verify_migration_record(connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)?;
+        verify_migration_record(connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, false)?;
+        verify_migration_record(connection, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL, true)?;
         return Ok(());
     }
 
@@ -22579,6 +22584,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22603,6 +22609,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22626,6 +22633,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22648,6 +22656,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22669,6 +22678,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22689,6 +22699,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22708,6 +22719,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22726,6 +22738,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22743,6 +22756,7 @@ fn migrate_with_failpoint(
             | V32_SCHEMA_VERSION
             | V33_SCHEMA_VERSION
             | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22755,7 +22769,11 @@ fn migrate_with_failpoint(
         migrate_conversation_history_state(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V31_SCHEMA_VERSION | V32_SCHEMA_VERSION | V33_SCHEMA_VERSION | V34_SCHEMA_VERSION
+        V31_SCHEMA_VERSION
+            | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
+            | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22768,7 +22786,7 @@ fn migrate_with_failpoint(
         migrate_conversation_coedit(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V32_SCHEMA_VERSION | V33_SCHEMA_VERSION | V34_SCHEMA_VERSION
+        V32_SCHEMA_VERSION | V33_SCHEMA_VERSION | V34_SCHEMA_VERSION | V35_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22779,7 +22797,10 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V32_SCHEMA_VERSION {
         migrate_task_session_environment_binding(connection, failpoint)?;
-    } else if !matches!(current_version, V33_SCHEMA_VERSION | V34_SCHEMA_VERSION) {
+    } else if !matches!(
+        current_version,
+        V33_SCHEMA_VERSION | V34_SCHEMA_VERSION | V35_SCHEMA_VERSION
+    ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -22789,7 +22810,17 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V33_SCHEMA_VERSION {
         migrate_resolved_task_delegation_policy_snapshot(connection, failpoint)?;
-    } else if current_version != V34_SCHEMA_VERSION {
+    } else if !matches!(current_version, V34_SCHEMA_VERSION | V35_SCHEMA_VERSION) {
+        return Err(StoreError::CorruptSchema(format!(
+            "migration stopped at unexpected schema version {current_version}"
+        )));
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V34_SCHEMA_VERSION {
+        migrate_agent_auth_observations(connection, failpoint)?;
+    } else if current_version != V35_SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -22942,6 +22973,28 @@ fn migrate_resolved_task_delegation_policy_snapshot(
     record_migration(&transaction, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL)?;
     transaction
         .pragma_update(None, "user_version", V34_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version thirty-five persists redacted auth observations under exact
+/// AgentProfile/Runtime/incarnation/module/version/method scope.
+fn migrate_agent_auth_observations(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V35_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV35Migration)?;
+    record_migration(&transaction, 35, V35_MIGRATION_NAME, SQLITE_V35_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V35_SCHEMA_VERSION)
         .map_err(map_database_error)?;
     validate_schema(&transaction)?;
     transaction.commit().map_err(map_database_error)?;
@@ -24161,6 +24214,7 @@ enum Failpoint {
     DuringV32Migration,
     DuringV33Migration,
     DuringV34Migration,
+    DuringV35Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,

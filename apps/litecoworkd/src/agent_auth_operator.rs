@@ -93,18 +93,23 @@ async fn begin_agent_authentication(
     };
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let auth = state.auth.clone();
+    let store = state.control.store.clone();
+    let profile_id = agent_profile_id.clone();
     let method = auth_method_id.clone();
     // The launch can block on process spawn, so it never runs on the async executor.
-    let outcome = tokio::task::spawn_blocking(move || auth.begin(&descriptor, &method, now)).await;
+    let outcome = tokio::task::spawn_blocking(move || {
+        auth.begin(&store, &profile_id, &descriptor, &method, now)
+    })
+    .await;
     match outcome {
-        Ok(Ok(BeginOutcome::Started { expires_at } | BeginOutcome::InFlight { expires_at })) => {
-            Json(json!({
-                "kind": "NATIVE_FLOW_STARTED",
-                "auth_method_id": auth_method_id,
-                "expires_at": rfc3339(expires_at),
-            }))
-            .into_response()
-        }
+        Ok(Ok(
+            BeginOutcome::Started { expires_at, .. } | BeginOutcome::InFlight { expires_at, .. },
+        )) => Json(json!({
+            "kind": "NATIVE_FLOW_STARTED",
+            "auth_method_id": auth_method_id,
+            "expires_at": rfc3339(expires_at),
+        }))
+        .into_response(),
         Ok(Ok(BeginOutcome::SecretRequired)) => Json(json!({
             "kind": "SECRET_REQUIRED",
             "auth_method_id": auth_method_id,
@@ -124,6 +129,11 @@ async fn begin_agent_authentication(
             StatusCode::SERVICE_UNAVAILABLE,
             "DEPENDENCY_UNAVAILABLE",
             "No qualified native sign-in launch exists for this agent module",
+        ),
+        Ok(Err(BeginError::Storage)) => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Native sign-in observation could not be recorded",
         ),
         Ok(Err(BeginError::LaunchFailed)) | Err(_) => operator_error(
             StatusCode::SERVICE_UNAVAILABLE,

@@ -241,7 +241,7 @@ See [contracts/errors-recovery.md](contracts/errors-recovery.md). Rules: unavail
 - The LiteCowork client consumes a session from the process/session owner defined by Feature 011/O-08. It does not discover a private LiteSPM endpoint, create a daemon descriptor or spawn an unmanaged process.
 - Host compatibility profile is data: host, host version, OS/build, scope, kind, operation, evidence ref. Only rows qualified in 013-T18 are enabled.
 - Deadlines and caps are finite; proposed initial values (MCP initialization 5 s, tool call 30 s, response 4 MiB, inventory page 200) are checked against the pinned MCP bridge contract in 013-T04.
-- Migration: one forward-only `sqlite-vNN.sql` (allocated v40 in docs/LITECOWORK-BUILD-TASKS.md; the 2026-11-20 chain ends at `sqlite-v34.sql`).
+- Migration: one forward-only `sqlite-vNN.sql` (allocated v40 in docs/LITECOWORK-BUILD-TASKS.md; the 2026-11-20 chain ended at v34 and the current 2026-11-23 chain ends at v35).
 
 ## 13. Observability
 

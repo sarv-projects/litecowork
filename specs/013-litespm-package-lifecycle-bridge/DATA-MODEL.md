@@ -3,7 +3,7 @@
 **Status:** IN_REVIEW - not owner-accepted; does not authorize implementation; not a claim of implementation or qualification.
 **Feature:** 013 | **Authority:** LITESPM-LITECOWORK-INTEROP-LLD.md sections 1-3, STORAGE.md, EVENTS.md, TRUST.md, CAPABILITY-FABRIC.md.
 
-LiteCowork stores stable external refs, owner approvals and operation receipts only (interop LLD section 1). It does not store inventory, catalog rows, plans beyond their digest, host config or any LiteSPM-owned record. No table below exists today; the 2026-11-20 migration chain ends at `sqlite-v34.sql` and v40 is allocated to this package (DEFERRED with the whole package).
+LiteCowork stores stable external refs, owner approvals and operation receipts only (interop LLD section 1). It does not store inventory, catalog rows, plans beyond their digest, host config or any LiteSPM-owned record. No table below exists today; the 2026-11-20 migration chain ended at v34, and the current 2026-11-23 chain ends at `sqlite-v35.sql`. v40 remains allocated to this package (DEFERRED with the whole package).
 
 ## 1. Existing records reused
 

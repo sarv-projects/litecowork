@@ -31,7 +31,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-The implementation currently uses the existing `agent_control_descriptors` table (created by migration 16) and has no durable auth-observation table or credential-submission receipt. Do not create duplicate descriptor DDL. If durable auth observations or replay receipts are implemented, allocate the next unused immutable migration through `docs/LITECOWORK-BUILD-TASKS.md` and land it with the owner doc, schema and tests in one change. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
+The implementation uses the existing `agent_control_descriptors` table (created by migration 16) and does not create duplicate descriptor DDL. Under user-delegated internal direction A-120, migration v35 now adds exact-scope, Runtime-local durable auth observations; see the current migration allocation and Feature 002 T07. Credential-submission replay receipts remain unimplemented: v36 is only provisional for T08 if the user-delegated SecretStore crash-reconciliation decision requires DDL. Any further migration remains immutable once wired and lands with its owner document, schema and tests in one change. Rollback is forward-only in production; a prior binary refuses an unsupported newer schema and explicit recovery is required.
 
 ## Risks
 

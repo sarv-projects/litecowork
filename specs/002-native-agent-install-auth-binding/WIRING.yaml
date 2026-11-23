@@ -16,6 +16,9 @@ nodes:
   - id: "profile"
     owner: AgentProfile and descriptor owner
     kind: service
+  - id: "auth-observation"
+    owner: Runtime-local AgentAuthObservationStore
+    kind: store
   - id: "binding"
     owner: AgentBindingService
     kind: service
@@ -68,6 +71,18 @@ edges:
     from: "profile"
     to: "os-auth"
     kind: native-login-or-secure-slot-broker
+  - id: "e-auth-observation"
+    from: "operator"
+    to: "auth-observation"
+    kind: profile-runtime-incarnation-scoped-reservation-and-read
+  - id: "e-auth-launch"
+    from: "operator"
+    to: "os-auth"
+    kind: bounded-native-launch-after-reservation-outside-transaction
+  - id: "e-auth-projection"
+    from: "auth-observation"
+    to: "profile"
+    kind: exact-scope-unexpired-generation-fenced-descriptor-overlay
   - id: "e-op-binding"
     from: "operator"
     to: "binding"
@@ -97,6 +112,10 @@ transactions:
     owner: AgentProfileService
     atomic_records: ["profile_observation", "control_descriptor"]
     external_calls_inside: false
+  - id: "tx-auth-reservation"
+    owner: Agent Runtime
+    atomic_records: ["agent_auth_observation: exact profile/runtime/incarnation/module/version/method scope, generation, AUTHENTICATING, observed_at, expires_at"]
+    external_calls_inside: false
   - id: "tx-binding"
     owner: AgentBindingService
     atomic_records: ["agent_binding", "domain_event", "idempotency_receipt", "audit_record"]
@@ -117,7 +136,8 @@ recovery:
   source_of_truth: last-committed-runtime-observation-and-workspace-binding-receipt
   restart_action: re-probe-runtime-incarnation-and-install-auth-descriptor-independently; preserve-binding; reconcile-in-flight-lifecycle-before-new-side-effect
 
-# Status note (checked 2026-11-13): this graph remains the accepted TARGET wiring; it is not evidence that
+# Status note (updated 2026-11-23): this graph remains accepted TARGET wiring, with A-120 USER-DELEGATED
+# direction recorded for durable auth observations; it is not Agent Runtime/Storage/Security owner ratification or evidence that
 # every edge is fully implemented or qualified. CODE/SERVED cross-check:
 # - The profile probe -> computed OpenCode offer -> disabled AgentBinding path is implemented for the exact
 #   2.0.32/complete-probe/observed-host-stop tuple (002-T01); no packaged native bind/send journey is qualified.
@@ -128,7 +148,8 @@ recovery:
 # - Enable uses a fresh descriptor-revision CAS for descriptor-backed profiles; legacy module-less profiles do
 #   not enforce that check yet (002-T06).
 # - Auth-begin/native-config routes and ID-only bridges exist, but the production launcher/opener fail closed;
-#   OpenCode declares no method/target. Auth observations are in-memory and restart to UNKNOWN (002-T07/T10).
+#   OpenCode declares no method/target. T07 now owns the exact-scope persistent observation path, while provider
+#   login, module-reported completion/re-probe and packaged qualification remain unavailable (002-T07/T10).
 # - Credential submit uses `StoredAgentDescriptorSource` but still returns 503 before SecretStore mutation;
 #   durable replay/reconciliation is not implemented (002-T08).
 # - The ACP client and Matchmaker are code-level components but are not wired to a qualified provider flow

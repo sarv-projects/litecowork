@@ -130,7 +130,7 @@ Each row cross-references the [DOCS-REAUDIT-2026.md](DOCS-REAUDIT-2026.md) verdi
 
 **Contradicted (now corrected at owner):**
 
-- Baseline `STORAGE.md` "current schema version is 28" vs source `SCHEMA_VERSION = 27`; v28 unreachable — Cluster B, **A-40** (resolved and later implemented: v28 Workspace settings are wired; current chain reaches v34, including the v34 Task-policy snapshot enrichment. Earlier v27/unwired labels are historical and have been corrected in current owner/status docs).
+- Baseline `STORAGE.md` "current schema version is 28" vs source `SCHEMA_VERSION = 27`; v28 unreachable — Cluster B, **A-40** (resolved and later implemented: v28 Workspace settings are wired; the current chain reaches v35, including v34 Task-policy snapshot enrichment and v35 Runtime-local auth observations. Earlier v27/v34 labels are historical and are corrected in current owner/status docs).
 - `FLOWS.md` flow index omitted F115–F124, F136–F143 and duplicated F119 as F128 — Cluster C, **A-38** (resolved: index now covers F00–F143).
 - UIV1-001..158 cited as acceptance anchors but defined only in the archived legacy coverage doc — Cluster C, **A-39** (resolved: UIV1 retired as active authority, provenance-only).
 - Baseline A-18 finding: ContextDocumentKind has four values while creation accepted only PERSONAL_PROFILE / WORKSPACE_NOTES. Owner accepted narrowing the create enum; current OpenAPI create metadata now has two kinds while record/read and policy types retain four. Coworker/Goal owner paths remain unserved.

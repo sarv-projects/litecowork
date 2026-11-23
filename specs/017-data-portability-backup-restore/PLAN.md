@@ -59,7 +59,7 @@ Each task in TASKS.md lists exact allowed paths. Summary: storage work in `crate
 
 ## 5. Migrations
 
-One forward-only migration (allocated `docs/schemas/sqlite-v46.sql`; v34 is wired in the 2026-11-20 checkout) adds `backup_operations` and its partial unique index on nonterminal state. `workspace_backup_manifests` stays immutable and unchanged. No migration ships while the package is IN_REVIEW.
+One forward-only migration (allocated `docs/schemas/sqlite-v46.sql`; v34 was wired in the 2026-11-20 checkout and v35 is now wired) adds `backup_operations` and its partial unique index on nonterminal state. `workspace_backup_manifests` stays immutable and unchanged. No migration ships while the package is IN_REVIEW.
 
 ## 6. Rollout
 

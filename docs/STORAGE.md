@@ -1215,12 +1215,19 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   insert guard with closed-shape, identity, Workspace-ceiling, strategy and profile-policy checks.
   Pre-v28 NULL history remains NULL and is presented as unavailable; migration does not infer past
   policy from current mutable settings. Snapshot values are immutable after insertion.
+- migration 35 (`schemas/sqlite-v35.sql`, Feature 002 T07; USER-DELEGATED internal direction,
+  Feature 002 remains ACCEPTED/LOCKED while T07 remains PARTIAL) adds a Runtime-local table for
+  redacted auth observations keyed by exact AgentProfile, Runtime, RuntimeIncarnation, module,
+  module version and method. An IMMEDIATE transaction reserves an expiring AUTHENTICATING generation;
+  native launch occurs after commit, and only a matching current generation may settle. Missing,
+  expired, mismatched or new-incarnation rows project as UNKNOWN. The table contains no credential
+  bytes, native handles, provider transcripts, Workspace events or backup state.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
   the schema-object fingerprint at that migration boundary. Reopening verifies every
   recorded migration name/source checksum and compares the active schema version's
   fingerprint with the current non-internal `sqlite_master` objects; historical
   fingerprints are retained because later migrations intentionally add schema objects.
-  The current wired schema version is 34, so the v34 fingerprint is checked against the full
+  The current wired schema version is 35, so the v35 fingerprint is checked against the full
   current schema. Missing migration records, changed
   source checksums, or changed current schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances

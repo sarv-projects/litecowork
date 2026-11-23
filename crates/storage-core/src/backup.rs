@@ -81,6 +81,7 @@ pub const BACKUP_EXCLUDED_TABLES: &[&str] = &[
     "agent_session_host_bindings",
     "agent_host_instances",
     "agent_control_descriptors",
+    "agent_auth_observations",
     "agent_installation_observations",
     "agent_lifecycle_operations",
     "agent_registry_cache",
@@ -928,5 +929,6 @@ mod tests {
         assert!(!BACKUP_EXCLUDED_TABLES.contains(&"context_document_purge_receipts"));
         assert!(BACKUP_EXCLUDED_TABLES.contains(&"execution_leases"));
         assert!(BACKUP_EXCLUDED_TABLES.contains(&"secret_leases"));
+        assert!(BACKUP_EXCLUDED_TABLES.contains(&"agent_auth_observations"));
     }
 }

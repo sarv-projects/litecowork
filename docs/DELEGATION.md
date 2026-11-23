@@ -282,8 +282,9 @@ against the Task's fixed Coworker origin and the current Workspace settings revi
 caller never submits a per-Task route override.
 
 Workspace delegation settings and the original TaskSpec snapshot column are migration v28;
-migration v34 completes the same snapshot contract (`SCHEMA_VERSION` is 34 as of 2026-11-20;
-register A-40 and [STORAGE.md](STORAGE.md)). The user-delegated Feature 015 T22 implementation now
+migration v34 completes the same snapshot contract (`SCHEMA_VERSION` was 34 as of 2026-11-20;
+register A-40 and [STORAGE.md](STORAGE.md)). Feature 002 T07 later wired v35 for Runtime-local auth
+observations; it does not alter Task delegation snapshots. The user-delegated Feature 015 T22 implementation now
 resolves the source from the exact Task Coworker revision and Workspace settings revision, applies
 the Workspace profile ceiling, pins exact profile revisions and model-selection policies, writes
 the typed snapshot before the aggregate blob, and revalidates it in the TaskSpec transaction.

@@ -45,7 +45,7 @@ The active checkout has source-backed discovery, inventory, profile-probe, OpenC
 | OpenCode probe | CODE/SERVED: admission is computed by `opencode_offer_admission`; only exact CLI 2.0.32 + complete probe + observed host stop is `compatible=true`/`STARTABLE`. The registered executable is shared with dispatch and the endpoint capability records the observed protocol/text input. | This is an offer observation, not a live native session. No packaged Windows/Linux bind/send/recovery journey is INTEGRATED or QUALIFIED. |
 | AgentControlDescriptor | CODE/SERVED for a profile selecting the trusted OpenCode module: GET returns a fresh stored descriptor; POST refresh runs a bounded probe outside the transaction, validates/seals and stores it. The `getAgentSessionOptions` projection requires that same fresh descriptor; `getAgentHarnessCapabilities` also requires one matching current Runtime endpoint/offer and excludes the private locator. Module-less profiles return `503`. | Descriptor storage uses the table created by migration 16; no new descriptor DDL was added. TTL is 900 seconds; the three-per-minute refresh window is in-process and resets on daemon restart. These projections do not mount the model picker or prove a qualified send path. |
 | Credential submission | POST credential-slot route is mounted with no-store, bounded body and request validation. Production wiring now reads the fresh module descriptor through `StoredAgentDescriptorSource`. | It returns `503` before SecretStore mutation until T08's durable cross-store replay receipt and reconciliation are implemented. Durable exact replay/reconciliation is not implemented. No V1 module declares a LiteCowork-owned credential slot. |
-| Authentication and native config | `beginAgentAuthentication` and `openAgentNativeConfiguration` are served through authenticated ID-only Tauri commands and Operator routes. The auth service checks the fresh module descriptor and native opener checks declared targets. | The production launcher/opener are unqualified fail-closed implementations; OpenCode currently declares no auth method or native-config target. Auth observations are in-memory and restart to `UNKNOWN`; no durable auth-observation DDL exists. A served route does not mean sign-in/config opening works. |
+| Authentication and native config | `beginAgentAuthentication` and `openAgentNativeConfiguration` are served through authenticated ID-only Tauri commands and Operator routes. The auth service checks the fresh module descriptor and native opener checks declared targets. | v35 now persists redacted auth observations under exact profile/Runtime/incarnation/module/version/method scope with expiry and generation fencing. Missing, expired or new-incarnation observations read `UNKNOWN`. The production launcher/opener remain unqualified and fail closed; OpenCode currently declares no auth method or native-config target, and no module-reported completion/re-probe caller is wired. A served route does not mean sign-in/config opening works. |
 | AgentBinding | List/get/create/enable/disable are CODE/SERVED; creation is disabled by default; mutations use version checks, idempotency receipts and audit events. OpenCode exact-route probe can now create a disabled binding. | Enable enforces descriptor revision CAS for modules declaring a descriptor. The legacy module-less profile path does not enforce AC-004's descriptor gate; no real auth/bind/send journey is qualified. `auth_ref` is rejected on create. |
 | Install/update | OpenAPI target operations exist. | No install/update handler or native lifecycle implementation is served; V1 must present these actions as unavailable. |
 | Desktop UI | `AgentCatalogSettings` renders 15 curated candidates, ACP Registry results, local inventory, Codex/OpenCode probes, observed profiles, Workspace bindings/default lead and worker-profile controls. The descriptor panel calls served OpenCode routes. | No install/update, successful native sign-in, credential-slot form or session-options bridge. Model-picker logic is view-model only and is not mounted. This remains a catalogue/probe/binding surface, not a complete lifecycle UI. |
@@ -99,7 +99,7 @@ Per the A-35 accepted resolution in [docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.m
 
 ## 6. High-level design
 
-Desktop UI talks only to the authenticated Operator. AgentRegistryService caches distribution metadata. AgentLifecycleService records Runtime-local installation observations. AgentBindingService commits Workspace-scoped bindings. Native sign-in stays outside SQLite. Session start is feature 001, not this package.
+Desktop UI talks only to the authenticated Operator. AgentRegistryService caches distribution metadata. AgentLifecycleService records Runtime-local installation observations. AgentBindingService commits Workspace-scoped bindings. Native sign-in itself stays outside SQLite transactions; a separate Runtime-local table stores only a bounded, redacted observation of the provider-owned flow. Session start is feature 001, not this package.
 
 ### Feature-specific component diagram
 
@@ -109,9 +109,12 @@ flowchart TD
   OP --> REG[AgentRegistryService cached metadata]
   OP --> LIFE[AgentLifecycleService Runtime-local observations]
   OP --> DESC[AgentControlDescriptor producer]
+  OP --> AUTHOBS[Scoped auth observation store]
   OP --> CRED[Credential broker -> SecretStore]
   OP --> BIND[AgentBindingService Workspace-scoped]
-  LIFE --> NATIVE[Native install/auth outside SQLite]
+  LIFE --> NATIVE[Native install outside SQLite]
+  OP --> NATIVEAUTH[Native provider auth outside SQLite]
+  AUTHOBS --> DB[(SQLite Runtime-local observations)]
   BIND --> DB[(SQLite bindings/receipts/audit)]
   DESC --> DB
   BIND -. enables future turn .-> F1[Feature 001 session start]
@@ -204,17 +207,22 @@ fn opencode_offer_admission(probe: &OpenCodeProfileProbe) -> OfferAdmission; // 
 pub struct StoredAgentDescriptorSource { /* Runtime-local descriptor store + AgentModuleRegistry */ }
 impl CurrentAgentDescriptorSource for StoredAgentDescriptorSource { /* fresh, validated, digest-bound */ }
 
-// Target record; the current service has an in-memory observation, not durable storage.
+// A-120 USER-DELEGATED implementation direction; Runtime-local, not Workspace state.
 pub struct AgentAuthObservation {
     pub agent_profile_id: String,
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
+    pub module_id: String,
+    pub module_version: String,
     pub auth_method_id: String,
-    pub state: AgentAuthState,                  // existing closed enum in control_descriptor.rs
+    pub state: AgentAuthState,                  // closed enum; UNKNOWN is absence/expiry
+    pub generation: u64,                        // fences late completion/cancel
     pub observed_at: Timestamp,
     pub expires_at: Timestamp,
 }
 ```
 
-Typed error names remain the target contract: `BindingError::{DescriptorStale, OfferIncompatible, NotLeadEligible}`; `CredentialError::{DescriptorStale, ReplayConflict, Unsupported}`; `AuthError::{MethodNotDeclared, Cancelled, Expired, Denied}`. Some mappings are implemented; the credential replay path, durable auth observation and full route/schema parity are not complete. Verify each mapping against `docs/schemas/error-codes.schema.json` and the current handler before claiming promotion.
+The canonical internal record/transition contract is in `docs/AGENT-CONTROL.md` §8.2/§9.4.1 and the storage-core AuthObservationStore contract. It persists only non-UNKNOWN closed states, reserves `AUTHENTICATING` in a brief transaction, launches outside SQLite, and accepts outcomes only for the exact generation. It creates no Workspace event or backup payload. Typed error names remain the target contract: `BindingError::{DescriptorStale, OfferIncompatible, NotLeadEligible}`; `CredentialError::{DescriptorStale, ReplayConflict, Unsupported}`; `AuthError::{MethodNotDeclared, Cancelled, Expired, Denied}`. The production launcher, completion/re-probe path, credential replay path and full route/schema parity are not complete. Verify each mapping against `docs/schemas/error-codes.schema.json` and the current handler before claiming promotion.
 
 ## 8. Data
 
@@ -319,7 +327,7 @@ Read from AGENT-CONTROL, AGENT-FABRIC, AGENT-ACCOUNT-ROUTE-MATRIX, V1-AGENT-DISC
 - ACP Registry metadata cannot invent install commands, auth callbacks, or secret slots. LiteCowork does not execute a shell command from that metadata.
 - Lifecycle install, update, auth, descriptor probe, and native-config open do not start a Conversation, Task, Attempt, or native session, and install does not create an AgentProfile or AgentBinding.
 - AgentInstallationObservation is Runtime-local. It is not an AgentProfile, AgentEndpoint, or AgentBinding. Inventory readiness stays UNKNOWN or NOT_PROBED until probed.
-- AgentAuthDescriptor.state is only UNKNOWN, NEEDS_AUTH, AUTHENTICATING, AUTHENTICATED, EXPIRED, DEGRADED, or ERROR. credential_slots is required and may be empty. Auth is not AgentAdapter.authenticate().
+- AgentAuthDescriptor.state is only UNKNOWN, NEEDS_AUTH, AUTHENTICATING, AUTHENTICATED, EXPIRED, DEGRADED, or ERROR. `NEEDS_AUTH` is rendered as “Sign-in required”; explicit denial is a typed begin-operation error, not a persistent state. Do not infer `NOT_REQUIRED` from an absent method. credential_slots is required and may be empty. Auth is not AgentAdapter.authenticate().
 - New bindings are created disabled. Enable is a separate owner step and does not grant Workspace or Task authority. lead_eligible=false returns AGENT_NOT_LEAD_ELIGIBLE. No enabled binding returns AGENT_UNAVAILABLE and keeps the draft. A disabled explicit override does not fall back to the Workspace default.
 - Enable and disable commit one ALLOW AuditRecord with the binding projection, domain event, and idempotency receipt, excluding configuration values and SecretRefs. Exact replay returns that receipt and writes no second audit. Disable blocks new admissions only. A committed STARTING reservation may still activate on its pinned host.
 - Installation, update, and auth observations are not Workspace domain events. Non-secret binding configuration emits agent.binding.configuration.changed.v1 with credential slot ids only.
@@ -334,12 +342,12 @@ Read from AGENT-CONTROL, AGENT-FABRIC, AGENT-ACCOUNT-ROUTE-MATRIX, V1-AGENT-DISC
 - Operator routes to cite: GET /agent-registry, POST /agent-registry/refresh, GET /agent-installations, install and update, profile refresh, control-descriptor, begin auth, credential submit, native-config open, binding list, create, configuration, enable, disable. Several remain target-only until served.
 
 
-## 7b. Current source and visible UI boundary — checked 2026-11-13
+## 7b. Current source and visible UI boundary — checked 2026-11-23
 
 - The mounted Settings Agents surface is `AgentCatalogSettings`, not the target Catalog/Installed/Profiles/Workspace bindings/Usage information architecture. It shows 15 curated candidates and ACP Registry distributions; registry entries are read-only metadata and map to `NO_ADAPTER`. Local inventory is bounded version/path observation, with authentication `UNKNOWN` and readiness `NOT_PROBED`.
 - Profile probe is limited to Codex and OpenCode and requires an enrolled local Runtime. Codex App Server initialize/account/model-list observations exist. OpenCode v2.0.32 now yields a compatible `STARTABLE` offer only for an exact-version, complete probe with observed host stop; this remains an observation and does not prove an end-to-end Conversation session.
 - OpenCode's trusted module now produces a validated descriptor through served GET/refresh routes. The desktop descriptor panel is wired to those routes. The descriptor uses existing migration-16 storage; session-options and harness-capability projections are now served from that descriptor, but no picker or send-admission consumer is mounted. Probe throttling is in-memory and resets after daemon restart.
-- No native AgentModule install/update/repair action exists in the active UI or a served installer route. Native auth-begin and native-config-open are served and wired through authenticated ID-only Tauri commands, but fail closed because OpenCode declares no method/target and production launcher/opener adapters are unqualified. Credential submission still fails closed before SecretStore mutation because the production descriptor source is unavailable and durable replay protection is incomplete.
+- No native AgentModule install/update/repair action exists in the active UI or a served installer route. Native auth-begin and native-config-open are served and wired through authenticated ID-only Tauri commands, but fail closed because OpenCode declares no method/target and production launcher/opener adapters are unqualified. v35 stores redacted exact-scope auth observations with expiry and generation fencing; no module-reported completion/re-probe caller is wired. Credential submission reads the fresh stored descriptor and returns unavailable before SecretStore mutation because durable replay protection is incomplete; no current module declares a credential slot.
 - Workspace binding list/create/enable/disable/default-lead operations are served. New bindings are disabled by default. Backend enable checks the fresh descriptor revision for descriptor-backed modules, but the legacy module-less path bypasses that gate and must be resolved before claiming AC-004 globally. A binding does not prove authentication or dispatchability.
 - The Conversation supervisor has an OpenCode dispatch branch; Codex can be bound but is not dispatched by it. The OpenCode profile is now bindable in code for the exact accepted probe tuple, but no packaged native provider journey has been qualified.
 - The composer model/effort picker remains view-model code only: the popover is not mounted, no Tauri command consumes the model options, and the send admission does not revalidate the selection. Do not render a provider model selector or claim a model selection can run merely because a descriptor exposes display options.

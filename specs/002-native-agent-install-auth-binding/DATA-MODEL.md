@@ -1,6 +1,6 @@
 # Data model - Native Agent Install, Auth and Binding
 
-**Feature:** 002 | **Updated:** 2026-11-13 (source-backed persistence refresh)
+**Feature:** 002 | **Updated:** 2026-11-23 (A-120 delegated auth-observation contract)
 
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
 
@@ -13,6 +13,7 @@ Identities and lifecycles stay in the canonical owner documents. This file lists
 - **AgentInstallationObservation** — Runtime-local installation/detection/version observation, tied to exact OS/architecture/Runtime incarnation and redacted executable identity.
 - **AgentProfile** — module/Runtime-specific profile/configuration and native auth observation; no raw credential material.
 - **AgentControlDescriptor** — time-bounded, version-pinned, non-secret capabilities/options and native-config/credential-slot declarations.
+- **AgentAuthObservation** — Runtime-local, redacted, closed-state observation scoped to exact profile, Runtime, Runtime incarnation, module, module version and auth method; includes generation plus observation/expiry timestamps. `UNKNOWN` is absence/expiry, not a stored success state.
 - **AgentBinding** — Workspace-scoped durable eligibility/default selection; disabled on create; not a session handle, permission grant or proof of session readiness.
 - **AgentLifecycleOperation / receipt** — Runtime-local idempotent install/update/repair operation when a qualified module lifecycle exists; not a domain Task.
 - **AgentSessionHostBinding** — opaque Runtime-local native session handle binding; never exposed as a normal UI field or replicated.
@@ -27,7 +28,7 @@ AgentBinding is the Workspace-scoped aggregate. Registry cache, installation obs
 
 Install and update begin an idempotent lifecycle operation, perform the exact module-approved native call outside SQLite, then persist the Runtime-local observation and reconcile the receipt. An unknown result after a lost response is not a failed install; re-probe and reconcile before retry. Preserve the last known working version until replacement qualification succeeds. Uninstall is restricted to the exact installation owned by this lifecycle service and must not delete a user-managed CLI or its configuration.
 
-Native sign-in and credential submission are separate from installation and binding. A canceled/failed sign-in preserves existing binding; credential bytes never enter frontend state after submission, SQLite, events, logs or diagnostics. An auth observation is redacted and time-bounded.
+Native sign-in and credential submission are separate from installation and binding. A canceled/failed sign-in preserves existing binding; credential bytes never enter frontend state after submission, SQLite, events, logs or diagnostics. A native auth observation is redacted and time-bounded. Its unique scope is `(agent_profile_id, runtime_id, runtime_incarnation_id, module_id, module_version, auth_method_id)`. Begin uses a short IMMEDIATE transaction to reserve `AUTHENTICATING` and advance the generation, releases the transaction before native launch, and later accepts an outcome only for that exact generation. An in-flight unexpired row makes concurrent begin single-flight. Expired, absent, mismatched or superseded state is never used as proof and projects as `UNKNOWN`. No Workspace event is emitted.
 
 Binding creation, configuration, enablement and disablement use Workspace authorization, version compare-and-swap and idempotency. Create disabled; enable requires fresh compatible Runtime offer plus fresh exact AgentControlDescriptor. Disable blocks future admissions only; it does not claim a running session was interrupted. Active Task/Attempt/Conversation pins are reviewed before destructive removal.
 
@@ -37,7 +38,7 @@ Use existing event names in [docs/EVENTS.md](../../docs/EVENTS.md). A new event 
 
 ## Retention and migration
 
-Follow owner retention rules. Purge removes future visibility of payload bytes; receipts may remain. The `agent_control_descriptors` table already exists from migration 16 and `AgentDescriptorStore` now writes validated non-secret descriptors to it with digest/version/runtime-incarnation and expiry; T04 added no migration. The three-per-minute descriptor probe budget is currently an in-process sliding window rather than a durable counter, so daemon restart resets it. Auth observations are currently in-memory and return to `UNKNOWN` after restart; no durable auth-observation table or credential-submission receipt exists. Any new DDL must use the current allocation in `docs/LITECOWORK-BUILD-TASKS.md`, must not duplicate the descriptor table, and must land with its canonical owner contract and tests. The active allocations are v35 for T07 and v36 for T08; the older v34 reservation was consumed by 015-T22 and does not itself establish whether either auth feature needs DDL.
+Follow owner retention rules. Purge removes future visibility of payload bytes; receipts may remain. The `agent_control_descriptors` table already exists from migration 16 and `AgentDescriptorStore` writes validated non-secret descriptors to it with digest/version/runtime-incarnation and expiry; T04 added no migration. The three-per-minute descriptor probe budget remains an in-process sliding window and daemon restart resets it. A-120 assigns v35 to a dedicated Runtime-local `agent_auth_observations` table; the backup table map must exclude it. A new Runtime incarnation never reads a prior incarnation's observation. This table records lifecycle observations only; native sign-in, authentication verification and re-probe remain separate. No credential-submission receipt exists; v36 remains provisionally reserved for T08 only if its reconciled cross-store contract requires DDL. The older v34 reservation was consumed by 015-T22 and is immutable.
 
 ## Provider identity (002-T01)
 

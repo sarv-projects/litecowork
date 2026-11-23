@@ -19,6 +19,12 @@ pub use agent_descriptor::{
     AGENT_DESCRIPTOR_PROBES_PER_MINUTE, AgentControlDescriptorRecord, AgentDescriptorGate,
     AgentDescriptorStore, validate_agent_control_descriptor_record,
 };
+mod agent_auth_observations;
+pub use agent_auth_observations::{
+    AgentAuthObservationKey, AgentAuthObservationRecord, AgentAuthObservationReservation,
+    AgentAuthObservationScope, AgentAuthObservationState, AgentAuthObservationStore,
+    validate_agent_auth_observation_key, validate_agent_auth_observation_scope,
+};
 
 mod agent_registry_cache;
 pub use agent_registry_cache::{
