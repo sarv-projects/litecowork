@@ -54,6 +54,25 @@ function ready() {
   });
 }
 
+test("Conversation projection stream accepts the same-snapshot turn status field", () => {
+  const initial = ready();
+  const projected = reducePresentationFrame(initial, {
+    type: "projection", workspace_id: workspaceId, projection_type: "conversation_presentation",
+    projection_revision: 2, cursor: "cursor-turn-status",
+    payload: conversationPayload([{
+      ...messageWrapper("message-agent", "AGENT", "Committed answer"),
+      turn_status: "COMPLETED",
+      message: {
+        ...messageWrapper("message-agent", "AGENT", "Committed answer").message,
+        turn_id: turnId,
+        resource_refs: [],
+      },
+    }], { stream_cursor: "conversation-turn-status", origin_sequence: "2" }),
+  });
+  assert.equal(projected.conversationSnapshot?.messages[0]?.turn_id, turnId);
+  assert.equal(projected.conversationSnapshot?.messages[0]?.turn_status, "COMPLETED");
+});
+
 function draftFrame(event: string, payload: Record<string, unknown>, sequence: number, overrides: Record<string, unknown> = {}) {
   return {
     type: "rich.draft", workspace_id: workspaceId, conversation_id: conversationId, turn_id: turnId,

@@ -72,6 +72,7 @@ fn local_state(incarnation_id: &str, clean: bool) -> RuntimeLocalState {
         recovered_from_unclean_shutdown: false,
         last_shutdown_clean: clean,
         blockers: Vec::new(),
+        startup_recovery: super::StartupRecoveryFacts::default(),
         version: 1,
     }
 }
@@ -421,6 +422,7 @@ fn startup_recovery_failure_persists_blocker_without_partial_settlement_then_ret
         &store,
         OWNER,
         &mut degraded,
+        &mut incarnation_version,
         vec![super::RuntimeLifecycleBlocker {
             code: "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned(),
             created_at: NOW.to_owned(),
@@ -1688,6 +1690,19 @@ fn startup_workspace_enumeration_failure_persists_recovery_blockers() {
     let directory = tempfile::tempdir().expect("temporary Runtime data directory");
     ensure_private_state_directory(directory.path()).expect("restrict Runtime data directory");
     let store = store(directory.path());
+    let mut state = local_state("startup-workspace-enumeration-failure", false);
+    persist_state(directory.path(), &state).expect("persist starting Runtime state");
+    let registered = register_from_bootstrap(&store, &state);
+    let mut incarnation_version = registered.version;
+    state.transition(RuntimeState::Ready, Vec::new());
+    super::persist_ready_catalog_transition(
+        directory.path(),
+        &store,
+        &mut state,
+        &mut incarnation_version,
+    )
+    .expect("initial readiness is durable before recovery pass");
+
     let database = directory.path().join("litecowork.sqlite3");
     let connection = Connection::open(&database).expect("open recovery fixture database");
     connection
@@ -1703,13 +1718,12 @@ fn startup_workspace_enumeration_failure_persists_recovery_blockers() {
         "fixture must exercise the failed Workspace enumeration"
     );
 
-    let mut state = local_state("startup-workspace-enumeration-failure", false);
-    persist_state(directory.path(), &state).expect("persist starting Runtime state");
     let blockers = super::recover_and_persist_startup_blockers(
         directory.path(),
         &store,
         "principal-integrated-recovery-test",
         &mut state,
+        &mut incarnation_version,
         Vec::new(),
     )
     .expect("recovery failures are durably projected before Operator admission");
@@ -1733,4 +1747,21 @@ fn startup_workspace_enumeration_failure_persists_recovery_blockers() {
         .expect("startup recovery state is persisted");
     assert_eq!(persisted.recovery_state, RuntimeState::Degraded);
     assert_eq!(persisted.blockers, blocker_codes);
+
+    let durable_recovery_state: (String, String) = Connection::open(&database)
+        .expect("reopen durable Runtime catalog")
+        .query_row(
+            "SELECT r.availability, ri.recovery_state
+             FROM runtimes r JOIN runtime_incarnations ri
+               ON ri.runtime_id=r.runtime_id
+              AND ri.runtime_incarnation_id=r.current_incarnation_id
+             WHERE r.runtime_id=?1",
+            [RUNTIME_ID],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read durable Runtime catalog after late recovery failure");
+    assert_eq!(
+        durable_recovery_state,
+        ("DEGRADED".into(), "DEGRADED".into())
+    );
 }

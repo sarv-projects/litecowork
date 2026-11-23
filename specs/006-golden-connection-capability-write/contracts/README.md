@@ -1,6 +1,6 @@
 # 006 contracts
 
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Status:** IN_REVIEW - revision 1.1 records USER-DELEGATED direction; formal domain-owner ratification pending. These contracts remain TARGET, not implementation or qualification evidence.
 
 - [API and events](api-events.md)
 - [Errors and recovery](errors-recovery.md)

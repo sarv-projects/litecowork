@@ -226,7 +226,8 @@ const SQLITE_V30_DDL: &str = include_str!("../../../docs/schemas/sqlite-v30.sql"
 const SQLITE_V31_DDL: &str = include_str!("../../../docs/schemas/sqlite-v31.sql");
 const SQLITE_V32_DDL: &str = include_str!("../../../docs/schemas/sqlite-v32.sql");
 const SQLITE_V33_DDL: &str = include_str!("../../../docs/schemas/sqlite-v33.sql");
-const SCHEMA_VERSION: i64 = 33;
+const SQLITE_V34_DDL: &str = include_str!("../../../docs/schemas/sqlite-v34.sql");
+const SCHEMA_VERSION: i64 = 34;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -258,6 +259,7 @@ const V30_SCHEMA_VERSION: i64 = 30;
 const V31_SCHEMA_VERSION: i64 = 31;
 const V32_SCHEMA_VERSION: i64 = 32;
 const V33_SCHEMA_VERSION: i64 = 33;
+const V34_SCHEMA_VERSION: i64 = 34;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -299,6 +301,7 @@ const V30_MIGRATION_NAME: &str = "conversation_turn_activity_v30";
 const V31_MIGRATION_NAME: &str = "conversation_history_state_v31";
 const V32_MIGRATION_NAME: &str = "conversation_coedit_v32";
 const V33_MIGRATION_NAME: &str = "task_session_environment_binding_v33";
+const V34_MIGRATION_NAME: &str = "resolved_task_delegation_policy_snapshot_v34";
 #[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
@@ -946,6 +949,14 @@ enum Command {
     ListAgentHostInstances {
         runtime_id: String,
         runtime_incarnation_id: String,
+        reply: mpsc::Sender<Result<Vec<AgentHostInstanceRecord>, StoreError>>,
+    },
+    ListPriorAgentHostInstances {
+        runtime_id: String,
+        current_runtime_incarnation_id: String,
+        after_started_at: Option<String>,
+        after_host_instance_id: Option<String>,
+        limit: usize,
         reply: mpsc::Sender<Result<Vec<AgentHostInstanceRecord>, StoreError>>,
     },
     ListStartingTaskPlanningSessions {
@@ -1813,6 +1824,66 @@ impl SqliteWorkspaceStore {
         let response = reply_receiver.recv();
         metrics.outstanding_commands.fetch_sub(1, Ordering::Relaxed);
         response.map_err(|_| StoreError::ExecutorStopped)?
+    }
+
+    fn resolve_task_delegation_policy_before_blob(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        coworker_id: Option<&str>,
+        coworker_revision: Option<u64>,
+        resolved_at: &str,
+    ) -> Result<storage_core::ResolvedDelegationPolicySnapshot, StoreError> {
+        let principal_id = principal_id.to_owned();
+        let workspace_id = workspace_id.to_owned();
+        let coworker_id = coworker_id.map(str::to_owned);
+        let resolved_at = resolved_at.to_owned();
+        let (reply, receive) = mpsc::channel();
+        self.execute_command(
+            Command::Operation {
+                operation: Box::new(move |connection| {
+                    let result = (|| {
+                        let tx = connection
+                            .transaction_with_behavior(TransactionBehavior::Deferred)
+                            .map_err(map_database_error)?;
+                        let workspace: Option<(String, String)> = tx
+                            .query_row(
+                                "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+                                [&workspace_id],
+                                |row| Ok((row.get(0)?, row.get(1)?)),
+                            )
+                            .optional()
+                            .map_err(map_database_error)?;
+                        let Some((owner, status)) = workspace else {
+                            return Err(StoreError::NotFound);
+                        };
+                        if owner != principal_id {
+                            return Err(StoreError::Invalid(
+                                "authenticated Principal does not own this Workspace".to_owned(),
+                            ));
+                        }
+                        if status != "ACTIVE" {
+                            return Err(StoreError::Invalid(
+                                "archived Workspace is read-only".to_owned(),
+                            ));
+                        }
+                        let snapshot = resolve_task_delegation_policy_snapshot(
+                            &tx,
+                            &workspace_id,
+                            coworker_id.as_deref(),
+                            coworker_revision,
+                            &resolved_at,
+                            None,
+                            true,
+                        )?;
+                        tx.commit().map_err(map_database_error)?;
+                        Ok(snapshot)
+                    })();
+                    let _ = reply.send(result);
+                }),
+            },
+            receive,
+        )
     }
 
     fn resource_read_error_after_blob_failure(
@@ -3440,6 +3511,39 @@ impl AgentHostStore for SqliteWorkspaceStore {
             reply_receiver,
         )
     }
+
+    fn list_prior_agent_host_instances(
+        &self,
+        runtime_id: &str,
+        current_runtime_incarnation_id: &str,
+        after_started_at: Option<&str>,
+        after_host_instance_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AgentHostInstanceRecord>, StoreError> {
+        validate_nonempty(&[runtime_id, current_runtime_incarnation_id])?;
+        if limit == 0
+            || limit > 100
+            || after_started_at.is_some() != after_host_instance_id.is_some()
+            || after_started_at.is_some_and(str::is_empty)
+            || after_host_instance_id.is_some_and(str::is_empty)
+        {
+            return Err(StoreError::Invalid(
+                "prior AgentHostInstance page request is invalid".to_owned(),
+            ));
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ListPriorAgentHostInstances {
+                runtime_id: runtime_id.to_owned(),
+                current_runtime_incarnation_id: current_runtime_incarnation_id.to_owned(),
+                after_started_at: after_started_at.map(str::to_owned),
+                after_host_instance_id: after_host_instance_id.map(str::to_owned),
+                limit,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
 }
 
 impl TaskStore for SqliteWorkspaceStore {
@@ -3449,6 +3553,31 @@ impl TaskStore for SqliteWorkspaceStore {
     ) -> Result<storage_core::CommittedTask, StoreError> {
         canonicalize_task_timestamps(&mut commit)?;
         validate_task_create_commit(&commit)?;
+        let idempotency_payload = commit
+            .idempotency_payload
+            .as_ref()
+            .unwrap_or(&commit.request.request_payload);
+        if let Some(receipt) = self.get_task_create_receipt(
+            &commit.request.principal_id,
+            &commit.request.request_id,
+            idempotency_payload,
+        )? {
+            if receipt.view.task.workspace_id != commit.task.workspace_id {
+                return Err(StoreError::Conflict {
+                    expected: None,
+                    actual: None,
+                });
+            }
+            return Ok(receipt);
+        }
+        commit.initial_spec_revision.delegation_policy_snapshot =
+            Some(self.resolve_task_delegation_policy_before_blob(
+                &commit.request.principal_id,
+                &commit.task.workspace_id,
+                commit.task.origin_coworker_id.as_deref(),
+                commit.task.origin_coworker_revision,
+                &commit.initial_spec_revision.created_at,
+            )?);
         let snapshot = TaskAggregateSnapshot {
             task: commit.task.clone(),
             current_spec_revision: commit.initial_spec_revision.clone(),
@@ -3582,6 +3711,41 @@ impl TaskStore for SqliteWorkspaceStore {
         commit.task_spec_revision.created_at =
             canonicalize_utc_timestamp(&commit.task_spec_revision.created_at)?;
         commit.event.recorded_at = canonicalize_utc_timestamp(&commit.event.recorded_at)?;
+        validate_task_spec_revision_commit(&commit)?;
+        if let Some(receipt) = self.get_task_spec_revision_receipt(
+            &commit.request.principal_id,
+            &commit.request.request_id,
+            &commit.request.request_payload,
+        )? {
+            return Ok(receipt);
+        }
+        let current = self
+            .get_task(&commit.task.workspace_id, &commit.task.task_id)?
+            .ok_or(StoreError::NotFound)?;
+        if current.task.version != commit.expected_task_version
+            || current.task.current_spec_revision.checked_add(1)
+                != Some(commit.task_spec_revision.revision)
+        {
+            return Err(StoreError::Conflict {
+                expected: Some(commit.expected_task_version),
+                actual: Some(current.task.version),
+            });
+        }
+        commit.task_spec_revision.delegation_policy_snapshot =
+            Some(self.resolve_task_delegation_policy_before_blob(
+                &commit.request.principal_id,
+                &commit.task.workspace_id,
+                current.task.origin_coworker_id.as_deref(),
+                current.task.origin_coworker_revision,
+                &commit.task_spec_revision.created_at,
+            )?);
+        let spec_digest = digest(&canonical_json(&commit.task_spec_revision)?);
+        let Some(payload) = commit.event.payload.as_object_mut() else {
+            return Err(StoreError::Invalid(
+                "TaskSpec revision event payload is invalid".to_owned(),
+            ));
+        };
+        payload.insert("spec_digest".to_owned(), Value::String(spec_digest));
         validate_task_spec_revision_commit(&commit)?;
         let snapshot = TaskAggregateSnapshot {
             task: commit.task.clone(),
@@ -12688,18 +12852,74 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
             "lead_failover_policy must be omitted or an object".to_owned(),
         ));
     }
-    let conversation_requested = request_object
-        .get("conversation_id")
-        .is_some_and(|value| !value.is_null())
-        || request_object
-            .get("source_message_refs")
-            .is_some_and(|value| value != &json!([]))
-        || event.payload.get("conversation_id").is_some()
+    let request_conversation_id = match request_object.get("conversation_id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value))
+            if !value.trim().is_empty()
+                && value.len() <= 256
+                && !value.chars().any(char::is_control) =>
+        {
+            Some(value.as_str())
+        }
+        Some(_) => {
+            return Err(StoreError::Invalid(
+                "Conversation origin must identify one source Conversation".to_owned(),
+            ));
+        }
+    };
+    let request_source_refs = match request_object.get("source_message_refs") {
+        None => Vec::new(),
+        Some(Value::Array(values)) if values.len() <= 2 => values
+            .iter()
+            .map(|value| match value {
+                Value::String(id)
+                    if !id.trim().is_empty()
+                        && id.len() <= 256
+                        && !id.chars().any(char::is_control) =>
+                {
+                    Ok(id.as_str())
+                }
+                _ => Err(StoreError::Invalid(
+                    "Conversation source message identity is invalid".to_owned(),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => {
+            return Err(StoreError::Invalid(
+                "Conversation source must contain exactly the ordered USER and AGENT message IDs"
+                    .to_owned(),
+            ));
+        }
+    };
+    let conversation_origin_present = request_conversation_id.is_some()
+        || !request_source_refs.is_empty()
         || task.conversation_id.is_some()
-        || !spec.source_message_refs.is_empty();
-    if conversation_requested {
+        || !spec.source_message_refs.is_empty()
+        || event.payload.get("conversation_id").is_some();
+    if conversation_origin_present {
+        if request_conversation_id.is_none()
+            || request_source_refs.len() != 2
+            || request_source_refs[0] == request_source_refs[1]
+            || task.conversation_id.as_deref() != request_conversation_id
+            || spec.source_message_refs
+                != request_source_refs
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect::<Vec<_>>()
+            || event.payload.get("conversation_id").and_then(Value::as_str)
+                != request_conversation_id
+        {
+            return Err(StoreError::Invalid(
+                "Conversation Task origin fields must match the exact ordered source pair"
+                    .to_owned(),
+            ));
+        }
+    } else if task.conversation_id.is_some()
+        || !spec.source_message_refs.is_empty()
+        || event.payload.get("conversation_id").is_some()
+    {
         return Err(StoreError::Invalid(
-            "Conversation-origin Task creation is unavailable until its ConversationMessage can be appended atomically".to_owned(),
+            "Standalone Task cannot carry Conversation origin fields".to_owned(),
         ));
     }
     const CREATE_TASK_FIELDS: &[&str] = &[
@@ -13006,6 +13226,226 @@ fn validate_task_resource_inputs(
             return Err(StoreError::NotFound);
         };
         ensure_context_document_content_readable(context_document_json.as_deref())?;
+    }
+    Ok(())
+}
+
+/// Revalidates Conversation promotion provenance inside the same IMMEDIATE
+/// transaction that creates Task, TaskSpecRevision, event and idempotency
+/// receipt. A UI projection is only a discovery hint; this is the authority
+/// check for the exact immutable source pair and its already-pinned inputs.
+fn validate_conversation_task_origin(
+    connection: &Connection,
+    workspace_id: &str,
+    conversation_id: &str,
+    source_message_refs: &[String],
+    input_refs: &[Value],
+    principal_id: &str,
+) -> Result<(), StoreError> {
+    if source_message_refs.len() != 2
+        || source_message_refs[0].trim().is_empty()
+        || source_message_refs[1].trim().is_empty()
+        || source_message_refs[0] == source_message_refs[1]
+    {
+        return Err(StoreError::Invalid(
+            "Conversation Task source must be one ordered USER/AGENT pair".to_owned(),
+        ));
+    }
+
+    type SourceMessage = (
+        String,
+        Option<String>,
+        String,
+        String,
+        String,
+        Option<String>,
+    );
+    let load_message = |message_id: &str| -> Result<SourceMessage, StoreError> {
+        connection
+            .query_row(
+                "SELECT m.role,m.turn_id,m.author_json,m.content_json,m.resource_refs_json,m.agent_binding_id
+                   FROM conversation_messages m
+                   JOIN conversations c ON c.conversation_id=m.conversation_id
+                  WHERE m.message_id=?1 AND m.conversation_id=?2 AND c.workspace_id=?3",
+                params![message_id, conversation_id, workspace_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(map_database_error)?
+            .ok_or(StoreError::NotFound)
+    };
+
+    let (user_role, user_turn_id, user_author_json, user_content_json, user_refs_json, _) =
+        load_message(&source_message_refs[0])?;
+    let (
+        agent_role,
+        agent_turn_id,
+        agent_author_json,
+        agent_content_json,
+        agent_refs_json,
+        agent_binding_id,
+    ) = load_message(&source_message_refs[1])?;
+    let Some(turn_id) = user_turn_id.as_deref() else {
+        return Err(StoreError::Invalid(
+            "Conversation Task source messages do not share a completed turn".to_owned(),
+        ));
+    };
+    if user_role != "USER" || agent_role != "AGENT" || agent_turn_id.as_deref() != Some(turn_id) {
+        return Err(StoreError::Invalid(
+            "Conversation Task source messages are not the ordered USER/AGENT pair from one turn"
+                .to_owned(),
+        ));
+    }
+
+    let user_author: Value = serde_json::from_str(&user_author_json)
+        .map_err(|_| StoreError::Integrity("Conversation source author is invalid".to_owned()))?;
+    if user_author != json!({"kind":"USER","principal_id":principal_id}) {
+        return Err(StoreError::Invalid(
+            "Conversation Task source prompt was not authored by this Workspace owner".to_owned(),
+        ));
+    }
+    let agent_author: Value = serde_json::from_str(&agent_author_json)
+        .map_err(|_| StoreError::Integrity("Conversation source author is invalid".to_owned()))?;
+    if agent_author.get("kind").and_then(Value::as_str) != Some("AGENT")
+        || agent_binding_id.as_deref().is_none_or(str::is_empty)
+        || agent_author.get("agent_binding_id").and_then(Value::as_str)
+            != agent_binding_id.as_deref()
+    {
+        return Err(StoreError::Invalid(
+            "Conversation Task reply does not have a canonical producer identity".to_owned(),
+        ));
+    }
+
+    let turn: Option<(String, String, Option<String>)> = connection
+        .query_row(
+            "SELECT t.user_message_id,t.status,t.settled_at
+               FROM conversation_turns t
+               JOIN conversations c ON c.conversation_id=t.conversation_id
+              WHERE c.workspace_id=?1 AND t.conversation_id=?2 AND t.turn_id=?3",
+            params![workspace_id, conversation_id, turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if turn.as_ref().is_none_or(|(user_id, status, settled_at)| {
+        user_id != &source_message_refs[0] || status != "COMPLETED" || settled_at.is_none()
+    }) {
+        return Err(StoreError::Invalid(
+            "Conversation Task promotion requires its exact completed turn".to_owned(),
+        ));
+    }
+
+    for (message_id, author_json, content_json, refs_json) in [
+        (
+            &source_message_refs[0],
+            &user_author_json,
+            &user_content_json,
+            &user_refs_json,
+        ),
+        (
+            &source_message_refs[1],
+            &agent_author_json,
+            &agent_content_json,
+            &agent_refs_json,
+        ),
+    ] {
+        let author: Value = serde_json::from_str(author_json).map_err(|_| {
+            StoreError::Integrity("Conversation source author is invalid".to_owned())
+        })?;
+        let content: Value = serde_json::from_str(content_json).map_err(|_| {
+            StoreError::Integrity("Conversation source content is invalid".to_owned())
+        })?;
+        let refs: Value = serde_json::from_str(refs_json).map_err(|_| {
+            StoreError::Integrity("Conversation source references are invalid".to_owned())
+        })?;
+        if !content.is_array() || !refs.is_array() {
+            return Err(StoreError::Integrity(
+                "Conversation source message content is invalid".to_owned(),
+            ));
+        }
+        let (event_count, payload_json): (i64, Option<String>) = connection
+            .query_row(
+                "SELECT COUNT(*), MAX(payload_json) FROM domain_events
+                  WHERE workspace_id=?1 AND entity_type='Conversation' AND entity_id=?2
+                    AND type='conversation.message.added.v1'
+                    AND json_extract(payload_json,'$.message_id')=?3
+                    AND json_extract(payload_json,'$.conversation_id')=?2",
+                params![workspace_id, conversation_id, message_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_database_error)?;
+        if event_count != 1 {
+            return Err(StoreError::Invalid(
+                "Conversation Task source message must have exactly one canonical append event"
+                    .to_owned(),
+            ));
+        }
+        let Some(payload_json) = payload_json else {
+            return Err(StoreError::Invalid(
+                "Conversation Task source message has no canonical append event".to_owned(),
+            ));
+        };
+        let payload: Value = serde_json::from_str(&payload_json).map_err(|_| {
+            StoreError::Integrity("Conversation source event is invalid".to_owned())
+        })?;
+        if !payload_has_exact_keys(
+            &payload,
+            &[
+                "message_id",
+                "conversation_id",
+                "author",
+                "content_digest",
+                "resource_refs",
+            ],
+        ) || payload.get("message_id").and_then(Value::as_str) != Some(message_id.as_str())
+            || payload.get("conversation_id").and_then(Value::as_str) != Some(conversation_id)
+            || payload.get("author") != Some(&author)
+            || payload.get("content_digest").and_then(Value::as_str)
+                != Some(digest(&canonical_json(&content)?).as_str())
+            || payload.get("resource_refs") != Some(&refs)
+        {
+            return Err(StoreError::Invalid(
+                "Conversation Task source message append event does not match its immutable record"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    let user_refs: Value = serde_json::from_str(&user_refs_json).map_err(|_| {
+        StoreError::Integrity("Conversation source references are invalid".to_owned())
+    })?;
+    let user_refs = user_refs.as_array().ok_or_else(|| {
+        StoreError::Integrity("Conversation source references are not an array".to_owned())
+    })?;
+    for input in input_refs {
+        let pin: PinnedResourceRef = serde_json::from_value(input.clone()).map_err(|_| {
+            StoreError::Invalid(
+                "Conversation Task inputs must be exact pinned source ResourceRefs".to_owned(),
+            )
+        })?;
+        let exact_source_ref = json!({
+            "workspace_id": pin.workspace_id,
+            "resource_id": pin.resource_id,
+            "revision_id": pin.revision_id,
+        });
+        if !user_refs
+            .iter()
+            .any(|reference| reference == &exact_source_ref)
+        {
+            return Err(StoreError::Invalid(
+                "Conversation Task input is not an exact pinned ResourceRef from the source USER message"
+                    .to_owned(),
+            ));
+        }
     }
     Ok(())
 }
@@ -14161,16 +14601,10 @@ fn validate_agent_host_instance(host: &AgentHostInstanceRecord) -> Result<(), St
 fn valid_agent_host_transition(from: &str, to: &str) -> bool {
     matches!(
         (from, to),
-        (
-            "STARTING",
-            "READY" | "DEGRADED" | "STOPPING" | "STOPPED" | "FAILED"
-        ) | (
-            "READY",
-            "BUSY" | "DEGRADED" | "STOPPING" | "STOPPED" | "FAILED"
-        ) | (
-            "BUSY",
-            "READY" | "DEGRADED" | "STOPPING" | "STOPPED" | "FAILED"
-        ) | ("DEGRADED", "READY" | "STOPPING" | "STOPPED" | "FAILED")
+        ("STARTING", "READY" | "DEGRADED" | "FAILED")
+            | ("READY", "BUSY" | "DEGRADED" | "STOPPING" | "FAILED")
+            | ("BUSY", "READY" | "DEGRADED" | "FAILED")
+            | ("DEGRADED", "READY" | "STOPPING" | "FAILED")
             | ("STOPPING", "STOPPED" | "FAILED")
     )
 }
@@ -14363,6 +14797,57 @@ fn list_agent_host_instances(
         .map_err(map_database_error)
 }
 
+fn list_prior_agent_host_instances(
+    connection: &Connection,
+    runtime_id: &str,
+    current_runtime_incarnation_id: &str,
+    after_started_at: Option<&str>,
+    after_host_instance_id: Option<&str>,
+    limit: usize,
+) -> Result<Vec<AgentHostInstanceRecord>, StoreError> {
+    let after_started_at = after_started_at.unwrap_or("");
+    let after_host_instance_id = after_host_instance_id.unwrap_or("");
+    let mut statement = connection
+        .prepare(
+            "SELECT host_instance_id, runtime_id, runtime_incarnation_id, agent_profile_id,
+          endpoint_id, hosting_mode, state, process_identity_ref, ownership, started_at,
+          last_used_at, idle_since FROM agent_host_instances
+         WHERE runtime_id = ?1 AND runtime_incarnation_id <> ?2
+           AND (?3 = '' OR started_at > ?3 OR (started_at = ?3 AND host_instance_id > ?4))
+         ORDER BY started_at ASC, host_instance_id ASC LIMIT ?5",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                runtime_id,
+                current_runtime_incarnation_id,
+                after_started_at,
+                after_host_instance_id,
+                limit as i64
+            ],
+            |row| {
+                Ok(AgentHostInstanceRecord {
+                    host_instance_id: row.get(0)?,
+                    runtime_id: row.get(1)?,
+                    runtime_incarnation_id: row.get(2)?,
+                    agent_profile_id: row.get(3)?,
+                    endpoint_id: row.get(4)?,
+                    hosting_mode: row.get(5)?,
+                    state: row.get(6)?,
+                    process_identity_ref: row.get(7)?,
+                    ownership: row.get(8)?,
+                    started_at: row.get(9)?,
+                    last_used_at: row.get(10)?,
+                    idle_since: row.get(11)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)
+}
+
 fn create_task_transaction(
     connection: &mut Connection,
     commit: TaskCreateCommit,
@@ -14447,6 +14932,21 @@ pub(crate) fn create_task_in_transaction(
         return Err(StoreError::Invalid(
             "archived Workspace is read-only".to_owned(),
         ));
+    }
+    let resolved_policy = resolve_task_delegation_policy_snapshot(
+        tx,
+        &task.workspace_id,
+        task.origin_coworker_id.as_deref(),
+        task.origin_coworker_revision,
+        &spec.created_at,
+        None,
+        true,
+    )?;
+    if spec.delegation_policy_snapshot.as_ref() != Some(&resolved_policy) {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
     }
     if spec.workspace_instruction_revision
         != instruction_revision
@@ -14561,6 +15061,16 @@ pub(crate) fn create_task_in_transaction(
                 .to_owned(),
         ));
     }
+    if let Some(conversation_id) = task.conversation_id.as_deref() {
+        validate_conversation_task_origin(
+            tx,
+            &task.workspace_id,
+            conversation_id,
+            &spec.source_message_refs,
+            &spec.input_refs,
+            &commit.request.principal_id,
+        )?;
+    }
     routines::validate_task_admission(tx, &commit)?;
     automation_admission::validate_task_admission(tx, &commit)?;
     begin_automation_occurrence_claim(tx, &commit, occurrence_state_refs.as_ref())?;
@@ -14636,7 +15146,7 @@ pub(crate) fn create_task_in_transaction(
             required_outputs_json, criteria_json, approvals_json, budget_json,
             delegation_budget_json, failover_json, spec.deadline, source_refs_json,
             placement_json, spec.preferred_lead_agent_binding_id, spec_author_json, spec.created_at,
-            delegation_policy_snapshot_json(tx, &spec.workspace_id)?,
+            delegation_policy_snapshot_json(spec)?,
         ],
     ).map_err(map_database_error)?;
 
@@ -15438,6 +15948,21 @@ fn revise_task_spec_transaction(
     }
     let current = load_task_view(&transaction, &revision.workspace_id, &revision.task_id)?
         .ok_or(StoreError::NotFound)?;
+    let resolved_policy = resolve_task_delegation_policy_snapshot(
+        &transaction,
+        &revision.workspace_id,
+        current.task.origin_coworker_id.as_deref(),
+        current.task.origin_coworker_revision,
+        &revision.created_at,
+        None,
+        true,
+    )?;
+    if revision.delegation_policy_snapshot.as_ref() != Some(&resolved_policy) {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_task_version),
+            actual: Some(current.task.version),
+        });
+    }
     if current.task.version != commit.expected_task_version
         || current.task.current_spec_revision.checked_add(1) != Some(revision.revision)
         || revision.parent_revisions.len() != 1
@@ -15578,50 +16103,206 @@ fn insert_task_spec_revision_row(
             outputs_json, criteria_json, approvals_json, budget_json, delegation_budget_json, failover_json,
             revision.deadline, source_refs_json, placement_json, revision.preferred_lead_agent_binding_id,
             authored_by_json, revision.created_at,
-            delegation_policy_snapshot_json(transaction, &revision.workspace_id)?],
+            delegation_policy_snapshot_json(revision)?],
     ).map_err(map_database_error)?;
     Ok(())
 }
 
-/// Builds the immutable delegation policy snapshot pinned on a TaskSpec revision from
-/// the Workspace's current delegation settings revision (migration v28). Worker
-/// profiles are pinned only when the Workspace strategy delegates beyond the agent's
-/// native behaviour.
-fn delegation_policy_snapshot_json(
-    transaction: &rusqlite::Transaction<'_>,
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceDelegationProfileRef {
+    profile_id: String,
+    revision: u64,
+}
+
+/// Resolve the canonical policy from immutable owner rows. Caller-supplied snapshots
+/// are never treated as authority.
+fn resolve_task_delegation_policy_snapshot(
+    connection: &Connection,
     workspace_id: &str,
-) -> Result<String, StoreError> {
-    let (revision, strategy, profiles_json, native_child_model_policy): (i64, String, String, String) =
-        transaction
-            .query_row(
-                "SELECT s.revision, s.default_strategy, s.enabled_delegation_profile_revisions_json, s.native_child_model_policy
-                 FROM workspaces w
-                 JOIN workspace_delegation_settings_revisions s
-                   ON s.workspace_id = w.workspace_id AND s.revision = w.current_delegation_settings_revision
-                 WHERE w.workspace_id = ?1",
-                params![workspace_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .optional()
-            .map_err(map_database_error)?
-            .ok_or_else(|| {
-                StoreError::Invalid("Workspace delegation settings revision is missing".to_owned())
-            })?;
-    let profiles: Value = serde_json::from_str(&profiles_json)
-        .map_err(|error| StoreError::Invalid(error.to_string()))?;
-    let worker_profiles = if strategy == "NATIVE_DEFAULT" {
-        json!([])
+    coworker_id: Option<&str>,
+    coworker_revision: Option<u64>,
+    resolved_at: &str,
+    historical_settings_revision: Option<u64>,
+    require_current_profile_enabled: bool,
+) -> Result<storage_core::ResolvedDelegationPolicySnapshot, StoreError> {
+    if coworker_id.is_some() != coworker_revision.is_some() {
+        return Err(StoreError::Invalid(
+            "Task Coworker identity is incomplete".to_owned(),
+        ));
+    }
+    let settings_head: Option<i64> = connection
+        .query_row(
+            "SELECT current_delegation_settings_revision FROM workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let settings_revision = historical_settings_revision
+        .map(|value| to_sql_i64(value, "Workspace delegation settings revision"))
+        .transpose()?
+        .or(settings_head)
+        .ok_or(StoreError::NotFound)?;
+    let (workspace_strategy, profile_refs_json, native_policy): (String, String, String) = connection.query_row(
+        "SELECT default_strategy, enabled_delegation_profile_revisions_json, native_child_model_policy
+         FROM workspace_delegation_settings_revisions WHERE workspace_id = ?1 AND revision = ?2",
+        params![workspace_id, settings_revision],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).optional().map_err(map_database_error)?.ok_or_else(|| {
+        StoreError::Invalid("Workspace delegation settings revision is missing".to_owned())
+    })?;
+    let profile_refs: Vec<WorkspaceDelegationProfileRef> = serde_json::from_str(&profile_refs_json)
+        .map_err(|error| StoreError::Integrity(error.to_string()))?;
+    if profile_refs.len() > 64 {
+        return Err(StoreError::Integrity(
+            "Workspace delegation profile ceiling exceeds 64".to_owned(),
+        ));
+    }
+    let mut profile_revisions = std::collections::BTreeMap::new();
+    for profile in profile_refs {
+        if profile.profile_id.trim().is_empty()
+            || profile.revision == 0
+            || profile_revisions
+                .insert(profile.profile_id.clone(), profile.revision)
+                .is_some()
+        {
+            return Err(StoreError::Integrity(
+                "Workspace delegation profile ceiling is malformed".to_owned(),
+            ));
+        }
+    }
+
+    let (source, strategy, coworker_profile_ids) = if let (Some(id), Some(revision)) =
+        (coworker_id, coworker_revision)
+    {
+        let row: (String, String, String) = connection.query_row(
+            "SELECT delegation_policy_source, delegation_strategy, enabled_delegation_profile_ids_json
+             FROM coworker_revisions WHERE workspace_id = ?1 AND coworker_id = ?2 AND revision = ?3",
+            params![workspace_id, id, to_sql_i64(revision, "Coworker revision")?],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional().map_err(map_database_error)?.ok_or_else(|| {
+            StoreError::Invalid("Task Coworker revision is unavailable".to_owned())
+        })?;
+        let ids: Vec<String> = serde_json::from_str(&row.2)
+            .map_err(|error| StoreError::Integrity(error.to_string()))?;
+        if ids.len() > 64
+            || ids.iter().any(|id| id.trim().is_empty())
+            || ids.iter().collect::<std::collections::BTreeSet<_>>().len() != ids.len()
+        {
+            return Err(StoreError::Integrity(
+                "Coworker profile selection is malformed".to_owned(),
+            ));
+        }
+        match row.0.as_str() {
+            "WORKSPACE_DEFAULT" if row.1 == "NATIVE_DEFAULT" && ids.is_empty() => {
+                (row.0, workspace_strategy, Vec::new())
+            }
+            "WORKSPACE_DEFAULT" => {
+                return Err(StoreError::Integrity(
+                    "Workspace-default Coworker revision contains overrides".to_owned(),
+                ));
+            }
+            "COWORKER_OVERRIDE" => (row.0, row.1, ids),
+            _ => {
+                return Err(StoreError::Integrity(
+                    "Coworker delegation source is invalid".to_owned(),
+                ));
+            }
+        }
     } else {
-        profiles
+        (
+            "WORKSPACE_DEFAULT".to_owned(),
+            workspace_strategy.clone(),
+            Vec::new(),
+        )
     };
-    String::from_utf8(canonical_json(&json!({
-        "source": "WORKSPACE_DEFAULT",
-        "strategy": strategy,
-        "native_child_model_policy": native_child_model_policy,
-        "worker_profiles": worker_profiles,
-        "workspace_settings_revision": revision,
-    }))?)
-    .map_err(|error| StoreError::Invalid(error.to_string()))
+    if !matches!(
+        strategy.as_str(),
+        "NATIVE_DEFAULT" | "BALANCED" | "COST_SAVER" | "HOST_DELEGATION_ONLY"
+    ) || !matches!(
+        native_policy.as_str(),
+        "AGENT_DEFAULT" | "INHERIT_PARENT_IF_SUPPORTED"
+    ) {
+        return Err(StoreError::Integrity(
+            "delegation policy enum is invalid".to_owned(),
+        ));
+    }
+    let selected_ids = if strategy == "NATIVE_DEFAULT" {
+        if source == "COWORKER_OVERRIDE" && !coworker_profile_ids.is_empty() {
+            return Err(StoreError::Invalid(
+                "native-only Coworker policy cannot select worker profiles".to_owned(),
+            ));
+        }
+        Vec::new()
+    } else if source == "COWORKER_OVERRIDE" {
+        coworker_profile_ids
+    } else {
+        profile_revisions.keys().cloned().collect()
+    };
+    let mut worker_profiles = Vec::with_capacity(selected_ids.len());
+    for profile_id in selected_ids {
+        let revision = profile_revisions.get(&profile_id).copied().ok_or_else(|| {
+            StoreError::Invalid(
+                "Coworker delegation selection exceeds Workspace ceiling".to_owned(),
+            )
+        })?;
+        let profile: (String, String) = connection.query_row(
+            "SELECT p.status, r.worker_model_selection_policy FROM delegation_profiles p
+             JOIN delegation_profile_revisions r ON r.delegation_profile_id = p.delegation_profile_id
+                AND r.workspace_id = p.workspace_id
+             WHERE p.workspace_id = ?1 AND p.delegation_profile_id = ?2 AND r.revision = ?3",
+            params![workspace_id, profile_id, to_sql_i64(revision, "Delegation profile revision")?],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(map_database_error)?.ok_or_else(|| {
+            StoreError::Invalid("Workspace delegation profile revision is unavailable".to_owned())
+        })?;
+        if require_current_profile_enabled && profile.0 != "ENABLED" {
+            return Err(StoreError::Invalid(
+                "a pinned delegation profile is no longer enabled for new Tasks".to_owned(),
+            ));
+        }
+        if !matches!(
+            profile.1.as_str(),
+            "PROFILE_CONFIGURED" | "MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE"
+        ) {
+            return Err(StoreError::Integrity(
+                "delegation profile model-selection policy is invalid".to_owned(),
+            ));
+        }
+        worker_profiles.push(storage_core::ResolvedDelegationPolicyWorkerProfile {
+            profile_id,
+            revision,
+            worker_model_selection_policy: profile.1,
+        });
+    }
+    worker_profiles.sort_by(|left, right| left.profile_id.cmp(&right.profile_id));
+    Ok(storage_core::ResolvedDelegationPolicySnapshot {
+        source,
+        workspace_settings_revision: from_sql_i64(
+            settings_revision,
+            "Workspace delegation settings revision",
+        )?,
+        coworker_id: coworker_id.map(str::to_owned),
+        coworker_revision,
+        strategy,
+        native_child_model_policy: native_policy,
+        worker_profiles,
+        resolved_at: canonicalize_utc_timestamp(resolved_at)?,
+    })
+}
+
+fn delegation_policy_snapshot_json(
+    revision: &TaskSpecRevisionRecord,
+) -> Result<String, StoreError> {
+    let snapshot = revision
+        .delegation_policy_snapshot
+        .as_ref()
+        .ok_or_else(|| {
+            StoreError::Invalid("resolved Task delegation policy is required".to_owned())
+        })?;
+    String::from_utf8(canonical_json(snapshot)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))
 }
 
 fn payload_has_exact_keys(payload: &Value, expected: &[&str]) -> bool {
@@ -16371,7 +17052,7 @@ fn load_task_view(
                 required_outputs_json, acceptance_criteria_json, approvals_required_json,
                 budget_json, delegation_budget_policy_json, lead_failover_policy_json, deadline,
                 source_message_refs_json, placement_preference, preferred_lead_agent_binding_id,
-                authored_by_json, created_at
+                authored_by_json, created_at, delegation_policy_snapshot_json
          FROM task_spec_revisions WHERE task_id = ?1 AND revision = ?2",
         params![task.task_id, to_sql_i64(task.current_spec_revision, "TaskSpec revision")?],
         task_spec_from_row,
@@ -16404,7 +17085,7 @@ fn list_task_spec_revisions(
                 required_outputs_json, acceptance_criteria_json, approvals_required_json,
                 budget_json, delegation_budget_policy_json, lead_failover_policy_json, deadline,
                 source_message_refs_json, placement_preference, preferred_lead_agent_binding_id,
-                authored_by_json, created_at
+                authored_by_json, created_at, delegation_policy_snapshot_json
          FROM task_spec_revisions WHERE task_id = ?1 ORDER BY revision ASC",
     ).map_err(map_database_error)?;
     statement
@@ -16668,6 +17349,7 @@ fn task_spec_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskSpecRevis
     let source_refs_json: String = row.get(17)?;
     let placement_json: String = row.get(18)?;
     let authored_by_json: String = row.get(20)?;
+    let delegation_policy_snapshot_json: Option<String> = row.get(22)?;
     Ok(TaskSpecRevisionRecord {
         task_id: row.get(0)?,
         workspace_id: row.get(1)?,
@@ -16701,6 +17383,13 @@ fn task_spec_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskSpecRevis
         preferred_lead_agent_binding_id: row.get(19)?,
         authored_by: parse(20, authored_by_json)?,
         created_at: row.get(21)?,
+        delegation_policy_snapshot: delegation_policy_snapshot_json
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(22, Type::Text, Box::new(error))
+                })
+            })
+            .transpose()?,
     })
 }
 
@@ -20712,6 +21401,23 @@ fn writer_loop(
                             &runtime_incarnation_id,
                         ));
                     }
+                    Command::ListPriorAgentHostInstances {
+                        runtime_id,
+                        current_runtime_incarnation_id,
+                        after_started_at,
+                        after_host_instance_id,
+                        limit,
+                        reply,
+                    } => {
+                        let _ = reply.send(list_prior_agent_host_instances(
+                            &connection,
+                            &runtime_id,
+                            &current_runtime_incarnation_id,
+                            after_started_at.as_deref(),
+                            after_host_instance_id.as_deref(),
+                            limit,
+                        ));
+                    }
                     Command::ListStartingTaskPlanningSessions {
                         workspace_id,
                         limit,
@@ -21417,7 +22123,8 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 30, V30_MIGRATION_NAME, SQLITE_V30_DDL, false)?;
         verify_migration_record(connection, 31, V31_MIGRATION_NAME, SQLITE_V31_DDL, false)?;
         verify_migration_record(connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)?;
-        verify_migration_record(connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)?;
+        verify_migration_record(connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)?;
+        verify_migration_record(connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)?;
         return Ok(());
     }
 
@@ -21868,6 +22575,8 @@ fn migrate_with_failpoint(
             | V30_SCHEMA_VERSION
             | V31_SCHEMA_VERSION
             | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21890,6 +22599,8 @@ fn migrate_with_failpoint(
             | V30_SCHEMA_VERSION
             | V31_SCHEMA_VERSION
             | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21911,6 +22622,8 @@ fn migrate_with_failpoint(
             | V30_SCHEMA_VERSION
             | V31_SCHEMA_VERSION
             | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21931,6 +22644,8 @@ fn migrate_with_failpoint(
             | V30_SCHEMA_VERSION
             | V31_SCHEMA_VERSION
             | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21950,6 +22665,8 @@ fn migrate_with_failpoint(
             | V30_SCHEMA_VERSION
             | V31_SCHEMA_VERSION
             | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21968,6 +22685,8 @@ fn migrate_with_failpoint(
             | V30_SCHEMA_VERSION
             | V31_SCHEMA_VERSION
             | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21985,6 +22704,8 @@ fn migrate_with_failpoint(
             | V30_SCHEMA_VERSION
             | V31_SCHEMA_VERSION
             | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -21997,7 +22718,12 @@ fn migrate_with_failpoint(
         migrate_conversation_durable_turn(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V29_SCHEMA_VERSION | V30_SCHEMA_VERSION | V31_SCHEMA_VERSION | V32_SCHEMA_VERSION
+        V29_SCHEMA_VERSION
+            | V30_SCHEMA_VERSION
+            | V31_SCHEMA_VERSION
+            | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22010,7 +22736,11 @@ fn migrate_with_failpoint(
         migrate_conversation_turn_activity(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V30_SCHEMA_VERSION | V31_SCHEMA_VERSION | V32_SCHEMA_VERSION
+        V30_SCHEMA_VERSION
+            | V31_SCHEMA_VERSION
+            | V32_SCHEMA_VERSION
+            | V33_SCHEMA_VERSION
+            | V34_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -22021,7 +22751,10 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V30_SCHEMA_VERSION {
         migrate_conversation_history_state(connection, failpoint)?;
-    } else if !matches!(current_version, V31_SCHEMA_VERSION | V32_SCHEMA_VERSION) {
+    } else if !matches!(
+        current_version,
+        V31_SCHEMA_VERSION | V32_SCHEMA_VERSION | V33_SCHEMA_VERSION | V34_SCHEMA_VERSION
+    ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -22031,7 +22764,10 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V31_SCHEMA_VERSION {
         migrate_conversation_coedit(connection, failpoint)?;
-    } else if current_version != V32_SCHEMA_VERSION {
+    } else if !matches!(
+        current_version,
+        V32_SCHEMA_VERSION | V33_SCHEMA_VERSION | V34_SCHEMA_VERSION
+    ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -22041,7 +22777,17 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V32_SCHEMA_VERSION {
         migrate_task_session_environment_binding(connection, failpoint)?;
-    } else if current_version != V33_SCHEMA_VERSION {
+    } else if !matches!(current_version, V33_SCHEMA_VERSION | V34_SCHEMA_VERSION) {
+        return Err(StoreError::CorruptSchema(format!(
+            "migration stopped at unexpected schema version {current_version}"
+        )));
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V33_SCHEMA_VERSION {
+        migrate_resolved_task_delegation_policy_snapshot(connection, failpoint)?;
+    } else if current_version != V34_SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -22085,6 +22831,115 @@ fn migrate_task_session_environment_binding(
     record_migration(&transaction, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL)?;
     transaction
         .pragma_update(None, "user_version", V33_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version thirty-four expands and constrains the immutable TaskSpec policy snapshot.
+/// Existing non-null v28 values are reconstructed only from their pinned source rows.
+fn migrate_resolved_task_delegation_policy_snapshot(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let legacy: Vec<(
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    )> = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT s.task_id, s.workspace_id, s.revision, s.created_at,
+                        s.delegation_policy_snapshot_json, t.origin_coworker_id,
+                        t.origin_coworker_revision
+                 FROM task_spec_revisions s
+                 JOIN tasks t ON t.task_id = s.task_id AND t.workspace_id = s.workspace_id
+                 WHERE s.delegation_policy_snapshot_json IS NOT NULL
+                 ORDER BY s.workspace_id, s.task_id, s.revision",
+            )
+            .map_err(map_database_error)?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })
+            .map_err(map_database_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_database_error)?
+    };
+    for (task_id, workspace_id, revision, created_at, old_json, coworker_id, coworker_revision) in
+        legacy
+    {
+        let old_json = old_json.ok_or_else(|| {
+            StoreError::CorruptSchema(
+                "non-null TaskSpec delegation snapshot disappeared during migration".to_owned(),
+            )
+        })?;
+        let old: Value = serde_json::from_str(&old_json).map_err(|error| {
+            StoreError::CorruptSchema(format!("legacy delegation snapshot is invalid: {error}"))
+        })?;
+        let settings_revision = old
+            .get("workspace_settings_revision")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                StoreError::CorruptSchema(
+                    "legacy delegation snapshot has no pinned Workspace revision".to_owned(),
+                )
+            })?;
+        let snapshot = resolve_task_delegation_policy_snapshot(
+            &transaction,
+            &workspace_id,
+            coworker_id.as_deref(),
+            coworker_revision
+                .map(|value| from_sql_i64(value, "Coworker revision"))
+                .transpose()?,
+            &created_at,
+            Some(settings_revision),
+            false,
+        )
+        .map_err(|error| {
+            StoreError::CorruptSchema(format!(
+                "cannot reconstruct Task {task_id} revision {revision} delegation snapshot: {error}"
+            ))
+        })?;
+        let encoded = String::from_utf8(canonical_json(&snapshot)?)
+            .map_err(|error| StoreError::CorruptSchema(error.to_string()))?;
+        let changed = transaction
+            .execute(
+                "UPDATE task_spec_revisions SET delegation_policy_snapshot_json = ?1
+                 WHERE task_id = ?2 AND workspace_id = ?3 AND revision = ?4
+                   AND delegation_policy_snapshot_json = ?5",
+                params![encoded, task_id, workspace_id, revision, old_json],
+            )
+            .map_err(map_database_error)?;
+        if changed != 1 {
+            return Err(StoreError::CorruptSchema(
+                "TaskSpec snapshot changed during migration".to_owned(),
+            ));
+        }
+    }
+    transaction
+        .execute_batch(SQLITE_V34_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV34Migration)?;
+    record_migration(&transaction, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V34_SCHEMA_VERSION)
         .map_err(map_database_error)?;
     validate_schema(&transaction)?;
     transaction.commit().map_err(map_database_error)?;
@@ -23303,6 +24158,7 @@ enum Failpoint {
     DuringV31Migration,
     DuringV32Migration,
     DuringV33Migration,
+    DuringV34Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,

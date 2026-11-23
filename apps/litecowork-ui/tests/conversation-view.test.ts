@@ -2,11 +2,100 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { appendConversationPage, appendConversationListPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationList, parseConversationListPage, parseConversationSnapshot, richPresentationCacheKey } from "../src/conversations/conversation-view.ts";
+import * as conversationView from "../src/conversations/conversation-view.ts";
 
 test("unsent conversation drafts are scoped to one Workspace and Conversation", () => {
   const first = conversationDraftScope("workspace-a", "conversation-a");
   assert.notEqual(first, conversationDraftScope("workspace-a", "conversation-b"));
   assert.notEqual(first, conversationDraftScope("workspace-b", "conversation-a"));
+});
+
+test("pending existing-Conversation sends preserve an exact bounded body and reject cross-Workspace refs", () => {
+  const entry = {
+    workspaceId: "workspace-1",
+    conversationId: "conversation-1",
+    requestId: "request-1",
+    content: [{ kind: "TEXT", text: "Exact message" }],
+    resourceRefs: [{ workspace_id: "workspace-1", resource_id: "resource-1", revision_id: "revision-1" }],
+    agentBindingId: "binding-1",
+    presentationPreference: "RICH",
+    attachmentLabels: ["report.txt"],
+  };
+  const parsed = conversationView.parsePendingConversationSends([entry]);
+  assert.equal(conversationView.pendingConversationSendText(parsed[0]!), "Exact message");
+  assert.deepEqual(parsed[0], entry);
+  assert.deepEqual(conversationView.restorePendingConversationAttachmentChips(parsed[0]!, [{
+    resourceId: "resource-1", workspaceId: "workspace-1", resourceRevisionId: "revision-new",
+    displayName: "Current report.txt", mediaType: "text/plain", sizeBytes: 12,
+  }]), [{
+    resourceId: "resource-1", workspaceId: "workspace-1", resourceRevisionId: "revision-1",
+    displayName: "report.txt", mediaType: "text/plain", sizeBytes: 12,
+  }], "the saved label and pinned revision survive a typed refusal after restart");
+  assert.deepEqual(conversationView.restorePendingConversationAttachmentChips(parsed[0]!, []), [{
+    resourceId: "resource-1", workspaceId: "workspace-1", resourceRevisionId: "revision-1",
+    displayName: "report.txt", mediaType: "application/x-litecowork-recovered-resource", sizeBytes: Number.MAX_SAFE_INTEGER,
+  }], "unavailable Resources remain visible as removable, non-authoritative chips");
+  assert.throws(() => conversationView.parsePendingConversationSends([{
+    ...entry,
+    resourceRefs: [{ ...entry.resourceRefs[0]!, workspace_id: "workspace-2" }],
+  }]), /Resource references/);
+  assert.throws(() => conversationView.parsePendingConversationSends([entry, {
+    ...entry,
+    requestId: "request-2",
+  }]), /duplicate identities/);
+  assert.throws(() => conversationView.parsePendingConversationSends([{
+    ...entry,
+    content: [{ kind: "TEXT", text: "Exact message", native_session_id: "private" }],
+  }]), /content is invalid/);
+  assert.throws(() => conversationView.parsePendingConversationSends([{
+    ...entry,
+    attachmentLabels: [],
+  }]), /labels do not match/);
+});
+
+test("an admitted or refused send remains visible for exact retry when journal acknowledgement cannot be verified", () => {
+  const request = {
+    workspaceId: "workspace-1",
+    conversationId: "conversation-1",
+    requestId: "request-1",
+    content: [{ kind: "TEXT" as const, text: "Exact message" }],
+    resourceRefs: [],
+    agentBindingId: "binding-1",
+    presentationPreference: "RICH" as const,
+    attachmentLabels: [],
+  };
+  const retained = conversationView.retainPendingConversationSend([], request);
+  assert.deepEqual(retained, [request]);
+  assert.deepEqual(conversationView.retainPendingConversationSend(retained, request), retained,
+    "recovery state must not duplicate the exact identity");
+  const collision = { ...request, content: [{ kind: "TEXT" as const, text: "different body" }] };
+  assert.deepEqual(conversationView.retainPendingConversationSend(retained, collision), retained,
+    "a conflicting body must never replace the original retry payload under the same identity");
+});
+
+test("Conversation send outcomes accept only the validated receipt or a closed pre-commit refusal", () => {
+  const admitted = {
+    kind: "ADMITTED",
+    receipt: {
+      turn_id: "turn-1", conversation_id: "conversation-1", user_message_id: "message-1",
+      status: "OPEN", accepted_at: "2026-11-20T10:15:30Z", correlation_id: "correlation-1",
+      presentation_preference: "RICH",
+    },
+  };
+  assert.deepEqual(conversationView.parseConversationSendOutcome(admitted, "conversation-1", "RICH"), admitted);
+  assert.throws(() => conversationView.parseConversationSendOutcome(admitted, "conversation-2", "RICH"), /receipt is invalid/);
+  assert.throws(() => conversationView.parseConversationSendOutcome({
+    ...admitted,
+    receipt: { ...admitted.receipt, extra: "unknown" },
+  }, "conversation-1", "RICH"), /receipt is invalid/);
+  assert.deepEqual(conversationView.parseConversationSendOutcome({
+    kind: "REFUSED", status: 422, code: "AGENT_UNAVAILABLE", message: "Choose an available agent",
+  }, "conversation-1", "RICH"), {
+    kind: "REFUSED", status: 422, code: "AGENT_UNAVAILABLE", message: "Choose an available agent",
+  });
+  assert.throws(() => conversationView.parseConversationSendOutcome({
+    kind: "REFUSED", status: 503, code: "DEPENDENCY_UNAVAILABLE", message: "Unknown outcome",
+  }, "conversation-1", "RICH"), /outcome is invalid/);
 });
 
 test("late Conversation create response is discarded after an A to B to A Workspace switch", async () => {
@@ -47,6 +136,73 @@ test("Conversation snapshots preserve their bounded pagination cursor", () => {
   const { next_cursor: _nextCursor, ...snapshotWithoutCursor } = snapshot;
   assert.throws(() => parseConversationSnapshot(snapshotWithoutCursor, "workspace-1", "conversation-1"), /pagination cursor/);
   assert.throws(() => parseConversationSnapshot({ ...snapshot, next_cursor: "../foreign" }, "workspace-1", "conversation-1"), /pagination cursor/);
+});
+
+test("Conversation snapshots preserve exact turn lineage and treat omitted status as unknown", () => {
+  const user = {
+    message_id: "message-user", conversation_id: "conversation-1", role: "USER",
+    turn_id: "turn-1", created_at: "2026-10-09T12:00:00Z",
+    content: [{ kind: "TEXT", text: "Analyze this file" }],
+    resource_refs: [{ workspace_id: "workspace-1", resource_id: "resource-1", revision_id: "revision-7" }],
+  };
+  const agent = {
+    message_id: "message-agent", conversation_id: "conversation-1", role: "AGENT",
+    turn_id: "turn-1", created_at: "2026-10-09T12:00:01Z",
+    content: [{ kind: "TEXT", text: "Here is the answer" }], resource_refs: [],
+  };
+  const snapshot = {
+    workspace_id: "workspace-1", conversation_id: "conversation-1", projection_revision: 1,
+    stream_cursor: "conversation:conversation-1:1", origin_sequence: "2",
+    items: [
+      { message: user, rich_presentation: null, linked_items: [], turn_status: "COMPLETED" },
+      { message: agent, rich_presentation: null, linked_items: [], turn_status: "COMPLETED" },
+    ],
+    next_cursor: null, active_turn: null,
+  };
+  const parsed = parseConversationSnapshot(snapshot, "workspace-1", "conversation-1");
+  assert.equal(parsed.messages[0]?.turn_id, "turn-1");
+  assert.equal(parsed.messages[0]?.turn_status, "COMPLETED");
+  assert.deepEqual(parsed.messages[0]?.resource_refs, [
+    { workspace_id: "workspace-1", resource_id: "resource-1", revision_id: "revision-7" },
+  ]);
+  assert.equal(parsed.messages[1]?.turn_status, "COMPLETED");
+
+  const legacy = parseConversationSnapshot({
+    ...snapshot,
+    items: [{ message: agent, rich_presentation: null, linked_items: [] }],
+  }, "workspace-1", "conversation-1");
+  assert.equal(legacy.messages[0]?.turn_status, null);
+  assert.throws(() => parseConversationSnapshot({
+    ...snapshot,
+    items: [{ ...snapshot.items[1]!, turn_status: "UNKNOWN" }],
+  }, "workspace-1", "conversation-1"), /Conversation message is invalid/);
+});
+
+test("Conversation snapshots preserve the latest completed activity identity without granting control authority", () => {
+  const message = { message_id: "message-1", conversation_id: "conversation-1", role: "AGENT", created_at: "2026-10-09T12:00:00Z", content: [{ kind: "TEXT", text: "Saved answer" }] };
+  const activityTurn = { turn_id: "turn-completed", retry_ordinal: 2, status: "COMPLETED" };
+  const snapshot = {
+    workspace_id: "workspace-1", conversation_id: "conversation-1", projection_revision: 2,
+    stream_cursor: "conversation:conversation-1:2", origin_sequence: "4",
+    items: [{ message, rich_presentation: null, linked_items: [] }], next_cursor: null,
+    active_turn: null, retryable_turn: null, activity_turn: activityTurn,
+  };
+  const parsed = parseConversationSnapshot(snapshot, "workspace-1", "conversation-1");
+  assert.deepEqual(parsed.activity_turn, activityTurn);
+  assert.equal(typeof conversationView.activityTurnForRead, "function");
+  assert.deepEqual(conversationView.activityTurnForRead(parsed), activityTurn);
+  assert.equal(parsed.active_turn, null, "the activity identity does not become Stop authority");
+  assert.equal(parsed.retryable_turn, null, "a completed turn does not become Retry authority");
+  assert.throws(() => parseConversationSnapshot({ ...snapshot, activity_turn: { ...activityTurn, status: "UNKNOWN" } }, "workspace-1", "conversation-1"), /Conversation history or source frontier is invalid/);
+
+  const { activity_turn: _activityTurn, ...legacySnapshot } = snapshot;
+  const legacyRunning = parseConversationSnapshot({
+    ...legacySnapshot,
+    active_turn: { turn_id: "turn-running", version: 3, retry_ordinal: 1, status: "RUNNING" },
+  }, "workspace-1", "conversation-1");
+  assert.deepEqual(conversationView.activityTurnForRead(legacyRunning), {
+    turn_id: "turn-running", retry_ordinal: 1, status: "RUNNING",
+  });
 });
 
 test("Conversation snapshots preserve producer identity and reject malformed identity fields", () => {
@@ -262,6 +418,39 @@ test("pending Conversation create identity restores from a persisted journal aft
   assert.equal(retry.title, "Draft");
 });
 
+test("first-send recovery reuses the exact body but separates different messages with the same title", () => {
+  let allocations = 0;
+  const requests = new ConversationCreateRequestCache();
+  const makeId = () => `first-turn-${++allocations}`;
+  const firstTurn = { content: [{ kind: "TEXT", text: "Plan a quiet weekend." }], resourceRefs: [], agentBindingId: "binding-default-at-send", presentationPreference: "RICH" };
+  const changedTurn = { content: [{ kind: "TEXT", text: "Plan a busy weekend." }], resourceRefs: [], agentBindingId: "binding-default-at-send", presentationPreference: "RICH" };
+
+  const original = requests.get("workspace-1", "Plan a quiet weekend.", makeId, firstTurn);
+  const exactRetry = requests.get("workspace-1", "Plan a quiet weekend.", makeId, firstTurn);
+  const changedMessage = requests.get("workspace-1", "Plan a quiet weekend.", makeId, changedTurn);
+  const changedBinding = requests.get("workspace-1", "Plan a quiet weekend.", makeId, {
+    ...firstTurn,
+    agentBindingId: "binding-after-default-change",
+  });
+  assert.equal(exactRetry.requestId, original.requestId);
+  assert.notEqual(changedMessage.requestId, original.requestId);
+  assert.notEqual(changedBinding.requestId, original.requestId);
+
+  const restarted = new ConversationCreateRequestCache();
+  restarted.replace([{
+    ...original,
+    firstTurn: {
+      presentationPreference: "RICH",
+      agentBindingId: "binding-default-at-send",
+      resourceRefs: [],
+      content: [{ kind: "TEXT", text: "Plan a quiet weekend." }],
+    },
+  }]);
+  const afterRestart = restarted.get("workspace-1", "Plan a quiet weekend.", makeId, firstTurn);
+  assert.equal(afterRestart.requestId, original.requestId);
+  assert.deepEqual(afterRestart.firstTurn, firstTurn);
+});
+
 test("pending Conversation acknowledgement removes only an exact Workspace and request identity", () => {
   const requests = new ConversationCreateRequestCache();
   const workspaceOne = requests.get("workspace-1", "Draft", () => "request-shared");
@@ -316,6 +505,23 @@ test("Conversation UI wires stable rich bindings, Workspace response fencing, re
   assert.match(page, /\}, \[cacheKey, conversationId, message\.message_id, presentationId, requestedKey, retry, semanticContentDigest, text, workspaceId\]\)/);
   assert.match(page, /auto-load message may move out of the recent viewport set while its fetch is in/);
   assert.doesNotMatch(page, /\}, \[[^\]]*\breference\b[^\]]*\]\)/);
+  assert.doesNotMatch(page, /optimisticMessage|user-msg-\$\{Date\.now\(\)\}/);
+  assert.match(page, /list_pending_conversation_sends/);
+  assert.match(page, /Retry saved send/);
+  assert.match(page, /requestId: request\.requestId/);
+  assert.match(page, /resourceRefs: request\.resourceRefs/);
+  assert.match(page, /attachmentLabels: request\.attachmentLabels/);
+  assert.match(page, /exactRequestStillPending/);
+  assert.match(page, /retainPendingConversationSend\(current, request\)/,
+    "an acknowledgement whose journal recheck also fails keeps the exact existing send visible for retry");
+  assert.match(page, /retainPendingConversationSend\(current, savedRequest\)/,
+    "an initial send remains visible if its result or journal acknowledgement cannot be confirmed locally");
+  assert.match(page, /pendingSendsInWorkspace\.map\(request =>/,
+    "the exact in-memory recovery request stays visible even while the journal recheck is unavailable");
+  assert.doesNotMatch(page, /sendJournalStatus === "READY" && pendingSendsInWorkspace\.map/,
+    "journal read failure must not hide the already-known exact retry request");
+  assert.match(page, /restorePendingConversationAttachmentChips\(request, pickerState\.items\)/);
+  assert.match(page, /pendingSendForSelection !== null/);
   assert.match(page, /conversationWorkspaceSelections\.isCurrent\(requestSelection\)/, "create UI updates are fenced to the captured Workspace selection epoch");
   assert.match(page, /useLayoutEffect\(\(\) => \{\s*conversationWorkspaceSelections\.select\(workspaceId\)/, "the shared selection epoch updates when the active page commits a Workspace switch");
   assert.ok([...page.matchAll(/isCurrentCreateRequest\(\)/g)].length >= 7, "create response, acknowledgement, and recovery updates use the current request fence");
@@ -326,6 +532,9 @@ test("Conversation UI wires stable rich bindings, Workspace response fencing, re
   assert.match(page, /Retry checking pending Conversation requests/);
   assert.match(page, /list_pending_conversation_creates/);
   assert.match(page, /item\.workspaceId !== request\.workspaceId \|\| item\.requestId !== request\.requestId/);
+  assert.match(page, /activityTurnForRead\(currentSnapshot\)/, "latest activity identity is read from the durable projection");
+  assert.match(page, /list_conversation_turn_activity/, "the exact activity identity selects the existing per-turn read route");
+  assert.match(page, /retryTarget\(currentSnapshot\?\.active_turn, currentSnapshot\?\.retryable_turn/, "activity identity does not replace Stop/Retry authority");
   assert.match(page, /list_conversations", \{ workspaceId: requestWorkspaceId, cursor \}/);
   assert.match(page, /appendConversationListPage\(/);
 

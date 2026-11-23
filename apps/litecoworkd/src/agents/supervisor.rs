@@ -10,8 +10,9 @@
 //! 5. Response Streaming & Terminal Settlement: Stream deltas collected and atomically committed
 //!    via `commit_conversation_agent_response`.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -240,6 +241,7 @@ impl NativePermissionRegistry {
         &self,
         scope: &NativePermissionScope,
         event: &NormalizedAgentEvent,
+        workspace_root: Option<&Path>,
     ) -> Result<NativePermissionPromptView, NativePermissionRegistryError> {
         let NormalizedAgentEvent::PermissionAsked {
             permission_id,
@@ -256,7 +258,7 @@ impl NativePermissionRegistry {
             getrandom::fill(&mut token_bytes)
                 .map_err(|_| NativePermissionRegistryError::InvalidPrompt)?;
             let token = hex::encode(token_bytes);
-            match self.register_with_token(
+            match self.register_with_token_and_display(
                 scope,
                 native_session_id,
                 token,
@@ -264,6 +266,7 @@ impl NativePermissionRegistry {
                 action.clone(),
                 message.clone(),
                 resources.clone(),
+                permission_resource_labels(workspace_root, resources),
             ) {
                 Err(NativePermissionRegistryError::TokenCollision) => continue,
                 result => return result,
@@ -282,6 +285,31 @@ impl NativePermissionRegistry {
         explanation: Option<String>,
         native_resources: Vec<String>,
     ) -> Result<NativePermissionPromptView, NativePermissionRegistryError> {
+        let display_resources = permission_resource_labels(None, &native_resources);
+        self.register_with_token_and_display(
+            scope,
+            observed_session_id,
+            token,
+            native_request_id,
+            action,
+            explanation,
+            native_resources,
+            display_resources,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn register_with_token_and_display(
+        &self,
+        scope: &NativePermissionScope,
+        observed_session_id: &str,
+        token: String,
+        native_request_id: String,
+        action: String,
+        explanation: Option<String>,
+        native_resources: Vec<String>,
+        display_resources: Vec<String>,
+    ) -> Result<NativePermissionPromptView, NativePermissionRegistryError> {
         if observed_session_id != scope.native_session_id {
             return Err(NativePermissionRegistryError::ForeignSession);
         }
@@ -293,6 +321,12 @@ impl NativePermissionRegistry {
             || native_request_id.len() > 128
             || native_request_id.chars().any(char::is_control)
             || native_resources.len() > 64
+            || display_resources.len() != native_resources.len().min(16)
+            || display_resources.iter().any(|resource| {
+                resource.is_empty()
+                    || resource.len() > 128
+                    || resource.chars().any(char::is_control)
+            })
         {
             return Err(NativePermissionRegistryError::InvalidPrompt);
         }
@@ -341,9 +375,7 @@ impl NativePermissionRegistry {
             action,
             explanation,
             resource_count: native_resources.len(),
-            resources: (0..native_resources.len().min(16))
-                .map(|index| format!("Resource {}", index + 1))
-                .collect(),
+            resources: display_resources,
             decision: None,
         };
         prompts.insert(
@@ -752,7 +784,9 @@ impl NativePermissionRegistry {
                 (prompt.scope == *scope
                     && matches!(
                         prompt.view.state,
-                        NativePermissionState::Pending | NativePermissionState::Replying
+                        NativePermissionState::Pending
+                            | NativePermissionState::Replying
+                            | NativePermissionState::OutcomeUnknown
                     ))
                 .then(|| token.clone())
             })
@@ -849,6 +883,7 @@ struct NativePermissionObserver {
     registry: NativePermissionRegistry,
     scope: NativePermissionScope,
     bus: crate::transient_frames::TransientFrameBus,
+    workspace_root: Option<PathBuf>,
 }
 
 impl NativePermissionObserver {
@@ -856,11 +891,13 @@ impl NativePermissionObserver {
         registry: NativePermissionRegistry,
         scope: NativePermissionScope,
         bus: crate::transient_frames::TransientFrameBus,
+        workspace_root: Option<PathBuf>,
     ) -> Self {
         Self {
             registry,
             scope,
             bus,
+            workspace_root,
         }
     }
 }
@@ -896,7 +933,10 @@ fn publish_native_permission_prompt(
 
 impl TurnObserver for NativePermissionObserver {
     fn on_event(&mut self, event: &NormalizedAgentEvent) {
-        let Ok(prompt) = self.registry.register(&self.scope, event) else {
+        let Ok(prompt) = self
+            .registry
+            .register(&self.scope, event, self.workspace_root.as_deref())
+        else {
             return;
         };
         publish_native_permission_prompt(&self.bus, &self.scope, &prompt);
@@ -915,6 +955,98 @@ fn permission_display_text(raw: &str, max_bytes: usize) -> Option<String> {
     }
     let cleaned = cleaned.trim().to_owned();
     (!cleaned.is_empty()).then_some(cleaned)
+}
+
+/// Show a native resource path only after proving it is an existing, non-link
+/// path beneath the already-resolved Workspace root. The provider's path itself
+/// remains private for exact pending-list reconciliation.
+fn permission_resource_labels(workspace_root: Option<&Path>, resources: &[String]) -> Vec<String> {
+    let canonical_root = workspace_root.and_then(|root| std::fs::canonicalize(root).ok());
+    resources
+        .iter()
+        .take(16)
+        .enumerate()
+        .map(|(index, resource)| {
+            let fallback = format!("Resource {}", index + 1);
+            let Some(root) = canonical_root.as_deref() else {
+                return fallback;
+            };
+            permission_resource_label(root, resource, index + 1).unwrap_or(fallback)
+        })
+        .collect()
+}
+
+fn permission_path_without_verbatim_prefix(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(value) = path.to_str() {
+            let unc_prefix = "\\\\?\\UNC\\";
+            if value
+                .get(..unc_prefix.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(unc_prefix))
+            {
+                return PathBuf::from(format!("\\\\{}", &value[unc_prefix.len()..]));
+            }
+            if let Some(value) = value.strip_prefix("\\\\?\\") {
+                return PathBuf::from(value);
+            }
+        }
+    }
+    path.to_path_buf()
+}
+
+fn permission_resource_label(root: &Path, raw: &str, ordinal: usize) -> Option<String> {
+    if raw.is_empty() || raw.len() > 4_096 || raw.chars().any(char::is_control) {
+        return None;
+    }
+    let root = permission_path_without_verbatim_prefix(root);
+    let path = permission_path_without_verbatim_prefix(Path::new(raw));
+    let relative = if path.is_absolute() {
+        match path.strip_prefix(&root) {
+            Ok(relative) => relative,
+            Err(_) => return Some(format!("External resource {ordinal}")),
+        }
+    } else {
+        path.as_path()
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+
+    let mut candidate = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        candidate.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&candidate).ok()?;
+        if is_permission_resource_link_or_reparse(&metadata)
+            || (index + 1 < components.len() && !metadata.is_dir())
+        {
+            return None;
+        }
+    }
+
+    let display = relative.to_str()?.replace('\\', "/");
+    if display.is_empty() || display.len() > 128 || display.chars().any(char::is_control) {
+        return None;
+    }
+    Some(display)
+}
+
+#[cfg(windows)]
+fn is_permission_resource_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_permission_resource_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
 }
 
 /// Closed diagnostic classes for failures after durable turn admission. Never add provider
@@ -1691,7 +1823,27 @@ impl ReadyHostStateGuard {
         self.state = "READY";
     }
 
-    fn finish(&mut self, next_state: &'static str) -> Result<(), String> {
+    fn mark_degraded_after_session_loss(&mut self) -> Result<(), String> {
+        self.transition("DEGRADED")
+    }
+
+    fn begin_stopping(&mut self) -> Result<(), String> {
+        self.transition("STOPPING")
+    }
+
+    fn finish_stopped(&mut self) -> Result<(), String> {
+        self.transition("STOPPED")?;
+        self.active = false;
+        Ok(())
+    }
+
+    fn retain_stopping_pending(&mut self) {
+        // STOPPING remains durable when exit is unknown; startup reconciliation
+        // owns any later retry and must not infer success from this stack.
+        self.active = false;
+    }
+
+    fn transition(&mut self, next_state: &'static str) -> Result<(), String> {
         self.store
             .transition_agent_host_instance(
                 &self.runtime_id,
@@ -1703,14 +1855,14 @@ impl ReadyHostStateGuard {
                 None,
             )
             .map_err(|_| "Could not reconcile the native host process state".to_owned())?;
-        self.active = false;
+        self.state = next_state;
         Ok(())
     }
 }
 
 impl Drop for ReadyHostStateGuard {
     fn drop(&mut self) {
-        if self.active {
+        if self.active && self.state != "STOPPING" {
             let _ = self.store.transition_agent_host_instance(
                 &self.runtime_id,
                 &self.runtime_incarnation_id,
@@ -2268,6 +2420,7 @@ fn execute_agent_turn(
                     native_permissions.clone(),
                     permission_scope,
                     permission_bus.clone(),
+                    std::fs::canonicalize(&working_dir).ok(),
                 )),
                 Box::new(crate::transient_frames::TurnFramePublisher::new(
                     crate::transient_frames::transient_bus().clone(),
@@ -2435,9 +2588,11 @@ fn execute_agent_turn(
                 Ok(TurnObservation::StopUnconfirmed) => {
                     // The interrupt was sent but quiescence was not observed in time.
                     // The turn stays CANCEL_REQUESTED; CANCELLED is never fabricated.
-                    // This interim adapter still kills on shutdown/drop; retained
-                    // process/session reconciliation requires the shared host owner.
-                    finish_per_session_host(&mut adapter, &mut host_state_guard)?;
+                    // The live AgentSession reference prevents an orderly STOPPING
+                    // transition. This per-turn adapter still attempts process
+                    // cleanup on Drop; retaining its handle for reconciliation is
+                    // an unresolved shared-host ownership gap, so this path is not
+                    // qualified.
                     return Ok(TurnOutcome::StopUnconfirmed);
                 }
                 Ok(TurnObservation::Failed { reason_code }) | Err(reason_code) => {
@@ -2456,10 +2611,9 @@ fn execute_agent_turn(
                         turn_usage(usage_collector.snapshot(), prompt_bytes, 0),
                     );
                     if failure_settlement.is_ok() {
-                        // LOST settlement does not return the BUSY host row to READY.
-                        // Reconcile this per-turn process from BUSY after the attempt
-                        // settlement has completed. If settlement failed, leave the
-                        // guard active so Drop degrades the uncertain host row.
+                        // LOST has released the AgentSession reference. Mark this
+                        // per-turn host degraded, then stop it through STOPPING.
+                        host_state_guard.mark_degraded_after_session_loss()?;
                         finish_per_session_host(&mut adapter, &mut host_state_guard)?;
                     }
                     return Err(format!(
@@ -2598,22 +2752,29 @@ fn finish_per_session_host(
     adapter: &mut OpenCodeAdapter,
     host_state_guard: &mut ReadyHostStateGuard,
 ) -> Result<(), String> {
-    reconcile_per_session_host_shutdown(
+    let host_state_guard = RefCell::new(host_state_guard);
+    let exit_observed = reconcile_per_session_host_shutdown(
+        || host_state_guard.borrow_mut().begin_stopping(),
         || adapter.shutdown(),
-        |next_state| host_state_guard.finish(next_state),
-    )
+        || host_state_guard.borrow_mut().finish_stopped(),
+    )?;
+    if !exit_observed {
+        host_state_guard.borrow_mut().retain_stopping_pending();
+    }
+    Ok(())
 }
 
 fn reconcile_per_session_host_shutdown(
+    persist_stopping: impl FnOnce() -> Result<(), String>,
     stop: impl FnOnce() -> bool,
-    persist_state: impl FnOnce(&'static str) -> Result<(), String>,
-) -> Result<(), String> {
-    let process_stopped = stop();
-    persist_state(if process_stopped {
-        "STOPPED"
-    } else {
-        "DEGRADED"
-    })
+    persist_stopped: impl FnOnce() -> Result<(), String>,
+) -> Result<bool, String> {
+    persist_stopping()?;
+    if !stop() {
+        return Ok(false);
+    }
+    persist_stopped()?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -3259,6 +3420,121 @@ mod tests {
     }
 
     #[test]
+    fn native_permission_resource_projection_shows_only_existing_workspace_relative_paths() {
+        let workspace = tempfile::tempdir().expect("temporary workspace");
+        let source = workspace.path().join("src");
+        std::fs::create_dir_all(&source).expect("create workspace subdirectory");
+        std::fs::write(source.join("main.rs"), "fn main() {}").expect("create workspace file");
+        let outside = tempfile::tempdir().expect("temporary outside directory");
+        let external_file = outside.path().join("secret.txt");
+        std::fs::write(&external_file, "secret").expect("create external file");
+        let canonical_root = std::fs::canonicalize(workspace.path()).expect("canonical root");
+
+        let labels = permission_resource_labels(
+            Some(&canonical_root),
+            &[
+                "src/main.rs".to_owned(),
+                external_file.to_string_lossy().into_owned(),
+                "../outside.txt".to_owned(),
+                "missing.txt".to_owned(),
+            ],
+        );
+
+        assert_eq!(
+            labels,
+            [
+                "src/main.rs",
+                "External resource 2",
+                "Resource 3",
+                "Resource 4"
+            ]
+        );
+        assert!(
+            labels
+                .iter()
+                .all(|label| !label.contains(workspace.path().to_string_lossy().as_ref()))
+        );
+        assert!(
+            labels
+                .iter()
+                .all(|label| !label.contains(outside.path().to_string_lossy().as_ref()))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_permission_resource_projection_does_not_follow_workspace_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().expect("temporary workspace");
+        let outside = tempfile::tempdir().expect("temporary outside directory");
+        let secret = outside.path().join("secret.txt");
+        std::fs::write(&secret, "secret").expect("create external file");
+        symlink(&secret, workspace.path().join("secret-link")).expect("create workspace symlink");
+        let canonical_root = std::fs::canonicalize(workspace.path()).expect("canonical root");
+
+        assert_eq!(
+            permission_resource_labels(Some(&canonical_root), &["secret-link".to_owned()]),
+            ["Resource 1"],
+            "a symlink target must not disclose a path outside the Workspace"
+        );
+    }
+
+    #[test]
+    fn native_permission_attempt_end_closes_unknown_outcome_without_claiming_a_reply() {
+        let registry = NativePermissionRegistry::default();
+        let scope = NativePermissionScope {
+            workspace_id: "ws-unknown-end".to_owned(),
+            conversation_id: "conv-unknown-end".to_owned(),
+            turn_id: "turn-unknown-end".to_owned(),
+            retry_ordinal: 0,
+            agent_session_id: "agent-session-unknown-end".to_owned(),
+            runtime_incarnation_id: "inc-unknown-end".to_owned(),
+            native_session_id: "native-session-unknown-end".to_owned(),
+        };
+        let (sender, _receiver) = sync_channel(MAX_NATIVE_PERMISSION_COMMANDS_PER_SESSION);
+        let _mailbox = registry
+            .register_mailbox(
+                scope.clone(),
+                sender,
+                crate::transient_frames::TransientFrameBus::for_tests(),
+            )
+            .expect("active attempt mailbox is registered");
+        let token = "d".repeat(64);
+        registry
+            .register_with_token(
+                &scope,
+                &scope.native_session_id,
+                token.clone(),
+                "native-request-unknown-end".to_owned(),
+                "writeFile".to_owned(),
+                None,
+                Vec::new(),
+            )
+            .expect("register prompt");
+        registry
+            .begin_reply(
+                &scope,
+                &token,
+                "owner-unknown-end",
+                "reply-key-unknown-end",
+                NativePermissionDecision::AllowOnce,
+            )
+            .expect("start one decision");
+        let uncertain =
+            registry.reconcile_reply(&scope, &token, NativePermissionDecision::AllowOnce, None);
+        assert_eq!(uncertain[0].state, NativePermissionState::OutcomeUnknown);
+        assert_eq!(uncertain[0].decision(), Some("ALLOW_ONCE"));
+
+        let ended = registry.end_attempt(&scope);
+
+        assert_eq!(ended.len(), 1);
+        assert_eq!(ended[0].state, NativePermissionState::SessionEnded);
+        assert_eq!(ended[0].decision(), Some("ALLOW_ONCE"));
+        assert_eq!(ended[0].sequence(), 4);
+    }
+
+    #[test]
     fn native_permission_registry_reclaims_prompt_capacity_when_attempt_ends() {
         let registry = NativePermissionRegistry::default();
         let mut registrations = Vec::new();
@@ -3575,7 +3851,7 @@ mod tests {
             message: None,
         };
         let registered = registry
-            .register(&scope, &event)
+            .register(&scope, &event, None)
             .expect("generate an opaque prompt token");
         assert_eq!(registered.prompt_token.len(), 64);
         assert!(
@@ -3600,12 +3876,23 @@ mod tests {
             runtime_incarnation_id: "inc-one".to_owned(),
             native_session_id: "native-session-secret".to_owned(),
         };
-        let mut observer = NativePermissionObserver::new(registry.clone(), scope.clone(), bus);
+        let workspace = tempfile::tempdir().expect("temporary Workspace root");
+        let resource = workspace.path().join("src").join("main.rs");
+        std::fs::create_dir_all(resource.parent().expect("resource parent"))
+            .expect("create resource directory");
+        std::fs::write(&resource, "fn main() {}").expect("create resource");
+        let canonical_root = std::fs::canonicalize(workspace.path()).expect("canonical root");
+        let mut observer = NativePermissionObserver::new(
+            registry.clone(),
+            scope.clone(),
+            bus,
+            Some(canonical_root),
+        );
         let event = NormalizedAgentEvent::PermissionAsked {
             permission_id: "native-request-secret".to_owned(),
             native_session_id: "native-session-secret".to_owned(),
             action: "writeFile".to_owned(),
-            resources: vec!["C:/private/file.txt".to_owned()],
+            resources: vec![resource.to_string_lossy().into_owned()],
             message: Some("Please update this file".to_owned()),
         };
         observer.on_event(&event);
@@ -3621,11 +3908,11 @@ mod tests {
         assert_eq!(value["sequence"], 1);
         assert_eq!(value["state"], "PENDING");
         assert_eq!(value["action"], "writeFile");
-        assert_eq!(value["resources"], serde_json::json!(["Resource 1"]));
+        assert_eq!(value["resources"], serde_json::json!(["src/main.rs"]));
         let serialized = value.to_string();
         assert!(!serialized.contains("native-session-secret"));
         assert!(!serialized.contains("native-request-secret"));
-        assert!(!serialized.contains("C:/private/file.txt"));
+        assert!(!serialized.contains(resource.to_string_lossy().as_ref()));
 
         let token = value["prompt_token"].as_str().expect("opaque token");
         registry.acknowledge_reply(&scope, token, NativePermissionDecision::AllowOnce);
@@ -3657,7 +3944,8 @@ mod tests {
         let registration = registry
             .register_mailbox(scope.clone(), sender, bus.clone())
             .expect("attempt mailbox is registered");
-        let mut observer = NativePermissionObserver::new(registry.clone(), scope.clone(), bus);
+        let mut observer =
+            NativePermissionObserver::new(registry.clone(), scope.clone(), bus, None);
         observer.on_event(&NormalizedAgentEvent::PermissionAsked {
             permission_id: "native-request-private".to_owned(),
             native_session_id: scope.native_session_id.clone(),
@@ -3709,32 +3997,57 @@ mod tests {
     #[test]
     fn per_session_host_state_follows_observed_process_shutdown() {
         let order = std::cell::RefCell::new(Vec::new());
-        reconcile_per_session_host_shutdown(
+        let stopped = reconcile_per_session_host_shutdown(
+            || {
+                order.borrow_mut().push("STOPPING");
+                Ok(())
+            },
             || {
                 order.borrow_mut().push("stop");
                 true
             },
-            |state| {
-                order.borrow_mut().push(state);
+            || {
+                order.borrow_mut().push("STOPPED");
                 Ok(())
             },
         )
-        .expect("observed process exit should persist STOPPED");
-        assert_eq!(*order.borrow(), ["stop", "STOPPED"]);
+        .expect("observed process exit should persist STOPPED after STOPPING");
+        assert!(stopped);
+        assert_eq!(*order.borrow(), ["STOPPING", "stop", "STOPPED"]);
 
         let order = std::cell::RefCell::new(Vec::new());
-        reconcile_per_session_host_shutdown(
+        let stopped = reconcile_per_session_host_shutdown(
+            || {
+                order.borrow_mut().push("STOPPING");
+                Ok(())
+            },
             || {
                 order.borrow_mut().push("stop");
                 false
             },
-            |state| {
-                order.borrow_mut().push(state);
+            || {
+                order.borrow_mut().push("STOPPED");
                 Ok(())
             },
         )
-        .expect("unconfirmed exit should persist DEGRADED");
-        assert_eq!(*order.borrow(), ["stop", "DEGRADED"]);
+        .expect("unconfirmed exit remains durably STOPPING");
+        assert!(!stopped);
+        assert_eq!(*order.borrow(), ["STOPPING", "stop"]);
+
+        let order = std::cell::RefCell::new(Vec::new());
+        let result = reconcile_per_session_host_shutdown(
+            || Err("cannot persist STOPPING".to_owned()),
+            || {
+                order.borrow_mut().push("stop");
+                true
+            },
+            || Ok(()),
+        );
+        assert!(result.is_err());
+        assert!(
+            order.borrow().is_empty(),
+            "do not stop before durable STOPPING"
+        );
     }
 
     #[test]
@@ -3805,26 +4118,34 @@ mod tests {
     }
 
     #[test]
-    fn conversation_usage_collector_sums_reported_tokens_across_steps() {
+    fn conversation_usage_collector_uses_step_deltas_not_session_snapshots() {
         use super::super::adapter::{TurnObserver, UsageCollector};
         use super::super::normalizer::NormalizedAgentEvent;
         let mut collector = UsageCollector::default();
-        collector.on_event(&NormalizedAgentEvent::UsageRecorded {
+        collector.on_event(&NormalizedAgentEvent::UsageSnapshot {
+            input_tokens: Some(100),
+            output_tokens: Some(200),
+        });
+        collector.on_event(&NormalizedAgentEvent::UsageSnapshot {
+            input_tokens: Some(120),
+            output_tokens: Some(230),
+        });
+        collector.on_event(&NormalizedAgentEvent::UsageSnapshot {
+            input_tokens: Some(130),
+            output_tokens: Some(240),
+        });
+        collector.on_event(&NormalizedAgentEvent::StepEnded {
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+        });
+        collector.on_event(&NormalizedAgentEvent::StepFailed {
             input_tokens: Some(5),
-            output_tokens: None,
-        });
-        collector.on_event(&NormalizedAgentEvent::UsageRecorded {
-            input_tokens: None,
-            output_tokens: None,
-        });
-        collector.on_event(&NormalizedAgentEvent::UsageRecorded {
-            input_tokens: Some(7),
-            output_tokens: Some(9),
+            output_tokens: Some(0),
         });
         let total = collector.snapshot();
         assert_eq!(
             (total.input_tokens, total.output_tokens, total.observed),
-            (12, 9, true)
+            (15, 20, true)
         );
     }
 

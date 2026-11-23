@@ -242,6 +242,7 @@ fn test_run_commit(
             preferred_lead_agent_binding_id: Some(lead_binding.to_owned()),
             authored_by: created_by,
             created_at: NOW.to_owned(),
+            delegation_policy_snapshot: None,
         },
         event: storage_core::EventDraft {
             event_id: format!("ev-test-run-{task_id}"),

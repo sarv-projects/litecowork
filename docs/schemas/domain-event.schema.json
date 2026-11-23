@@ -69,7 +69,8 @@
     },
     "type": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_.-]+\\.v[0-9]+$"
+      "pattern": "^[a-z][a-z0-9_.-]+\\.v[0-9]+$",
+      "description": "Unknown versioned types are accepted only for opaque forwarding and must not be applied to projections. Locally authored events use a registered type from docs/EVENTS.md and its closed payload schema."
     },
     "payload": {
       "type": "object"
@@ -1496,6 +1497,68 @@
           },
           "created_by": {
             "$ref": "#/$defs/principal_ref"
+          }
+        },
+        "additionalProperties": false
+      },
+      "conversation_renamed": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "conversation_id",
+          "title_digest",
+          "changed_by",
+          "aggregate_version"
+        ],
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conversation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title_digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "changed_by": {
+            "$ref": "#/$defs/principal_ref"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "conversation_history_state_changed": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "conversation_id",
+          "changed_by",
+          "aggregate_version"
+        ],
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conversation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "changed_by": {
+            "$ref": "#/$defs/principal_ref"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -9949,6 +10012,63 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/conversation_created"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "conversation.renamed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/conversation_renamed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "conversation.archived.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/conversation_history_state_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "conversation.unarchived.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/conversation_history_state_changed"
           }
         }
       }

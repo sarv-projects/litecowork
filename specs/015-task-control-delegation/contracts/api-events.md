@@ -40,3 +40,7 @@ Accepted target: `task.pause.requested.v1`, `task.paused.v1`, `task.resumed.v1`,
 ## 5. Security contract
 
 No route returns provider handles, native transcripts, SecretLease material or steering text in events. The delegate request is authorized by the parent Attempt's current session and lease, never by the desktop principal alone.
+
+## 6. TaskSpec delegation-policy projection (USER-DELEGATED direction, T22)
+
+`TaskSpecRevision.delegation_policy_snapshot` uses the existing canonical `ResolvedDelegationPolicySnapshot` OpenAPI schema. A post-v28 create or explicit TaskSpec revision returns the immutable resolved object with source, Workspace settings revision, Coworker ID/revision or null, strategy, native child-model policy, exact worker profile revisions and their `worker_model_selection_policy`, and `resolved_at`. Get Task, list TaskSpec revisions, idempotent create/revise receipts and Task aggregate snapshots return the same object. The caller cannot provide or override it. Pre-v28 records may return null under the schema's existing legacy allowance. No new event is needed; the snapshot is already part of the immutable TaskSpec aggregate state.

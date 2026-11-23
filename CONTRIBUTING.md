@@ -19,7 +19,7 @@ Before claiming a feature works, trace its screen and control to the typed Tauri
 
 ## Current delivery truth
 
-Conversation CRUD and an OpenCode-only code-level dispatch path exist. The Send control now enforces the disabled-until-qualified gate and the empty state is truthful LiteCowork-branded copy (register A-24/A-26), but Stop is ineffective for OpenCode, failed-turn Retry has no UI affordance, and no packaged provider USER journey is qualified. The local 30-second Automation TriggerHost settles supported schedules and materializes READY Tasks but does not execute them. Notification outcomes can create PENDING delivery records, but no outbound sender advances them to delivered states. Task planning/Attempt admission, a qualified mediated Effect path, LiteSPM lifecycle integration, a real process-backed terminal, a controlled browser, Computer use and the full Coworker/memory experience are not release-qualified. The precise evidence and the ordered blockers are maintained in [docs/IMPLEMENTATION-STATUS.md](docs/IMPLEMENTATION-STATUS.md); the capability-level coverage verdict is in [docs/V1-PRODUCT-FEATURE-COVERAGE.md](docs/V1-PRODUCT-FEATURE-COVERAGE.md).
+Conversation CRUD and an OpenCode-only code-level dispatch path exist. Send eligibility currently checks dispatch conditions (draft, Workspace, Operator readiness and binding eligibility); it does not prove a fresh provider descriptor, authentication, session readiness, recovery readiness or a qualified release route (Feature 001 T09/A-24). Stop/retry and provider journeys remain unqualified. The local 30-second Automation TriggerHost settles supported schedules and materializes READY Tasks but does not execute them. Notification outcomes can create PENDING delivery records, but no outbound sender advances them to delivered states. Task planning/Attempt admission, a qualified mediated Effect path, LiteSPM lifecycle integration, a real process-backed terminal, a controlled browser, Computer use and the full Coworker/memory experience are not release-qualified. The precise evidence and the ordered blockers are maintained in [docs/IMPLEMENTATION-STATUS.md](docs/IMPLEMENTATION-STATUS.md); the capability-level coverage verdict is in [docs/V1-PRODUCT-FEATURE-COVERAGE.md](docs/V1-PRODUCT-FEATURE-COVERAGE.md).
 
 ## Architecture first
 
@@ -64,7 +64,12 @@ Navigate the full active corpus (every indexed file, line counts): [docs/COMPLET
    Record exact commands/results and known limitations in CURRENT-RUN.md.
 
 Implementation does not begin for a material feature while its spec is DRAFT/IN_REVIEW
-or while a decision blocking the assigned task remains unresolved.
+or while a decision blocking the assigned task remains unresolved, except when the
+product owner explicitly delegates the internal product/engineering decision and
+implementation. In that case, record the direction in the owning package and alignment
+register as USER-DELEGATED DIRECTION; keep the package lifecycle, cross-owner
+ratification, external protocol facts, credentials, platform evidence and release
+qualification gates separate. Delegation is not owner acceptance or qualification.
 
 ## Implementation workflow
 

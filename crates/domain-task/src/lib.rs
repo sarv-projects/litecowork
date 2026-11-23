@@ -138,6 +138,31 @@ pub struct CreateStandaloneTask {
     pub event: EventContext,
 }
 
+/// Exact immutable source pair for an owner initiated Conversation-to-Task
+/// promotion. The USER message supplies the editable objective and input pins;
+/// the AGENT message is the completed reply that exposed the promotion action.
+/// Storage revalidates both IDs and their owning completed turn in the Task
+/// creation transaction, so this value is source identity, never authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConversationTaskOrigin {
+    pub conversation_id: String,
+    pub user_message_id: String,
+    pub agent_message_id: String,
+}
+
+impl ConversationTaskOrigin {
+    fn source_message_refs(&self) -> Vec<String> {
+        vec![self.user_message_id.clone(), self.agent_message_id.clone()]
+    }
+
+    fn is_valid(&self) -> bool {
+        !self.conversation_id.trim().is_empty()
+            && !self.user_message_id.trim().is_empty()
+            && !self.agent_message_id.trim().is_empty()
+            && self.user_message_id != self.agent_message_id
+    }
+}
+
 /// Owner-authored changes to a saved Task. The Operator constructs this only after
 /// authenticating the Workspace owner; SQLite repeats the version, state, parent, and
 /// Resource-scope checks in the atomic commit.
@@ -271,12 +296,48 @@ impl<S: TaskStore> TaskService<S> {
         self.store.create_task(commit)
     }
 
+    /// Persists a READY Task with exact Conversation source provenance. This is
+    /// an explicit owner command and does not change Conversation state or start
+    /// planning, an AgentSession, an Attempt, or an Environment.
+    pub fn create_from_conversation(
+        &self,
+        command: CreateStandaloneTask,
+        origin: ConversationTaskOrigin,
+    ) -> Result<CommittedTask, StoreError> {
+        let commit = self.prepare_from_conversation(command, origin)?;
+        self.store.create_task(commit)
+    }
+
     /// Builds the exact ordinary Task creation commit without persisting it. The
     /// Suggestion acceptance path uses this same constructor and submits the commit
     /// to a storage port that atomically resolves the Suggestion alongside it.
     pub fn prepare_standalone(
         &self,
         command: CreateStandaloneTask,
+    ) -> Result<TaskCreateCommit, StoreError> {
+        self.prepare_task(command, None)
+    }
+
+    /// Builds a Conversation-origin TaskCreateCommit without persisting it. The
+    /// request body must carry the exact same ordered source IDs as the typed
+    /// origin value; SQLite independently validates that source in-transaction.
+    pub fn prepare_from_conversation(
+        &self,
+        command: CreateStandaloneTask,
+        origin: ConversationTaskOrigin,
+    ) -> Result<TaskCreateCommit, StoreError> {
+        if !origin.is_valid() {
+            return Err(StoreError::Invalid(
+                "Conversation Task origin is invalid".to_owned(),
+            ));
+        }
+        self.prepare_task(command, Some(origin))
+    }
+
+    fn prepare_task(
+        &self,
+        command: CreateStandaloneTask,
+        origin: Option<ConversationTaskOrigin>,
     ) -> Result<TaskCreateCommit, StoreError> {
         let request = &command.request_payload;
         let objective = required_string(request, "objective")?.trim().to_owned();
@@ -285,13 +346,24 @@ impl<S: TaskStore> TaskService<S> {
                 "Task objective must contain 1 to 32768 bytes".to_owned(),
             ));
         }
-        if optional_string(request, "conversation_id")?.is_some()
-            || !string_array(request, "source_message_refs")?.is_empty()
-        {
-            return Err(StoreError::Invalid(
-                "Conversation-origin Task creation requires its atomic admission service"
-                    .to_owned(),
-            ));
+        let requested_conversation_id = optional_string(request, "conversation_id")?;
+        let requested_source_refs = string_array(request, "source_message_refs")?;
+        match origin.as_ref() {
+            Some(origin)
+                if requested_conversation_id == Some(origin.conversation_id.as_str())
+                    && requested_source_refs == origin.source_message_refs() => {}
+            Some(_) => {
+                return Err(StoreError::Invalid(
+                    "Conversation Task origin does not match the accepted request".to_owned(),
+                ));
+            }
+            None if requested_conversation_id.is_some() || !requested_source_refs.is_empty() => {
+                return Err(StoreError::Invalid(
+                    "Conversation-origin Task creation requires its typed admission service"
+                        .to_owned(),
+                ));
+            }
+            None => {}
         }
         let request_coworker_id = optional_string(request, "coworker_id")?.map(str::to_owned);
         let request_coworker_version = request
@@ -338,7 +410,10 @@ impl<S: TaskStore> TaskService<S> {
             )
             .map_err(|_| StoreError::Invalid("Task lead failover policy is invalid".to_owned()))?,
             deadline: optional_string(request, "deadline")?.map(str::to_owned),
-            source_message_refs: Vec::new(),
+            source_message_refs: origin
+                .as_ref()
+                .map(ConversationTaskOrigin::source_message_refs)
+                .unwrap_or_default(),
             placement_preference: request
                 .get("placement_preference")
                 .cloned()
@@ -346,11 +421,12 @@ impl<S: TaskStore> TaskService<S> {
             preferred_lead_agent_binding_id: Some(command.lead_agent_binding_id.clone()),
             authored_by: created_by.clone(),
             created_at: timestamp.clone(),
+            delegation_policy_snapshot: None,
         };
         let task = TaskRecord {
             task_id: command.task_id.clone(),
             workspace_id: command.workspace_id.clone(),
-            conversation_id: None,
+            conversation_id: origin.as_ref().map(|origin| origin.conversation_id.clone()),
             current_spec_revision: 1,
             current_plan_revision: None,
             status: "READY".to_owned(),
@@ -371,6 +447,16 @@ impl<S: TaskStore> TaskService<S> {
             completed_at: None,
             version: 1,
         };
+        let mut event_payload = json!({
+            "task_id": command.task_id,
+            "initial_spec_revision": 1,
+            "created_by": created_by,
+            "origin_coworker_id": task.origin_coworker_id.clone(),
+            "origin_coworker_revision": task.origin_coworker_revision,
+        });
+        if let Some(origin) = origin.as_ref() {
+            event_payload["conversation_id"] = json!(origin.conversation_id);
+        }
         let event = EventDraft {
             event_id: command.event.event_id,
             workspace_id: command.workspace_id.clone(),
@@ -383,13 +469,7 @@ impl<S: TaskStore> TaskService<S> {
             causation_id: command.event.causation_id,
             schema_version: 1,
             event_type: "task.created.v1".to_owned(),
-            payload: json!({
-                "task_id": command.task_id,
-                "initial_spec_revision": 1,
-                "created_by": created_by,
-                "origin_coworker_id": task.origin_coworker_id.clone(),
-                "origin_coworker_revision": task.origin_coworker_revision,
-            }),
+            payload: event_payload,
             recorded_at: command.event.recorded_at.clone(),
         };
         Ok(TaskCreateCommit {

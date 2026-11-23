@@ -2,7 +2,7 @@
 
 - **Status:** IN_REVIEW - authored 2026-11-09 after the owner acceptance packet; B-42 is PROPOSED and remains OPEN after the 2026-11-10 owner review (A-62); does not authorize implementation and is not a claim of implementation or qualification.
 - **Revision:** 0.1 | **Updated:** 2026-11-09 | **Delivery wave:** Wave 6 (gate G); normalization contract needed in Wave 1 by Feature 001 | **Master plan:** P11
-- **Implementation state (2026-11-10):** Not implemented; B-42 open (T01 and T10). Migration v46 allocated only if needed.
+- **Implementation state (2026-11-10):** Not implemented; B-42 open (T01 and T10). Migration v47 allocated only if needed.
 - **Owners:** Observability, Operator/API, Desktop UI, Security/Trust, Agent Runtime and Product.
 
 ## User outcome

@@ -14,6 +14,10 @@ Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs
 6. Revocation blocks future context reads and assembly; purge reports pending/complete from owner receipts. It does not claim to recall content already sent to a native AgentSession.
 7. No Memory or Learning control creates a Grant, Connection, package assignment, Automation or schedule.
 
+## Delegation source editor (USER-DELEGATED direction, T19)
+
+The Coworker settings editor presents a required two-choice control: “Use Workspace defaults” and “Customize for this Coworker”. New Coworkers start in Workspace-default mode. That mode explains that Task admission resolves the current Workspace policy, displays the source as inherited, and disables Coworker-specific strategy and worker-profile selectors. Its submitted revision is normalized to `WORKSPACE_DEFAULT`, `NATIVE_DEFAULT`, and an empty profile list. Custom mode enables the strategy and profile controls and clearly states that selections cannot exceed the Workspace's enabled profiles. A stale, disabled, or removed profile remains visible as unavailable until the owner removes it; it cannot be newly selected. Loading, save conflict, denied Workspace scope and offline states retain the last committed revision and do not show the draft as saved. No copy implies that worker dispatch or a native agent is qualified.
+
 ## Current UI evidence
 
 - Home `HomeCoworkerOnboarding.tsx` offers optional creation of a general Assistant and Workspace primary selection. It does not open a Coworker chat. Copy states primary only prefills future Task settings and does not start an agent.

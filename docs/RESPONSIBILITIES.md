@@ -60,7 +60,14 @@ CoworkerInteractionPolicy {
 ```
 
 Each edit appends an immutable revision and advances the head with expected-version
-checking. The default lead must be an enabled, same-Workspace, lead-eligible AgentBinding.
+checking. A newly created Coworker defaults to `WORKSPACE_DEFAULT`; migrated legacy
+revisions retain `COWORKER_OVERRIDE` so their previously saved policy is not silently
+changed. Under `WORKSPACE_DEFAULT`, the revision stores `delegation_strategy=NATIVE_DEFAULT`
+and an empty Coworker profile list; the effective strategy and profile ceiling come from
+the exact Workspace delegation settings revision. Under `COWORKER_OVERRIDE`, the
+Coworker's strategy and enabled profile IDs may narrow but never widen the Workspace's
+current enabled profile ceiling. The source, strategy and profile list are revisioned
+together. The default lead must be an enabled, same-Workspace, lead-eligible AgentBinding.
 Every listed DelegationProfile must be enabled and belong to the same Workspace. Profile
 and binding state is rechecked at admission; a Coworker revision does not pin a running
 session's provider options. An avatar reference pins an exact same-Workspace Resource

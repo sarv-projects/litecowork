@@ -39,6 +39,7 @@ fn draining_state(version: u64) -> RuntimeLocalState {
         recovered_from_unclean_shutdown: false,
         last_shutdown_clean: false,
         blockers: vec!["TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned()],
+        startup_recovery: super::StartupRecoveryFacts::default(),
         version,
     }
 }

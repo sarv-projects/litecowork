@@ -690,6 +690,7 @@ mod tests {
                 preferred_lead_agent_binding_id: None,
                 authored_by: json!({"kind":"USER","principal_id":"owner"}),
                 created_at: "2026-10-17T10:00:00Z".into(),
+                delegation_policy_snapshot: None,
             },
             plan: PlanRevisionRecord {
                 task_id: "task-a".into(),

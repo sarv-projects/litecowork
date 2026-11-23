@@ -400,6 +400,17 @@ mod tests {
                 .into_iter()
                 .collect())
         }
+
+        fn list_prior_agent_host_instances(
+            &self,
+            _runtime_id: &str,
+            _current_runtime_incarnation_id: &str,
+            _after_started_at: Option<&str>,
+            _after_host_instance_id: Option<&str>,
+            _limit: usize,
+        ) -> Result<Vec<AgentHostInstanceRecord>, StoreError> {
+            Ok(Vec::new())
+        }
     }
 
     fn host_record(state: &str) -> AgentHostInstanceRecord {

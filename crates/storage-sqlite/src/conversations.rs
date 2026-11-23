@@ -481,7 +481,13 @@ impl ConversationTurnStore for SqliteConversationStore {
                     |row| row.get(0),
                 )
                 .map_err(map_database_error)?;
-            let selected_binding = conversation_binding.clone().or(workspace_default);
+            let selected_binding = commit
+                .turn_event
+                .payload
+                .get("agent_binding_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| conversation_binding.clone().or(workspace_default));
             let Some(selected_binding) = selected_binding else {
                 return Err(StoreError::Invalid("AGENT_UNAVAILABLE".to_owned()));
             };
@@ -611,6 +617,257 @@ impl ConversationTurnStore for SqliteConversationStore {
                 "INSERT INTO request_dedup(principal_id,request_id,request_digest,response_json,response_digest,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,NULL)",
                 params![principal, commit.request.request_id, request_digest, response_json, digest(response_json.as_bytes()), commit.turn.created_at],
             ).map_err(map_database_error)?;
+            tx.commit().map_err(map_database_error)?;
+            Ok(accepted)
+        })
+    }
+
+    fn create_conversation_with_first_turn(
+        &self,
+        commit: CreateConversationWithFirstTurnCommit,
+    ) -> Result<CommittedConversationFirstTurn, StoreError> {
+        let turn_commit = CreateConversationTurnCommit {
+            request: commit.request.clone(),
+            principal_id: commit.principal_id.clone(),
+            workspace_id: commit.workspace_id.clone(),
+            message: commit.message.clone(),
+            turn: commit.turn.clone(),
+            message_event: commit.message_event.clone(),
+            turn_event: commit.turn_event.clone(),
+        };
+        validate_conversation_record(&commit.conversation)?;
+        validate_turn_create_records(&turn_commit)?;
+        let first_binding = commit
+            .conversation
+            .active_agent_binding_id
+            .clone()
+            .ok_or_else(|| StoreError::Invalid("initial AgentBinding is required".to_owned()))?;
+        let expected_first_turn_request = serde_json::json!({
+            "operation": "conversation.create_first_turn.v1",
+            "workspace_id": commit.workspace_id,
+            "title": commit.conversation.title,
+            "content": commit.message.content,
+            "resource_refs": commit.message.resource_refs,
+            "requested_agent_binding_id": first_binding,
+            "presentation_preference": serde_json::to_value(commit.turn.presentation_preference)
+                .map_err(|error| StoreError::Invalid(error.to_string()))?
+        });
+        if commit.request.principal_id != commit.principal_id
+            || !super::valid_shared_idempotency_key(&commit.request.request_id)
+            || commit.request.request_payload != expected_first_turn_request
+            || commit.conversation.workspace_id != commit.workspace_id
+            || commit.conversation.version != 1
+            || commit.message.conversation_id != commit.conversation.conversation_id
+            || commit.message_event.entity_revision != 2
+            || commit.conversation_event.workspace_id != commit.workspace_id
+            || commit.conversation_event.entity_type != "Conversation"
+            || commit.conversation_event.entity_id != commit.conversation.conversation_id
+            || commit.conversation_event.entity_revision != 1
+            || commit.conversation_event.event_type != "conversation.created.v1"
+            || !payload_has_exact_keys(
+                &commit.conversation_event.payload,
+                &["conversation_id", "created_by"],
+                &[],
+            )
+            || commit
+                .conversation_event
+                .payload
+                .get("conversation_id")
+                .and_then(Value::as_str)
+                != Some(commit.conversation.conversation_id.as_str())
+            || commit
+                .conversation_event
+                .payload
+                .get("created_by")
+                .and_then(|value| value.get("principal_id"))
+                .and_then(Value::as_str)
+                != Some(commit.principal_id.as_str())
+            || commit
+                .turn_event
+                .payload
+                .get("agent_binding_id")
+                .and_then(Value::as_str)
+                != Some(first_binding.as_str())
+            || commit.conversation_event.correlation_id != commit.message_event.correlation_id
+            || commit.conversation_event.correlation_id != commit.turn_event.correlation_id
+        {
+            return Err(StoreError::Invalid(
+                "Conversation first-turn commit is inconsistent".to_owned(),
+            ));
+        }
+
+        let request_digest = digest(&canonical_json(&commit.request.request_payload)?);
+        let principal = commit.principal_id.clone();
+        let workspace = commit.workspace_id.clone();
+        let blobs = Arc::clone(&self.store.inner.blobs);
+        self.run(move |connection| {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_database_error)?;
+            if let Some(replay) = verify_request_receipt::<CommittedConversationFirstTurn>(
+                &tx,
+                &principal,
+                &commit.request.request_id,
+                &request_digest,
+            )? {
+                tx.commit().map_err(map_database_error)?;
+                return Ok(replay);
+            }
+            let allowed: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2 AND status='ACTIVE')",
+                    params![workspace, principal],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            if !allowed {
+                return Err(StoreError::NotFound);
+            }
+            let binding_eligible: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agent_bindings WHERE workspace_id=?1 AND agent_binding_id=?2 AND enabled=1 AND lead_eligible=1)",
+                    params![workspace, first_binding],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            if !binding_eligible {
+                return Err(StoreError::Invalid("AGENT_UNAVAILABLE".to_owned()));
+            }
+
+            let initial_bytes = canonical_json(&commit.conversation)?;
+            let initial_blob = blobs.put(
+                &workspace,
+                BlobPurpose::AggregateState,
+                &initial_bytes,
+                super::STATE_MEDIA_TYPE,
+            )?;
+            if initial_blob.size_bytes != initial_bytes.len() as u64
+                || blobs.get(&workspace, BlobPurpose::AggregateState, &initial_blob)?
+                    != initial_bytes
+            {
+                return Err(StoreError::Integrity(
+                    "Conversation aggregate state failed BlobStore verification".to_owned(),
+                ));
+            }
+            let initial_state = AggregateStateRef {
+                blob: initial_blob,
+                entity_revision: 1,
+                record_schema_version: 1,
+            };
+            tx.execute(
+                "INSERT INTO conversations(conversation_id,workspace_id,title,active_agent_binding_id,created_at,version) VALUES(?1,?2,?3,?4,?5,1)",
+                params![
+                    commit.conversation.conversation_id,
+                    workspace,
+                    commit.conversation.title,
+                    first_binding,
+                    commit.conversation.created_at
+                ],
+            )
+            .map_err(map_database_error)?;
+            let created_event = insert_domain_event(&tx, &commit.conversation_event, &initial_state)?;
+
+            tx.execute(
+                "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,agent_session_id,agent_binding_id,turn_id,content_json,resource_refs_json,source_channel_ref_json,created_at) VALUES(?1,?2,?3,'USER',NULL,NULL,?4,?5,?6,NULL,?7)",
+                params![
+                    commit.message.message_id,
+                    commit.message.conversation_id,
+                    canonical_json_string(&commit.message.author)?,
+                    commit.turn.turn_id,
+                    canonical_json_string(&commit.message.content)?,
+                    canonical_json_string(&commit.message.resource_refs)?,
+                    commit.message.created_at
+                ],
+            )
+            .map_err(map_database_error)?;
+            tx.execute(
+                "INSERT INTO conversation_turns(turn_id,conversation_id,user_message_id,agent_session_id,status,retry_ordinal,created_at,settled_at,version,presentation_preference) VALUES(?1,?2,?3,NULL,'OPEN',0,?4,NULL,1,?5)",
+                params![
+                    commit.turn.turn_id,
+                    commit.turn.conversation_id,
+                    commit.turn.user_message_id,
+                    commit.turn.created_at,
+                    serde_json::to_value(commit.turn.presentation_preference)
+                        .ok()
+                        .and_then(|value| value.as_str().map(str::to_owned))
+                        .ok_or_else(|| StoreError::Invalid("invalid presentation preference".to_owned()))?
+                ],
+            )
+            .map_err(map_database_error)?;
+            tx.execute(
+                "INSERT INTO conversation_dispatch_intents(turn_id,retry_ordinal,conversation_id,state,created_at) VALUES(?1,0,?2,'UNCLAIMED',?3)",
+                params![commit.turn.turn_id, commit.turn.conversation_id, commit.turn.created_at],
+            )
+            .map_err(map_database_error)?;
+
+            let mut admitted_conversation = commit.conversation.clone();
+            admitted_conversation.version = 2;
+            let admitted_bytes = canonical_json(&admitted_conversation)?;
+            let admitted_blob = blobs.put(
+                &workspace,
+                BlobPurpose::AggregateState,
+                &admitted_bytes,
+                super::STATE_MEDIA_TYPE,
+            )?;
+            if admitted_blob.size_bytes != admitted_bytes.len() as u64
+                || blobs.get(&workspace, BlobPurpose::AggregateState, &admitted_blob)?
+                    != admitted_bytes
+            {
+                return Err(StoreError::Integrity(
+                    "Conversation aggregate state failed BlobStore verification".to_owned(),
+                ));
+            }
+            tx.execute(
+                "UPDATE conversations SET version=2 WHERE workspace_id=?1 AND conversation_id=?2 AND version=1",
+                params![workspace, admitted_conversation.conversation_id],
+            )
+            .map_err(map_database_error)?;
+            let admitted_state = AggregateStateRef {
+                blob: admitted_blob,
+                entity_revision: 2,
+                record_schema_version: 1,
+            };
+            let message_event = insert_domain_event(&tx, &commit.message_event, &admitted_state)?;
+            let turn_bytes = canonical_json(&commit.turn)?;
+            let turn_blob = blobs.put(
+                &workspace,
+                BlobPurpose::AggregateState,
+                &turn_bytes,
+                super::STATE_MEDIA_TYPE,
+            )?;
+            if turn_blob.size_bytes != turn_bytes.len() as u64
+                || blobs.get(&workspace, BlobPurpose::AggregateState, &turn_blob)? != turn_bytes
+            {
+                return Err(StoreError::Integrity(
+                    "ConversationTurn aggregate state failed BlobStore verification".to_owned(),
+                ));
+            }
+            let turn_state = AggregateStateRef {
+                blob: turn_blob,
+                entity_revision: 1,
+                record_schema_version: 1,
+            };
+            let turn_event = insert_domain_event(&tx, &commit.turn_event, &turn_state)?;
+            let accepted = CommittedConversationFirstTurn {
+                conversation: admitted_conversation,
+                message: commit.message.clone(),
+                turn: commit.turn.clone(),
+                events: vec![created_event, message_event, turn_event],
+            };
+            let response_json = String::from_utf8(canonical_json(&accepted)?)
+                .map_err(|error| StoreError::Invalid(error.to_string()))?;
+            tx.execute(
+                "INSERT INTO request_dedup(principal_id,request_id,request_digest,response_json,response_digest,created_at,expires_at) VALUES(?1,?2,?3,?4,?5,?6,NULL)",
+                params![
+                    principal,
+                    commit.request.request_id,
+                    request_digest,
+                    response_json,
+                    digest(response_json.as_bytes()),
+                    commit.turn.created_at
+                ],
+            )
+            .map_err(map_database_error)?;
             tx.commit().map_err(map_database_error)?;
             Ok(accepted)
         })
@@ -1023,17 +1280,13 @@ impl ConversationTurnStore for SqliteConversationStore {
             ));
         }
 
-        match commit.turn_status {
-            ConversationTurnStatus::Completed
-            | ConversationTurnStatus::WaitingUser
-            | ConversationTurnStatus::WaitingDependency
-            | ConversationTurnStatus::Failed
-            | ConversationTurnStatus::Cancelled => {}
-            _ => {
-                return Err(StoreError::Invalid(
-                    "Invalid terminal conversation turn status".to_owned(),
-                ));
-            }
+        // B-04 is the final Agent-result transaction. User-request waiting and
+        // continuation transitions belong to their separate B-06 operations; they
+        // must not write a final response, settle the turn, or close its session.
+        if !commit.turn_status.is_terminal() {
+            return Err(StoreError::Invalid(
+                "Conversation response commit requires a terminal turn status".to_owned(),
+            ));
         }
 
         commit.message.created_at = canonicalize_utc_timestamp(&commit.message.created_at)?;
@@ -1254,8 +1507,6 @@ impl ConversationTurnStore for SqliteConversationStore {
             // 8. Settle conversation turn
             let turn_status_db_str = match commit.turn_status {
                 ConversationTurnStatus::Completed => "COMPLETED",
-                ConversationTurnStatus::WaitingUser => "WAITING_USER",
-                ConversationTurnStatus::WaitingDependency => "WAITING_DEPENDENCY",
                 ConversationTurnStatus::Failed => "FAILED",
                 ConversationTurnStatus::Cancelled => "CANCELLED",
                 _ => return Err(StoreError::Invalid("Unsupported terminal turn status".to_owned())),
@@ -2008,6 +2259,26 @@ pub(super) fn resolve_conversation_session_host_in_transaction(
 }
 
 fn validate_turn_create(commit: &CreateConversationTurnCommit) -> Result<(), StoreError> {
+    validate_turn_create_records(commit)?;
+    let expected_request = serde_json::json!({
+        "operation":"conversation.turn.create.v1", "workspace_id":commit.workspace_id,
+        "conversation_id":commit.turn.conversation_id, "turn_id":commit.turn.turn_id,
+        "message_id":commit.message.message_id, "author":commit.message.author,
+        "content":commit.message.content, "resource_refs":commit.message.resource_refs,
+        "presentation_preference":serde_json::to_value(commit.turn.presentation_preference).map_err(|error|StoreError::Invalid(error.to_string()))?
+    });
+    if commit.request.request_payload != expected_request {
+        return Err(StoreError::Invalid(
+            "ConversationTurn request payload does not match the committed content".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validates the immutable message, OPEN turn, and event records shared by ordinary
+/// turn append and atomic first-send. Each operation validates its own request receipt
+/// separately because the idempotent request payloads intentionally differ.
+fn validate_turn_create_records(commit: &CreateConversationTurnCommit) -> Result<(), StoreError> {
     let message = &commit.message;
     let turn = &commit.turn;
     if commit.request.principal_id != commit.principal_id
@@ -2127,18 +2398,6 @@ fn validate_turn_create(commit: &CreateConversationTurnCommit) -> Result<(), Sto
     {
         return Err(StoreError::Invalid(
             "ConversationTurn creation commit is inconsistent".to_owned(),
-        ));
-    }
-    let expected_request = serde_json::json!({
-        "operation":"conversation.turn.create.v1", "workspace_id":commit.workspace_id,
-        "conversation_id":turn.conversation_id, "turn_id":turn.turn_id,
-        "message_id":message.message_id, "author":message.author,
-        "content":message.content, "resource_refs":message.resource_refs,
-        "presentation_preference":serde_json::to_value(turn.presentation_preference).map_err(|error|StoreError::Invalid(error.to_string()))?
-    });
-    if commit.request.request_payload != expected_request {
-        return Err(StoreError::Invalid(
-            "ConversationTurn request payload does not match the committed content".to_owned(),
         ));
     }
     Ok(())

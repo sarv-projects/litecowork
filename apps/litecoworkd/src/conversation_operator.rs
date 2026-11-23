@@ -14,9 +14,10 @@ use storage_core::conversation::{
     SetConversationArchived, TurnCommand, request_payload_value,
 };
 use storage_core::{
-    AgentSessionRecord, AgentSessionStore, CommittedConversation, ConversationHistoryStore,
-    ConversationMessageRecord, ConversationRecord, ConversationStore, ConversationTurnReceipt,
-    ConversationTurnStore, CreateConversationCommit, CreateConversationTurnCommit, EventDraft,
+    AgentSessionRecord, AgentSessionStore, CommittedConversation, CommittedConversationFirstTurn,
+    ConversationHistoryStore, ConversationMessageRecord, ConversationRecord, ConversationStore,
+    ConversationTurnReceipt, ConversationTurnStore, CreateConversationCommit,
+    CreateConversationTurnCommit, CreateConversationWithFirstTurnCommit, EventDraft,
     SetConversationAgentBinding, WorkspaceCreateRequest,
 };
 use storage_sqlite::SqliteConversationStore;
@@ -26,6 +27,26 @@ use storage_sqlite::SqliteConversationStore;
 struct CreateBody {
     workspace_id: String,
     title: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateConversationFirstTurnBody {
+    workspace_id: String,
+    title: Option<String>,
+    content: Vec<ConversationTurnContentBlock>,
+    #[serde(default)]
+    resource_refs: Vec<ConversationTurnResourceRef>,
+    agent_binding_id: String,
+    #[serde(default)]
+    presentation_preference: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationFirstTurnAdmission {
+    conversation: ConversationRecord,
+    turn: ConversationTurnReceipt,
 }
 
 #[derive(Deserialize)]
@@ -136,6 +157,10 @@ where
         .route(
             "/v1/conversations",
             get(list_conversations).post(create_conversation),
+        )
+        .route(
+            "/v1/conversations/first-turn",
+            post(create_conversation_with_first_turn),
         )
         .route(
             "/v1/conversations/{conversation_id}/turns",
@@ -296,6 +321,340 @@ async fn create_conversation(
         correlation,
     );
     Ok(response)
+}
+
+/// Creates the Conversation and admits its first user turn in one owner transaction.
+/// The durable receipt is keyed by the exact user request, so a lost acknowledgement
+/// can be retried without creating a title-only Conversation or a duplicate turn.
+async fn create_conversation_with_first_turn(
+    State(state): State<ConversationApiState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateConversationFirstTurnBody>,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    if body.workspace_id != workspace_id {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
+    }
+    ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
+    let title = body.title.as_ref().map(|value| value.trim().to_owned());
+    if title.as_ref().is_some_and(|value| {
+        value.is_empty() || value.chars().count() > 160 || value.chars().any(char::is_control)
+    }) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation title must contain 1 to 160 printable characters",
+        ));
+    }
+    let turn_body = SubmitConversationTurnBody {
+        content: body.content,
+        resource_refs: body.resource_refs,
+        agent_binding_id: Some(body.agent_binding_id.clone()),
+        presentation_preference: body.presentation_preference.clone(),
+    };
+    validate_turn_request(&turn_body, &workspace_id)?;
+    let presentation_preference =
+        parse_presentation_preference(turn_body.presentation_preference.as_deref())?;
+    check_turn_resources(&state, &workspace_id, &turn_body).await?;
+
+    // The UI sends the exact binding displayed in its selector, including the
+    // Workspace default. Pinning it makes ambiguous replay immune to a later
+    // default change. SQLite rechecks enabled and lead-eligible facts atomically.
+    let workspace = state
+        .store
+        .get_workspace(&workspace_id)
+        .map_err(|_| internal())?
+        .ok_or_else(not_found)?;
+    if workspace.owner_principal_id != state.principal_id || workspace.status != "ACTIVE" {
+        return Err(not_found());
+    }
+    let selected_binding = turn_body
+        .agent_binding_id
+        .clone()
+        .filter(|value| valid_task_query_id(value))
+        .ok_or_else(agent_unavailable)?;
+
+    let request_id = idempotency_key(&headers)?;
+    let principal_id = state.principal_id.clone();
+    let conversation_id =
+        idempotent_id("con", &principal_id, &request_id, "conversation-first-turn");
+    let message_id = idempotent_id(
+        "msg",
+        &principal_id,
+        &request_id,
+        "conversation-first-turn-message",
+    );
+    let turn_id = idempotent_id(
+        "turn",
+        &principal_id,
+        &request_id,
+        "conversation-first-turn",
+    );
+    let correlation_id =
+        idempotent_id("cor", &principal_id, &request_id, "conversation-first-turn");
+    let request_payload = json!({
+        "operation": "conversation.create_first_turn.v1",
+        "workspace_id": workspace_id,
+        "title": title,
+        "content": turn_body.content,
+        "resource_refs": turn_body.resource_refs,
+        "requested_agent_binding_id": turn_body.agent_binding_id,
+        "presentation_preference": serde_json::to_value(presentation_preference)
+            .map_err(|_| invalid_turn_request())?,
+    });
+    let content = request_payload
+        .get("content")
+        .cloned()
+        .ok_or_else(invalid_turn_request)?;
+    let resource_refs = request_payload
+        .get("resource_refs")
+        .cloned()
+        .ok_or_else(invalid_turn_request)?;
+    let title = request_payload
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let content_digest = canonical_digest(&content)?;
+    let author = json!({"kind":"USER","principal_id":principal_id});
+    let created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let message_created =
+        event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let turn_created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let conversation = ConversationRecord {
+        conversation_id: conversation_id.clone(),
+        workspace_id: workspace_id.clone(),
+        title,
+        active_agent_binding_id: Some(selected_binding.clone()),
+        version: 1,
+        created_at: created.recorded_at.clone(),
+    };
+    let message = ConversationMessageRecord {
+        message_id: message_id.clone(),
+        conversation_id: conversation_id.clone(),
+        author: author.clone(),
+        role: "USER".to_owned(),
+        agent_session_id: None,
+        agent_binding_id: None,
+        turn_id: Some(turn_id.clone()),
+        content,
+        resource_refs: resource_refs.clone(),
+        source_channel_ref: None,
+        created_at: created.recorded_at.clone(),
+    };
+    let turn = ConversationTurn {
+        turn_id: turn_id.clone(),
+        conversation_id: conversation_id.clone(),
+        user_message_id: message_id.clone(),
+        agent_session_id: None,
+        status: ConversationTurnStatus::Open,
+        retry_ordinal: 0,
+        presentation_preference,
+        created_at: created.recorded_at.clone(),
+        settled_at: None,
+        version: 1,
+    };
+    let commit = CreateConversationWithFirstTurnCommit {
+        request: WorkspaceCreateRequest {
+            principal_id: principal_id.clone(),
+            request_id: request_id.clone(),
+            request_payload,
+        },
+        principal_id: principal_id.clone(),
+        workspace_id: workspace_id.clone(),
+        conversation,
+        conversation_event: EventDraft {
+            event_id: created.event_id,
+            workspace_id: workspace_id.clone(),
+            entity_type: "Conversation".to_owned(),
+            entity_id: conversation_id.clone(),
+            origin_runtime_id: created.origin_runtime_id,
+            entity_revision: 1,
+            hlc_timestamp: created.hlc_timestamp,
+            correlation_id: created.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.created.v1".to_owned(),
+            payload: json!({"conversation_id":conversation_id,"created_by":{"kind":"USER","principal_id":principal_id}}),
+            recorded_at: created.recorded_at,
+        },
+        message,
+        turn,
+        message_event: EventDraft {
+            event_id: message_created.event_id,
+            workspace_id: workspace_id.clone(),
+            entity_type: "Conversation".to_owned(),
+            entity_id: conversation_id.clone(),
+            origin_runtime_id: message_created.origin_runtime_id,
+            entity_revision: 2,
+            hlc_timestamp: message_created.hlc_timestamp,
+            correlation_id: message_created.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.message.added.v1".to_owned(),
+            payload: json!({
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "author": author,
+                "content_digest": content_digest,
+                "resource_refs": resource_refs,
+            }),
+            recorded_at: message_created.recorded_at,
+        },
+        turn_event: EventDraft {
+            event_id: turn_created.event_id,
+            workspace_id: workspace_id.clone(),
+            entity_type: "ConversationTurn".to_owned(),
+            entity_id: turn_id.clone(),
+            origin_runtime_id: turn_created.origin_runtime_id,
+            entity_revision: 1,
+            hlc_timestamp: turn_created.hlc_timestamp,
+            correlation_id: turn_created.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.turn.created.v2".to_owned(),
+            payload: json!({
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "user_message_id": message_id,
+                "agent_binding_id": selected_binding,
+                "aggregate_version": 1,
+                "presentation_preference": serde_json::to_value(presentation_preference)
+                    .map_err(|_| invalid_turn_request())?,
+            }),
+            recorded_at: turn_created.recorded_at,
+        },
+    };
+    let store = state.store.clone();
+    let committed = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).create_conversation_with_first_turn(commit)
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?;
+
+    if let Some(supervisor) = state.supervisor.as_ref() {
+        crate::agents::turn_coordinator::AgentTurnCoordinator::new(supervisor.clone())
+            .dispatch_admitted_turn(
+                &state.local_incarnation_id,
+                &principal_id,
+                &workspace_id,
+                &committed.conversation.conversation_id,
+                committed.turn.clone(),
+                &correlation_id,
+            );
+        let admission = first_turn_response(&committed, correlation_id.clone());
+        let correlation = header::HeaderValue::from_str(&correlation_id).map_err(|_| internal())?;
+        let mut response = (StatusCode::ACCEPTED, Json(admission)).into_response();
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-correlation-id"),
+            correlation,
+        );
+        return Ok(response);
+    }
+
+    settle_unavailable_first_turn(
+        &state,
+        &committed,
+        &workspace_id,
+        &principal_id,
+        &correlation_id,
+    )
+    .await?;
+    Err(turn_admission_unavailable())
+}
+
+fn first_turn_response(
+    committed: &CommittedConversationFirstTurn,
+    correlation_id: String,
+) -> ConversationFirstTurnAdmission {
+    ConversationFirstTurnAdmission {
+        conversation: committed.conversation.clone(),
+        turn: ConversationTurnReceipt {
+            turn_id: committed.turn.turn_id.clone(),
+            conversation_id: committed.turn.conversation_id.clone(),
+            user_message_id: committed.turn.user_message_id.clone(),
+            status: committed.turn.status,
+            accepted_at: committed.turn.created_at.clone(),
+            correlation_id,
+            presentation_preference: committed.turn.presentation_preference,
+        },
+    }
+}
+
+async fn settle_unavailable_first_turn(
+    state: &ConversationApiState,
+    committed: &CommittedConversationFirstTurn,
+    workspace_id: &str,
+    principal_id: &str,
+    correlation_id: &str,
+) -> Result<(), Response> {
+    let store = state.store.clone();
+    let lookup_workspace = workspace_id.to_owned();
+    let lookup_conversation = committed.conversation.conversation_id.clone();
+    let lookup_turn = committed.turn.turn_id.clone();
+    let current = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).get_conversation_turn(
+            &lookup_workspace,
+            &lookup_conversation,
+            &lookup_turn,
+        )
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?
+    .ok_or_else(not_found)?;
+    if current.status == ConversationTurnStatus::Failed {
+        return Ok(());
+    }
+    if current.status != ConversationTurnStatus::Open {
+        return Ok(());
+    }
+    let expected_turn_revision = current.version.checked_add(1).ok_or_else(internal)?;
+    let settled_context =
+        event_context(&state.runtime_id, correlation_id).map_err(|_| internal())?;
+    let settled_at = settled_context.recorded_at.clone();
+    let event = EventDraft {
+        event_id: settled_context.event_id,
+        workspace_id: workspace_id.to_owned(),
+        entity_type: "ConversationTurn".to_owned(),
+        entity_id: current.turn_id.clone(),
+        origin_runtime_id: settled_context.origin_runtime_id,
+        entity_revision: expected_turn_revision,
+        hlc_timestamp: settled_context.hlc_timestamp,
+        correlation_id: settled_context.correlation_id,
+        causation_id: None,
+        schema_version: 1,
+        event_type: "conversation.turn.settled.v1".to_owned(),
+        payload: json!({
+            "turn_id": current.turn_id,
+            "from": "OPEN",
+            "to": "FAILED",
+            "reason_code": CONVERSATION_SESSION_ADMISSION_UNAVAILABLE,
+            "aggregate_version": expected_turn_revision,
+        }),
+        recorded_at: settled_context.recorded_at,
+    };
+    match run_turn_transition(
+        state.store.clone(),
+        principal_id.to_owned(),
+        workspace_id.to_owned(),
+        current.conversation_id,
+        current.turn_id,
+        current.version,
+        TurnCommand::Fail { settled_at },
+        event,
+    )
+    .await
+    {
+        Ok(turn) if turn.status == ConversationTurnStatus::Failed => Ok(()),
+        Err(StoreError::Conflict { .. }) => Ok(()),
+        Ok(_) => Err(settlement_inconsistent()),
+        Err(_) => Err(turn_settlement_failed()),
+    }
 }
 
 async fn set_conversation_agent_binding(
@@ -970,7 +1329,6 @@ async fn submit_conversation_turn(
         load_authorized_conversation(&state, &workspace_id, &conversation_id).await?;
     let presentation_preference =
         parse_presentation_preference(body.presentation_preference.as_deref())?;
-    check_turn_resources(&state, &workspace_id, &body).await?;
     let content = serde_json::to_value(&body.content).map_err(|_| invalid_turn_request())?;
     let resource_refs =
         serde_json::to_value(&body.resource_refs).map_err(|_| invalid_turn_request())?;
@@ -1013,10 +1371,25 @@ async fn submit_conversation_turn(
     .await
     .map_err(|_| internal())?
     .map_err(map_store_error)?;
-    if let Some(ref receipt) = replayed
-        && state.supervisor.is_some()
-        && receipt.turn.status != ConversationTurnStatus::Failed
-    {
+    if let Some(receipt) = replayed {
+        let admitted_binding = receipt
+            .events
+            .iter()
+            .find(|event| event.event_type == "conversation.turn.created.v2")
+            .and_then(|event| event.payload.get("agent_binding_id"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(internal)?;
+        if body
+            .agent_binding_id
+            .as_deref()
+            .is_some_and(|requested| requested != admitted_binding)
+        {
+            return Err(error(
+                StatusCode::CONFLICT,
+                "IDEMPOTENCY_CONFLICT",
+                "Idempotency key was already used with a different AgentBinding",
+            ));
+        }
         let correlation_id = receipt
             .events
             .iter()
@@ -1040,27 +1413,19 @@ async fn submit_conversation_turn(
         );
         return Ok(response);
     }
-    let agent_binding_id = match replayed {
-        Some(receipt) => receipt
-            .events
-            .iter()
-            .find(|event| event.event_type == "conversation.turn.created.v2")
-            .and_then(|event| event.payload.get("agent_binding_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(internal)?,
+    // A request without a receipt is fresh admission and must revalidate current
+    // Resource access before it can write a USER message or turn.
+    check_turn_resources(&state, &workspace_id, &body).await?;
+    // Pin the binding visible at the time of Send. When omitted by a legacy client,
+    // resolve the existing Conversation override/Workspace default. Storage rechecks
+    // same-Workspace enabled/lead eligibility inside the admission transaction.
+    let agent_binding_id = match body.agent_binding_id.as_deref() {
+        Some(binding) if !binding.trim().is_empty() && !binding.chars().any(char::is_control) => {
+            binding.to_owned()
+        }
+        Some(_) => return Err(agent_unavailable()),
         None => resolve_turn_agent_binding(&state, &workspace_id, &conversation)?,
     };
-    // A caller-supplied AgentBinding is compared for identity only; it never
-    // rewrites the Conversation and never overrides the resolved selection. An exact
-    // receipt replay uses the originally admitted selection above.
-    if body
-        .agent_binding_id
-        .as_deref()
-        .is_some_and(|requested| requested != agent_binding_id)
-    {
-        return Err(agent_unavailable());
-    }
     let created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
     let turn_created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
     let next_conversation_revision = conversation.version.checked_add(1).ok_or_else(internal)?;

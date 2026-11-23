@@ -297,6 +297,7 @@ fn neutral_coworker() -> CoworkerDefinition {
         avatar_ref: None,
         role_description: String::new(),
         default_lead_agent_binding_id: None,
+        delegation_policy_source: CoworkerDelegationPolicySource::CoworkerOverride,
         delegation_strategy: DelegationStrategy::NativeDefault,
         enabled_delegation_profile_ids: vec![],
         delegation_budget_policy: None,
@@ -320,6 +321,48 @@ fn neutral_coworker() -> CoworkerDefinition {
             failures: BinaryNotification::Always,
         },
     }
+}
+
+#[test]
+fn coworker_delegation_policy_source_preserves_explicit_source_and_legacy_override() {
+    let mut legacy = serde_json::to_value(neutral_coworker()).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("delegation_policy_source");
+    let decoded: CoworkerDefinition = serde_json::from_value(legacy).unwrap();
+    assert_eq!(
+        serde_json::to_value(decoded).unwrap()["delegation_policy_source"],
+        "COWORKER_OVERRIDE"
+    );
+
+    let mut workspace_default = serde_json::to_value(neutral_coworker()).unwrap();
+    workspace_default["delegation_policy_source"] = serde_json::json!("WORKSPACE_DEFAULT");
+    let decoded: CoworkerDefinition = serde_json::from_value(workspace_default).unwrap();
+    assert_eq!(
+        serde_json::to_value(decoded).unwrap()["delegation_policy_source"],
+        "WORKSPACE_DEFAULT"
+    );
+}
+
+#[test]
+fn coworker_workspace_default_source_requires_inherited_strategy_and_profiles() {
+    let mut workspace_default = neutral_coworker();
+    workspace_default.delegation_policy_source = CoworkerDelegationPolicySource::WorkspaceDefault;
+    assert_eq!(validate_coworker_definition(&workspace_default), Ok(()));
+
+    workspace_default.delegation_strategy = DelegationStrategy::Balanced;
+    assert_eq!(
+        validate_coworker_definition(&workspace_default),
+        Err(DomainError::InvalidDefinition)
+    );
+
+    workspace_default.delegation_strategy = DelegationStrategy::NativeDefault;
+    workspace_default.enabled_delegation_profile_ids = vec!["worker-profile".into()];
+    assert_eq!(
+        validate_coworker_definition(&workspace_default),
+        Err(DomainError::InvalidDefinition)
+    );
 }
 
 #[test]

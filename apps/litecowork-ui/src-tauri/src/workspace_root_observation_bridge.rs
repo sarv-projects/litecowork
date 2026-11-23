@@ -373,8 +373,7 @@ mod tests {
         assert!(parse(oversized_resource_id).is_err());
 
         let mut wrong_prefix = page();
-        wrong_prefix["items"][0]["resource_id"] =
-            json!(format!("resource_{}", "a".repeat(64)));
+        wrong_prefix["items"][0]["resource_id"] = json!(format!("resource_{}", "a".repeat(64)));
         assert!(parse(wrong_prefix).is_err());
 
         let mut wrong_digest_length = page();

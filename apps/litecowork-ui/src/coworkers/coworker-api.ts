@@ -1,5 +1,6 @@
 export type CoworkerStatus = "ACTIVE" | "PAUSED" | "ARCHIVED";
 export type CoworkerDelegationStrategy = "NATIVE_DEFAULT" | "BALANCED" | "COST_SAVER" | "HOST_DELEGATION_ONLY";
+export type CoworkerDelegationPolicySource = "WORKSPACE_DEFAULT" | "COWORKER_OVERRIDE";
 export type CoworkerInteractionDefault = "STANDARD_TRUST_POLICY" | "REQUIRE_OWNER_APPROVAL" | "HANDOFF_TO_OWNER";
 export type CoworkerContextKind = "PERSONAL_PROFILE" | "COWORKER_NOTES" | "WORKSPACE_NOTES" | "GOAL_NOTES";
 export type PinnedResourceRef = { workspace_id: string; resource_id: string; revision_id: string };
@@ -14,6 +15,7 @@ export type CoworkerRevisionInput = {
   avatar_ref: PinnedResourceRef | null;
   role_description: string;
   default_lead_agent_binding_id: string | null;
+  delegation_policy_source: CoworkerDelegationPolicySource;
   delegation_strategy: CoworkerDelegationStrategy;
   enabled_delegation_profile_ids: string[];
   delegation_budget_policy: Record<string, unknown> | null;
@@ -139,7 +141,12 @@ function decodeResourceRef(value: unknown, workspaceId: string): PinnedResourceR
 }
 function decodeRevision(value: unknown, workspaceId: string): CoworkerRevisionInput {
   const row = object(value);
+  const source = enumValue(row.delegation_policy_source, ["WORKSPACE_DEFAULT", "COWORKER_OVERRIDE"] as const);
   const strategy = enumValue(row.delegation_strategy, ["NATIVE_DEFAULT", "BALANCED", "COST_SAVER", "HOST_DELEGATION_ONLY"] as const);
+  const enabledProfiles = stringList(row.enabled_delegation_profile_ids);
+  if (source === "WORKSPACE_DEFAULT" && (strategy !== "NATIVE_DEFAULT" || enabledProfiles.length !== 0)) {
+    throw new Error("Invalid Coworker Workspace-default delegation policy.");
+  }
   const interaction = object(row.interaction_policy);
   const interactionValues = ["STANDARD_TRUST_POLICY", "REQUIRE_OWNER_APPROVAL", "HANDOFF_TO_OWNER"] as const;
   const context = object(row.context_policy);
@@ -155,8 +162,9 @@ function decodeRevision(value: unknown, workspaceId: string): CoworkerRevisionIn
     avatar_ref: decodeResourceRef(row.avatar_ref, workspaceId),
     role_description: typeof row.role_description === "string" ? row.role_description : "",
     default_lead_agent_binding_id: nullableText(row.default_lead_agent_binding_id),
+    delegation_policy_source: source,
     delegation_strategy: strategy,
-    enabled_delegation_profile_ids: stringList(row.enabled_delegation_profile_ids),
+    enabled_delegation_profile_ids: enabledProfiles,
     delegation_budget_policy: budget ? { ...budget } : null,
     lead_failover_policy: failover ? {
       mode: enumValue(failover.mode, ["DISABLED", "ASK", "ALLOW_LISTED"] as const),

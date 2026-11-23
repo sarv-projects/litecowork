@@ -1,8 +1,8 @@
 # Implementation Plan - Proactivity and Quiet Learning
 
-**Feature:** 020 | **Spec:** SPEC.md revision 0.1
-**Status:** IN_REVIEW - not owner-accepted; authorizes no implementation; not a claim of implementation or qualification.
-**Updated:** 2026-11-09
+**Feature:** 020 | **Spec:** SPEC.md revision 0.2
+**Status:** IN_REVIEW - not formally owner-accepted. Only T03's pure-gate repair has a narrow repository-owner delegated implementation direction; this does not authorize dependent product work or claim qualification.
+**Updated:** 2026-11-20
 **Rule:** the authoritative ordered work list is [TASKS.md](TASKS.md) (T01 to T17). This plan is the summary view.
 
 ## 1. Delivery strategy
@@ -55,14 +55,14 @@ flowchart TD
 |---|---|---|---|
 | Suggestion domain/storage | `crates/domain-responsibility/src/suggestions.rs`, `crates/storage-sqlite/src/suggestions.rs` | Responsibility, Storage | One admission transaction; no candidate text on suppression |
 | Producers | `apps/litecoworkd/src/suggestion_producers.rs`, `suggestion_producer_worker.rs` (new) | Responsibility | Deterministic; committed state only |
-| Learning gates | `crates/storage-core/src/coworker_learning.rs` | Responsibility, Security | Never widen eligibility |
+| Learning gates | `crates/domain-responsibility/src/learning_gates.rs`; compatibility re-export at `crates/storage-core/src/coworker_learning.rs` | Responsibility, Security | Never widen eligibility; pure code only until storage/service tasks are authorized |
 | Learning service/storage | `crates/domain-responsibility/src/learning.rs`, `crates/storage-sqlite/src/learning.rs` (new) | Responsibility, Storage | Resource-backed payloads; recheck in transaction |
 | Learning routes/bridge | `apps/litecoworkd/src/learning_operator.rs`, `apps/litecowork-ui/src-tauri/src/learning_bridge.rs` (new) | Operator/API | Idempotency, If-Match, no-store |
 | UI | `apps/litecowork-ui/src/suggestions/`, `apps/litecowork-ui/src/learning/` (new), named slots in `App.tsx`, `ConversationsPage.tsx`, `CoworkerSettings.tsx`, `HomeCoworkerOnboarding.tsx` | Desktop UI | No authority logic in the WebView |
 
 ## 5. Migrations
 
-One forward-only migration (allocated `sqlite-v43.sql`, promoted in T02) adds `learning_candidates`, `coworker_learning_policies`, `memory_records`, `learning_work_items` and `suggestion_producer_cursors`, plus a partial index on `suggestions(workspace_id, proposed_by, created_at)`. Existing Coworkers get no policy row, which reads as REVIEW_ALL (AC-021). No existing table changes shape.
+One forward-only migration (allocated `sqlite-v44.sql`, promoted in T02) adds `learning_candidates`, `coworker_learning_policies`, `memory_records`, `learning_work_items` and `suggestion_producer_cursors`, plus a partial index on `suggestions(workspace_id, proposed_by, created_at)`. Existing Coworkers get no policy row, which reads as REVIEW_ALL (AC-021). No existing table changes shape.
 
 ## 6. Rollout
 

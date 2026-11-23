@@ -228,7 +228,7 @@ See [contracts/errors-recovery.md](contracts/errors-recovery.md). Key rules: sta
 
 - Title bound reused from create (1-160 printable characters).
 - Search bounds: query 256 characters, 32 terms, limit 50, snippet 240 characters; proposed p95 budget below.
-- Migration: v31 (shipped, side table `conversation_history_state`) holds status and timestamps; a later forward-only `sqlite-vNN.sql` (next free number after the allocation table; chain ends at `sqlite-v32.sql`) adds the search index table, tombstone and manifest tables, and the list index `(workspace_id, status, created_at DESC, conversation_id DESC)`.
+- Migration: v31 (shipped, side table `conversation_history_state`) holds status and timestamps; a later forward-only `sqlite-vNN.sql` (next free number after the allocation table; the 2026-11-20 chain ends at `sqlite-v34.sql`) adds the search index table, tombstone and manifest tables, and the list index `(workspace_id, status, created_at DESC, conversation_id DESC)`.
 - Old binaries reading a migrated database would not understand status; the migration is one-way and covered by the upgrade check of Feature 017.
 
 ## 13. Observability

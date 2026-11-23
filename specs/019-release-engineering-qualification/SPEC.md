@@ -1,10 +1,13 @@
 # Feature Specification - Release Engineering and V1 Qualification
 
-- **Feature ID:** 019 | **Status:** IN_REVIEW | **Revision:** 0.1
-- **Created / Updated:** 2026-11-09 / 2026-11-09
+- **Feature ID:** 019 | **Status:** IN_REVIEW | **Revision:** 0.2
+- **Created / Updated:** 2026-11-09 / 2026-11-20
 - **Review state:** authored complete after the owner acceptance of packages 001 to 012 (2026-11-09, [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md)). This package did not exist when that packet was accepted, so it is IN_REVIEW: nothing here is owner-accepted, and blockers B-43 and B-44 are PROPOSED, pending owner. A passing structural validator is not owner approval.
 - **Target:** LiteCowork V1 local desktop release (gate G of [docs/V1-PRODUCT-RELEASE-CONTRACT.md](../../docs/V1-PRODUCT-RELEASE-CONTRACT.md) section 7)
 - **Release matrix rows:** Windows 11/10 `x86_64-pc-windows-msvc` + OpenCode v2.0.32 first; Linux x86_64 desktop + OpenCode v2.0.32 second. WSL2 never counts as either row.
+- **Current matrix transport:** `opencode-v2-http-sse` names the active OpenCode v2 adapter; the accepted ACP route remains a separate target until it is implemented and qualified. The matrix does not label the current HTTP/SSE route as ACP.
+- **Journey roster:** adopted V1 matrix cells are E2E-01..E2E-12 and E2E-14..E2E-17. Conditional E2E-13 is not a V1 release gate.
+- **2026-11-20 USER-DELEGATED correction:** exact row tuple validation and the adopted journey roster are being implemented under T24 at the product owner's direction. This is not whole-SPEC owner acceptance; Feature 019 remains IN_REVIEW and all release qualification remains unearned.
 - **Owners:** Release Engineering, Security, Desktop Shell (Tauri), Runtime, QA/Accessibility, Product (licensing and sign-off)
 - **Dependencies:** Feature 011 (IPC profile, authenticated Runtime stop, update quiescence gate), every V1 package 001 to 020 (for the go/no-go decision), [ACCEPTANCE-AND-E2E-PLAN.md](../../docs/ACCEPTANCE-AND-E2E-PLAN.md), [TESTING.md](../../docs/TESTING.md), [SECURITY.md](../../docs/SECURITY.md), [NETWORK-SECURITY.md](../../docs/NETWORK-SECURITY.md), [BENCHMARKS.md](../../docs/BENCHMARKS.md), [LITECOWORK-BUILD-TASKS.md](../../docs/LITECOWORK-BUILD-TASKS.md) BT-00 and BT-10.5.
 
@@ -179,7 +182,7 @@ scripts/v1_csp_audit.py (new)               parse tauri.conf.json CSP and capabi
 scripts/v1_release_gate.py (new)            go/no-go: read matrix, bundles and package statuses; print GO or NO-GO with reasons
 ```
 
-`v1_platform_matrix.py` gains `--rows scripts/v1_release_matrix_rows.json`, WSL2 detection (`WSL_DISTRO_NAME`, `/proc/sys/kernel/osrelease` containing `microsoft`) that marks the run `NOT_COUNTED`, and per-row E2E-01..E2E-12 cells. Its default `--out` moves to `docs/release/QUALIFICATION-MATRIX.md` (new).
+`v1_platform_matrix.py` reads `scripts/v1_release_matrix_rows.json`, detects WSL2 (`WSL_DISTRO_NAME`, `/proc/sys/kernel/osrelease` containing `microsoft`) and marks the run `NOT_COUNTED`, and emits per-row cells for the adopted roster E2E-01..E2E-12 plus E2E-14..E2E-17. E2E-13 is conditional and is excluded from V1 rows. A linked evidence bundle must match the row's OS minimum, architecture, agent/version, authentication mode, protocol, packaged mode and clean-checkout requirement before it can count. Its default `--out` is `docs/release/QUALIFICATION-MATRIX.md`.
 
 ### 7.3 Request ordering and transaction owner
 
@@ -234,8 +237,8 @@ Each CI and release run records: commit SHA, dirty status, runner OS/build/arch,
 - AC-009 WHEN the owner chooses Install for an available update, THE SYSTEM SHALL call the Feature 011 update quiescence gate first, and IF the gate returns NotQuiescent or is unavailable, THEN THE SYSTEM SHALL NOT download-to-install, SHALL list what is running or unknown and SHALL offer Retry. Verify: updater command tests with a stubbed gate and the packaged stop/update journey.
 - AC-010 IF an update manifest or artifact signature fails verification, the offered version is not greater than the installed version, the channel differs from `stable`, or the endpoint is not the pinned HTTPS origin, THEN THE SYSTEM SHALL refuse the update and leave the installed version unchanged. Verify: updater negative tests with tampered fixtures.
 - AC-011 IF an update install is interrupted (process kill, power loss or installer failure), THEN on next launch THE SYSTEM SHALL run either the previous version or the completed new version, the daemon database SHALL pass `PRAGMA integrity_check`, and a migration SHALL be either fully applied or not applied. Verify: interrupted-install fault injection on the Windows row.
-- AC-012 WHEN the release matrix is generated, THE SYSTEM SHALL emit one row per declared tuple (Windows x64 + OpenCode v2.0.32; Linux x64 + OpenCode v2.0.32) with a cell per E2E-01 to E2E-12 and per capability, and SHALL report PASSED only for a cell observed on that host with linked evidence; every other cell SHALL be NOT_RUN, BLOCKED, UNAVAILABLE or NOT_COUNTED with a reason. Verify: generator unit tests and a real-host run.
-- AC-013 WHEN an evidence bundle is assembled, THE SYSTEM SHALL validate it against the release evidence bundle schema (journey id, requirement ids, SHA and dirty status, OS/build/arch, agent/provider versions and protocol, CODE commands, SYSTEM trace, USER links, negative cases, limitations, reviewer, date) and IF a required field is missing or the secret scan reports a finding, THEN THE SYSTEM SHALL reject the bundle. Verify: `scripts/v1_evidence_bundle.py` tests.
+- AC-012 WHEN the release matrix is generated, THE SYSTEM SHALL emit one row per declared tuple (Windows x64 + OpenCode v2.0.32; Linux x64 + OpenCode v2.0.32) with a cell per adopted V1 journey E2E-01 to E2E-12 and E2E-14 to E2E-17 and per capability, and SHALL report PASSED only for linked evidence from a clean packaged build whose exact OS minimum, architecture, agent/version, authentication mode and protocol match that row; every other cell SHALL be NOT_RUN, BLOCKED, UNAVAILABLE or NOT_COUNTED with a reason. Conditional E2E-13 SHALL NOT appear as a V1 release cell. Verify: generator unit tests and native-row runs.
+- AC-013 WHEN an evidence bundle is assembled, THE SYSTEM SHALL validate it against the release evidence bundle schema (journey id, requirement ids, SHA and dirty status, OS/build/arch, agent/provider versions, authentication mode and protocol, packaging mode, CODE commands, SYSTEM trace, USER links, negative cases, limitations, reviewer, date) and IF a required field is missing or the secret scan reports a finding, THEN THE SYSTEM SHALL reject the bundle. Verify: `scripts/v1_evidence_bundle.py` tests.
 - AC-014 WHILE a release row lacks a recorded owner USER sign-off for a journey, THE SYSTEM SHALL keep that journey cell below QUALIFIED for that row. Verify: release gate test.
 - AC-015 WHILE the packaged app runs on a release row, THE SYSTEM SHALL make every interactive control on the E2E journey screens keyboard reachable with visible focus and an accessible name, honor reduced motion, report zero serious automated audit violations, and record a Narrator (Windows) or Orca (Linux) walkthrough. Verify: rendered-UI audit plus owner USER walkthrough.
 - AC-016 WHEN performance qualification runs on a named hardware profile, THE SYSTEM SHALL report p50/p95 for composer input acknowledgement (budget p95 <= 100 ms), local admission receipt (<= 250 ms), mediation overhead before adapter dispatch (<= 200 ms) and small artifact first paint (<= 1 s), plus a bounded-footprint soak with a passing integrity check, and SHALL report any miss with its cause. Verify: performance and soak reports per row.
@@ -289,6 +292,7 @@ This package is IN_REVIEW and authorizes nothing yet. After owner acceptance, ea
 | Licensing/packaging decision and notices | V1 release contract section 1, B-44 | 019-T13 | AC-017 |
 | Release qualification matrix | ACCEPTANCE section 7 | 019-T14 | AC-002 / AC-012 |
 | Evidence bundle process and USER sign-off | ACCEPTANCE sections 2, 6 | 019-T15 | AC-013 / AC-014 |
+| Exact row tuple verification and adopted E2E roster | ACCEPTANCE sections 3, 6, 7 | 019-T24 | AC-012 / AC-013 |
 | App-wide accessibility qualification | V1 release contract Area 10, BT-10.4 | 019-T16 | AC-015 |
 | Performance and soak qualification | BENCHMARKS | 019-T17 | AC-016 |
 | Resilience matrix on both rows | TESTING fault injection, ACCEPTANCE section 5 | 019-T18 | AC-021 / AC-011 |

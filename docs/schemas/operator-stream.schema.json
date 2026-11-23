@@ -298,7 +298,8 @@
         "items",
         "next_cursor",
         "active_turn",
-        "retryable_turn"
+        "retryable_turn",
+        "activity_turn"
       ],
       "properties": {
         "conversation_id": {"type": "string", "minLength": 1, "maxLength": 256},
@@ -321,6 +322,12 @@
             {"$ref": "#/$defs/conversation_retryable_turn"},
             {"type": "null"}
           ]
+        },
+        "activity_turn": {
+          "oneOf": [
+            {"$ref": "#/$defs/conversation_activity_turn"},
+            {"type": "null"}
+          ]
         }
       },
       "additionalProperties": false
@@ -338,7 +345,7 @@
     },
     "conversation_presentation_message": {
       "type": "object",
-      "required": ["message", "rich_presentation", "linked_items"],
+      "required": ["message", "rich_presentation", "linked_items", "turn_status"],
       "properties": {
         "message": {"$ref": "#/$defs/conversation_message"},
         "rich_presentation": {
@@ -351,6 +358,11 @@
           "type": "array",
           "maxItems": 200,
           "items": {"$ref": "#/$defs/presentation_item"}
+        },
+        "turn_status": {
+          "type": ["string", "null"],
+          "enum": ["OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY", "CANCEL_REQUESTED", "COMPLETED", "FAILED", "CANCELLED", null],
+          "description": "Canonical status of the exact owning Conversation turn from the same SQLite snapshot; null when this message has no exact same-Conversation turn. Read-only lineage metadata, never command authority."
         }
       },
       "additionalProperties": false
@@ -452,6 +464,16 @@
         "version": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
         "retry_ordinal": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
         "reason_code": {"type": ["string", "null"], "maxLength": 128}
+      },
+      "additionalProperties": false
+    },
+    "conversation_activity_turn": {
+      "type": "object",
+      "required": ["turn_id", "retry_ordinal", "status"],
+      "properties": {
+        "turn_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "retry_ordinal": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "status": {"enum": ["OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY", "CANCEL_REQUESTED", "COMPLETED", "FAILED", "CANCELLED"]}
       },
       "additionalProperties": false
     },

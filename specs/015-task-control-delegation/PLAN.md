@@ -1,11 +1,13 @@
 # Implementation Plan - Task Control and Heterogeneous Delegation
 
 **Feature:** 015 | **Spec revision:** 0.1
-**Status:** IN_REVIEW - authored for owner review; does not authorize implementation until owner acceptance (TASKS T01).
+**Status:** IN_REVIEW - whole-package implementation awaits owner acceptance (TASKS T01). USER-DELEGATED T22 authorizes only the TaskSpec delegation-snapshot correction and does not promote package acceptance.
 
 ## 1. Delivery strategy
 
 Build on Feature 005 rather than beside it. The order is: typed Task status first (so every control is checked against one transition table), then the state-only controls (pause, resume, steer), then fan-out cancel and handoff (which reuse Feature 005 cancel and admission), then delegation (child admission, escalation, independent verification), then routes and UI, then recovery and qualification. Wave 4 in the V1 delivery plan (gate E). Qualify on the Linux x86_64 row first; the Windows row ships the UNAVAILABLE posture until Feature 005 B-35 qualifies.
+
+The USER-DELEGATED T22 correction is a separate cross-cutting prerequisite: Task create and explicit TaskSpec revision resolve policy from the exact Coworker revision and Workspace settings revision, pin the complete profile policy, and revalidate before committing. It does not start worker execution or bypass Feature 005 admission requirements.
 
 All new code is Rust (daemon services in `apps/litecoworkd`, domain logic in `crates/domain-task`, storage in `crates/storage-sqlite`) or TypeScript (Work-screen components under `apps/litecowork-ui/src/tasks/`). Most decision logic already exists in Rust; the work is mostly composition plus fences, which keeps the change small and testable.
 
@@ -33,7 +35,8 @@ flowchart LR
   T17 --> T19[T19 docs sync]
   T13 & T16 --> T20[T20 Mission Control + Compare]
   O09[Owner decision: Compare Agents surface and provider contract] -.-> T20
-  T18 & T19 & T20 --> T21[T21 VERIFIED]
+  F009[009-T19 Coworker policy source] --> T22[T22 TaskSpec policy snapshot]
+  T18 & T19 & T20 & T22 --> T21[T21 VERIFIED]
   F005[Feature 005 safe file-write Attempt slice] -.-> T04
   F005 -.-> T08
   F004[Feature 002/004 Claude Code] -.-> T08
@@ -69,7 +72,7 @@ flowchart LR
 
 ## 5. Persistence, migration, rollout
 
-One forward-only migration (allocated v42 in docs/LITECOWORK-BUILD-TASKS.md; chain ends at `sqlite-v32.sql`) adds `task_control_requests` and `task_resume_packets`. Any persistence of `on_exhaustion` must preserve the accepted A-37 TARGET-not-yet-wired posture until its dispatcher owner lands; Feature 015 must not remove that label or treat a stored target field as producer support. No existing column changes type; `tasks.status` stays text and is parsed by the new enum. Rollout is behind the Task projection's `allowed_commands`: a control is invisible to the UI until its route and owner path are served.
+One forward-only migration (allocated v43 in docs/LITECOWORK-BUILD-TASKS.md; chain currently ends at `sqlite-v34.sql`) adds `task_control_requests` and `task_resume_packets`. Any persistence of `on_exhaustion` must preserve the accepted A-37 TARGET-not-yet-wired posture until its dispatcher owner lands; Feature 015 must not remove that label or treat a stored target field as producer support. No existing column changes type; `tasks.status` stays text and is parsed by the new enum. Rollout is behind the Task projection's `allowed_commands`: a control is invisible to the UI until its route and owner path are served.
 
 ## 6. Operational risks
 
@@ -103,4 +106,4 @@ Stop if any path reports PAUSED or CANCELLED without observed quiescence, admits
 
 ## 9. Handoff
 
-After T20 the package moves to VERIFIED; downstream consumers are Feature 010 (Automation-created Tasks use the same controls) and Feature 020 (Needs You items from `on_exhaustion`).
+After T20 and T22 the package may move to VERIFIED; downstream consumers are Feature 010 (Automation-created Tasks use the same controls) and Feature 020 (Needs You items from `on_exhaustion`).

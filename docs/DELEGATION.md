@@ -273,20 +273,33 @@ match. Parent credentials, sessions, subscription entitlements and provider sett
 cross bindings.
 
 At Task admission, TaskService resolves and pins the source, Workspace settings revision,
-optional Coworker revision, strategy, native-child model policy, and exact eligible worker
-profile revisions in TaskSpecRevision. Worker model policy is read from each pinned profile
-revision. Settings edits affect future Task admissions only. An existing Task retains its
-pinned policy; applying new settings requires an explicit TaskSpec revision action that
-re-resolves policy server-side. The caller never submits a per-Task route override.
+optional immutable Coworker origin revision, strategy, native-child model policy, and exact
+eligible worker profile revisions in TaskSpecRevision. Worker model policy is read from each
+pinned profile revision. Initial admission checks that the selected Coworker version is current
+for the command. Later Coworker edits do not replace that Task's immutable origin revision.
+Workspace settings edits affect future admissions; an explicit TaskSpec revision re-resolves
+against the Task's fixed Coworker origin and the current Workspace settings revision. The
+caller never submits a per-Task route override.
 
-This delegation-settings persistence is migration v28, which is wired (`SCHEMA_VERSION` is
-29; register A-40 and [STORAGE.md](STORAGE.md)); the TaskSpec writers pin the snapshot
-described below. The settings route family and policy events remain target-only. A pre-v28
-TaskSpecRevision may have a null policy snapshot because the earlier schema did not preserve
-this contract. Do not interpret null as native-only or reconstruct a policy
-from current mutable settings. Existing Attempts remain under their recorded provenance;
-new child admission for a legacy Task is blocked until an explicit TaskSpec revision
-resolves and pins policy under the current contract.
+Workspace delegation settings and the original TaskSpec snapshot column are migration v28;
+migration v34 completes the same snapshot contract (`SCHEMA_VERSION` is 34 as of 2026-11-20;
+register A-40 and [STORAGE.md](STORAGE.md)). The user-delegated Feature 015 T22 implementation now
+resolves the source from the exact Task Coworker revision and Workspace settings revision, applies
+the Workspace profile ceiling, pins exact profile revisions and model-selection policies, writes
+the typed snapshot before the aggregate blob, and revalidates it in the TaskSpec transaction.
+Focused native-Windows CODE evidence passes for Task create/read/history/receipt/aggregate-blob
+round-trip, Coworker Workspace-default and override-source resolution, exact selected profile and
+model-selection revision, explicit TaskSpec revision, and a deterministic Workspace-settings-head
+race that commits no revision, event or receipt. Migration tests cover non-null reconstruction,
+pre-v28 null preservation, rejection of a foreign-Workspace profile without partial backfill, and
+v28-v34 rollback/replay. Tauri current/history/receipt projection tests pass 2/2; the Work
+detail/history disclosure tests pass 2/2; TypeScript and API checks pass; structural validation
+passes all 20 feature packages. This remains CODE evidence only: it does not qualify Task execution
+or worker dispatch, and the Feature 015 package remains IN_REVIEW. The settings route family and
+policy events remain target-only. A pre-v28 TaskSpecRevision may have a null policy snapshot; do not
+interpret null as native-only or reconstruct a policy from current mutable settings. Existing
+Attempts remain under their recorded provenance; new child admission for a legacy Task is blocked
+until an explicit TaskSpec revision resolves and pins policy under the current contract.
 
 ### Composer conversation versus Task worker dispatch
 

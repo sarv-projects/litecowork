@@ -51,7 +51,7 @@ No cloud, remote or scheduled off-device backup; no automatic backup schedule in
 | Staging crash safety | PARTIAL: create removes `.backup-staging-<backup_id>` on every normal exit path | A process crash leaves a plaintext snapshot in the state directory; no startup sweep exists |
 | Private directory on Windows | GAP: `ensure_private_directory` creates 0700 directories on Unix, but on Windows (`#[cfg(not(unix))]`) calls plain `fs::create_dir_all` with no owner-only DACL | On the first GA row the plaintext staging snapshot and the `backups` folder inherit the parent ACL |
 | Restore receipt | DEFECT: `restore_into_staging` sets `restored_at: manifest.verified_at` and `new_runtime_identity_required: true` but registers no new Runtime identity | Receipt time is wrong; the new identity must be minted on first start of the restored installation |
-| Manifest table | CODE: `workspace_backup_manifests` in `docs/schemas/sqlite-v1.sql` with immutability trigger `immutable_workspace_backup_manifest_update` | No backup operation (job) record, no progress, no cancellation; latest migration is `sqlite-v32.sql` |
+| Manifest table | CODE: `workspace_backup_manifests` in `docs/schemas/sqlite-v1.sql` with immutability trigger `immutable_workspace_backup_manifest_update` | No backup operation (job) record, no progress, no cancellation; the 2026-11-20 latest migration is `sqlite-v34.sql` |
 | OpenAPI | TARGET_ONLY: list/get/create backups and `POST /recovery/backups/{backupId}/restore` (`RestoreWorkspaceBackupRequest.confirm_empty_installation`) | The restore operation contradicts the CLI header rule that restore never runs over the Operator socket (resolved by B-41 below) |
 | ContextDocument deletion status | SERVED per Resource: `GET/POST /v1/resources/{resource_id}/context-document/deletion` (`apps/litecoworkd/src/operator.rs`), Tauri `context_document_deletion_bridge.rs` | No Workspace-level list of pending purge targets and no retry surface in Settings |
 | Settings category | ABSENT: `SettingsCategory` in `SettingsView.tsx` is `general`, `workspaces`, `agents`, `runtime` | "Storage & Backup" (IA category 13) is target only |
@@ -235,7 +235,7 @@ Tauri commands (PROPOSED, `apps/litecowork-ui/src-tauri/src/backup_bridge.rs` (n
 
 ## 8. Data model and lifecycle
 
-See [DATA-MODEL.md](DATA-MODEL.md). Summary: existing `workspace_backup_manifests` (immutable) plus a PROPOSED `backup_operations` table (operation lifecycle QUEUED -> RUNNING -> SUCCEEDED | FAILED | CANCELLED) in `sqlite-v45.sql` (allocated). Archives are files, not rows. Manifests reference archives by backup id and local relative path; a missing file is an observation (MISSING), not a deletion of the manifest.
+See [DATA-MODEL.md](DATA-MODEL.md). Summary: existing `workspace_backup_manifests` (immutable) plus a PROPOSED `backup_operations` table (operation lifecycle QUEUED -> RUNNING -> SUCCEEDED | FAILED | CANCELLED) in `sqlite-v46.sql` (allocated). Archives are files, not rows. Manifests reference archives by backup id and local relative path; a missing file is an observation (MISSING), not a deletion of the manifest.
 
 ## 9. Wiring
 
@@ -315,7 +315,7 @@ Do not run a restore against the owner's real installation, delete archives, or 
 
 | ID | Question | Evidence or limitation | Owner | Gate |
 |---|---|---|---|---|
-| O-01 | Exact per-table Workspace predicate for every table in the current schema. | `sqlite-v1.sql` to `sqlite-v32.sql` define the tables; some rows are installation-level (runtimes, schema ledger). | Storage | B-41 / 017-T03 |
+| O-01 | Exact per-table Workspace predicate for every table in the current schema. | `sqlite-v1.sql` to `sqlite-v34.sql` define the tables; some rows are installation-level (runtimes, schema ledger). | Storage | B-41 / 017-T03 |
 | O-02 | Whether Conversation delete (Feature 014, B-38) produces tombstones that need the same purge-ack carry rule as ContextDocuments. | 014 is being authored in parallel; B-38 is open. | Storage, Conversation | 017-T12 |
 | O-03 | Whether the Feature 011 stop/quiescence gate can be called by the desktop before a sidecar restore on Windows. | No authenticated Operator stop exists (`main.rs` HELP). | Runtime Lifecycle | 017-T09 |
 | O-04 | Reference fixture size for the performance baseline. | No profiling baseline exists; the telemetry LLD forbids hard-coded SLOs before a baseline. | Storage, Release | 017-T14 |

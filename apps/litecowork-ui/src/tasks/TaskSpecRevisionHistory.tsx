@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./task-spec-revision-history.css";
+import { TaskDelegationPolicySnapshot, type DelegationPolicySnapshot } from "./TaskDelegationPolicySnapshot";
 
 type TaskSpecRevision = {
   taskId: string;
@@ -10,6 +11,7 @@ type TaskSpecRevision = {
   objective: string;
   authoredBy: { principalId: string; kind: string };
   createdAt: string;
+  delegationPolicySnapshot: DelegationPolicySnapshot | null;
 };
 
 function formatRevisionTime(value: string): string {
@@ -104,6 +106,7 @@ export function TaskSpecRevisionHistory({ workspaceId, taskId, currentRevision, 
             <p>{revision.objective}</p>
             <small>Authored by {revision.authoredBy.kind} · {revision.authoredBy.principalId}</small>
             <small>Parent revisions: {revision.parentRevisions.length ? revision.parentRevisions.map((parent) => `#${parent}`).join(", ") : "None (initial revision)"}</small>
+            <TaskDelegationPolicySnapshot snapshot={revision.delegationPolicySnapshot} />
           </li>
         ))}
       </ol>}

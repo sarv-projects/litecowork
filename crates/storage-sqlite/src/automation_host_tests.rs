@@ -764,6 +764,7 @@ fn scheduled_task_commit(
             preferred_lead_agent_binding_id: Some("binding-automation".to_owned()),
             authored_by: created_by,
             created_at: recorded_at.to_owned(),
+            delegation_policy_snapshot: None,
         },
         event: storage_core::EventDraft {
             event_id: format!("ev-automation-{occurrence_id}"),

@@ -2,7 +2,7 @@
 
 - **Status:** IN_REVIEW - authored 2026-11-09 after the owner acceptance packet; B-41 was ACCEPTED as proposed on 2026-11-10 (A-62) and whole-SPEC acceptance is pending; does not authorize implementation and is not a claim of implementation or qualification.
 - **Revision:** 0.1 | **Updated:** 2026-11-09 | **Delivery wave:** Wave 6 (gate G) | **E2E:** E2E-12 | **Master plan:** P11
-- **Implementation state (2026-11-10):** Not implemented beyond a CLI-only backup operator; migration v45 allocated.
+- **Implementation state (2026-11-10):** Not implemented beyond a CLI-only backup operator; migration v46 allocated.
 - **Owners:** Storage, Operator/API, Desktop UI, Security/Trust, Runtime Lifecycle and Product.
 
 ## User outcome

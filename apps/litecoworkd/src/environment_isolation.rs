@@ -22,13 +22,10 @@
 use linux_process_scope::LocalProviderProbe;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(unix)]
-use std::fs::File;
 use std::{
     collections::BTreeMap,
-    fs,
-    fs::OpenOptions,
-    io::Write,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -424,6 +421,10 @@ pub struct RuntimeLocalIsolationStore {
 }
 
 const PREPARATION_JOURNAL_VERSION: u8 = 1;
+const PREPARATION_JOURNAL_LOCK_FILE: &str = ".journal.lock";
+const MAX_PREPARATION_JOURNAL_ENTRY_BYTES: usize = 16 * 1024;
+#[cfg(windows)]
+const WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 
 /// Exact non-secret identity committed to the Runtime-private write-ahead journal before
 /// a provider may create any external scope or filesystem state. The idempotency key is a
@@ -524,6 +525,16 @@ pub struct RuntimeLocalPreparationJournal {
     runtime_id: String,
 }
 
+struct PreparationJournalFileLock {
+    file: File,
+}
+
+impl Drop for PreparationJournalFileLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
 impl RuntimeLocalIsolationStore {
     /// Open (or create) the private store for one Runtime incarnation.
     pub fn open(
@@ -554,6 +565,8 @@ impl RuntimeLocalIsolationStore {
             }
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
+        #[cfg(windows)]
+        windows_local_security::secure_current_user_directory(&directory)?;
         Ok(Self {
             directory,
             runtime_id: runtime_id.to_owned(),
@@ -674,6 +687,8 @@ impl RuntimeLocalPreparationJournal {
             }
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
+        #[cfg(windows)]
+        windows_local_security::secure_current_user_directory(&directory)?;
         Ok(Self {
             directory,
             runtime_id: runtime_id.to_owned(),
@@ -693,6 +708,7 @@ impl RuntimeLocalPreparationJournal {
         &self,
         intent: PreparationJournalIntent,
     ) -> Result<PreparationJournalEntry, IsolationStoreError> {
+        let _lock = self.acquire_exclusive_lock()?;
         validate_preparation_intent(&intent)?;
         if intent.runtime_id != self.runtime_id {
             return Err(IsolationStoreError::IncarnationMismatch);
@@ -705,17 +721,13 @@ impl RuntimeLocalPreparationJournal {
             admission_receipt: None,
         };
         let path = self.record_path(&entry.intent.attempt_id)?;
-        if path.exists() {
-            let existing = self.load(&entry.intent.attempt_id)?.ok_or_else(|| {
-                IsolationStoreError::InvalidRecord("journal disappeared during begin".into())
-            })?;
+        if let Some(existing) = self.load_unlocked(&entry.intent.attempt_id)? {
             return if existing == entry {
                 Ok(existing)
             } else {
                 Err(IsolationStoreError::JournalConflict)
             };
         }
-
         let bytes = serialize_preparation_entry(&entry)?;
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -735,35 +747,30 @@ impl RuntimeLocalPreparationJournal {
         &self,
         attempt_id: &str,
     ) -> Result<Option<PreparationJournalEntry>, IsolationStoreError> {
+        let _lock = self.acquire_exclusive_lock()?;
+        self.load_unlocked(attempt_id)
+    }
+
+    fn load_unlocked(
+        &self,
+        attempt_id: &str,
+    ) -> Result<Option<PreparationJournalEntry>, IsolationStoreError> {
         let path = self.record_path(attempt_id)?;
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
+        match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(IsolationStoreError::Io(error)),
-        };
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(IsolationStoreError::InvalidRecord(
-                "preparation journal entry is not a regular file".into(),
-            ));
+            Ok(_) => {}
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0
-            {
-                return Err(IsolationStoreError::InvalidRecord(
-                    "preparation journal entry permissions or owner are unsafe".into(),
-                ));
-            }
-        }
-        let bytes = fs::read(&path)?;
-        let entry: PreparationJournalEntry = serde_json::from_slice(&bytes).map_err(|_| {
-            IsolationStoreError::InvalidRecord("preparation journal entry is unreadable".into())
-        })?;
-        validate_preparation_entry(&entry)?;
+        let entry = read_preparation_journal_entry(&path)?;
         if entry.intent.attempt_id != attempt_id || entry.intent.runtime_id != self.runtime_id {
             return Err(IsolationStoreError::InvalidRecord(
                 "preparation journal identity does not match its key".into(),
+            ));
+        }
+        let expected = self.record_path(&entry.intent.attempt_id)?;
+        if path.file_name() != expected.file_name() {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal filename does not match its key".into(),
             ));
         }
         Ok(Some(entry))
@@ -772,19 +779,21 @@ impl RuntimeLocalPreparationJournal {
     /// Enumerate durable intents left by any Runtime incarnation. Corrupt entries fail
     /// the whole scan so startup cannot silently overlook an unknown external scope.
     pub fn list_pending(&self) -> Result<Vec<PreparationJournalEntry>, IsolationStoreError> {
+        let _lock = self.acquire_exclusive_lock()?;
         let mut entries = Vec::new();
         for item in fs::read_dir(&self.directory)? {
             let item = item?;
-            if item.path().extension().and_then(|value| value.to_str()) != Some("json") {
+            let path = item.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
                 continue;
             }
-            let bytes = fs::read(item.path())?;
-            let entry: PreparationJournalEntry = serde_json::from_slice(&bytes).map_err(|_| {
-                IsolationStoreError::InvalidRecord(
-                    "preparation journal contains an unreadable entry".into(),
-                )
-            })?;
-            validate_preparation_entry(&entry)?;
+            let entry = read_preparation_journal_entry(&path)?;
+            let expected = self.record_path(&entry.intent.attempt_id)?;
+            if path.file_name() != expected.file_name() {
+                return Err(IsolationStoreError::InvalidRecord(
+                    "preparation journal filename does not match its key".into(),
+                ));
+            }
             if entry.intent.runtime_id != self.runtime_id {
                 return Err(IsolationStoreError::IncarnationMismatch);
             }
@@ -799,16 +808,17 @@ impl RuntimeLocalPreparationJournal {
         attempt_id: &str,
         held_scope: HeldProviderScopeIdentity,
     ) -> Result<PreparationJournalEntry, IsolationStoreError> {
+        let _lock = self.acquire_exclusive_lock()?;
         validate_held_scope(&held_scope)?;
-        let mut entry = self.required_entry(attempt_id)?;
+        let mut entry = self.required_entry_unlocked(attempt_id)?;
         let expected_unit = scope_unit_name(&entry.intent.provider_scope_id);
         if held_scope.unit_name != expected_unit {
             return Err(IsolationStoreError::JournalConflict);
         }
         match entry.phase {
             PreparationJournalPhase::IntentWritten => {
-                entry.held_scope = Some(held_scope);
                 entry.phase = PreparationJournalPhase::ScopeHeld;
+                entry.held_scope = Some(held_scope);
                 self.persist_entry(&entry)?;
                 Ok(entry)
             }
@@ -818,27 +828,23 @@ impl RuntimeLocalPreparationJournal {
                 Ok(entry)
             }
             _ => Err(IsolationStoreError::JournalTransition(
-                "scope identity is not new or an exact replay",
+                "provider scope may be recorded only once".into(),
             )),
         }
     }
 
-    /// Persist the exact committed receipt after the SQLite transaction. A lost journal
-    /// write is repaired on restart by looking up the original idempotency key.
     pub fn record_admission_receipt(
         &self,
         attempt_id: &str,
         receipt: PreparationAdmissionReceipt,
     ) -> Result<PreparationJournalEntry, IsolationStoreError> {
-        let mut entry = self.required_entry(attempt_id)?;
+        let _lock = self.acquire_exclusive_lock()?;
+        let mut entry = self.required_entry_unlocked(attempt_id)?;
         validate_receipt_matches(&entry.intent, &receipt)?;
         match entry.phase {
             PreparationJournalPhase::ScopeHeld => {
-                if entry.held_scope.is_none() {
-                    return Err(IsolationStoreError::JournalConflict);
-                }
-                entry.admission_receipt = Some(receipt);
                 entry.phase = PreparationJournalPhase::AdmissionCommitted;
+                entry.admission_receipt = Some(receipt);
                 self.persist_entry(&entry)?;
                 Ok(entry)
             }
@@ -849,49 +855,40 @@ impl RuntimeLocalPreparationJournal {
                 Ok(entry)
             }
             _ => Err(IsolationStoreError::JournalTransition(
-                "admission receipt requires a held scope and exact replay",
+                "admission receipt requires the exact held scope".into(),
             )),
         }
     }
 
-    /// Write this marker before sending the one-shot launch signal. After a crash, an
-    /// attempted signal is treated as ambiguous and is never replayed in the old scope.
     pub fn mark_launch_handoff_attempted(
         &self,
         attempt_id: &str,
     ) -> Result<PreparationJournalEntry, IsolationStoreError> {
-        let mut entry = self.required_entry(attempt_id)?;
-        if entry.phase != PreparationJournalPhase::AdmissionCommitted
-            || entry.admission_receipt.is_none()
-            || entry.held_scope.is_none()
-        {
-            return Err(IsolationStoreError::JournalTransition(
-                "launch handoff requires an exact committed receipt and held scope",
-            ));
+        let _lock = self.acquire_exclusive_lock()?;
+        let mut entry = self.required_entry_unlocked(attempt_id)?;
+        match entry.phase {
+            PreparationJournalPhase::AdmissionCommitted => {
+                entry.phase = PreparationJournalPhase::LaunchHandoffAttempted;
+                self.persist_entry(&entry)?;
+                Ok(entry)
+            }
+            _ => Err(IsolationStoreError::JournalTransition(
+                "launch handoff requires a committed admission receipt and is one-shot".into(),
+            )),
         }
-        entry.phase = PreparationJournalPhase::LaunchHandoffAttempted;
-        self.persist_entry(&entry)?;
-        Ok(entry)
     }
 
-    /// Reconcile one entry using a storage-owner lookup by its exact original idempotency
-    /// key. Unknown is a blocker; a committed Attempt is recovered/settled, never relaunched.
     pub fn recovery_action(
         &self,
         attempt_id: &str,
-        lookup: PreparationReceiptLookup,
+        receipt: PreparationReceiptLookup,
     ) -> Result<PreparationRecoveryAction, IsolationStoreError> {
-        let mut entry = self.required_entry(attempt_id)?;
-        match lookup {
+        let _lock = self.acquire_exclusive_lock()?;
+        let entry = self.required_entry_unlocked(attempt_id)?;
+        match receipt {
             PreparationReceiptLookup::Unknown => Ok(PreparationRecoveryAction::BlockUnknown),
             PreparationReceiptLookup::DefinitelyAbsent => {
-                if entry.admission_receipt.is_some()
-                    || matches!(
-                        entry.phase,
-                        PreparationJournalPhase::AdmissionCommitted
-                            | PreparationJournalPhase::LaunchHandoffAttempted
-                    )
-                {
+                if entry.admission_receipt.is_some() {
                     return Err(IsolationStoreError::JournalConflict);
                 }
                 Ok(PreparationRecoveryAction::InspectExactProviderScope {
@@ -913,9 +910,10 @@ impl RuntimeLocalPreparationJournal {
                     if entry.phase != PreparationJournalPhase::ScopeHeld {
                         return Err(IsolationStoreError::JournalConflict);
                     }
-                    entry.admission_receipt = Some(receipt.clone());
-                    entry.phase = PreparationJournalPhase::AdmissionCommitted;
-                    self.persist_entry(&entry)?;
+                    let mut committed = entry.clone();
+                    committed.admission_receipt = Some(receipt.clone());
+                    committed.phase = PreparationJournalPhase::AdmissionCommitted;
+                    self.persist_entry(&committed)?;
                 }
                 Ok(PreparationRecoveryAction::RecoverCommittedAttempt {
                     receipt,
@@ -928,11 +926,11 @@ impl RuntimeLocalPreparationJournal {
         }
     }
 
-    fn required_entry(
+    fn required_entry_unlocked(
         &self,
         attempt_id: &str,
     ) -> Result<PreparationJournalEntry, IsolationStoreError> {
-        self.load(attempt_id)?.ok_or_else(|| {
+        self.load_unlocked(attempt_id)?.ok_or_else(|| {
             IsolationStoreError::InvalidRecord("preparation journal entry is missing".into())
         })
     }
@@ -948,6 +946,8 @@ impl RuntimeLocalPreparationJournal {
                 .as_file()
                 .set_permissions(fs::Permissions::from_mode(0o600))?;
         }
+        #[cfg(windows)]
+        windows_local_security::secure_current_user_file(temporary.path())?;
         temporary.write_all(&serialize_preparation_entry(entry)?)?;
         temporary.as_file().sync_all()?;
         temporary
@@ -956,6 +956,148 @@ impl RuntimeLocalPreparationJournal {
         sync_private_directory(&self.directory)?;
         Ok(())
     }
+
+    fn acquire_exclusive_lock(&self) -> Result<PreparationJournalFileLock, IsolationStoreError> {
+        let path = self.directory.join(PREPARATION_JOURNAL_LOCK_FILE);
+        let file = open_or_create_preparation_journal_lock(&path, &self.directory)?;
+        fs2::FileExt::lock_exclusive(&file)?;
+        Ok(PreparationJournalFileLock { file })
+    }
+}
+
+fn open_or_create_preparation_journal_lock(
+    path: &Path,
+    directory: &Path,
+) -> Result<File, IsolationStoreError> {
+    loop {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    return Err(IsolationStoreError::InvalidRecord(
+                        "preparation journal lock is not a regular file".into(),
+                    ));
+                }
+                let file = open_existing_preparation_journal_file(path)?;
+                let opened = file.metadata()?;
+                if !opened.is_file() {
+                    return Err(IsolationStoreError::InvalidRecord(
+                        "preparation journal lock is not a regular file".into(),
+                    ));
+                }
+                validate_private_journal_file(&opened)?;
+                return Ok(file);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut options = OpenOptions::new();
+                options.read(true).write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                match options.open(path) {
+                    Ok(file) => {
+                        #[cfg(windows)]
+                        windows_local_security::secure_current_user_file(path)?;
+                        file.sync_all()?;
+                        sync_private_directory(directory)?;
+                        validate_private_journal_file(&file.metadata()?)?;
+                        return Ok(file);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(IsolationStoreError::Io(error)),
+                }
+            }
+            Err(error) => return Err(IsolationStoreError::Io(error)),
+        }
+    }
+}
+
+fn read_preparation_journal_entry(
+    path: &Path,
+) -> Result<PreparationJournalEntry, IsolationStoreError> {
+    let file = open_existing_preparation_journal_file(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() {
+        return Err(IsolationStoreError::InvalidRecord(
+            "preparation journal entry is not a regular file".into(),
+        ));
+    }
+    validate_private_journal_file(&opened)?;
+    if opened.len() > MAX_PREPARATION_JOURNAL_ENTRY_BYTES as u64 {
+        return Err(IsolationStoreError::InvalidRecord(
+            "preparation journal entry exceeds its size limit".into(),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(opened.len() as usize);
+    file.take(MAX_PREPARATION_JOURNAL_ENTRY_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_PREPARATION_JOURNAL_ENTRY_BYTES {
+        return Err(IsolationStoreError::InvalidRecord(
+            "preparation journal entry exceeds its size limit".into(),
+        ));
+    }
+    let entry: PreparationJournalEntry = serde_json::from_slice(&bytes).map_err(|_| {
+        IsolationStoreError::InvalidRecord("preparation journal entry is unreadable".into())
+    })?;
+    validate_preparation_entry(&entry)?;
+    Ok(entry)
+}
+
+fn open_existing_preparation_journal_file(path: &Path) -> Result<File, IsolationStoreError> {
+    #[cfg(unix)]
+    {
+        let descriptor = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )?;
+        Ok(File::from(descriptor))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .custom_flags(WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT);
+        let file = options.open(path)?;
+        let metadata = file.metadata()?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal file is not a regular file".into(),
+            ));
+        }
+        Ok(file)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Err(IsolationStoreError::InvalidRecord(
+            "preparation journal file access is unsupported on this platform".into(),
+        ))
+    }
+}
+
+fn validate_private_journal_file(metadata: &fs::Metadata) -> Result<(), IsolationStoreError> {
+    if !metadata.is_file() {
+        return Err(IsolationStoreError::InvalidRecord(
+            "preparation journal file is not regular".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.uid() != rustix::process::geteuid().as_raw()
+            || metadata.permissions().mode() & 0o077 != 0
+        {
+            return Err(IsolationStoreError::InvalidRecord(
+                "preparation journal file permissions or owner are unsafe".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn serialize_preparation_entry(
@@ -1687,6 +1829,123 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn preparation_journal_pending_scan_rejects_noncanonical_entry_names() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1")
+            .expect("private preparation journal");
+        let intent = preparation_intent();
+        journal.begin(intent.clone()).expect("begin");
+        let canonical = journal.record_path(&intent.attempt_id).unwrap();
+        let noncanonical = journal.directory.join("other-attempt.json");
+        fs::rename(canonical, noncanonical).expect("rename to a noncanonical journal key");
+
+        assert!(matches!(
+            journal.list_pending(),
+            Err(IsolationStoreError::InvalidRecord(_))
+        ));
+    }
+
+    #[test]
+    fn preparation_journal_reads_reject_oversized_entries_before_parsing() {
+        let temp = tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1")
+            .expect("private preparation journal");
+        let intent = preparation_intent();
+        journal.begin(intent.clone()).expect("begin");
+        let path = journal.record_path(&intent.attempt_id).unwrap();
+        fs::write(&path, vec![b' '; MAX_PREPARATION_JOURNAL_ENTRY_BYTES + 1])
+            .expect("replace with oversized journal record");
+
+        for result in [
+            journal.load(&intent.attempt_id).map(|_| ()),
+            journal.list_pending().map(|_| ()),
+        ] {
+            assert!(matches!(
+                result,
+                Err(IsolationStoreError::InvalidRecord(reason)) if reason.contains("size limit")
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preparation_journal_pending_scan_rejects_symlink_entries() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1")
+            .expect("private preparation journal");
+        let intent = preparation_intent();
+        journal.begin(intent.clone()).expect("begin");
+        let canonical = journal.record_path(&intent.attempt_id).unwrap();
+        let saved = journal.directory.join("saved.json");
+        fs::rename(&canonical, &saved).expect("move original entry");
+        symlink(&saved, &canonical).expect("replace canonical entry with symlink");
+
+        assert!(matches!(
+            journal.list_pending(),
+            Err(IsolationStoreError::InvalidRecord(_))
+        ));
+        assert!(matches!(
+            journal.load(&intent.attempt_id),
+            Err(IsolationStoreError::InvalidRecord(_))
+        ));
+    }
+
+    #[test]
+    fn preparation_journal_serializes_mutations_across_processes() {
+        use std::{process::Command, thread, time::Duration};
+
+        let temp = tempdir().unwrap();
+        let journal =
+            RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1").expect("journal handle");
+        let held_lock = journal.acquire_exclusive_lock().expect("hold journal lock");
+        let started = temp.path().join("child-started");
+        let done = temp.path().join("child-done");
+        let mut child = Command::new(std::env::current_exe().expect("test executable"))
+            .arg("--exact")
+            .arg("environment_isolation::tests::preparation_journal_lock_child")
+            .arg("--nocapture")
+            .env("LITECOWORK_PREPARATION_JOURNAL_TEST_ROOT", temp.path())
+            .spawn()
+            .expect("start another process against the same journal");
+
+        let started_at = std::time::Instant::now();
+        while !started.exists() {
+            if let Some(status) = child.try_wait().expect("inspect child test") {
+                panic!("child test exited before reaching the journal: {status}");
+            }
+            assert!(started_at.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            !done.exists(),
+            "child mutation must wait for the journal lock"
+        );
+
+        drop(held_lock);
+        let status = child.wait().expect("wait for journal child");
+        assert!(status.success(), "child journal operation must succeed");
+        assert!(done.exists(), "child mutation completes after lock release");
+    }
+
+    #[test]
+    fn preparation_journal_lock_child() {
+        let Some(root) = std::env::var_os("LITECOWORK_PREPARATION_JOURNAL_TEST_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let journal = RuntimeLocalPreparationJournal::open(&root, "runtime-1")
+            .expect("open journal in child process");
+        fs::write(root.join("child-started"), b"started").expect("signal before begin");
+        journal
+            .begin(preparation_intent())
+            .expect("begin after acquiring cross-process lock");
+        fs::write(root.join("child-done"), b"done").expect("signal completed begin");
     }
 
     #[test]

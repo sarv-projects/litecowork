@@ -73,8 +73,8 @@ def main() -> int:
     # operation from target-only to served. The inventory is generated from source by
     # scripts/audit_served_routes.py.
     counts = (len(inventory.get("served", [])), len(outside), len(inventory.get("target_only", [])))
-    if counts != (181, 4, 53):
-        errors.append(f"Route inventory count drift: {counts}; expected (181, 4, 53)")
+    if counts != (184, 4, 52):
+        errors.append(f"Route inventory count drift: {counts}; expected (184, 4, 52)")
     if inventory.get("version") != 3:
         errors.append(f"Unexpected route inventory version: {inventory.get('version')}")
 

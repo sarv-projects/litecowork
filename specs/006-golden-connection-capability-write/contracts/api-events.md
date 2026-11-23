@@ -1,6 +1,6 @@
 # API and events - Golden Connection and One Capability Write
 
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
+**Status:** IN_REVIEW - revision 1.1 records USER-DELEGATED direction; formal domain-owner ratification pending. API/event behavior below is TARGET unless explicitly marked served.
 
 ## Currently served operations
 
@@ -13,11 +13,11 @@
 
 ## Target-only operations and missing lifecycle
 
-`listConnections`, `getConnection` and `disconnectConnection` remain target-only (`GET /connections`, `GET /connections/{connectionId}`, `POST /connections/{connectionId}/disconnect`). No composed account-Connection create/start-OAuth/callback/refresh route is served. No served golden-provider read or consequential-write invocation operation exists. `docs/schemas/served-route-inventory.json` is the composed-route authority for this checkout; generated TypeScript operation types alone do not prove a mounted handler.
+`listConnections`, `getConnection` and `disconnectConnection` remain target-only (`GET /connections`, `GET /connections/{connectionId}`, `POST /connections/{connectionId}/disconnect`). No composed account-Connection device-authorization begin/poll/cancel or refresh route is served. No served golden-provider read or consequential-write invocation operation exists. `docs/schemas/served-route-inventory.json` is the composed-route authority for this checkout; generated TypeScript operation types alone do not prove a mounted handler.
 
 ## Target Connection flow
 
-After B-19 closes, the accepted public OAuth/PKCE flow must use an OS-chosen loopback listener on 127.0.0.1, single-use `state`, PKCE, exact redirect/host allowlists, and a callback containing no token. Provider token bytes move directly to the owner SecretStore boundary. Connection state becomes CONNECTED only after durable Connection commit and SecretStore reference persistence succeed. Cancelled/failed auth persists no usable Connection. Refresh serializes per Connection; invalid_grant/revocation becomes REAUTH_REQUIRED; revoke fences future refresh and invocation.
+Revision 1.1 target: the authenticated owner explicitly starts a GitHub App user-to-server device authorization. ConnectionService sends requests only to the fixed GitHub device-code endpoint, returns the user code and fixed verification URI to the settings UI, and polls only the fixed token endpoint at the provider-supplied interval. It honors `authorization_pending`, `slow_down` (including the added interval), `access_denied`, expiry and cancellation. No loopback listener, redirect callback, client secret or App private key is used. `device_code` is daemon-memory-only; AuthAttempt persists status, expiry, expected version, non-secret correlation metadata and private preallocated SecretRef IDs only while credentials are staged. Restart expires pending authorization and cleans staged refs. Device-flow `offline_access` requests an expiring access/refresh pair; tokens move directly to the owner SecretStore boundary, refresh is serialized and token rotation is atomic. Connection state becomes CONNECTED only after durable Connection commit and SecretStore reference persistence succeed. The GitHub user's resource access and App installation/permission access must both include a target repository. The exact LiteCowork CapabilityGrant still gates each operation and repository. Local revoke fences future refresh/invocation and deletes local tokens; the user separately revokes GitHub App authorization in GitHub Settings. No API/event schema is promoted until T01 updates the canonical owners and machine contracts together.
 
 ## Target capability and Effect flow
 

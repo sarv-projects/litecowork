@@ -1,7 +1,7 @@
 # Feature Specification - Proactivity and Quiet Learning
 
-- **Feature ID:** 020 | **Status:** IN_REVIEW | **Revision:** 0.1
-- **Created / Updated:** 2026-11-09 / 2026-11-09
+- **Feature ID:** 020 | **Status:** IN_REVIEW | **Revision:** 0.2
+- **Created / Updated:** 2026-11-09 / 2026-11-20
 - **Review state:** authored complete after the owner acceptance of packages 001 to 012 (2026-11-09, [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md)). This package did not exist when that packet was accepted, so it is IN_REVIEW: B-45 and D-01 were accepted as proposed by the owner (sarv-projects) on 2026-11-10; the SPEC as a whole is not yet accepted. A passing structural validator is not owner approval. It uses the A-20/A-34 `LearningCandidate` vocabulary that the owner accepted as written on 2026-11-09 and does not reintroduce the superseded `MemoryCandidate` state set.
 - **Target:** LiteCowork V1, Area 7 "bounded proactive suggestions", Area 8 "quiet eligible learning only within accepted policy", gate E (learning half).
 - **Release matrix rows:** Windows 11/10 x64 + OpenCode v2.0.32 first; Linux x64 + OpenCode v2.0.32 second.
@@ -14,7 +14,7 @@ LiteCowork already serves Suggestions ("Ideas"), Goals and the Needs You inbox, 
 
 - `apps/litecoworkd/src/suggestions_operator.rs` mounts list, resolve, accept-task, snooze and preference routes. The domain file `crates/domain-responsibility/src/suggestions.rs` says "proposal production remains separate", and no production code inserts a row into `suggestions`. The Ideas page is therefore always empty in a real install.
 - `goal_operator.rs` serves passive, revisioned Goals ("Goal commands record intent and references only; they never schedule work"). `needs_you_operator.rs` serves a read-only, no-store Needs You projection over Approval, UserRequest and TaskBlocker rows.
-- `crates/storage-core/src/coworker_learning.rs` (1,711 lines, 30 tests) implements source eligibility, redaction, conflict classification, the candidate state machine and event payload shape, but has no production caller, no storage, no service, no route and no UI (LEARNING.md "Current implementation checkpoint"). Feature 009 defers automatic learning (B-24) and names this package as the owner of the `LearningCandidate` pipeline.
+- `crates/domain-responsibility/src/learning_gates.rs` is the canonical pure implementation of source eligibility, redaction, conflict classification, candidate decisions and event payload shape; 34 focused tests pass in the current working tree. `storage-core/src/coworker_learning.rs` is a compatibility re-export. There is still no production gate caller, learning storage, service, route or UI (see LEARNING.md "Current implementation checkpoint"). Feature 009 defers automatic learning (B-24) and names this package as the owner of the `LearningCandidate` pipeline.
 
 **Outcome:** a user sees a few relevant, explained ideas that never act on their own, can mute or snooze them, and is not interrupted during quiet hours. A Coworker remembers the user's explicit, low-risk private preferences without a modal, shows a subtle "Remembered" notice with Undo, sends anything riskier to a review list, and never learns from third-party or model content.
 
@@ -41,7 +41,7 @@ No autonomous background agent that polls or plans; no Suggestion that executes,
 | Suggestion bridge and UI | CODE. `apps/litecowork-ui/src-tauri/src/suggestions_bridge.rs`: `list_suggestions`, `suggestion_owner_action` (dismiss, snooze, unsnooze), `accept_suggestion_task`, `list_suggestion_preferences`, `set_suggestion_preference`, registered in `lib.rs`. `apps/litecowork-ui/src/suggestions/SuggestionsPage.tsx` (Ideas page) with visibility tabs, preference mute controls, unresolved-mutation recovery and a polite live region. Tests: `tests/desktop-suggestion-api.test.ts`, `tests/suggestion-request-scope.test.ts`. | Home prominent idea and Ideas drawer limits are documented but not verified; no quiet-hours behavior. |
 | Goals | SERVED. `goal_operator.rs`: `GET/POST /v1/goals`, `GET /v1/goals/{id}`, `POST .../revisions`, `POST .../status`; `GoalService`, `GoalProgressProjection` with `verified_task_count`, `linked_task_count`; UI `apps/litecowork-ui/src/goals/GoalsPage.tsx`. | No package owner; no negative test that Goal commands create no Task or schedule. |
 | Needs You | SERVED. `needs_you_operator.rs` `GET /v1/needs-you` with `Cache-Control: no-store`; kinds `APPROVAL`, `USER_REQUEST`, `TASK_BLOCKER` (`crates/storage-core/src/needs_you.rs`); UI `apps/litecowork-ui/src/needs-you/TaskAttentionPage.tsx`; tests `apps/litecoworkd/src/needs_you_operator_tests.rs` and UI `needs-you-*` tests. | No package owner. |
-| Learning gates | CODE, no caller. `crates/storage-core/src/coworker_learning.rs`: `LearningCandidate`, `LearningCandidateKind`, `LearningSourceKind`, `LearningSourceChannel`, `LearningCandidateState`, `CoworkerLearningPolicy::{default_for_coworker, allows_certainty}`, `evaluate_learning_candidate`, `classify_learning_conflict`, `redact_sensitive_content`, `learning_candidate_event_payload`. `redact_sensitive_content` is reused by `crates/storage-core/src/skill.rs`. | No persistence, service, classifier, route, event producer or UI. Defects found while reading (section 7.1). |
+| Learning gates | CODE, no production caller. `crates/domain-responsibility/src/learning_gates.rs` owns the canonical types and functions; `crates/storage-core/src/coworker_learning.rs` and storage-core root exports retain compatibility. 34 focused gate tests pass. | No persistence, service, classifier, route, event producer or UI. T03 closes the three deterministic gate defects without enabling a new source or widening default eligibility. |
 | Quiet hours | CODE in Feature 010 domain. `crates/domain-responsibility/src/notifications.rs` `QuietHours::{parse, contains}`; stored per Workspace and event class in `notification_preferences.quiet_hours_json`. `NotificationEventClass` has only Automation, Task and Dependency classes. | No Suggestion or learning event class; quiet-hours editor is owned by Feature 010 and not built (register A-28/A-35). |
 | Coworker status | CODE. `CoworkerStatus` Active, Paused, Archived (`crates/domain-responsibility/src/models.rs`); Suggestion owner actions reject an ARCHIVED Coworker head (`suggestions_operator.rs` line 728). | Paused Coworker does not fence producers or learning yet. |
 
@@ -70,6 +70,8 @@ No autonomous background agent that polls or plans; no Suggestion that executes,
 | F-02 | Learning worker shape | Bounded Tokio task with a durable queue table, or poll of NEW candidates | Finite batch; never on Send path |
 | F-03 | Payload storage | Coworker-scoped ContextDocument Resource revision (Feature 009 COWORKER_NOTES) or a dedicated Resource kind | Resource-backed; same purge/revoke semantics |
 | F-04 | Module location of the pure gates | Keep in `crates/storage-core/src/coworker_learning.rs`, or move to `crates/domain-responsibility/src/learning_gates.rs` with a re-export | One canonical definition; no `domain-learning` crate |
+
+**User-delegated T03 implementation decision (2026-11-20; not formal package acceptance):** place the canonical pure gates in `crates/domain-responsibility/src/learning_gates.rs` and retain a `storage-core` compatibility re-export. The gate decides whether a learning candidate is eligible; that is responsibility-domain policy, while storage-core remains a consumer and compatibility boundary. This follows the existing dependency direction (`storage-core` depends on `domain-responsibility`) and avoids a reverse dependency or duplicate implementation. The module move does not enable any new source, caller, persistence, route, or UI. The package remains IN_REVIEW; tasks other than this narrowly delegated T03 remain blocked by their own prerequisites.
 
 ### Design decision D-01 (accepted as proposed 2026-11-10)
 
@@ -158,7 +160,7 @@ pub trait SuggestionExpiryStore; pub trait SuggestionOwnerActionStore; pub trait
 pub const SUGGESTION_EXPIRY_BATCH_LIMIT: usize = 100;
 pub const SUGGESTION_SERVICE_PRINCIPAL_ID: &str = "service:suggestion-service";
 
-// crates/storage-core/src/coworker_learning.rs
+// crates/domain-responsibility/src/learning_gates.rs
 pub fn evaluate_learning_candidate(candidate: &LearningCandidate, context: &LearningEvaluationContext) -> LearningEvaluation;
 pub fn classify_learning_conflict(/* payload, current memories */) -> LearningConflict;
 pub fn redact_sensitive_content(body: &str) -> RedactionReport;
@@ -170,11 +172,11 @@ impl CoworkerLearningPolicy { pub fn default_for_coworker(coworker_id: &str, cre
 impl QuietHours { pub fn parse(value: &serde_json::Value) -> Result<Self, DomainError>; pub fn contains(&self, now_epoch_ms: i64) -> Result<bool, DomainError>; }
 ```
 
-Defects found in the gates (fixed by TASKS T03 before any caller exists):
+Defects found in the gates and fixed by TASKS T03 before any production caller exists (CODE; not a learning-pipeline implementation):
 
-- `source_kind_matches_channel` accepts `LearningSourceKind::UserExplicit` from `LearningSourceChannel::VerifiedTaskOutcome`. Because the default policy lists `USER_EXPLICIT` as eligible and deliberately omits `TASK_OUTCOME`, a Task-outcome candidate labelled `USER_EXPLICIT` passes the source-kind check that LEARNING section 16 intends to close. The mapping must be one kind per channel.
-- `LearningSourceChannel::permitted_source_kind` has no caller and maps every untrusted channel to `UserExplicit`, the most privileged kind. Remove it or return `Option<LearningSourceKind>` with `None` for untrusted channels.
-- `learning_candidate_event_payload` writes `"disposition": format!("{:?}", evaluation.disposition)`, so the wire value depends on Rust `Debug` formatting (`AutoCommit`, not a SCREAMING_SNAKE_CASE token). Add `LearningDisposition::as_str` and use it before the event schema is promoted.
+- `source_kind_matches_channel` accepted `LearningSourceKind::UserExplicit` from `LearningSourceChannel::VerifiedTaskOutcome`. It now rejects that pair with `SOURCE_KIND_CHANNEL_MISMATCH`; the default policy still does not enable Task-outcome learning.
+- `LearningSourceChannel::permitted_source_kind` previously mapped every untrusted channel to `UserExplicit`. It now returns `None` for untrusted channels.
+- `learning_candidate_event_payload` previously serialized Rust `Debug` output. It now uses `LearningDisposition::as_str` and the stable wire tokens defined in LEARNING §19.
 
 ### 7.2 Proposed signatures (PROPOSED in design; not in source)
 
@@ -221,7 +223,7 @@ Operator routes (target, from LEARNING section 18; promoted by T02): `GET /v1/co
 
 ## 8. Data model and lifecycle
 
-See [DATA-MODEL.md](DATA-MODEL.md). New tables (PROPOSED, allocated `sqlite-v43.sql`): `learning_candidates`, `coworker_learning_policies`, `memory_records`, `learning_work_items`, `suggestion_producer_cursors`. Lifecycles: Suggestion (existing), LearningCandidate (L-05), MemoryRecord ACTIVE -> SUPERSEDED | REVOKED -> PURGE_PENDING.
+See [DATA-MODEL.md](DATA-MODEL.md). New tables (PROPOSED, allocated `sqlite-v44.sql`): `learning_candidates`, `coworker_learning_policies`, `memory_records`, `learning_work_items`, `suggestion_producer_cursors`. Lifecycles: Suggestion (existing), LearningCandidate (L-05), MemoryRecord ACTIVE -> SUPERSEDED | REVOKED -> PURGE_PENDING.
 
 ## 9. Wiring
 
@@ -299,7 +301,7 @@ This package is IN_REVIEW and authorizes nothing yet. After acceptance, each tas
 | O-01 | Does Feature 009 Coworker-owned Conversation admission land before T09? | B-45 source requires `ConversationRecord` Coworker origin, absent today. | Feature 009 | T09 |
 | O-02 | Which Feature 010 notification event classes will carry Suggestion and memory notices? | `NotificationEventClass` has no such class. | Feature 010 | T06 |
 | O-03 | Is the native lead route an acceptable extractor cost for users (quota)? | Extraction uses the user's harness account. | Product | B-45 |
-| O-04 | Should the pure gates move to `domain-responsibility` (F-04)? | They live in a storage port crate today. | Responsibility/Storage | T03 |
+| O-04 | Should the pure gates move to `domain-responsibility` (F-04)? | Resolved for T03 implementation by the repository owner's delegated direction on 2026-11-20: canonical pure gates move to `domain-responsibility`; `storage-core` keeps a compatibility re-export. No formal Feature 020 acceptance is implied. | Responsibility/Storage | T03 |
 | O-05 | `SuppressedDuplicate`, `SuppressedBudget`, `SuppressedScope` extend the three outcomes in RESPONSIBILITIES; owner doc must change with them. | RESPONSIBILITIES lists CREATED, SUPPRESSED_MUTED, SUPPRESSED_COOLDOWN. | Responsibility | T02 |
 | O-06 | ACCEPTANCE has no learning journey id; a proposed journey (quiet learning on a Coworker) must be added to ACCEPTANCE by T02. | E2E-09 covers Coworker scope, not learning. | QA | T02 |
 

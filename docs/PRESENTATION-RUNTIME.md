@@ -340,7 +340,7 @@ the currently active retry/session. Retry, settlement, cancellation, disconnect,
 resync fence old drafts. A draft can be discarded at any time without affecting the
 message or turn.
 
-The Operator stream schema defines six frame types, all of which the client reduces:
+The canonical Operator stream schema defines eight frame types:
 
 ```text
 OperatorStreamFrame =
@@ -348,9 +348,16 @@ OperatorStreamFrame =
   | PROJECTION
   | TURN_DELTA
   | TURN_SETTLED
+  | TURN_ACTIVITY
+  | TURN_PERMISSION
   | RICH_DRAFT
   | RESYNC_REQUIRED
 ```
+
+The Conversation presentation stream type and reducer handle seven of these frames;
+`TURN_PERMISSION` has its own exact-scope parser and reducer in the Conversation page.
+Keep the permission path separate so pending native permission requests retain their
+prompt-specific state and sequence checks.
 
 `STREAM_READY`, `PROJECTION` and `RESYNC_REQUIRED` are produced by the local Operator.
 The OpenCode `TurnFramePublisher` also produces bounded transient `TURN_DELTA` frames and

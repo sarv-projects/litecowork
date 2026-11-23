@@ -8,7 +8,7 @@ Identities and lifecycles stay in the canonical owner documents. This file lists
 
 ### Present in the current source tree
 
-- Coworker head and immutable CoworkerRevision, including the persisted CoworkerDefinition and CoworkerContextPolicy JSON.
+- Coworker head and immutable CoworkerRevision, including the persisted CoworkerDefinition and CoworkerContextPolicy JSON. SQLite v28 has a dedicated `delegation_policy_source` column; source is part of the immutable revision and must round-trip with its definition.
 - Workspace `primary_coworker_id`.
 - Task `origin_coworker_id` and `origin_coworker_revision` pins.
 - Resource-owned ContextDocument metadata/status and local purge-plan/receipt state for the currently accepted owner scopes (Personal Profile and Workspace Notes).
@@ -41,4 +41,4 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 
 ## Migration
 
-No migration has shipped for this package yet; the source chain ends at v32. The build allocation reserves v38 for Feature 009 Conversation Coworker origin and memory fields, but no v38 file or source schema exists. A-91 blocks finalizing the manual-memory metadata fields until the Memory/Coworker owners resolve B-24 against LEARNING.md §7; no candidate id may be fabricated and no second lifecycle may be added. B-24/B-25 and the A-18 create boundary are accepted (2026-11-09). Conversation origin, COWORKER_NOTES creation, CoworkerCapabilityAssignment and responsibility proposals must be promoted through their canonical owners and T02/T04/T11/T12. The automatic LearningCandidate store belongs to Feature 020; owner-scoped Resource records remain Resource/Coworker/Conversation-owned, not a second memory database.
+No migration has shipped for this package's Conversation or memory path; the global SQLite chain is at v34. T19 reuses the existing v28 source column and needs no DDL. The build allocation reserves v39 for Feature 009 Conversation Coworker origin and memory fields, but no v39 file or source schema exists. A-91 blocks finalizing the manual-memory metadata fields until the Memory/Coworker owners resolve B-24 against LEARNING.md §7; no candidate id may be fabricated and no second lifecycle may be added. B-24/B-25 and the A-18 create boundary are accepted (2026-11-09). Conversation origin, COWORKER_NOTES creation, CoworkerCapabilityAssignment and responsibility proposals must be promoted through their canonical owners and T02/T04/T11/T12. The automatic LearningCandidate store belongs to Feature 020; owner-scoped Resource records remain Resource/Coworker/Conversation-owned, not a second memory database.

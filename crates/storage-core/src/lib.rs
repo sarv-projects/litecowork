@@ -97,10 +97,11 @@ pub use resource_edge::{
 };
 pub mod conversation;
 pub use conversation::{
-    AppendOwnerSideNote, CommittedConversation, CommittedConversationTurn, ConversationCoeditStore,
-    ConversationHistoryStore, ConversationMessageRecord, ConversationPage, ConversationRecord,
-    ConversationStatus, ConversationStore, ConversationTurnReceipt, ConversationTurnStore,
-    CreateConversationCommit, CreateConversationTurnCommit, OwnerControlEventInsert,
+    AppendOwnerSideNote, CommittedConversation, CommittedConversationFirstTurn,
+    CommittedConversationTurn, ConversationCoeditStore, ConversationHistoryStore,
+    ConversationMessageRecord, ConversationPage, ConversationRecord, ConversationStatus,
+    ConversationStore, ConversationTurnReceipt, ConversationTurnStore, CreateConversationCommit,
+    CreateConversationTurnCommit, CreateConversationWithFirstTurnCommit, OwnerControlEventInsert,
     OwnerSideNoteRecord, RenameConversation, ResolvedConversationHost, SetConversationAgentBinding,
     SetConversationArchived,
 };
@@ -1104,6 +1105,33 @@ pub struct TaskSpecRevisionRecord {
     pub preferred_lead_agent_binding_id: Option<String>,
     pub authored_by: Value,
     pub created_at: String,
+    /// Null is retained only for TaskSpec history written before schema v28. New
+    /// Task creation and explicit revisions receive a server-resolved immutable pin.
+    #[serde(default)]
+    pub delegation_policy_snapshot: Option<ResolvedDelegationPolicySnapshot>,
+}
+
+/// Canonical resolved Task delegation policy, matching the OpenAPI schema. This is
+/// provenance for a TaskSpec revision, not authority granted to a worker.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedDelegationPolicySnapshot {
+    pub source: String,
+    pub workspace_settings_revision: u64,
+    pub coworker_id: Option<String>,
+    pub coworker_revision: Option<u64>,
+    pub strategy: String,
+    pub native_child_model_policy: String,
+    pub worker_profiles: Vec<ResolvedDelegationPolicyWorkerProfile>,
+    pub resolved_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedDelegationPolicyWorkerProfile {
+    pub profile_id: String,
+    pub revision: u64,
+    pub worker_model_selection_policy: String,
 }
 
 /// The Task aggregate snapshot referenced by its event includes the current immutable
@@ -1608,6 +1636,17 @@ pub trait AgentHostStore: Send + Sync {
         &self,
         runtime_id: &str,
         runtime_incarnation_id: &str,
+    ) -> Result<Vec<AgentHostInstanceRecord>, StoreError>;
+
+    /// Bounded, keyset-paged Runtime-local history used before Operator admission to
+    /// reconcile hosts from earlier Runtime incarnations. Native identity remains local.
+    fn list_prior_agent_host_instances(
+        &self,
+        runtime_id: &str,
+        current_runtime_incarnation_id: &str,
+        after_started_at: Option<&str>,
+        after_host_instance_id: Option<&str>,
+        limit: usize,
     ) -> Result<Vec<AgentHostInstanceRecord>, StoreError>;
 }
 

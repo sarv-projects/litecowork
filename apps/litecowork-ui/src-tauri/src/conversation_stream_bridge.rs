@@ -2,12 +2,12 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
 };
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 const STREAM_EVENT: &str = "conversation-presentation-stream";
 const TASK_STREAM_EVENT: &str = "task-presentation-stream";
@@ -512,8 +512,8 @@ pub(crate) async fn acknowledge_conversation_stream_frame(
 #[cfg(test)]
 mod tests {
     use super::{
-        envelope, valid_id, valid_resume_cursor, valid_session_id, FrameAcknowledgements,
-        StreamEventKind, TaskStreamEventEnvelope,
+        FrameAcknowledgements, StreamEventKind, TaskStreamEventEnvelope, envelope, valid_id,
+        valid_resume_cursor, valid_session_id,
     };
     use serde_json::json;
     use std::time::Duration;
@@ -615,17 +615,23 @@ mod tests {
             .expect("first frame registers");
 
         assert!(acknowledgements.register("session-1", "frame-2").is_err());
-        assert!(acknowledgements
-            .acknowledge("session-2", "frame-1")
-            .is_err());
-        assert!(acknowledgements
-            .acknowledge("session-1", "stale-frame")
-            .is_err());
+        assert!(
+            acknowledgements
+                .acknowledge("session-2", "frame-1")
+                .is_err()
+        );
+        assert!(
+            acknowledgements
+                .acknowledge("session-1", "stale-frame")
+                .is_err()
+        );
         assert!(acknowledgements.acknowledge("session-1", "frame-1").is_ok());
         assert!(receiver.await.is_ok());
-        assert!(acknowledgements
-            .acknowledge("session-1", "frame-1")
-            .is_err());
+        assert!(
+            acknowledgements
+                .acknowledge("session-1", "frame-1")
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -68,6 +68,7 @@ class OperatorStreamContractTests(unittest.TestCase):
                 "next_cursor": None,
                 "active_turn": None,
                 "retryable_turn": None,
+                "activity_turn": None,
             },
         }
         self.assertTrue(self.frames.is_valid(projection))
@@ -98,7 +99,7 @@ class OperatorStreamContractTests(unittest.TestCase):
             "cursor": "cursor-2", "payload": {
                 "conversation_id": "conversation-1", "stream_cursor": "conversation:1",
                 "origin_sequence": "9", "items": [message], "next_cursor": None,
-                "active_turn": None, "retryable_turn": None,
+                "active_turn": None, "retryable_turn": None, "activity_turn": None,
             },
         }
         upsert = {
@@ -116,6 +117,33 @@ class OperatorStreamContractTests(unittest.TestCase):
         self.assertFalse(self.frames.is_valid(malformed))
         self.assertFalse(self.frames.is_valid({**snapshot, "payload": {**snapshot["payload"], "extra": True}}))
         self.assertFalse(self.frames.is_valid({**ready, "untrusted": True}))
+
+    def test_conversation_activity_turn_is_required_nullable_and_closed(self):
+        base = {
+            "conversation_id": "conversation-1",
+            "stream_cursor": "conversation:1",
+            "origin_sequence": "1",
+            "items": [],
+            "next_cursor": None,
+            "active_turn": None,
+            "retryable_turn": None,
+            "activity_turn": None,
+        }
+        projection = {
+            "type": "projection",
+            "workspace_id": "workspace-1",
+            "projection_type": "conversation_presentation",
+            "projection_revision": 1,
+            "cursor": "cursor-1",
+            "payload": base,
+        }
+        self.assertTrue(self.frames.is_valid(projection))
+        activity = {"turn_id": "turn-1", "retry_ordinal": 2, "status": "COMPLETED"}
+        self.assertTrue(self.frames.is_valid({**projection, "payload": {**base, "activity_turn": activity}}))
+        self.assertFalse(self.frames.is_valid({**projection, "payload": {**base, "activity_turn": {**activity, "status": "UNKNOWN"}}}))
+        self.assertFalse(self.frames.is_valid({**projection, "payload": {**base, "activity_turn": {**activity, "provider_session_id": "private"}}}))
+        missing = {key: value for key, value in base.items() if key != "activity_turn"}
+        self.assertFalse(self.frames.is_valid({**projection, "payload": missing}))
 
     def test_task_projection_frames_use_a_closed_snapshot_with_a_durable_frontier(self):
         task_item = {

@@ -1,5 +1,5 @@
 feature_id: "006"
-status: "ACCEPTED/LOCKED"
+status: "IN_REVIEW"
 nodes:
   - id: "ui"
     owner: Desktop UI
@@ -60,9 +60,17 @@ edges:
     to: "storage"
     kind: transaction
 transactions:
+  - id: "tx-auth-stage"
+    owner: ConnectionService
+    atomic_records: ["auth_attempt"]
+    external_calls_inside: false
   - id: "tx-connection"
     owner: ConnectionService
-    atomic_records: ["connection"]
+    atomic_records: ["connection","auth_attempt"]
+    external_calls_inside: false
+  - id: "tx-refresh"
+    owner: ConnectionService
+    atomic_records: ["connection","auth_attempt"]
     external_calls_inside: false
   - id: "tx-invoke"
     owner: CapabilityBroker
@@ -95,12 +103,12 @@ recovery:
 # Approval resolve is served, but the Trust evaluator is dead-code/unwired and Approval
 # resolution does not dispatch an action. CapabilityInvocation APIs are GET-only; SQLite
 # refuses DISPATCHED admission. The provider/secret/invocation/effect edges must remain
-# TARGET until the golden OAuth/read/write flow and reconciliation are qualified.
+# TARGET until the golden device-authorization/read/write flow and reconciliation are qualified.
 
-# Owner acceptance 2026-11-09 (docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md): status ACCEPTED/LOCKED
-# authorizes implementation of this target wiring. It does not make any edge SERVED, INTEGRATED
-# or QUALIFIED. Keystore writes and removals happen outside tx-connection and tx-revoke (before
-# commit on connect, after commit on revoke). The provider edges allow only api.github.com for
-# Invocations and the GitHub OAuth token endpoint for ConnectionService. No edge reaches LiteSPM:
-# package lifecycle belongs to package 013. tx-revoke, tx-reconcile and the reconciler node are
-# accepted target wiring added in revision 1.0, not yet in source.
+# Revision 1.0 owner acceptance remains historical. Revision 1.1 records USER-DELEGATED direction
+# and is IN_REVIEW pending Connectors/Security ratification. No edge is thereby SERVED, INTEGRATED
+# or QUALIFIED. Keystore writes/removals happen outside tx-connection and tx-revoke (before commit
+# on connect, after commit on revoke). Invocation HTTP permits only api.github.com. ConnectionService
+# permits only github.com/login/device/code and github.com/login/oauth/access_token; the system
+# browser opens only github.com/login/device. No edge reaches LiteSPM: package lifecycle is 013.
+# tx-revoke, tx-reconcile and the reconciler node are target wiring, not source implementation.

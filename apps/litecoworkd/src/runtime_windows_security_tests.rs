@@ -56,6 +56,7 @@ fn runtime_bootstrap_protects_state_directory_and_lifecycle_files() {
             recovered_from_unclean_shutdown: false,
             last_shutdown_clean: true,
             blockers: Vec::new(),
+            startup_recovery: super::StartupRecoveryFacts::default(),
             version: 1,
         },
     )

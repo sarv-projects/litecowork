@@ -26,7 +26,8 @@ DETAILS = {
     "requirement_ids": ["AC-013"],
     "owner_contracts": ["docs/ACCEPTANCE-AND-E2E-PLAN.md"],
     "packaging_mode": "packaged",
-    "protocol": "acp",
+    "auth_mode": "user-configured",
+    "protocol": "opencode-v2-http-sse",
     "code_commands": [{"command": "cargo test", "exit_code": 0, "output_digest": "b" * 64}],
     "system_trace": {"request_ids": ["r"], "correlation_ids": ["c"], "event_sequences": [1], "receipt_refs": []},
     "negative_cases": [{"case": "stale handle", "outcome": "REFUSED"}],
@@ -42,6 +43,13 @@ def fake_token():
 
 
 class BundleTool(unittest.TestCase):
+    def test_os_build_capture_uses_release_minimum_tuple(self):
+        self.assertEqual(tool.format_os_build("Windows", "10.0.26100", "11"), "Windows 10.0.26100")
+        self.assertEqual(
+            tool.format_os_build("Linux", "6.8.0", "Linux", {"NAME": "Ubuntu", "VERSION_ID": "24.04"}),
+            "Ubuntu 24.04",
+        )
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(dir="/tmp")
         self.addCleanup(self.tmp.cleanup)
@@ -84,7 +92,7 @@ class BundleTool(unittest.TestCase):
         self.assertEqual(check.returncode, 0, check.stderr)
 
     def test_missing_required_fields_reject(self):
-        for field in ("negative_cases", "reviewer", "protocol"):
+        for field in ("negative_cases", "reviewer", "auth_mode", "protocol"):
             result = self.assemble(self.details(**{field: None}))
             self.assertEqual(result.returncode, 1, field)
             self.assertIn(field, result.stderr)
@@ -136,13 +144,24 @@ class BundleTool(unittest.TestCase):
         self.assertTrue(any("outside" in p or "missing" in p for p in problems))
 
     def test_journey_without_signoff_stays_below_qualified(self):
-        self.assertEqual(self.assemble(self.details()).returncode, 0)
-        bundle = json.loads(next(self.out.glob("*.json")).read_text())
+        bundle = {
+            **DETAILS,
+            "journey_id": "E2E-01",
+            "row_id": ROW,
+            "repo_sha": SHA,
+            "dirty": False,
+            "os_build": "Ubuntu 24.04",
+            "arch": "x86_64",
+            "agent_versions": {"opencode": "2.0.32"},
+            "user_artifacts": [],
+        }
+        self.assertEqual(tool.validate_bundle(bundle), [])
         bundles = {(ROW, "E2E-01"): {"digest": tool.canonical_digest(bundle), "document": bundle}}
         rows = matrix.load_rows(ROOT / "scripts" / "v1_release_matrix_rows.json")
+        self.assertEqual(matrix.evidence_tuple_mismatches(rows["rows"][1], bundle), [])
         built = matrix.build_release_matrix(rows, "linux", "NATIVE", "test", bundles)
         cell = next(r for r in built["rows"] if r["row_id"] == ROW)["cells"]["E2E-01"]
-        self.assertEqual(cell["state"], "PASSED")
+        self.assertEqual(cell["state"], "PASSED", cell)
 
     def test_committed_index_validates(self):
         result = subprocess.run(

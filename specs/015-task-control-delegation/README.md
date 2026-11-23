@@ -1,8 +1,8 @@
 # 015 - Task Control and Heterogeneous Delegation
 
-- **Status:** IN_REVIEW - authored complete for owner review; does not authorize implementation until the owner accepts the SPEC and blocker B-39.
-- **Revision:** 0.1 | **Updated:** 2026-11-12 | **Decision:** B-39 (first heterogeneous delegation pair and Environment sharing rule) ACCEPTED as proposed 2026-11-10 (A-62); whole-SPEC acceptance pending, package stays IN_REVIEW.
-- **Implementation state (2026-11-12 source audit):** The checkout contains partial Rust admission, lead-change, result, escalation and verification foundations, plus served lead-binding change and read-only verification-runs routes. No Task-control or delegation producer/dispatch journey is integrated or qualified. Migration v42 is allocated.
+- **Status:** IN_REVIEW - authored complete for owner review. User-delegated T22 permits only the TaskSpec policy-snapshot correction; it does not accept the whole SPEC or B-39.
+- **Revision:** 0.1 | **Updated:** 2026-11-20 | **Decision:** B-39 (first heterogeneous delegation pair and Environment sharing rule) ACCEPTED as proposed 2026-11-10 (A-62); whole-SPEC acceptance pending, package stays IN_REVIEW.
+- **Implementation state (2026-11-20 source audit):** The checkout contains partial Rust admission, lead-change, result, escalation and verification foundations, plus served lead-binding change and read-only verification-runs routes. T22 now resolves, persists and projects the canonical snapshot through storage and Work details; its immutable migration v34 is wired. No Task-control or delegation producer/dispatch journey is integrated or qualified. Feature 015 migration v43 remains allocated for its separate control records. The T22 direction is user-delegated implementation scope, not whole-package acceptance.
 - **Owners:** Task Runtime, Delegation, Storage, Operator/API, Desktop UI (Work screen), Security/Trust and Product.
 - **Release rows:** Linux x86_64 first; Windows x64 UNAVAILABLE until Feature 005 B-35 qualifies.
 

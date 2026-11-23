@@ -79,6 +79,9 @@ pub struct ConversationPresentationSnapshot {
     /// aggregate version for Retry's If-Match and the typed settlement reason code.
     #[serde(default)]
     pub retryable_turn: Option<Value>,
+    /// Latest turn identity for read-only REPORTED activity recovery; never command authority.
+    #[serde(default)]
+    pub activity_turn: Option<Value>,
 }
 
 pub const MAX_CONVERSATION_PRESENTATION_MESSAGES: usize = 100;
@@ -113,7 +116,8 @@ pub trait RichPresentationStore: Send + Sync {
     ) -> Result<Option<StoredRichPresentation>, StoreError>;
 
     /// Returns an owner-authorized, bounded message page with optional immutable rich
-    /// presentation refs. Cursors are Conversation-scoped and read-only.
+    /// presentation refs and each message's exact owning-turn status from the same
+    /// storage snapshot. Cursors are Conversation-scoped and read-only.
     fn read_conversation_presentation(
         &self,
         principal_id: &str,

@@ -428,8 +428,8 @@ fn load_coworker_revision(
 ) -> Result<Option<CoworkerRevision>, DomainError> {
     let revision_sql = sql_u64(revision, "Coworker revision")?;
     let value = connection.query_row(
-        "SELECT name, avatar_ref_json, role_description, default_lead_agent_binding_id, delegation_strategy, enabled_delegation_profile_ids_json, delegation_budget_policy_json, lead_failover_policy_json, interaction_policy_json, context_policy_json, notification_policy_json, authored_by_json, created_at FROM coworker_revisions WHERE workspace_id = ?1 AND coworker_id = ?2 AND revision = ?3",
-        params![workspace, id, revision_sql], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?, row.get::<_, Option<String>>(6)?, row.get::<_, Option<String>>(7)?, row.get::<_, String>(8)?, row.get::<_, String>(9)?, row.get::<_, String>(10)?, row.get::<_, String>(11)?, row.get::<_, String>(12)?)),
+        "SELECT name, avatar_ref_json, role_description, default_lead_agent_binding_id, delegation_policy_source, delegation_strategy, enabled_delegation_profile_ids_json, delegation_budget_policy_json, lead_failover_policy_json, interaction_policy_json, context_policy_json, notification_policy_json, authored_by_json, created_at FROM coworker_revisions WHERE workspace_id = ?1 AND coworker_id = ?2 AND revision = ?3",
+        params![workspace, id, revision_sql], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?, row.get::<_, String>(6)?, row.get::<_, Option<String>>(7)?, row.get::<_, Option<String>>(8)?, row.get::<_, String>(9)?, row.get::<_, String>(10)?, row.get::<_, String>(11)?, row.get::<_, String>(12)?, row.get::<_, String>(13)?)),
     ).optional().map_err(sql_error)?;
     let Some(value) = value else {
         return Ok(None);
@@ -439,22 +439,25 @@ fn load_coworker_revision(
         avatar_ref: value.1.map(decode).transpose()?,
         role_description: value.2,
         default_lead_agent_binding_id: value.3,
-        delegation_strategy: decode(
+        delegation_policy_source: decode(
             serde_json::to_string(&value.4).map_err(|_| DomainError::Storage)?,
         )?,
-        enabled_delegation_profile_ids: decode(value.5)?,
-        delegation_budget_policy: value.6.map(decode).transpose()?,
-        lead_failover_policy: value.7.map(decode).transpose()?,
-        interaction_policy: decode(value.8)?,
-        context_policy: decode(value.9)?,
-        notification_policy: decode(value.10)?,
+        delegation_strategy: decode(
+            serde_json::to_string(&value.5).map_err(|_| DomainError::Storage)?,
+        )?,
+        enabled_delegation_profile_ids: decode(value.6)?,
+        delegation_budget_policy: value.7.map(decode).transpose()?,
+        lead_failover_policy: value.8.map(decode).transpose()?,
+        interaction_policy: decode(value.9)?,
+        context_policy: decode(value.10)?,
+        notification_policy: decode(value.11)?,
     };
     let revision = CoworkerRevision {
         coworker_id: id.into(),
         revision,
         definition,
-        authored_by: decode(value.11)?,
-        created_at: value.12,
+        authored_by: decode(value.12)?,
+        created_at: value.13,
     };
     Ok(Some(revision))
 }
@@ -1181,7 +1184,12 @@ fn persist_coworker(
         let strategy = strategy_value
             .as_str()
             .ok_or(DomainError::InvalidDefinition)?;
-        tx.execute("INSERT INTO coworker_revisions(coworker_id, revision, workspace_id, name, avatar_ref_json, role_description, default_lead_agent_binding_id, delegation_strategy, enabled_delegation_profile_ids_json, delegation_budget_policy_json, lead_failover_policy_json, interaction_policy_json, context_policy_json, notification_policy_json, authored_by_json, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)", params![revision.coworker_id, sql_u64(revision.revision, "Coworker revision")?, scope.workspace_id, d.name, d.avatar_ref.as_ref().map(encode).transpose()?, d.role_description, d.default_lead_agent_binding_id, strategy, encode(&d.enabled_delegation_profile_ids)?, d.delegation_budget_policy.as_ref().map(encode).transpose()?, d.lead_failover_policy.as_ref().map(encode).transpose()?, encode(&d.interaction_policy)?, encode(&d.context_policy)?, encode(&d.notification_policy)?, encode(&revision.authored_by)?, revision.created_at]).map_err(sql_error)?;
+        let source_value = serde_json::to_value(d.delegation_policy_source)
+            .map_err(|_| DomainError::InvalidDefinition)?;
+        let source = source_value
+            .as_str()
+            .ok_or(DomainError::InvalidDefinition)?;
+        tx.execute("INSERT INTO coworker_revisions(coworker_id, revision, workspace_id, name, avatar_ref_json, role_description, default_lead_agent_binding_id, delegation_policy_source, delegation_strategy, enabled_delegation_profile_ids_json, delegation_budget_policy_json, lead_failover_policy_json, interaction_policy_json, context_policy_json, notification_policy_json, authored_by_json, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)", params![revision.coworker_id, sql_u64(revision.revision, "Coworker revision")?, scope.workspace_id, d.name, d.avatar_ref.as_ref().map(encode).transpose()?, d.role_description, d.default_lead_agent_binding_id, source, strategy, encode(&d.enabled_delegation_profile_ids)?, d.delegation_budget_policy.as_ref().map(encode).transpose()?, d.lead_failover_policy.as_ref().map(encode).transpose()?, encode(&d.interaction_policy)?, encode(&d.context_policy)?, encode(&d.notification_policy)?, encode(&revision.authored_by)?, revision.created_at]).map_err(sql_error)?;
     } else if mutation.append.is_some() {
         return Err(DomainError::TriggerUnsupported);
     }

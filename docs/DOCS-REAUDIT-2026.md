@@ -41,8 +41,8 @@ Evidence vocabulary (TARGET / CODE / SERVED / INTEGRATED / QUALIFIED) is defined
 | Doc + section | Claim | Code reality | Verdict | Register |
 |---|---|---|---|---|
 | [TASK-RUNTIME.md](TASK-RUNTIME.md) execution pipeline | Safe Task path: planning, Attempt admission, Environment, Trust, Effects, verification. | `apps/litecoworkd/src/agents/planning.rs` `require_dispatch()` is dead code and always errors; no production `admit_step_attempt` caller. Planning readiness returns `dispatch_available=false`. | aspirational-unlabeled (owner is TARGET; status-side already labels it) | A-06, A-07 |
-| [STORAGE.md](STORAGE.md) migrations §"current schema version is 28" | The current schema version is 28; migration 28 is applied. | `crates/storage-sqlite/src/lib.rs:218` `SCHEMA_VERSION = 27`; last `include_str!` is `sqlite-v27.sql`; `sqlite-v28.sql` is not referenced. | contradicted | A-40 |
-| [EVENTS.md](EVENTS.md) / [DELEGATION.md](DELEGATION.md) v28 references | "migration v28 seeds…" / "A pre-v28 TaskSpecRevision…" read as applied. | v28 unwired (above). | stale | A-40 |
+| [STORAGE.md](STORAGE.md) migrations §"current schema version is 28" | The current schema version is 28; migration 28 is applied. | **Historical re-audit finding:** at that audit checkpoint, `SCHEMA_VERSION = 27` and v28 was not referenced. Rechecked 2026-11-20: v28 is wired and the ordered source migration chain reaches v34; see current A-40 and implementation status. | contradicted at audit checkpoint; later resolved | A-40 |
+| [EVENTS.md](EVENTS.md) / [DELEGATION.md](DELEGATION.md) v28 references | "migration v28 seeds…" / "A pre-v28 TaskSpecRevision…" read as applied. | **Historical re-audit finding:** v28 was unwired at the audit checkpoint. Current source applies v28 and later migrations through v34. | stale at audit checkpoint; later resolved | A-40 |
 | [DATA-MODEL.md](DATA-MODEL.md) / [STATE-MACHINES.md](STATE-MACHINES.md) learning vocabulary | **At the original audit baseline:** `MemoryCandidate`, `LearningCandidate` and `MemoryRecordMetadata.status` coexisted without an owner decision. | The source still has typed gates only and no store/service/route/producer. **Rechecked 2026-11-12:** A-20/A-34 owner-accepted `LearningCandidate` as the sole candidate lifecycle; implementation is absent and A-91 separately gates manual Coworker-memory metadata. | baseline finding corrected by owner decision; implementation gap remains | A-34, A-20, A-91 |
 | [schemas/delegation.schema.json](schemas/delegation.schema.json) escalation_policy | Requires `escalation_policy.on_exhaustion` (RETURN_TO_LEAD\|NEEDS_YOU). | Rust `EscalationPolicy` carries only `max_worker_attempts`/`fallback_profile_ids`; no non-test producer. A-37 was owner-accepted 2026-11-09: this is an intentional TARGET-ahead-of-code field and packets may omit it until the dispatcher exists. | baseline finding resolved by owner decision; implementation gap remains | A-37 |
 | [ENVIRONMENTS.md](ENVIRONMENTS.md) / [TRUST.md](TRUST.md) isolation | Trust/Environment/isolation modules mediate Task execution. | Modules compile as dead code; not wired into a qualified admission path (`attempt_process_scope.rs` staged). | aspirational-unlabeled (TARGET owner) | A-07 |
@@ -115,8 +115,9 @@ audit.
 ## What this re-audit changed
 
 - Reconciled the known danglers at their owners: FLOWS.md flow index (A-38), the UIV1
-  namespace (A-39) and the unwired `sqlite-v28.sql` (A-40), plus the CURRENT-RUN.md and
-  IMPLEMENTATION-STATUS.md line-count drift.
+  namespace (A-39), and the then-unwired `sqlite-v28.sql` finding (A-40). A-40 is now
+  resolved in source: v28 is wired and the chain reaches v34; its earlier unwired status is
+  historical. Also reconciled the CURRENT-RUN.md and IMPLEMENTATION-STATUS.md line-count drift.
 - Filed one new contradiction, A-51 (Workbench Terminal/Diff/Browser status docs stale
   after the UI was remediated), and corrected the owner (IMPLEMENTATION-STATUS.md) and the
   affected rows A-08/A-09/A-10/A-30.

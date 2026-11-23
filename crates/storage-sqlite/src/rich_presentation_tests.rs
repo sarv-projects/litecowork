@@ -145,6 +145,11 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
         "RICH"
     );
     assert_eq!(first.active_turn.as_ref().unwrap()["version"], 3);
+    assert_eq!(
+        serde_json::to_value(&first).unwrap()["activity_turn"],
+        json!({"turn_id":"turn-active","retry_ordinal":0,"status":"RUNNING"}),
+        "activity lookup identity is captured with the same snapshot even while active"
+    );
     assert!(
         first.retryable_turn.is_none(),
         "a running turn is not retryable"
@@ -182,10 +187,48 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
     assert!(failed.active_turn.is_none());
     let retryable = failed
         .retryable_turn
+        .as_ref()
         .expect("latest FAILED turn is retryable");
     assert_eq!(retryable["turn_id"], "turn-active");
     assert_eq!(retryable["version"], 4);
     assert_eq!(retryable["reason_code"], "AGENT_TURN_TIMEOUT");
+    assert_eq!(
+        serde_json::to_value(&failed).unwrap()["activity_turn"],
+        json!({"turn_id":"turn-active","retry_ordinal":0,"status":"FAILED"}),
+        "activity identity is not borrowed from the Retry projection"
+    );
+
+    // The latest successful turn is neither active nor retryable, but its REPORTED
+    // activity must still be addressable after reopening the Conversation.
+    let c = Connection::open(state_database(&dir)).unwrap();
+    c.execute(
+        "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,content_json,resource_refs_json,created_at) VALUES('message-later','conversation-rich','{}','USER','[]','[]','2026-10-09T12:00:03.000000000Z')",
+        [],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO conversation_turns(turn_id,conversation_id,user_message_id,status,retry_ordinal,created_at,version,presentation_preference) VALUES('turn-completed','conversation-rich','message-later','COMPLETED',2,'2026-10-09T12:00:03.000000000Z',6,'AUTO')",
+        [],
+    )
+    .unwrap();
+    drop(c);
+    let completed = adapter
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            "runtime-local",
+            None,
+            1,
+        )
+        .unwrap();
+    assert!(completed.active_turn.is_none());
+    assert!(completed.retryable_turn.is_none());
+    assert_eq!(
+        serde_json::to_value(&completed).unwrap()["activity_turn"],
+        json!({"turn_id":"turn-completed","retry_ordinal":2,"status":"COMPLETED"}),
+        "completed activity survives when active and retryable projections are empty"
+    );
 
     let second = adapter
         .read_conversation_presentation(
@@ -199,7 +242,19 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
         .unwrap();
     assert_eq!(second.items[0]["message"]["message_id"], "message-z");
     assert_eq!(second.items[0]["rich_presentation"], Value::Null);
-    assert_eq!(second.next_cursor, None);
+    assert_eq!(second.next_cursor.as_deref(), Some("message-z"));
+    let third = adapter
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            "runtime-local",
+            second.next_cursor.as_deref(),
+            1,
+        )
+        .unwrap();
+    assert_eq!(third.items[0]["message"]["message_id"], "message-later");
+    assert_eq!(third.next_cursor, None);
 
     assert!(matches!(
         adapter.read_conversation_presentation(
@@ -234,6 +289,126 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
         ),
         Err(StoreError::Invalid(_))
     ));
+}
+
+#[test]
+fn conversation_message_projection_uses_exact_same_conversation_turn_status() {
+    let (dir, store, _) = fixture();
+    let connection = Connection::open(state_database(&dir)).unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,turn_id,content_json,resource_refs_json,created_at) VALUES('source-user','conversation-rich','{}','USER','turn-rich','[{\"kind\":\"TEXT\",\"text\":\"create a task\"}]','[]','2026-10-09T12:00:00.500000000Z')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_turns(turn_id,conversation_id,user_message_id,status,retry_ordinal,created_at,settled_at,version,presentation_preference) VALUES('turn-rich','conversation-rich','source-user','COMPLETED',0,'2026-10-09T12:00:00.500000000Z','2026-10-09T12:00:01.000000000Z',2,'AUTO')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversations(conversation_id,workspace_id,created_at) VALUES('conversation-foreign','workspace-rich',?1)",
+            [AT],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,turn_id,content_json,resource_refs_json,created_at) VALUES('foreign-user','conversation-foreign','{}','USER','turn-foreign','[]','[]','2026-10-09T12:00:02.000000000Z')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_turns(turn_id,conversation_id,user_message_id,status,retry_ordinal,created_at,version,presentation_preference) VALUES('turn-foreign','conversation-foreign','foreign-user','FAILED',0,'2026-10-09T12:00:02.000000000Z',3,'AUTO')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,turn_id,content_json,resource_refs_json,created_at) VALUES('cross-conversation-agent','conversation-rich','{}','AGENT','turn-foreign','[]','[]','2026-10-09T12:00:03.000000000Z')",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,turn_id,content_json,resource_refs_json,created_at) VALUES('orphan-agent','conversation-rich','{}','AGENT','missing-turn','[]','[]','2026-10-09T12:00:04.000000000Z')",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let snapshot = adapter(&store)
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            "runtime-local",
+            None,
+            100,
+        )
+        .unwrap();
+    let status = |message_id: &str| {
+        snapshot
+            .items
+            .iter()
+            .find(|item| item["message"]["message_id"] == message_id)
+            .map(|item| item["turn_status"].clone())
+            .expect("message is in the bounded projection")
+    };
+
+    assert_eq!(status("source-user"), json!("COMPLETED"));
+    assert_eq!(status("message-rich"), json!("COMPLETED"));
+    assert_eq!(status("cross-conversation-agent"), Value::Null);
+    assert_eq!(status("orphan-agent"), Value::Null);
+}
+
+#[test]
+fn latest_completed_activity_identity_is_reconstructed_after_storage_reopen() {
+    let (dir, store, request) = fixture();
+    let presentation_store = adapter(&store);
+    presentation_store
+        .publish_rich_presentation(request)
+        .unwrap();
+    let c = Connection::open(state_database(&dir)).unwrap();
+    c.execute(
+        "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,content_json,resource_refs_json,created_at) VALUES('message-after-restart','conversation-rich','{}','USER','[]','[]','2026-10-09T12:00:03.000000000Z')",
+        [],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO conversation_turns(turn_id,conversation_id,user_message_id,status,retry_ordinal,created_at,version,presentation_preference) VALUES('turn-completed-after-restart','conversation-rich','message-after-restart','COMPLETED',3,'2026-10-09T12:00:03.000000000Z',7,'AUTO')",
+        [],
+    )
+    .unwrap();
+    drop(c);
+    drop(presentation_store);
+    drop(store);
+
+    let reopened_store = test_store(&dir, Duration::from_millis(100));
+    let reopened = adapter(&reopened_store)
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            "runtime-local",
+            None,
+            10,
+        )
+        .unwrap();
+    assert!(reopened.active_turn.is_none());
+    assert!(reopened.retryable_turn.is_none());
+    assert_eq!(
+        serde_json::to_value(&reopened).unwrap()["activity_turn"],
+        json!({
+            "turn_id":"turn-completed-after-restart",
+            "retry_ordinal":3,
+            "status":"COMPLETED"
+        }),
+        "the latest completed REPORTED activity identity is reconstructed from durable turn state"
+    );
 }
 
 #[test]

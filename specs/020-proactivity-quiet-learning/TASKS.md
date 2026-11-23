@@ -1,26 +1,26 @@
 # Tasks - Proactivity and Quiet Learning
 
-**Feature:** 020 | **Status:** IN_REVIEW - not owner-accepted; no task is authorized until T01 records owner acceptance. Tasks not started unless marked.
-**Spec revision:** 0.1 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+**Feature:** 020 | **Status:** IN_REVIEW - not formally owner-accepted. By repository-owner delegation on 2026-11-20, only the isolated pure-gate repair in T03 may proceed; this does not accept the package or unblock dependent product work. Tasks not started unless marked.
+**Spec revision:** 0.2 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
 **Owners:** Responsibility domain, Coworker, Storage, Operator/API, Desktop UI, Security/Trust, Product.
 
 ## Current baseline
 
-Verified against the checkout on branch `docs/audit-competitor-superset` (HEAD 234c564).
+Historical baseline verified on branch `docs/audit-competitor-superset` (HEAD 234c564); it is not current checkout evidence. See CURRENT-RUN.md and docs/IMPLEMENTATION-STATUS.md for the current source state.
 
 - **Suggestions (SERVED, no producer):** `apps/litecoworkd/src/suggestions_operator.rs` mounts `GET /v1/suggestions` (runs `SuggestionService::settle_expired` first), `POST /v1/suggestions/{suggestion_id}/resolve`, `/accept-task`, `/snooze`, `GET /v1/workspaces/{workspace_id}/suggestion-preferences` and `PUT .../{kind}`; merged in `apps/litecoworkd/src/operator.rs`. Domain `crates/domain-responsibility/src/suggestions.rs` ("proposal production remains separate"); storage `crates/storage-sqlite/src/suggestions.rs` (`SqliteSuggestionStore`, `create_task_from_suggestion`); schema `docs/schemas/sqlite-v1.sql` table `suggestions`, `uq_suggestions_open_dedupe`, `idx_suggestions_dismissal_cooldown`, `suggestion_preferences`. No production code inserts a Suggestion; `suggestion.proposed.v1` is in `docs/schemas/domain-event.schema.json` with no producer.
 - **Suggestion UI:** `apps/litecowork-ui/src-tauri/src/suggestions_bridge.rs` (`list_suggestions`, `suggestion_owner_action` for dismiss/snooze/unsnooze, `accept_suggestion_task`, `list_suggestion_preferences`, `set_suggestion_preference`); `apps/litecowork-ui/src/suggestions/SuggestionsPage.tsx` ("Ideas"), `suggestion-api.ts`, `desktop-suggestion-api.ts`, `suggestion-request-scope.ts`; tests `apps/litecowork-ui/tests/desktop-suggestion-api.test.ts`, `suggestion-request-scope.test.ts`.
 - **Goals (SERVED):** `apps/litecoworkd/src/goal_operator.rs` (`/v1/goals`, `/v1/goals/{goal_id}`, `/revisions`, `/status`), `crates/domain-responsibility/src/goals.rs` (`GoalService`, `GoalProgressProjection`), `apps/litecowork-ui/src/goals/GoalsPage.tsx`, Tauri `goal_bridge::goal_request`.
 - **Needs You (SERVED, read-only):** `apps/litecoworkd/src/needs_you_operator.rs` (`GET /v1/needs-you`, `no-store` middleware), `crates/storage-core/src/needs_you.rs`, tests `apps/litecoworkd/src/needs_you_operator_tests.rs`; UI `apps/litecowork-ui/src/needs-you/TaskAttentionPage.tsx` and `needs-you-*` tests.
-- **Learning (CODE, no caller):** `crates/storage-core/src/coworker_learning.rs` (gates, 30 tests), exported from `crates/storage-core/src/lib.rs`; `redact_sensitive_content` reused by `crates/storage-core/src/skill.rs`. No learning table, service, route, event producer or UI. `apps/litecowork-ui/src/coworkers/CoworkerSettings.tsx` discloses that quiet learning is inactive.
+- **Learning (CODE, no production caller):** canonical gates in `crates/domain-responsibility/src/learning_gates.rs` (34 tests); `crates/storage-core/src/coworker_learning.rs` and crate-root exports retain compatibility. `redact_sensitive_content` is reused by `crates/storage-core/src/skill.rs`. No learning table, service, route, event producer or UI. `apps/litecowork-ui/src/coworkers/CoworkerSettings.tsx` discloses that quiet learning is inactive.
 - **Quiet hours (Feature 010 domain):** `crates/domain-responsibility/src/notifications.rs` `QuietHours::{parse, contains}`; `notification_preferences.quiet_hours_json` per Workspace and event class; `NotificationEventClass` has no Suggestion or learning class.
-- **Migrations:** chain ends at `docs/schemas/sqlite-v32.sql` today; task T02 is allocated v43 in docs/LITECOWORK-BUILD-TASKS.md (take the next free number if another package merges first).
+- **Migrations:** the current chain includes `docs/schemas/sqlite-v34.sql`; v44 is the current provisional allocation in docs/LITECOWORK-BUILD-TASKS.md and must still be rechecked if another migration is wired before T02.
 
-Gaps to V1: no producer and no `propose`; no quiet-hours behavior; no learning pipeline; three gate defects (SPEC 7.1); no owner for Goals/Needs You conformance; no qualification.
+Gaps to V1: no producer and no `propose`; no quiet-hours behavior; no learning pipeline; Goals/Needs You conformance work remains; no qualification. T03 closes the pure-gate defects only and does not reduce or complete the full feature scope.
 
 ## 020-T01 - Owner acceptance of SPEC, D-01 and blocker B-45
 
-- **Status:** BLOCKED (D-01 and B-45 accepted as proposed 2026-11-10; pending owner acceptance of SPEC revision 0.1; owner: repository owner, sarv-projects).
+- **Status:** BLOCKED (D-01 and B-45 accepted as proposed 2026-11-10; pending formal owner acceptance of SPEC revision 0.2; owner: repository owner, sarv-projects. The delegated T03 direction does not change this status).
 - **DEFERRED/BLOCKED note:** Why: whole-SPEC acceptance pending although D-01 and B-45 are accepted. Unblocks when: owner reviews and accepts the SPEC. Test later at: decision only.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE
@@ -54,19 +54,19 @@ Gaps to V1: no producer and no `propose`; no quiet-hours behavior; no learning p
 
 ## 020-T03 - Fix the deterministic learning gate defects (Rust)
 
-- **Status:** NOT STARTED (defects present in `crates/storage-core/src/coworker_learning.rs`).
+- **Status:** DONE (CODE; narrow implementation direction delegated by repository owner on 2026-11-20; package remains IN_REVIEW and T01 remains formally BLOCKED).
 - **Depends on:** T01
 - **Cross-package prerequisites:** NONE
 - **Owner:** Responsibility, Security.
-- **Allowed paths:** `crates/storage-core/src/coworker_learning.rs`, `crates/storage-core/src/lib.rs` (re-exports only), `crates/storage-core/src/skill.rs` (only if the redactor signature changes).
+- **Allowed paths:** `crates/domain-responsibility/src/learning_gates.rs` (canonical pure gate implementation and tests), `crates/domain-responsibility/src/lib.rs` (module/re-exports), `crates/storage-core/src/coworker_learning.rs` (compatibility re-export), `crates/storage-core/src/lib.rs` (compatibility re-exports only), `crates/storage-core/src/skill.rs` (only if the redactor signature changes), `specs/020-proactivity-quiet-learning/{README.md,SPEC.md,PLAN.md,TASKS.md,RESEARCH.md}`, `docs/LEARNING.md`, `docs/IMPLEMENTATION-STATUS.md`, `CURRENT-RUN.md`, and `docs/audit/EXTERNAL-AI-AUDIT-DISPOSITION-2026-11-19.md`.
 - **Contract:** SPEC section 7.1; LEARNING sections 6, 16, 19; AC-010, AC-011.
 - **Change intent:** make `source_kind_matches_channel` a strict one-kind-per-channel mapping (`OwnerMessage` to `UserExplicit` or `UserCorrection`, `OwnerFeedback` to `UserFeedback` or `UserCorrection`, `OwnerDemonstration` to `Demonstration`, `VerifiedTaskOutcome` to `TaskOutcome` or `RepeatedPattern`); remove `LearningSourceChannel::permitted_source_kind` or change it to return `Option<LearningSourceKind>` with `None` for untrusted channels; add `LearningDisposition::as_str` returning `AUTO_COMMIT`, `NEEDS_REVIEW`, `REJECTED`, `DEDUPLICATED` and use it in `learning_candidate_event_payload` instead of `format!("{:?}")`. Decide F-04 (keep or move to `domain-responsibility`) and record it; a move keeps one definition with a re-export.
 - **Acceptance:**
-  - [ ] Regression: a `USER_EXPLICIT` candidate from `VERIFIED_TASK_OUTCOME` is REJECTED with `SOURCE_KIND_CHANNEL_MISMATCH` (AC-010).
-  - [ ] Event payload `disposition` values are the four stable tokens.
-  - [ ] All 30 existing tests still pass; secret fixtures still blocked (AC-011).
-- **Command:** `cargo test -p storage-core --locked coworker_learning`
-- **Evidence:** test output.
+  - [x] Regression: a `USER_EXPLICIT` candidate from `VERIFIED_TASK_OUTCOME` is REJECTED with `SOURCE_KIND_CHANNEL_MISMATCH` (AC-010).
+  - [x] Event payload `disposition` values are the four stable tokens.
+  - [x] All 30 original tests and the added source-mapping/token regressions pass (34 tests); existing secret-redaction fixtures remain blocked (AC-011).
+- **Command:** `cargo test -j 1 -p domain-responsibility --locked learning_gates -- --nocapture`; `cargo test -j 1 -p storage-core --locked skill -- --nocapture`.
+- **Evidence:** native Windows: domain gate tests **34/34 passed**; storage-core Skill consumer tests **50/50 passed**. The red-first storage-core run failed the new spoofing regression as expected (`AutoCommit` vs `Rejected`); after the fix the moved gate suite passed. CODE only; no learning pipeline or qualification.
 - **Stop:** a change would widen eligibility; revert.
 
 ## 020-T04 - SuggestionService.propose and the admission transaction
@@ -145,7 +145,7 @@ Gaps to V1: no producer and no `propose`; no quiet-hours behavior; no learning p
 ## 020-T08 - Learning storage with CAS, idempotency and Resource-backed payloads
 
 - **Status:** BLOCKED (B-45 pending owner; owner: repository owner).
-- **DEFERRED/BLOCKED note:** Why: blocked on T01 SPEC acceptance and the migration v43 allocation. Unblocks when: T01. Test later at: any Linux host (storage tests).
+- **DEFERRED/BLOCKED note:** Why: blocked on T01 SPEC acceptance and the migration v44 allocation. Unblocks when: T01. Test later at: any Linux host (storage tests).
 - **Depends on:** T01, T02, T03
 - **Cross-package prerequisites:** 009-T04 (COWORKER_NOTES ContextDocument re-widen, A-18/B-24 rider) for memory text; Feature 003 Resource revision commit and purge.
 - **Owner:** Storage, Responsibility.

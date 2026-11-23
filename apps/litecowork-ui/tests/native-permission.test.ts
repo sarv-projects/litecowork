@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyNativePermissionReceipt,
-  endPendingNativePermissions,
+  endLiveNativePermissions,
   emptyNativePermissionState,
   markNativePermissionOutcomeUnknown,
   parseConversationPermissionSnapshot,
@@ -154,10 +154,13 @@ test("reply receipts update only the matching current prompt and sequence", () =
 
 test("terminal turn and ambiguous reply fail closed without re-enabling a decision", () => {
   const initial = reduceNativePermissionFrame(emptyNativePermissionState, frame(1), scope);
-  const uncertain = markNativePermissionOutcomeUnknown(initial, "a".repeat(64));
+  const uncertain = markNativePermissionOutcomeUnknown(initial, "a".repeat(64), "REJECT_SESSION_PENDING");
   assert.equal(Object.values(uncertain.prompts)[0]?.state, "OUTCOME_UNKNOWN");
-  assert.equal(Object.values(uncertain.prompts)[0]?.decision, null);
-  const ended = endPendingNativePermissions(initial);
+  assert.equal(Object.values(uncertain.prompts)[0]?.decision, "REJECT_SESSION_PENDING", "keep the decision as unconfirmed context");
+  const ended = endLiveNativePermissions(initial);
   assert.equal(Object.values(ended.prompts)[0]?.state, "SESSION_ENDED");
-  assert.equal(markNativePermissionOutcomeUnknown(ended, "a".repeat(64)), ended);
+  const endedUncertain = endLiveNativePermissions(uncertain);
+  assert.equal(Object.values(endedUncertain.prompts)[0]?.state, "SESSION_ENDED");
+  assert.equal(Object.values(endedUncertain.prompts)[0]?.decision, "REJECT_SESSION_PENDING", "session end must not imply the provider acknowledged it");
+  assert.equal(markNativePermissionOutcomeUnknown(endedUncertain, "a".repeat(64), "ALLOW_ONCE"), endedUncertain);
 });

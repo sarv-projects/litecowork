@@ -11,6 +11,10 @@
 use super::*;
 use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
 use rusqlite::{Connection, params};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 const WORKSPACE: &str = "workspace-routine-admission";
@@ -221,6 +225,7 @@ fn routine_commit_with(
             preferred_lead_agent_binding_id: Some(lead_binding.to_owned()),
             authored_by: created_by,
             created_at: NOW.to_owned(),
+            delegation_policy_snapshot: None,
         },
         event: storage_core::EventDraft {
             event_id: format!("ev-routine-{task_id}"),
@@ -246,6 +251,927 @@ fn routine_commit_with(
             recorded_at: NOW.to_owned(),
         },
     }
+}
+
+#[test]
+fn task_create_persists_and_projects_the_canonical_delegation_policy_snapshot() {
+    let (directory, store) = fixture("{\"type\":\"object\",\"properties\":{}} ");
+    let committed = store
+        .create_task(routine_commit(
+            "task-delegation-snapshot",
+            "request-delegation-snapshot",
+            1,
+            serde_json::json!({}),
+        ))
+        .expect("Task creation resolves the Workspace delegation policy");
+
+    let expected = storage_core::ResolvedDelegationPolicySnapshot {
+        source: "WORKSPACE_DEFAULT".to_owned(),
+        workspace_settings_revision: 1,
+        coworker_id: None,
+        coworker_revision: None,
+        strategy: "NATIVE_DEFAULT".to_owned(),
+        native_child_model_policy: "AGENT_DEFAULT".to_owned(),
+        worker_profiles: Vec::new(),
+        resolved_at: canonicalize_utc_timestamp(NOW).unwrap(),
+    };
+    assert_eq!(
+        committed
+            .view
+            .current_spec_revision
+            .delegation_policy_snapshot,
+        Some(expected.clone())
+    );
+
+    let current = store
+        .get_task(WORKSPACE, "task-delegation-snapshot")
+        .expect("Task read succeeds")
+        .expect("Task remains readable");
+    assert_eq!(
+        current.current_spec_revision.delegation_policy_snapshot,
+        Some(expected.clone())
+    );
+    assert_eq!(
+        store
+            .list_task_spec_revisions(WORKSPACE, "task-delegation-snapshot")
+            .expect("TaskSpec history reads succeed")[0]
+            .delegation_policy_snapshot,
+        Some(expected.clone())
+    );
+
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let stored: String = connection
+        .query_row(
+            "SELECT delegation_policy_snapshot_json FROM task_spec_revisions WHERE task_id = ?1 AND revision = 1",
+            ["task-delegation-snapshot"],
+            |row| row.get(0),
+        )
+        .expect("canonical snapshot is stored on the immutable revision");
+    assert_eq!(
+        serde_json::from_str::<storage_core::ResolvedDelegationPolicySnapshot>(&stored).unwrap(),
+        expected
+    );
+
+    let aggregate_bytes = store
+        .inner
+        .blobs
+        .get(
+            WORKSPACE,
+            storage_core::BlobPurpose::AggregateState,
+            &committed.event.aggregate_state_ref.blob,
+        )
+        .expect("Task aggregate snapshot remains readable");
+    let aggregate: storage_core::TaskAggregateSnapshot =
+        serde_json::from_slice(&aggregate_bytes).expect("aggregate state is canonical Task data");
+    assert_eq!(
+        aggregate.current_spec_revision.delegation_policy_snapshot,
+        Some(expected.clone())
+    );
+
+    let receipt_json: String = connection
+        .query_row(
+            "SELECT response_json FROM request_dedup
+             WHERE principal_id = 'owner-local' AND request_id = 'request-delegation-snapshot'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("idempotency receipt stores the committed response");
+    let receipt: storage_core::CommittedTask =
+        serde_json::from_str(&receipt_json).expect("receipt preserves the committed projection");
+    assert_eq!(
+        receipt
+            .view
+            .current_spec_revision
+            .delegation_policy_snapshot,
+        Some(expected)
+    );
+    assert_eq!(
+        receipt.event.aggregate_state_ref,
+        committed.event.aggregate_state_ref
+    );
+}
+
+#[test]
+fn task_create_pins_the_exact_coworker_policy_source_revision() {
+    let (directory, store) = fixture("{\"type\":\"object\",\"properties\":{}} ");
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let transaction = connection.unchecked_transaction().unwrap();
+    transaction
+        .execute(
+            "INSERT INTO coworkers(coworker_id, workspace_id, current_revision, status,
+             created_at, updated_at, version)
+             VALUES ('coworker-policy-source', ?1, 1, 'ACTIVE', ?2, ?2, 1)",
+            params![WORKSPACE, NOW],
+        )
+        .expect("Coworker head is available to the Task source");
+    transaction
+        .execute(
+            "INSERT INTO coworker_revisions(coworker_id, revision, workspace_id, name,
+             role_description, default_lead_agent_binding_id, delegation_strategy,
+             enabled_delegation_profile_ids_json, interaction_policy_json, context_policy_json,
+             notification_policy_json, authored_by_json, created_at, delegation_policy_source)
+             VALUES ('coworker-policy-source', 1, ?1, 'Policy source', 'Task policy fixture',
+             'binding-routine', 'NATIVE_DEFAULT', '[]',
+             '{\"read_only_work\":\"STANDARD_TRUST_POLICY\",\"draft_creation\":\"STANDARD_TRUST_POLICY\",\"external_mutation\":\"STANDARD_TRUST_POLICY\",\"destructive_action\":\"HANDOFF_TO_OWNER\",\"financial_commitment\":\"HANDOFF_TO_OWNER\"}', '{}', '{}',
+             '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', ?2,
+             'WORKSPACE_DEFAULT')",
+            params![WORKSPACE, NOW],
+        )
+        .expect("immutable Coworker revision selects the Workspace policy");
+    transaction.commit().unwrap();
+    drop(connection);
+
+    let mut commit = routine_commit(
+        "task-coworker-policy-source",
+        "request-coworker-policy-source",
+        1,
+        serde_json::json!({}),
+    );
+    commit.task.origin_coworker_id = Some("coworker-policy-source".to_owned());
+    commit.task.origin_coworker_revision = Some(1);
+    commit.expected_coworker_version = Some(1);
+    commit.request.request_payload["coworker_id"] = serde_json::json!("coworker-policy-source");
+    commit.request.request_payload["expected_coworker_version"] = serde_json::json!(1);
+    commit.idempotency_payload.as_mut().unwrap()["coworker_id"] =
+        serde_json::json!("coworker-policy-source");
+    commit.idempotency_payload.as_mut().unwrap()["expected_coworker_version"] =
+        serde_json::json!(1);
+    commit.event.payload["origin_coworker_id"] = serde_json::json!("coworker-policy-source");
+    commit.event.payload["origin_coworker_revision"] = serde_json::json!(1);
+
+    let mut stale_coworker_commit = commit.clone();
+    stale_coworker_commit.expected_coworker_version = Some(2);
+    stale_coworker_commit.request.request_payload["expected_coworker_version"] =
+        serde_json::json!(2);
+    stale_coworker_commit.idempotency_payload.as_mut().unwrap()["expected_coworker_version"] =
+        serde_json::json!(2);
+    assert!(matches!(
+        store.create_task(stale_coworker_commit),
+        Err(storage_core::StoreError::Conflict { .. })
+    ));
+    assert!(
+        store
+            .get_task(WORKSPACE, "task-coworker-policy-source")
+            .expect("stale Coworker selection creates no Task")
+            .is_none()
+    );
+
+    let committed = store
+        .create_task(commit)
+        .expect("Task creation resolves the exact Coworker policy revision");
+    let snapshot = committed
+        .view
+        .current_spec_revision
+        .delegation_policy_snapshot
+        .expect("Coworker-origin Task carries the resolved policy");
+    assert_eq!(snapshot.source, "WORKSPACE_DEFAULT");
+    assert_eq!(
+        snapshot.coworker_id.as_deref(),
+        Some("coworker-policy-source")
+    );
+    assert_eq!(snapshot.coworker_revision, Some(1));
+    assert_eq!(snapshot.workspace_settings_revision, 1);
+    assert_eq!(snapshot.strategy, "NATIVE_DEFAULT");
+    assert!(snapshot.worker_profiles.is_empty());
+}
+
+#[test]
+fn task_create_pins_coworker_worker_profile_revision_and_model_policy() {
+    let (directory, store) = fixture("{\"type\":\"object\",\"properties\":{}} ");
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let transaction = connection.unchecked_transaction().unwrap();
+    transaction
+        .execute(
+            "INSERT INTO delegation_profiles(delegation_profile_id, workspace_id, agent_binding_id,
+             name, name_key, current_revision, status, created_at, updated_at, version)
+             VALUES ('profile-policy-worker', ?1, 'binding-routine', 'Policy worker',
+             'policy worker', 1, 'ENABLED', ?2, ?2, 1)",
+            params![WORKSPACE, NOW],
+        )
+        .expect("Workspace profile head is available");
+    transaction
+        .execute(
+            "INSERT INTO delegation_profile_revisions(delegation_profile_id, revision, workspace_id,
+             name, name_key, routing_description, session_options_json, required_features_json,
+             preferred_features_json, enforced_policy_json, optimization_preference,
+             max_concurrency, max_host_delegation_depth, latency_class, environment_policy_json,
+             native_delegation_policy, warm_policy_json, authored_by_json, created_at,
+             worker_model_selection_policy)
+             VALUES ('profile-policy-worker', 1, ?1, 'Policy worker', 'policy worker',
+             'Test worker route', '{}', '[]', '[]',
+             '{\"capability_allowlist\":[],\"maximum_effect_risk\":\"SAFE\",\"filesystem_write_scope\":\"WORKTREE_ONLY\",\"external_effects\":\"DENY\",\"secret_access\":\"NONE\"}',
+             'BALANCED', 1, 0, 'STANDARD',
+             '{\"placement_preference\":\"AUTO\",\"isolation\":\"REQUIRED\",\"sharing_scope\":\"ATTEMPT_PRIVATE\"}',
+             'INHERIT',
+             '{\"host\":\"COLD\",\"native_session\":\"CLOSE_ON_SETTLE\",\"capability_hosts\":\"COLD\",\"browser_environment\":\"COLD\",\"local_model\":\"PROVIDER_DEFAULT\",\"ttl_ms\":null,\"max_memory_bytes\":null,\"max_idle_cost\":null,\"triggers\":[]}',
+             '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', ?2,
+             'MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE')",
+            params![WORKSPACE, NOW],
+        )
+        .expect("immutable worker profile revision records model-selection policy");
+    transaction
+        .execute(
+            "INSERT INTO workspace_delegation_settings_revisions(workspace_id, revision,
+             default_strategy, enabled_delegation_profile_revisions_json,
+             native_child_model_policy, authored_by_json, created_at)
+             VALUES (?1, 2, 'BALANCED',
+             '[{\"profile_id\":\"profile-policy-worker\",\"revision\":1}]',
+             'INHERIT_PARENT_IF_SUPPORTED',
+             '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', ?2)",
+            params![WORKSPACE, NOW],
+        )
+        .expect("Workspace revision defines the exact worker-profile ceiling");
+    transaction
+        .execute(
+            "UPDATE workspaces SET current_delegation_settings_revision = 2, version = version + 1
+             WHERE workspace_id = ?1",
+            [WORKSPACE],
+        )
+        .expect("Workspace ceiling head advances atomically");
+    transaction
+        .execute(
+            "INSERT INTO coworkers(coworker_id, workspace_id, current_revision, status,
+             created_at, updated_at, version)
+             VALUES ('coworker-policy-override', ?1, 1, 'ACTIVE', ?2, ?2, 1)",
+            params![WORKSPACE, NOW],
+        )
+        .expect("Coworker head is available to the Task source");
+    transaction
+        .execute(
+            "INSERT INTO coworker_revisions(coworker_id, revision, workspace_id, name,
+             role_description, default_lead_agent_binding_id, delegation_strategy,
+             enabled_delegation_profile_ids_json, interaction_policy_json, context_policy_json,
+             notification_policy_json, authored_by_json, created_at, delegation_policy_source)
+             VALUES ('coworker-policy-override', 1, ?1, 'Override source', 'Task policy fixture',
+             'binding-routine', 'BALANCED', '[\"profile-policy-worker\"]',
+             '{\"read_only_work\":\"STANDARD_TRUST_POLICY\",\"draft_creation\":\"STANDARD_TRUST_POLICY\",\"external_mutation\":\"STANDARD_TRUST_POLICY\",\"destructive_action\":\"HANDOFF_TO_OWNER\",\"financial_commitment\":\"HANDOFF_TO_OWNER\"}',
+             '{}', '{}', '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', ?2,
+             'COWORKER_OVERRIDE')",
+            params![WORKSPACE, NOW],
+        )
+        .expect("Coworker override is bounded by the current Workspace ceiling");
+    transaction.commit().unwrap();
+    drop(connection);
+
+    let mut commit = routine_commit(
+        "task-coworker-policy-override",
+        "request-coworker-policy-override",
+        1,
+        serde_json::json!({}),
+    );
+    commit.task.origin_coworker_id = Some("coworker-policy-override".to_owned());
+    commit.task.origin_coworker_revision = Some(1);
+    commit.expected_coworker_version = Some(1);
+    commit.request.request_payload["coworker_id"] = serde_json::json!("coworker-policy-override");
+    commit.request.request_payload["expected_coworker_version"] = serde_json::json!(1);
+    commit.idempotency_payload.as_mut().unwrap()["coworker_id"] =
+        serde_json::json!("coworker-policy-override");
+    commit.idempotency_payload.as_mut().unwrap()["expected_coworker_version"] =
+        serde_json::json!(1);
+    commit.event.payload["origin_coworker_id"] = serde_json::json!("coworker-policy-override");
+    commit.event.payload["origin_coworker_revision"] = serde_json::json!(1);
+
+    let committed = store
+        .create_task(commit)
+        .expect("Task creation resolves the exact Coworker override and profile revision");
+    let snapshot = committed
+        .view
+        .current_spec_revision
+        .delegation_policy_snapshot
+        .expect("Coworker-origin Task carries the resolved policy");
+    assert_eq!(snapshot.source, "COWORKER_OVERRIDE");
+    assert_eq!(
+        snapshot.coworker_id.as_deref(),
+        Some("coworker-policy-override")
+    );
+    assert_eq!(snapshot.coworker_revision, Some(1));
+    assert_eq!(snapshot.workspace_settings_revision, 2);
+    assert_eq!(snapshot.strategy, "BALANCED");
+    assert_eq!(
+        snapshot.native_child_model_policy,
+        "INHERIT_PARENT_IF_SUPPORTED"
+    );
+    assert_eq!(
+        snapshot.worker_profiles,
+        vec![storage_core::ResolvedDelegationPolicyWorkerProfile {
+            profile_id: "profile-policy-worker".to_owned(),
+            revision: 1,
+            worker_model_selection_policy: "MATCH_PARENT_IF_EXACT_ROUTE_AVAILABLE".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn explicit_task_spec_revision_pins_new_policy_without_rewriting_prior_revision() {
+    let (directory, store) = fixture("{\"type\":\"object\",\"properties\":{}} ");
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let transaction = connection.unchecked_transaction().unwrap();
+    transaction
+        .execute(
+            "INSERT INTO coworkers(coworker_id, workspace_id, current_revision, status,
+             created_at, updated_at, version)
+             VALUES ('coworker-revision-source', ?1, 1, 'ACTIVE', ?2, ?2, 1)",
+            params![WORKSPACE, NOW],
+        )
+        .expect("Coworker head exists for the Task origin");
+    transaction
+        .execute(
+            "INSERT INTO coworker_revisions(coworker_id, revision, workspace_id, name,
+             role_description, default_lead_agent_binding_id, delegation_strategy,
+             enabled_delegation_profile_ids_json, interaction_policy_json, context_policy_json,
+             notification_policy_json, authored_by_json, created_at, delegation_policy_source)
+             VALUES ('coworker-revision-source', 1, ?1, 'Revision source', 'Task policy fixture',
+             'binding-routine', 'NATIVE_DEFAULT', '[]',
+             '{\"read_only_work\":\"STANDARD_TRUST_POLICY\",\"draft_creation\":\"STANDARD_TRUST_POLICY\",\"external_mutation\":\"STANDARD_TRUST_POLICY\",\"destructive_action\":\"HANDOFF_TO_OWNER\",\"financial_commitment\":\"HANDOFF_TO_OWNER\"}',
+             '{}', '{}', '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', ?2,
+             'WORKSPACE_DEFAULT')",
+            params![WORKSPACE, NOW],
+        )
+        .expect("immutable Coworker source revision is valid");
+    transaction.commit().unwrap();
+    drop(connection);
+
+    let mut create = routine_commit(
+        "task-revise-delegation-snapshot",
+        "request-create-revise-delegation-snapshot",
+        1,
+        serde_json::json!({}),
+    );
+    create.task.origin_coworker_id = Some("coworker-revision-source".to_owned());
+    create.task.origin_coworker_revision = Some(1);
+    create.expected_coworker_version = Some(1);
+    create.request.request_payload["coworker_id"] = serde_json::json!("coworker-revision-source");
+    create.request.request_payload["expected_coworker_version"] = serde_json::json!(1);
+    create.idempotency_payload.as_mut().unwrap()["coworker_id"] =
+        serde_json::json!("coworker-revision-source");
+    create.idempotency_payload.as_mut().unwrap()["expected_coworker_version"] =
+        serde_json::json!(1);
+    create.event.payload["origin_coworker_id"] = serde_json::json!("coworker-revision-source");
+    create.event.payload["origin_coworker_revision"] = serde_json::json!(1);
+    let created = store
+        .create_task(create.clone())
+        .expect("Task creation resolves the first delegation-policy snapshot");
+    let first_snapshot = created
+        .view
+        .current_spec_revision
+        .delegation_policy_snapshot
+        .clone()
+        .expect("new TaskSpec has a complete policy snapshot");
+    assert_eq!(first_snapshot.workspace_settings_revision, 1);
+    assert_eq!(first_snapshot.strategy, "NATIVE_DEFAULT");
+    assert_eq!(
+        first_snapshot.coworker_id.as_deref(),
+        Some("coworker-revision-source")
+    );
+    assert_eq!(first_snapshot.coworker_revision, Some(1));
+
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspace_delegation_settings_revisions (
+                workspace_id, revision, default_strategy,
+                enabled_delegation_profile_revisions_json, native_child_model_policy,
+                authored_by_json, created_at
+             )
+             SELECT workspace_id, 2, 'BALANCED',
+                    enabled_delegation_profile_revisions_json, native_child_model_policy,
+                    authored_by_json, ?2
+             FROM workspace_delegation_settings_revisions
+             WHERE workspace_id = ?1 AND revision = 1",
+            params![WORKSPACE, NOW],
+        )
+        .expect("append the next immutable Workspace settings revision");
+    connection
+        .execute(
+            "UPDATE workspaces
+             SET current_delegation_settings_revision = 2, version = version + 1
+             WHERE workspace_id = ?1",
+            params![WORKSPACE],
+        )
+        .expect("advance the Workspace settings head");
+
+    let mut revision = create.initial_spec_revision.clone();
+    revision.revision = 2;
+    revision.parent_revisions = vec![1];
+    revision.objective = "Review the changed project".to_owned();
+    revision.constraints = vec!["Keep the update bounded".to_owned()];
+    revision.created_at = canonicalize_utc_timestamp(NOW).unwrap();
+    revision.delegation_policy_snapshot = None;
+    let initial_digest = digest(&canonical_json(&revision).unwrap());
+    let mut task = created.view.task.clone();
+    task.current_spec_revision = 2;
+    task.version = 2;
+    task.updated_at = canonicalize_utc_timestamp(NOW).unwrap();
+    let request = storage_core::WorkspaceCreateRequest {
+        principal_id: "owner-local".to_owned(),
+        request_id: "request-revise-delegation-snapshot".to_owned(),
+        request_payload: serde_json::json!({
+            "task_id": task.task_id,
+            "revision": 2,
+            "objective": revision.objective,
+        }),
+    };
+    let committed = store
+        .revise_task_spec(storage_core::TaskSpecRevisionCommit {
+            request,
+            expected_task_version: 1,
+            task,
+            task_spec_revision: revision.clone(),
+            event: storage_core::EventDraft {
+                event_id: "ev-revise-delegation-snapshot".to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                entity_type: "Task".to_owned(),
+                entity_id: "task-revise-delegation-snapshot".to_owned(),
+                origin_runtime_id: "runtime-routine-admission".to_owned(),
+                entity_revision: 2,
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "correlation-revise-delegation-snapshot".to_owned(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "task.spec.revised.v1".to_owned(),
+                payload: serde_json::json!({
+                    "task_id": "task-revise-delegation-snapshot",
+                    "revision": 2,
+                    "parent_revisions": [1],
+                    "spec_digest": initial_digest,
+                    "authored_by": revision.authored_by,
+                }),
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("explicit TaskSpec revision resolves the new Workspace policy");
+
+    let second_snapshot = committed
+        .revision
+        .delegation_policy_snapshot
+        .clone()
+        .expect("revised TaskSpec has a complete policy snapshot");
+    assert_eq!(second_snapshot.workspace_settings_revision, 2);
+    assert_eq!(second_snapshot.strategy, "BALANCED");
+    assert_eq!(
+        second_snapshot.coworker_id.as_deref(),
+        Some("coworker-revision-source")
+    );
+    assert_eq!(second_snapshot.coworker_revision, Some(1));
+    let history = store
+        .list_task_spec_revisions(WORKSPACE, "task-revise-delegation-snapshot")
+        .expect("TaskSpec history reads succeed");
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].delegation_policy_snapshot, Some(first_snapshot));
+    assert_eq!(
+        history[1].delegation_policy_snapshot,
+        Some(second_snapshot.clone())
+    );
+
+    let aggregate_bytes = store
+        .inner
+        .blobs
+        .get(
+            WORKSPACE,
+            storage_core::BlobPurpose::AggregateState,
+            &committed.event.aggregate_state_ref.blob,
+        )
+        .expect("revised Task aggregate snapshot remains readable");
+    let aggregate: storage_core::TaskAggregateSnapshot =
+        serde_json::from_slice(&aggregate_bytes).expect("revised aggregate snapshot parses");
+    assert_eq!(
+        aggregate.current_spec_revision.delegation_policy_snapshot,
+        Some(second_snapshot)
+    );
+}
+
+struct PolicyHeadRaceBlobStore {
+    inner: Arc<dyn storage_core::BlobStore>,
+    database_path: std::path::PathBuf,
+    advance_head_on_put: Arc<AtomicBool>,
+}
+
+impl storage_core::BlobStore for PolicyHeadRaceBlobStore {
+    fn put(
+        &self,
+        workspace_id: &str,
+        purpose: storage_core::BlobPurpose,
+        bytes: &[u8],
+        media_type: &str,
+    ) -> Result<storage_core::BlobRef, storage_core::StoreError> {
+        if self.advance_head_on_put.swap(false, Ordering::SeqCst) {
+            let connection = Connection::open(&self.database_path)
+                .expect("open SQLite to race the Workspace policy head");
+            let changed = connection
+                .execute(
+                    "UPDATE workspaces SET current_delegation_settings_revision = 2,
+                        version = version + 1 WHERE workspace_id = ?1",
+                    [workspace_id],
+                )
+                .expect("advance the policy head before the TaskSpec transaction");
+            assert_eq!(changed, 1);
+        }
+        self.inner.put(workspace_id, purpose, bytes, media_type)
+    }
+
+    fn get(
+        &self,
+        workspace_id: &str,
+        purpose: storage_core::BlobPurpose,
+        blob: &storage_core::BlobRef,
+    ) -> Result<Vec<u8>, storage_core::StoreError> {
+        self.inner.get(workspace_id, purpose, blob)
+    }
+
+    fn remove(
+        &self,
+        workspace_id: &str,
+        purpose: storage_core::BlobPurpose,
+        blob: &storage_core::BlobRef,
+    ) -> Result<(), storage_core::StoreError> {
+        self.inner.remove(workspace_id, purpose, blob)
+    }
+}
+
+#[test]
+fn explicit_task_spec_revision_conflicts_if_policy_head_changes_before_commit() {
+    let directory = tempfile::tempdir().unwrap();
+    let advance_head_on_put = Arc::new(AtomicBool::new(false));
+    let blobs: Arc<dyn storage_core::BlobStore> = Arc::new(PolicyHeadRaceBlobStore {
+        inner: Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            TestKeys { key: [19_u8; 32] },
+        )),
+        database_path: state_database(&directory),
+        advance_head_on_put: Arc::clone(&advance_head_on_put),
+    });
+    let store = SqliteWorkspaceStore::open(
+        state_database(&directory),
+        blobs,
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(1),
+        },
+    )
+    .expect("SQLite store opens with the deterministic race seam");
+    create_workspace(&store, WORKSPACE);
+    let setup = Connection::open(state_database(&directory)).unwrap();
+    setup
+        .execute(
+            "INSERT INTO agent_profiles(agent_profile_id, provider_key, display_name, discovered_at)
+             VALUES ('profile-routine', 'fixture', 'Fixture Agent', '2026-10-20T08:00:00Z')",
+            [],
+        )
+        .expect("fixture AgentProfile");
+    for binding_id in ["binding-routine", "binding-routine-2"] {
+        setup
+            .execute(
+                "INSERT INTO agent_bindings(agent_binding_id, workspace_id, agent_profile_id,
+                    endpoint_selection_policy_json, configuration_json, enabled, lead_eligible,
+                    created_at, version)
+                 VALUES (?1, ?2, 'profile-routine', '{}', '{}', 1, 1,
+                    '2026-10-20T08:00:00Z', 1)",
+                params![binding_id, WORKSPACE],
+            )
+            .expect("fixture AgentBinding");
+    }
+    setup.execute(
+        "UPDATE workspaces SET default_agent_binding_id = 'binding-routine' WHERE workspace_id = ?1",
+        [WORKSPACE],
+    ).expect("Workspace default AgentBinding is set");
+    let transaction = setup.unchecked_transaction().unwrap();
+    transaction
+        .execute(
+            "INSERT INTO routines(routine_id, workspace_id, name, current_revision, status,
+            created_at, updated_at, version)
+         VALUES ('routine-1', ?1, 'Routine', 1, 'ACTIVE',
+            '2026-10-20T08:00:00Z', '2026-10-20T08:00:00Z', 1)",
+            [WORKSPACE],
+        )
+        .expect("fixture Routine head");
+    transaction
+        .execute(
+            "INSERT INTO routine_revisions(workspace_id, routine_id, revision,
+            objective_template, instructions, input_schema_json, constraints_json,
+            non_goals_json, required_outputs_json, acceptance_criteria_json,
+            approvals_required_json, input_bindings_json, required_capabilities_json,
+            preferred_agent_binding_id, placement_preference_json, budget_ceiling_json,
+            verification_policy_json, authored_by_json, created_at)
+         VALUES (?1, 'routine-1', 1, 'Review project', 'Review the project', ?2,
+            '[]', '[]', '[]', '[]', '[]', '[]', '[]', NULL, '\"AUTO\"', NULL, '{}',
+            '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}',
+            '2026-10-20T08:00:00Z')",
+            params![WORKSPACE, "{\"type\":\"object\",\"properties\":{}}"],
+        )
+        .expect("fixture Routine revision");
+    transaction.commit().unwrap();
+    drop(setup);
+
+    let created = store
+        .create_task(routine_commit(
+            "task-policy-head-race",
+            "request-policy-head-race-create",
+            1,
+            serde_json::json!({}),
+        ))
+        .expect("Task starts with the revision-1 policy pin");
+    let setup = Connection::open(state_database(&directory)).unwrap();
+    setup
+        .execute(
+            "INSERT INTO workspace_delegation_settings_revisions (
+             workspace_id, revision, default_strategy, enabled_delegation_profile_revisions_json,
+             native_child_model_policy, authored_by_json, created_at)
+         SELECT workspace_id, 2, 'BALANCED', enabled_delegation_profile_revisions_json,
+             native_child_model_policy, authored_by_json, ?2
+         FROM workspace_delegation_settings_revisions WHERE workspace_id = ?1 AND revision = 1",
+            params![WORKSPACE, NOW],
+        )
+        .expect("append revision 2 before the race");
+    drop(setup);
+
+    let mut revision = created.view.current_spec_revision.clone();
+    revision.revision = 2;
+    revision.parent_revisions = vec![1];
+    revision.objective = "Review after policy update".to_owned();
+    revision.constraints.clear();
+    revision.created_at = canonicalize_utc_timestamp(NOW).unwrap();
+    revision.delegation_policy_snapshot = None;
+    let spec_digest = digest(&canonical_json(&revision).unwrap());
+    let mut task = created.view.task.clone();
+    task.current_spec_revision = 2;
+    task.version = 2;
+    task.updated_at = canonicalize_utc_timestamp(NOW).unwrap();
+    let commit = storage_core::TaskSpecRevisionCommit {
+        request: storage_core::WorkspaceCreateRequest {
+            principal_id: "owner-local".to_owned(),
+            request_id: "request-policy-head-race-revision".to_owned(),
+            request_payload: serde_json::json!({"task_id": task.task_id, "revision": 2}),
+        },
+        expected_task_version: 1,
+        task,
+        task_spec_revision: revision.clone(),
+        event: storage_core::EventDraft {
+            event_id: "ev-policy-head-race-revision".to_owned(),
+            workspace_id: WORKSPACE.to_owned(),
+            entity_type: "Task".to_owned(),
+            entity_id: "task-policy-head-race".to_owned(),
+            origin_runtime_id: "runtime-routine-admission".to_owned(),
+            entity_revision: 2,
+            hlc_timestamp: NOW.to_owned(),
+            correlation_id: "correlation-policy-head-race".to_owned(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "task.spec.revised.v1".to_owned(),
+            payload: serde_json::json!({
+                "task_id": "task-policy-head-race",
+                "revision": 2,
+                "parent_revisions": [1],
+                "spec_digest": spec_digest,
+                "authored_by": revision.authored_by,
+            }),
+            recorded_at: NOW.to_owned(),
+        },
+    };
+    advance_head_on_put.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        store.revise_task_spec(commit),
+        Err(storage_core::StoreError::Conflict { .. })
+    ));
+
+    let task = store
+        .get_task(WORKSPACE, "task-policy-head-race")
+        .unwrap()
+        .unwrap();
+    assert_eq!(task.task.version, 1);
+    assert_eq!(task.current_spec_revision.revision, 1);
+    assert_eq!(
+        task.current_spec_revision
+            .delegation_policy_snapshot
+            .as_ref()
+            .unwrap()
+            .workspace_settings_revision,
+        1
+    );
+    assert_eq!(
+        store
+            .list_task_spec_revisions(WORKSPACE, "task-policy-head-race")
+            .unwrap()
+            .len(),
+        1
+    );
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let revised_events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND entity_id = ?2
+            AND type = 'task.spec.revised.v1'",
+            params![WORKSPACE, "task-policy-head-race"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(revised_events, 0);
+}
+
+#[test]
+fn v34_migration_reconstructs_a_non_null_legacy_task_delegation_snapshot() {
+    let (directory, store) = fixture("{\"type\":\"object\",\"properties\":{}} ");
+    store
+        .create_task(routine_commit(
+            "task-legacy-delegation-snapshot",
+            "request-legacy-delegation-snapshot",
+            1,
+            serde_json::json!({}),
+        ))
+        .expect("Task creation resolves the Workspace delegation policy");
+    store
+        .create_task(routine_commit(
+            "task-legacy-null-delegation-snapshot",
+            "request-legacy-null-delegation-snapshot",
+            1,
+            serde_json::json!({}),
+        ))
+        .expect("second Task provides a legacy null-history case");
+    drop(store);
+
+    let mut connection = Connection::open(state_database(&directory)).unwrap();
+    connection
+        .execute_batch(
+            "DROP TRIGGER task_spec_delegation_policy_snapshot_guard;
+             DROP TRIGGER task_spec_delegation_policy_snapshot_immutable;
+             UPDATE task_spec_revisions
+             SET delegation_policy_snapshot_json = '{\"workspace_settings_revision\":1}'
+             WHERE task_id = 'task-legacy-delegation-snapshot' AND revision = 1;
+             UPDATE task_spec_revisions
+             SET delegation_policy_snapshot_json = NULL
+             WHERE task_id = 'task-legacy-null-delegation-snapshot' AND revision = 1;
+             DELETE FROM schema_migrations WHERE version = 34;
+             PRAGMA user_version = 33;",
+        )
+        .expect("model a pre-v34 database with a legacy non-null snapshot");
+
+    migrate(&mut connection).expect("v34 reconstructs policy from immutable owner records");
+    let stored: String = connection
+        .query_row(
+            "SELECT delegation_policy_snapshot_json FROM task_spec_revisions
+             WHERE task_id = 'task-legacy-delegation-snapshot' AND revision = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("migration preserves the TaskSpec row");
+    let snapshot: storage_core::ResolvedDelegationPolicySnapshot =
+        serde_json::from_str(&stored).expect("migration writes the canonical snapshot shape");
+    assert_eq!(snapshot.source, "WORKSPACE_DEFAULT");
+    assert_eq!(snapshot.workspace_settings_revision, 1);
+    assert_eq!(snapshot.strategy, "NATIVE_DEFAULT");
+    assert_eq!(snapshot.native_child_model_policy, "AGENT_DEFAULT");
+    assert!(snapshot.worker_profiles.is_empty());
+    assert_eq!(
+        snapshot.resolved_at,
+        canonicalize_utc_timestamp(NOW).unwrap()
+    );
+    let legacy_null: Option<String> = connection
+        .query_row(
+            "SELECT delegation_policy_snapshot_json FROM task_spec_revisions
+             WHERE task_id = 'task-legacy-null-delegation-snapshot' AND revision = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("migration preserves a pre-v28 null policy pin");
+    assert_eq!(legacy_null, None);
+}
+
+#[test]
+fn v34_migration_rejects_foreign_workspace_profile_without_partial_backfill() {
+    let (directory, store) = fixture("{\"type\":\"object\",\"properties\":{}} ");
+    store
+        .create_task(routine_commit(
+            "task-a-legacy-valid",
+            "request-legacy-valid",
+            1,
+            serde_json::json!({}),
+        ))
+        .expect("first legacy Task has a valid pinned policy");
+    store
+        .create_task(routine_commit(
+            "task-z-legacy-foreign-profile",
+            "request-legacy-foreign-profile",
+            1,
+            serde_json::json!({}),
+        ))
+        .expect("second legacy Task has a valid initial policy");
+    drop(store);
+
+    let mut connection = Connection::open(state_database(&directory)).unwrap();
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces(workspace_id, name, owner_principal_id, replication_policy,
+             status, created_at, updated_at, version)
+             VALUES ('workspace-foreign-profile', 'Foreign profile workspace', 'owner-local',
+             'LOCAL_ONLY', 'ACTIVE', ?1, ?1, 1)",
+            [NOW],
+        )
+        .expect("foreign Workspace is created without reusing the fixture event id");
+    let transaction = connection.unchecked_transaction().unwrap();
+    transaction
+        .execute(
+            "INSERT INTO agent_bindings(agent_binding_id, workspace_id, agent_profile_id,
+            endpoint_selection_policy_json, configuration_json, enabled, lead_eligible,
+            created_at, version)
+         VALUES ('binding-foreign-profile', 'workspace-foreign-profile', 'profile-routine',
+            '{}', '{}', 1, 0, ?1, 1)",
+            [NOW],
+        )
+        .expect("foreign Workspace owns its own AgentBinding");
+    transaction
+        .execute(
+            "INSERT INTO delegation_profiles(delegation_profile_id, workspace_id, agent_binding_id,
+            name, name_key, current_revision, status, created_at, updated_at, version)
+         VALUES ('profile-foreign', 'workspace-foreign-profile', 'binding-foreign-profile',
+            'Foreign profile', 'foreign profile', 1, 'ENABLED', ?1, ?1, 1)",
+            [NOW],
+        )
+        .expect("profile head belongs only to the second Workspace");
+    transaction.execute(
+        "INSERT INTO delegation_profile_revisions(delegation_profile_id, revision, workspace_id,
+            name, name_key, routing_description, session_options_json, required_features_json,
+            preferred_features_json, enforced_policy_json, optimization_preference,
+            max_concurrency, max_host_delegation_depth, latency_class, environment_policy_json,
+            native_delegation_policy, warm_policy_json, authored_by_json, created_at)
+         VALUES ('profile-foreign', 1, 'workspace-foreign-profile', 'Foreign profile',
+            'foreign profile', 'Test-only foreign profile', '{}', '[]', '[]', '{}',
+            'BALANCED', 1, 0, 'STANDARD', '{}', 'DENY_IF_SUPPORTED',
+            '{\"host\":\"COLD\",\"native_session\":\"CLOSE_ON_SETTLE\",\"capability_hosts\":\"COLD\",\"browser_environment\":\"COLD\",\"local_model\":\"PROVIDER_DEFAULT\",\"ttl_ms\":null,\"max_memory_bytes\":null,\"max_idle_cost\":null,\"triggers\":[]}',
+            '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', ?1)",
+        [NOW],
+    ).expect("foreign profile has its immutable revision");
+    transaction
+        .execute_batch(
+            "DROP TRIGGER workspace_delegation_settings_revision_insert_guard;
+         DROP TRIGGER workspace_delegation_settings_head_guard;
+         INSERT INTO workspace_delegation_settings_revisions(
+           workspace_id, revision, default_strategy, enabled_delegation_profile_revisions_json,
+           native_child_model_policy, authored_by_json, created_at)
+         VALUES ('workspace-routine-admission', 2, 'BALANCED',
+           '[{\"profile_id\":\"profile-foreign\",\"revision\":1}]', 'AGENT_DEFAULT',
+           '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', '2026-10-21T10:00:00Z');
+         UPDATE workspaces SET current_delegation_settings_revision = 2
+           WHERE workspace_id = 'workspace-routine-admission';
+         DROP TRIGGER task_spec_delegation_policy_snapshot_guard;
+         DROP TRIGGER task_spec_delegation_policy_snapshot_immutable;
+         UPDATE task_spec_revisions SET delegation_policy_snapshot_json =
+           '{\"workspace_settings_revision\":1}'
+           WHERE task_id = 'task-a-legacy-valid' AND revision = 1;
+         UPDATE task_spec_revisions SET delegation_policy_snapshot_json =
+           '{\"workspace_settings_revision\":2}'
+           WHERE task_id = 'task-z-legacy-foreign-profile' AND revision = 1;
+         DELETE FROM schema_migrations WHERE version = 34;
+         PRAGMA user_version = 33;",
+        )
+        .expect("model two legacy rows where the later row has a foreign profile ref");
+    transaction.commit().unwrap();
+
+    assert!(matches!(
+        migrate(&mut connection),
+        Err(storage_core::StoreError::CorruptSchema(_))
+    ));
+    let user_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(user_version, 33);
+    let migration_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 34",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(migration_count, 0);
+    for (task_id, expected) in [
+        ("task-a-legacy-valid", "{\"workspace_settings_revision\":1}"),
+        (
+            "task-z-legacy-foreign-profile",
+            "{\"workspace_settings_revision\":2}",
+        ),
+    ] {
+        let stored: String = connection
+            .query_row(
+                "SELECT delegation_policy_snapshot_json FROM task_spec_revisions
+                 WHERE task_id = ?1 AND revision = 1",
+                [task_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            stored, expected,
+            "failed migration must roll back {task_id}"
+        );
+    }
+    let task_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM task_spec_revisions
+             WHERE task_id IN ('task-a-legacy-valid', 'task-z-legacy-foreign-profile')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(task_count, 2);
 }
 
 fn scalar(connection: &Connection, sql: &str, task_id: &str) -> i64 {

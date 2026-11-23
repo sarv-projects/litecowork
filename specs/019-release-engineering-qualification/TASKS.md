@@ -291,6 +291,7 @@ Gaps to V1: CI, both installers, signing, updater, licensing record, row-aware m
 - **Command:** `uv run --locked python -m unittest tests.test_platform_matrix -v` (test to be added by this task) and `uv run --locked python scripts/v1_platform_matrix.py --rows scripts/v1_release_matrix_rows.json --skip-slow-probes`
 - **Evidence:** generated matrix committed per release candidate.
 - **Stop:** a PASSED cell lacks a bundle; the generator must refuse to write it.
+- **Current extension:** the original T14 acceptance roster covered E2E-01..E2E-12. The owner-adopted E2E-14..E2E-17 journeys and exact provider/build/auth evidence tuple are covered by follow-up T24; the task's original completion remains CODE-only.
 
 ## 019-T15 - Evidence bundle process and owner USER sign-off record
 
@@ -442,7 +443,7 @@ Gaps to V1: CI, both installers, signing, updater, licensing record, row-aware m
 - **Status:** NOT STARTED.
 - **Reference (DeepSeek Harness, MIT, pinned `fcc0ad46`, no code copied yet):** upstream [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness/tree/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159), reuse map [DEEPSEEK-HARNESS-REUSE-MAP-2026-11.md](../../docs/DEEPSEEK-HARNESS-REUSE-MAP-2026-11.md).
   - **P-36 Publication discipline and rollback (plan validated before credentials, artifacts before manifest, reconcile unknown writes, feed-only rollback).** Class: **ADAPT**. Upstream permalinks: [scripts/desktop-upload-plan.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/scripts/desktop-upload-plan.ts), [scripts/desktop-publish.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/scripts/desktop-publish.ts), [scripts/desktop-publish-record.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/scripts/desktop-publish-record.ts), [scripts/desktop-release-store.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/scripts/desktop-release-store.ts), [scripts/desktop-rollback.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/scripts/desktop-rollback.ts), [scripts/desktop-cos.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/scripts/desktop-cos.ts), [scripts/desktop-purge-recovery.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/scripts/desktop-purge-recovery.ts). Study: [desktop study](../../docs/DEEPSEEK-HARNESS-DESKTOP-DEEP-DIVE-2026-11.md) Sections 11 (11.4) and 14 (row P-36). Why: The order of operations and unknown-write reconciliation are independent of the storage vendor. LiteCowork V1 distribution endpoint is undecided, so only the discipline is reusable; the COS and EdgeOne specifics are REJECT. Reuse: Pattern only, reimplement. No upstream code or text is copied or imported (AGENTS.md section 7; upstream is Electron and TypeScript, LiteCowork is Tauri, Rust and React).
-- **Depends on:** T22
+- **Depends on:** T22, T24
 - **Cross-package prerequisites:** every package's "Package VERIFIED for V1" task: 001-T28, 002-T19, 003-T18, 004-T12, 005-T20, 006-T17, 007-T17, 008-T21, 009-T18, 010-T17, 011-T23, 012-T11, 013-T21, 014-T19, 015-T21, 016-T19, 017-T18, 018-T19, this package's T22, and 020-T17 (IDs re-synced on 2026-11-09 after folding the owner-approved tasks P-00 to P-19; re-check at execution time).
 - **Owner:** Product (repository owner, final decision), Release Engineering, Security, QA.
 - **Allowed paths:** `scripts/v1_release_gate.py` (new), `tests/test_release_gate.py` (new), `docs/release/V1-GO-NO-GO.md` (new), `docs/IMPLEMENTATION-STATUS.md`.
@@ -457,6 +458,26 @@ Gaps to V1: CI, both installers, signing, updater, licensing record, row-aware m
 - **Evidence:** `docs/release/V1-GO-NO-GO.md` with the gate output and owner signature.
 - **Stop:** any listed prerequisite is not VERIFIED; the decision is NO-GO, never an exception.
 
+## 019-T24 - Exact release-row evidence and adopted V1 journey coverage
+
+- **Status:** DONE (CODE) under the product owner's USER-DELEGATED direction recorded in A-109. Feature 019 remains IN_REVIEW; this task does not claim whole-SPEC owner acceptance or release qualification.
+- **Depends on:** T14, T15, and the adopted journey roster in `docs/ACCEPTANCE-AND-E2E-PLAN.md`.
+- **Owner:** Release Engineering, QA, Product.
+- **Allowed paths:** `scripts/v1_platform_matrix.py`, `scripts/v1_release_matrix_rows.json`, `scripts/v1_evidence_bundle.py`, `tests/test_platform_matrix.py`, `tests/test_evidence_bundle.py`, `docs/schemas/release-evidence-bundle.schema.json`, `docs/ACCEPTANCE-AND-E2E-PLAN.md`, `docs/release/QUALIFICATION-MATRIX.md` (generated), `docs/release/QUALIFICATION-MATRIX.json` (generated), `docs/release/README.md`, `specs/019-release-engineering-qualification/README.md`, `SPEC.md`, `PLAN.md`, `TASKS.md`, `DATA-MODEL.md`, `RESEARCH.md`, `WIRING.yaml`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`, `docs/IMPLEMENTATION-STATUS.md`, and `CURRENT-RUN.md`.
+- **Contract:** ACCEPTANCE sections 3, 6 and 7; Feature 019 SPEC AC-012 and AC-013; AGENTS.md evidence vocabulary.
+- **Change intent:** make the generated matrix cover adopted E2E-01..E2E-12 and E2E-14..E2E-17 while leaving conditional E2E-13 out of the V1 release cells; identify the current OpenCode v2.0.32 HTTP/SSE adapter accurately as `opencode-v2-http-sse` until its separate ACP route is implemented and qualified; require evidence bundles to match the declared row's OS minimum/build, architecture, agent/version, authentication mode, protocol, packaged mode and clean-checkout requirement; capture Windows build and Linux distribution/version facts that can be compared against those rows. This adds release evidence integrity and coverage; it removes no product capability.
+- **Acceptance:**
+  - [x] Generator emits all adopted V1 journeys and excludes conditional E2E-13.
+  - [x] Both OpenCode rows declare `opencode-v2-http-sse`, not ACP, for the active adapter.
+  - [x] Mismatched architecture, protocol, auth mode, provider version, OS minimum, dev packaging, or dirty source is BLOCKED with a reason; it never counts as PASSED or QUALIFIED.
+  - [x] Windows OS evidence includes a comparable numeric build; Linux evidence includes distribution name and release; a below-minimum release cannot count.
+  - [x] The generator supplies the current repository HEAD to the matrix builder; an unavailable or mismatched HEAD makes a linked bundle STALE rather than allowing it to count.
+  - [x] Evidence schema requires authentication mode; the bundle assembler and secret scan still reject incomplete or secret-bearing bundles.
+  - [x] Generated matrix remains NOT_COUNTED/NOT_RUN on unsupported evidence and makes no new qualification claim.
+- **Command:** `python -m unittest tests.test_platform_matrix tests.test_evidence_bundle -v`; `python scripts/v1_platform_matrix.py --rows scripts/v1_release_matrix_rows.json --skip-slow-probes`.
+- **Evidence:** `python -m unittest tests.test_platform_matrix tests.test_evidence_bundle -v` passed **34/34**; `python scripts/v1_platform_matrix.py --rows scripts/v1_release_matrix_rows.json --skip-slow-probes` exited 0 and regenerated the matrix on native Windows; `python .specify/scripts/validate_feature_package.py` passed all 20 packages. The generated Windows row remains NOT_RUN except explicit B-35 Windows Task/terminal UNAVAILABLE cells; Linux is NOT_COUNTED because this generator ran on Windows. No native user qualification is implied by these checks; details are in `CURRENT-RUN.md`.
+- **Stop:** any tuple mismatch must remain visible and blocked; never coerce it into a passing row.
+
 ## Implementation and optimization notes (Rust and TypeScript)
 
 Findings from reading the source, folded into the tasks above. They do not add scope.
@@ -466,7 +487,7 @@ Findings from reading the source, folded into the tasks above. They do not add s
 - **Frontend bundle size (T17):** `App.tsx` is 4,523 lines and imports every page eagerly, producing a 1.05 MB main chunk. Route-level `React.lazy` boundaries for heavy pages (Artifacts, Workbench, Automations, Settings) split the chunk without changing behavior; the CI budget keeps it from regressing.
 - **Packaging check is Unix-shaped (T08):** the binary lookup lacks `.exe` and the permission check greps source for `0o700`. Asking the built daemon to self-report its state-directory ACL (Windows) or mode (Linux) replaces a string grep with a behavioral check.
 - **Two Cargo workspaces (T03, T05):** `apps/litecowork-ui/src-tauri` has its own `[workspace]` and `Cargo.lock`, so `cargo test --workspace`, clippy and dependency audits at the root never see it. CI must run each explicitly.
-- **Matrix generator (T14):** `run()` calls are sequential with a 900 s timeout each; probes that do not depend on each other (agent `--version` checks, browser lookups) can run in a bounded thread pool to cut matrix time without changing results.
+- **Matrix generator (T14/T24):** `run()` calls are sequential with a 900 s timeout each; probes that do not depend on each other (agent `--version` checks, browser lookups) can run in a bounded thread pool to cut matrix time without changing results. Row evidence checks must remain deterministic and match the exact declared build/provider/auth/protocol tuple.
 
 ## Dependency order
 

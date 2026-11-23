@@ -4,6 +4,8 @@
 
 ## Currently served Coworker configuration operations
 
+For the delegation-source revision (T19), a missing current API field, an invalid source/strategy pairing, or an override profile outside the Workspace ceiling returns the normal typed invalid-definition or reference-validation error before commit. A conflicting Coworker head returns the existing version conflict. The UI retains the committed revision, marks unsaved edits, and retries only with an explicit new revision command; it never retries by silently converting an override to Workspace defaults. Legacy persisted payloads missing the field decode as `COWORKER_OVERRIDE` and are written with that exact value on the next revision unless the owner changes the setting.
+
 - Workspace mismatch and malformed identity/body fail closed.
 - Stale Coworker/Workspace version or conflicting idempotency replay returns a conflict; reload the current head before preparing a new command. An exact retry reuses the original idempotency key and request payload.
 - Target: PAUSED must fence new proactive/scheduled admission while an explicit owner Task may name a PAUSED Coworker when Task admission permits it. Current code does not fully enforce that target: already-enabled Automations are not rechecked by TriggerHost at occurrence settlement, while the Home composer blocks owner Tasks that the target allows. See register A-22; do not report PAUSED as a complete admission fence.

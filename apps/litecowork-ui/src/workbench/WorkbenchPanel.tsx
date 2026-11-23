@@ -628,7 +628,7 @@ export function WorkbenchPanel({
                 src={browserUrl}
                 title="Embedded page preview"
                 className="browser-live-frame"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                sandbox="allow-scripts allow-forms allow-popups"
                 onError={() => setIframeError(true)}
               />
             )}

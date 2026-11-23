@@ -18,6 +18,8 @@ The authenticated Coworker route group in `apps/litecoworkd/src/coworker_operato
 
 These routes persist Coworker configuration. They do not create a Coworker-owned Conversation, a Coworker-scoped ContextDocument or a LearningCandidate.
 
+`CoworkerRevisionInput.delegation_policy_source` is required by the canonical API. New callers send `WORKSPACE_DEFAULT` with `NATIVE_DEFAULT` and an empty profile override list, or send `COWORKER_OVERRIDE` with a strategy/profile selection that remains inside the Workspace ceiling. The v28 SQLite column is explicitly written and returned in the immutable revision. Legacy persisted definitions without the field decode as `COWORKER_OVERRIDE`; the authenticated current API does not accept omission. The source is a preference input only and does not dispatch a worker or grant authority. Current source does not yet round-trip this contract; see T19 and the current evidence ledger.
+
 ## ContextDocument API boundary
 
 The generic Resource upload request accepts create-time `context_document` metadata. The canonical `ContextDocumentCreateMetadata.kind` enum is narrowed by accepted A-18 to the two kinds the current `domain-workspace::valid_context_document_metadata` accepts:

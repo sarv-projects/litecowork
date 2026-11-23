@@ -61,9 +61,13 @@ fn decode_auth_challenge(body: &[u8], expected_method_id: &str) -> Result<Value,
     })?;
     let kind = object.get("kind").and_then(Value::as_str);
     let method_id = object.get("auth_method_id").and_then(Value::as_str);
-    if !matches!(kind, Some("NATIVE_FLOW_STARTED" | "SECRET_REQUIRED" | "NATIVE_CONFIG_REQUIRED"))
-        || method_id != Some(expected_method_id)
-        || object.get("expires_at").is_some_and(|value| !value.is_null() && !value.is_string())
+    if !matches!(
+        kind,
+        Some("NATIVE_FLOW_STARTED" | "SECRET_REQUIRED" | "NATIVE_CONFIG_REQUIRED")
+    ) || method_id != Some(expected_method_id)
+        || object
+            .get("expires_at")
+            .is_some_and(|value| !value.is_null() && !value.is_string())
     {
         return Err("Local Operator returned an unsupported authentication response".to_owned());
     }
@@ -71,7 +75,10 @@ fn decode_auth_challenge(body: &[u8], expected_method_id: &str) -> Result<Value,
     // native-session material, across the Tauri boundary.
     let mut safe = serde_json::Map::new();
     safe.insert("kind".to_owned(), Value::String(kind.unwrap().to_owned()));
-    safe.insert("auth_method_id".to_owned(), Value::String(expected_method_id.to_owned()));
+    safe.insert(
+        "auth_method_id".to_owned(),
+        Value::String(expected_method_id.to_owned()),
+    );
     if let Some(expires_at) = object.get("expires_at") {
         safe.insert("expires_at".to_owned(), expires_at.clone());
     }
@@ -235,15 +242,19 @@ mod tests {
         .unwrap();
         assert_eq!(decoded.as_object().unwrap().len(), 3);
         assert!(decoded.get("native_handle").is_none());
-        assert!(decode_auth_challenge(
-            br#"{"kind":"NATIVE_FLOW_STARTED","auth_method_id":"other"}"#,
-            "native-login"
-        )
-        .is_err());
-        assert!(decode_auth_challenge(
-            br#"{"kind":"UNKNOWN","auth_method_id":"native-login"}"#,
-            "native-login"
-        )
-        .is_err());
+        assert!(
+            decode_auth_challenge(
+                br#"{"kind":"NATIVE_FLOW_STARTED","auth_method_id":"other"}"#,
+                "native-login"
+            )
+            .is_err()
+        );
+        assert!(
+            decode_auth_challenge(
+                br#"{"kind":"UNKNOWN","auth_method_id":"native-login"}"#,
+                "native-login"
+            )
+            .is_err()
+        );
     }
 }

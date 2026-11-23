@@ -219,6 +219,7 @@ fn definition(value: serde_json::Value) -> Result<CoworkerDefinition, Response> 
         "avatar_ref",
         "role_description",
         "default_lead_agent_binding_id",
+        "delegation_policy_source",
         "delegation_strategy",
         "enabled_delegation_profile_ids",
         "delegation_budget_policy",
@@ -228,7 +229,9 @@ fn definition(value: serde_json::Value) -> Result<CoworkerDefinition, Response> 
         "notification_policy",
     ];
     let object = value.as_object().ok_or_else(invalid)?;
-    if object.keys().any(|key| !FIELDS.contains(&key.as_str())) {
+    if !object.contains_key("delegation_policy_source")
+        || object.keys().any(|key| !FIELDS.contains(&key.as_str()))
+    {
         return Err(invalid());
     }
     let result: CoworkerDefinition = serde_json::from_value(value).map_err(|_| invalid())?;
@@ -270,6 +273,55 @@ fn version(headers: &HeaderMap) -> Result<u64, Response> {
 }
 fn valid_id(id: &str) -> bool {
     !id.trim().is_empty() && id.len() <= 256 && !id.chars().any(char::is_control)
+}
+
+#[cfg(test)]
+mod delegation_source_tests {
+    use super::definition;
+    use serde_json::json;
+
+    #[test]
+    fn current_coworker_revision_requires_delegation_policy_source() {
+        let mut payload = json!({
+            "name": "Assistant",
+            "avatar_ref": null,
+            "role_description": "",
+            "default_lead_agent_binding_id": null,
+            "delegation_policy_source": "WORKSPACE_DEFAULT",
+            "delegation_strategy": "NATIVE_DEFAULT",
+            "enabled_delegation_profile_ids": [],
+            "delegation_budget_policy": null,
+            "lead_failover_policy": null,
+            "interaction_policy": {
+                "read_only_work": "STANDARD_TRUST_POLICY",
+                "draft_creation": "STANDARD_TRUST_POLICY",
+                "external_mutation": "REQUIRE_OWNER_APPROVAL",
+                "destructive_action": "HANDOFF_TO_OWNER",
+                "financial_commitment": "HANDOFF_TO_OWNER"
+            },
+            "context_policy": {
+                "allowed_context_kinds": [],
+                "max_retrieved_items": 0,
+                "retain_task_summaries": false,
+                "require_user_confirmation_for_memory": true
+            },
+            "notification_policy": {
+                "blockers": "ALWAYS",
+                "completion": "ON_SUCCESS",
+                "failures": "ALWAYS"
+            }
+        });
+
+        assert!(definition(payload.clone()).is_ok());
+        payload["delegation_strategy"] = json!("BALANCED");
+        assert!(definition(payload.clone()).is_err());
+        payload["delegation_strategy"] = json!("NATIVE_DEFAULT");
+        payload
+            .as_object_mut()
+            .unwrap()
+            .remove("delegation_policy_source");
+        assert!(definition(payload).is_err());
+    }
 }
 
 fn decode_cursor(

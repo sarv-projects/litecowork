@@ -243,8 +243,8 @@ fn render_unit(daemon: &Path, state_dir: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        install_unit, render_unit, validate_managed_unit, SYSTEMD_STOP_TIMEOUT_SECONDS,
-        UNIT_MARKER, UNIT_NAME,
+        SYSTEMD_STOP_TIMEOUT_SECONDS, UNIT_MARKER, UNIT_NAME, install_unit, render_unit,
+        validate_managed_unit,
     };
     use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
@@ -393,10 +393,12 @@ mod tests {
         let result = install_unit(directory.path(), &daemon, &state_dir);
 
         assert!(result.is_err(), "symlinked unit is rejected");
-        assert!(fs::symlink_metadata(&unit_path)
-            .expect("symlink remains")
-            .file_type()
-            .is_symlink());
+        assert!(
+            fs::symlink_metadata(&unit_path)
+                .expect("symlink remains")
+                .file_type()
+                .is_symlink()
+        );
         assert_eq!(
             fs::read(&target).expect("sentinel remains readable"),
             b"preserve this file"

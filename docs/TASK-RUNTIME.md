@@ -183,8 +183,8 @@ diagnostic does not disable Task creation or specification edits.
 ```text
 {
   workspace_id
-  conversation_id?
-  source_message_refs[]
+  conversation_id?                  // absent/null for a standalone Task
+  source_message_refs[]             // empty for standalone; USER then AGENT for promotion
   objective
   constraints[]
   non_goals[]
@@ -235,9 +235,22 @@ The policy can change the lead binding only; it does not copy grants, approvals,
 native session state, or Environment control. Every lead change gets a fresh planning
 AgentSession and bounded LeadHandoffPacket.
 There is no persisted Task `DRAFT` state in v1; incomplete/unsent composer content remains
-in the Operator until admission succeeds.
-The operator appends the originating ConversationMessage in the same command boundary
-when the Task came from a message. A standalone Task may omit a Conversation.
+in the Operator until admission succeeds. A new Task is committed as `READY`; saving it
+does not begin planning or provider execution.
+
+For explicit Conversation promotion under Feature 005-T12's user-delegated direction
+(2026-11-23; cross-owner review remains pending), `conversation_id` is paired with exactly
+two distinct, ordered `source_message_refs`: the immutable USER prompt followed by its
+AGENT reply. Both already exist in that Conversation and belong to the same settled
+`COMPLETED` turn. The existing messages and their canonical append events are referenced;
+the create command does not append or mutate a Conversation message or turn. In the same
+Task-create transaction, Core stores `Task.conversation_id`, the initial
+`TaskSpecRevision.source_message_refs`, `task.created.v1`, and the idempotency receipt.
+Storage revalidates the Workspace/Conversation/turn lineage, exactly one canonical
+append event per source message, the owner-authored USER message, producer identity, lead
+eligibility, and each submitted input against exact pinned ResourceRefs on the USER
+message. A standalone Task has no Conversation origin and an empty source-message list.
+Projection metadata is a UI visibility hint only; it is not accepted as write authority.
 
 Every `input_refs[]` item must identify a unique same-Workspace Resource revision and have
 exactly the three `PinnedResourceRef` members

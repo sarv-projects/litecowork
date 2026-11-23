@@ -602,6 +602,8 @@ struct TaskViewWire {
 struct TaskDetailRecordWire {
     task_id: String,
     workspace_id: String,
+    #[serde(default)]
+    conversation_id: Option<String>,
     origin_coworker_id: Option<String>,
     origin_coworker_revision: Option<u64>,
     current_spec_revision: u64,
@@ -617,7 +619,10 @@ struct TaskSpecDetailWire {
     task_id: String,
     revision: u64,
     objective: String,
+    #[serde(default)]
+    source_message_refs: Vec<String>,
     input_refs: Vec<PinnedResourceRefWire>,
+    delegation_policy_snapshot: Option<storage_core::ResolvedDelegationPolicySnapshot>,
 }
 
 #[derive(serde::Deserialize)]
@@ -631,6 +636,7 @@ struct TaskSpecHistoryRevisionWire {
     objective: String,
     authored_by: TaskSpecHistoryPrincipalWire,
     created_at: String,
+    delegation_policy_snapshot: Option<storage_core::ResolvedDelegationPolicySnapshot>,
 }
 
 #[derive(serde::Deserialize)]
@@ -649,6 +655,7 @@ struct TaskSpecHistoryRevisionView {
     objective: String,
     authored_by: TaskSpecHistoryPrincipalView,
     created_at: String,
+    delegation_policy_snapshot: Option<storage_core::ResolvedDelegationPolicySnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -671,6 +678,7 @@ impl TaskSpecHistoryRevisionView {
                 kind: revision.authored_by.kind,
             },
             created_at: revision.created_at,
+            delegation_policy_snapshot: revision.delegation_policy_snapshot,
         }
     }
 }
@@ -681,6 +689,7 @@ struct TaskSpecRevisionReceiptView {
     task_id: String,
     revision: u64,
     objective: String,
+    delegation_policy_snapshot: Option<storage_core::ResolvedDelegationPolicySnapshot>,
 }
 
 #[derive(serde::Deserialize)]
@@ -743,11 +752,45 @@ struct PinnedResourceRefView {
     revision_id: String,
 }
 
+fn task_create_request_payload(
+    workspace_id: &str,
+    conversation_id: Option<&str>,
+    source_message_refs: &[String],
+    objective: &str,
+    input_refs: &[PinnedResourceRefInput],
+    preferred_lead_agent_binding_id: &str,
+    coworker_id: Option<&str>,
+    expected_coworker_version: Option<u64>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "workspace_id": workspace_id,
+        "conversation_id": conversation_id,
+        "source_message_refs": source_message_refs,
+        "objective": objective,
+        "constraints": [],
+        "non_goals": [],
+        "input_refs": input_refs.iter().map(|input| serde_json::json!({
+            "workspace_id": input.workspace_id,
+            "resource_id": input.resource_id,
+            "revision_id": input.revision_id,
+        })).collect::<Vec<_>>(),
+        "required_outputs": [],
+        "acceptance_criteria": [],
+        "approvals_required": [],
+        "preferred_lead_agent_binding_id": preferred_lead_agent_binding_id,
+        "coworker_id": coworker_id,
+        "expected_coworker_version": expected_coworker_version,
+        "placement_preference": "AUTO",
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskDetailView {
     task_id: String,
     workspace_id: String,
+    conversation_id: Option<String>,
+    source_message_refs: Vec<String>,
     origin_coworker_id: Option<String>,
     origin_coworker_revision: Option<u64>,
     current_spec_revision: u64,
@@ -756,6 +799,7 @@ struct TaskDetailView {
     task_version: u64,
     objective: String,
     input_refs: Vec<PinnedResourceRefView>,
+    delegation_policy_snapshot: Option<storage_core::ResolvedDelegationPolicySnapshot>,
     plan_spec_revision: Option<u64>,
     plan_is_stale: bool,
     planned_steps: Vec<PlannedStepView>,
@@ -884,6 +928,8 @@ impl From<TaskViewWire> for TaskDetailView {
         Self {
             task_id: view.task.task_id,
             workspace_id: view.task.workspace_id,
+            conversation_id: view.task.conversation_id,
+            source_message_refs: view.current_spec_revision.source_message_refs,
             origin_coworker_id: view.task.origin_coworker_id,
             origin_coworker_revision: view.task.origin_coworker_revision,
             current_spec_revision: view.task.current_spec_revision,
@@ -901,6 +947,7 @@ impl From<TaskViewWire> for TaskDetailView {
                     revision_id: input.revision_id,
                 })
                 .collect(),
+            delegation_policy_snapshot: view.current_spec_revision.delegation_policy_snapshot,
             plan_spec_revision: None,
             plan_is_stale: false,
             planned_steps: Vec::new(),
@@ -2173,6 +2220,8 @@ async fn list_tasks(
 async fn create_task(
     app: AppHandle,
     workspace_id: String,
+    conversation_id: Option<String>,
+    source_message_refs: Vec<String>,
     objective: String,
     preferred_lead_agent_binding_id: String,
     coworker_id: Option<String>,
@@ -2182,6 +2231,21 @@ async fn create_task(
 ) -> Result<TaskDetailView, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let objective = objective.trim();
+        let valid_origin = match conversation_id.as_deref() {
+            None => source_message_refs.is_empty(),
+            Some(id) => {
+                !id.trim().is_empty()
+                    && id.len() <= 256
+                    && !id.chars().any(char::is_control)
+                    && source_message_refs.len() == 2
+                    && source_message_refs[0] != source_message_refs[1]
+                    && source_message_refs.iter().all(|source_id| {
+                        !source_id.trim().is_empty()
+                            && source_id.len() <= 256
+                            && !source_id.chars().any(char::is_control)
+                    })
+            }
+        };
         if workspace_id.trim().is_empty()
             || workspace_id.len() > 200
             || !workspace_id
@@ -2189,6 +2253,7 @@ async fn create_task(
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || objective.is_empty()
             || objective.len() > 32 * 1024
+            || !valid_origin
             || preferred_lead_agent_binding_id.trim().is_empty()
             || preferred_lead_agent_binding_id.len() > 200
             || !preferred_lead_agent_binding_id
@@ -2234,25 +2299,16 @@ async fn create_task(
             .post(format!("{base_url}/tasks"))
             .header("X-Workspace-ID", &workspace_id)
             .header("Idempotency-Key", request_id)
-            .json(&serde_json::json!({
-                "workspace_id": workspace_id,
-                "objective": objective,
-                "constraints": [],
-                "non_goals": [],
-                "source_message_refs": [],
-                "input_refs": input_refs.iter().map(|input| serde_json::json!({
-                    "workspace_id": input.workspace_id,
-                    "resource_id": input.resource_id,
-                    "revision_id": input.revision_id,
-                })).collect::<Vec<_>>(),
-                "required_outputs": [],
-                "acceptance_criteria": [],
-                "approvals_required": [],
-                "preferred_lead_agent_binding_id": preferred_lead_agent_binding_id,
-                "coworker_id": coworker_id,
-                "expected_coworker_version": expected_coworker_version,
-                "placement_preference": "AUTO",
-            }))
+            .json(&task_create_request_payload(
+                &workspace_id,
+                conversation_id.as_deref(),
+                &source_message_refs,
+                objective,
+                &input_refs,
+                &preferred_lead_agent_binding_id,
+                coworker_id.as_deref(),
+                expected_coworker_version,
+            ))
             .send()
             .map_err(|_| {
                 "Local Task service is unavailable; retry this save to reconcile it".to_owned()
@@ -2261,6 +2317,8 @@ async fn create_task(
         let view: TaskViewWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported Task details".to_owned())?;
         if view.task.workspace_id != workspace_id
+            || view.task.conversation_id != conversation_id
+            || view.current_spec_revision.source_message_refs != source_message_refs
             || view.task.origin_coworker_id != coworker_id
             || (view.task.origin_coworker_id.is_some()
                 != view.task.origin_coworker_revision.is_some())
@@ -2268,6 +2326,10 @@ async fn create_task(
             || view.current_spec_revision.task_id != view.task.task_id
             || view.current_spec_revision.revision != view.task.current_spec_revision
             || view.current_spec_revision.objective != objective
+            || view
+                .current_spec_revision
+                .delegation_policy_snapshot
+                .is_none()
             || view.current_spec_revision.input_refs
                 != input_refs
                     .iter()
@@ -2584,6 +2646,7 @@ async fn revise_task_spec(
         if revision.task_id != task_id
             || revision.revision != parent_revision.saturating_add(1)
             || revision.objective != objective
+            || revision.delegation_policy_snapshot.is_none()
             || revision
                 .input_refs
                 .iter()
@@ -2597,6 +2660,7 @@ async fn revise_task_spec(
             task_id: revision.task_id,
             revision: revision.revision,
             objective: revision.objective,
+            delegation_policy_snapshot: revision.delegation_policy_snapshot,
         })
     })
     .await
@@ -2808,14 +2872,12 @@ fn agent_binding_enable_command_plan(
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
     let valid_descriptor_revision = descriptor_revision.is_none_or(|revision| {
-        revision
-            .strip_prefix("sha256:")
-            .is_some_and(|digest| {
-                digest.len() == 64
-                    && digest
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            })
+        revision.strip_prefix("sha256:").is_some_and(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
     });
     if workspace_id.trim().is_empty()
         || !valid_binding_id
@@ -5566,8 +5628,11 @@ pub fn run() {
             artifact_bridge::artifact_library_command,
             conversation_bridge::list_conversations,
             conversation_bridge::list_pending_conversation_creates,
+            conversation_bridge::list_pending_conversation_sends,
             conversation_bridge::create_conversation,
+            conversation_bridge::create_conversation_with_first_turn,
             conversation_bridge::acknowledge_conversation_create,
+            conversation_bridge::acknowledge_conversation_send,
             conversation_bridge::get_conversation,
             conversation_bridge::set_conversation_agent_binding,
             conversation_bridge::submit_conversation_turn,
@@ -6312,19 +6377,18 @@ mod agent_binding_enable_command_tests {
             header(&headers, "X-Agent-Descriptor-Revision"),
             Some(format!("sha256:{}", "a".repeat(64)).as_str())
         );
-        assert_eq!(headers.len(), 4, "the enable request has no extra authority headers");
+        assert_eq!(
+            headers.len(),
+            4,
+            "the enable request has no extra authority headers"
+        );
     }
 
     #[test]
     fn moduleless_enable_omits_the_optional_descriptor_revision_header() {
-        let (_, headers) = agent_binding_enable_command_plan(
-            "workspace-1",
-            "binding-7",
-            12,
-            "request-9",
-            None,
-        )
-        .expect("valid legacy enable command plan");
+        let (_, headers) =
+            agent_binding_enable_command_plan("workspace-1", "binding-7", 12, "request-9", None)
+                .expect("valid legacy enable command plan");
 
         assert_eq!(headers.len(), 3);
         assert_eq!(header(&headers, "X-Agent-Descriptor-Revision"), None);
@@ -6353,13 +6417,173 @@ mod agent_binding_enable_command_tests {
 
     #[test]
     fn enable_command_rejects_binding_ids_that_escape_the_route_segment() {
-        assert!(agent_binding_enable_command_plan(
+        assert!(
+            agent_binding_enable_command_plan(
+                "workspace-1",
+                "binding/other",
+                12,
+                "request-9",
+                None,
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod task_delegation_snapshot_projection_tests {
+    use super::{
+        TaskDetailView, TaskSpecHistoryRevisionView, TaskSpecHistoryRevisionWire,
+        TaskSpecRevisionReceiptView, TaskViewWire,
+    };
+    use serde_json::{Value, json};
+
+    fn snapshot() -> storage_core::ResolvedDelegationPolicySnapshot {
+        serde_json::from_value(json!({
+            "source": "WORKSPACE_DEFAULT",
+            "workspace_settings_revision": 5,
+            "coworker_id": "coworker-1",
+            "coworker_revision": 2,
+            "strategy": "BALANCED",
+            "native_child_model_policy": "AGENT_DEFAULT",
+            "worker_profiles": [{
+                "profile_id": "reviewer",
+                "revision": 3,
+                "worker_model_selection_policy": "PROFILE_CONFIGURED"
+            }],
+            "resolved_at": "2026-10-21T10:00:00.000000000Z"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn current_task_history_and_revision_receipt_preserve_the_same_snapshot() {
+        let expected = snapshot();
+        let expected_value = serde_json::to_value(&expected).unwrap();
+        let task: TaskViewWire = serde_json::from_value(json!({
+            "task": {
+                "task_id": "task-1",
+                "workspace_id": "workspace-1",
+                "origin_coworker_id": "coworker-1",
+                "origin_coworker_revision": 2,
+                "current_spec_revision": 1,
+                "current_plan_revision": null,
+                "status": "READY",
+                "version": 1,
+                "created_at": "2026-10-21T10:00:00Z",
+                "updated_at": "2026-10-21T10:00:00Z"
+            },
+            "current_spec_revision": {
+                "task_id": "task-1",
+                "revision": 1,
+                "objective": "Review the change",
+                "input_refs": [],
+                "delegation_policy_snapshot": expected
+            }
+        }))
+        .unwrap();
+        let task_view = serde_json::to_value(TaskDetailView::from(task)).unwrap();
+        assert_eq!(task_view["delegationPolicySnapshot"], expected_value);
+
+        let history: TaskSpecHistoryRevisionWire = serde_json::from_value(json!({
+            "task_id": "task-1",
+            "workspace_id": "workspace-1",
+            "revision": 1,
+            "parent_revisions": [],
+            "objective": "Review the change",
+            "authored_by": {"principal_id": "owner-local", "kind": "USER"},
+            "created_at": "2026-10-21T10:00:00Z",
+            "delegation_policy_snapshot": expected
+        }))
+        .unwrap();
+        let history_view = TaskSpecHistoryRevisionView::from_wire(history, "workspace-1".into());
+        let history_value = serde_json::to_value(history_view).unwrap();
+        assert_eq!(history_value["delegationPolicySnapshot"], expected_value);
+
+        let receipt = TaskSpecRevisionReceiptView {
+            task_id: "task-1".into(),
+            revision: 2,
+            objective: "Updated objective".into(),
+            delegation_policy_snapshot: Some(expected.clone()),
+        };
+        let receipt_value: Value = serde_json::to_value(receipt).unwrap();
+        assert_eq!(receipt_value["delegationPolicySnapshot"], expected_value);
+    }
+
+    #[test]
+    fn missing_legacy_snapshot_survives_task_projection_as_null() {
+        let task: TaskViewWire = serde_json::from_value(json!({
+            "task": {
+                "task_id": "legacy-task",
+                "workspace_id": "workspace-1",
+                "origin_coworker_id": null,
+                "origin_coworker_revision": null,
+                "current_spec_revision": 1,
+                "current_plan_revision": null,
+                "status": "READY",
+                "version": 1,
+                "created_at": "2026-10-21T10:00:00Z",
+                "updated_at": "2026-10-21T10:00:00Z"
+            },
+            "current_spec_revision": {
+                "task_id": "legacy-task",
+                "revision": 1,
+                "objective": "Legacy task",
+                "input_refs": [],
+                "delegation_policy_snapshot": null
+            }
+        }))
+        .unwrap();
+        let task_view = serde_json::to_value(TaskDetailView::from(task)).unwrap();
+        assert!(task_view["delegationPolicySnapshot"].is_null());
+    }
+}
+
+#[cfg(test)]
+mod task_create_request_payload_tests {
+    use super::{PinnedResourceRefInput, task_create_request_payload};
+    use serde_json::json;
+
+    #[test]
+    fn promotion_request_preserves_the_exact_ordered_source_pair() {
+        let refs = vec!["message-user".to_owned(), "message-agent".to_owned()];
+        let value = task_create_request_payload(
             "workspace-1",
-            "binding/other",
-            12,
-            "request-9",
+            Some("conversation-1"),
+            &refs,
+            "Summarize this",
+            &[],
+            "binding-1",
             None,
-        )
-        .is_err());
+            None,
+        );
+
+        assert_eq!(value["conversation_id"], "conversation-1");
+        assert_eq!(
+            value["source_message_refs"],
+            json!(["message-user", "message-agent"])
+        );
+    }
+
+    #[test]
+    fn standalone_request_has_no_conversation_source_pair() {
+        let value = task_create_request_payload(
+            "workspace-1",
+            None,
+            &[],
+            "Write a report",
+            &[PinnedResourceRefInput {
+                workspace_id: "workspace-1".into(),
+                resource_id: "resource-1".into(),
+                revision_id: "revision-1".into(),
+            }],
+            "binding-1",
+            None,
+            None,
+        );
+
+        assert!(value["conversation_id"].is_null());
+        assert_eq!(value["source_message_refs"], json!([]));
+        assert_eq!(value["input_refs"][0]["revision_id"], "revision-1");
     }
 }

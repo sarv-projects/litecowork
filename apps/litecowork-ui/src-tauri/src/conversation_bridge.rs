@@ -22,6 +22,158 @@ fn valid_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
+fn valid_conversation_turn_receipt(
+    value: &serde_json::Value,
+    conversation_id: &str,
+    expected_preference: &str,
+) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.len() == 7
+        && [
+            "turn_id",
+            "conversation_id",
+            "user_message_id",
+            "status",
+            "accepted_at",
+            "correlation_id",
+            "presentation_preference",
+        ]
+        .iter()
+        .all(|field| object.contains_key(*field))
+        && value
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(conversation_id)
+        && value
+            .get("turn_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(valid_id)
+        && value
+            .get("user_message_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(valid_id)
+        && value
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|status| {
+                matches!(
+                    status,
+                    "OPEN"
+                        | "RUNNING"
+                        | "WAITING_USER"
+                        | "WAITING_DEPENDENCY"
+                        | "CANCEL_REQUESTED"
+                        | "COMPLETED"
+                        | "FAILED"
+                        | "CANCELLED"
+                )
+            })
+        && value
+            .get("accepted_at")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|timestamp| {
+                !timestamp.is_empty()
+                    && timestamp.len() <= 64
+                    && !timestamp.chars().any(char::is_control)
+            })
+        && value
+            .get("correlation_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(valid_id)
+        && value
+            .get("presentation_preference")
+            .and_then(serde_json::Value::as_str)
+            == Some(expected_preference)
+        && matches!(expected_preference, "AUTO" | "SIMPLE" | "RICH")
+}
+
+fn definitive_precommit_turn_refusal(status: u16, value: &serde_json::Value) -> bool {
+    let Some(error) = value.get("error").and_then(serde_json::Value::as_object) else {
+        return false;
+    };
+    if error
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .is_none()
+        || error.get("retryable").and_then(serde_json::Value::as_bool) != Some(false)
+        || !error
+            .get("correlation_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(valid_id)
+    {
+        return false;
+    }
+    let Some(code) = error.get("code").and_then(serde_json::Value::as_str) else {
+        return false;
+    };
+    matches!(
+        (status, code),
+        (400, "INVALID_ARGUMENT" | "INVALID_RESOURCE_REF")
+            | (409, "RESOURCE_STALE" | "CONVERSATION_TURN_IN_PROGRESS")
+            | (
+                422,
+                "INVALID_RESOURCE_REF" | "AGENT_UNAVAILABLE" | "AGENT_NOT_LEAD_ELIGIBLE"
+            )
+    )
+}
+
+fn admitted_send_outcome(
+    receipt: serde_json::Value,
+    conversation_id: &str,
+    presentation_preference: &str,
+) -> Result<serde_json::Value, String> {
+    if !valid_conversation_turn_receipt(&receipt, conversation_id, presentation_preference) {
+        return Err("Local Runtime returned an invalid Conversation turn receipt".to_owned());
+    }
+    Ok(serde_json::json!({"kind": "ADMITTED", "receipt": receipt}))
+}
+
+fn read_send_response(response: LocalOperatorResponse) -> Result<serde_json::Value, String> {
+    let status = response.status();
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_CONVERSATION_RESPONSE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Local Conversation response could not be read".to_owned())?;
+    if bytes.len() > MAX_CONVERSATION_RESPONSE_BYTES {
+        return Err("Local Conversation response exceeds its size limit".to_owned());
+    }
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "Local Runtime returned an unsupported Conversation response".to_owned())?;
+    if !(200..300).contains(&status) {
+        let message = value
+            .pointer("/error/message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Local Conversation operation failed")
+            .to_owned();
+        if definitive_precommit_turn_refusal(status, &value) {
+            let code = value
+                .pointer("/error/code")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "Local Conversation refusal did not contain its code".to_owned())?;
+            return Ok(serde_json::json!({
+                "kind": "REFUSED",
+                "status": status,
+                "code": code,
+                "message": message,
+            }));
+        }
+        return Err(message);
+    }
+    Ok(value)
+}
+
+fn record_send_before_dispatch<T>(
+    journal: &super::conversation_create_journal::ConversationCreateJournal,
+    pending: super::conversation_create_journal::PendingConversationSend,
+    dispatch: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    journal.record_send(pending)?;
+    dispatch()
+}
+
 fn valid_cursor(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_CONVERSATION_CURSOR_BYTES
@@ -453,6 +605,15 @@ pub(crate) async fn list_pending_conversation_creates(
 }
 
 #[tauri::command]
+pub(crate) async fn list_pending_conversation_sends(
+    app: AppHandle,
+) -> Result<Vec<super::conversation_create_journal::PendingConversationSend>, String> {
+    tauri::async_runtime::spawn_blocking(move || conversation_create_journal(&app)?.list_sends())
+        .await
+        .map_err(|_| "Pending Conversation sends could not be loaded".to_owned())?
+}
+
+#[tauri::command]
 pub(crate) async fn acknowledge_conversation_create(
     app: AppHandle,
     workspace_id: String,
@@ -463,6 +624,24 @@ pub(crate) async fn acknowledge_conversation_create(
     })
     .await
     .map_err(|_| "Conversation creation acknowledgement did not complete".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn acknowledge_conversation_send(
+    app: AppHandle,
+    workspace_id: String,
+    conversation_id: String,
+    request_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        conversation_create_journal(&app)?.acknowledge_send(
+            &workspace_id,
+            &conversation_id,
+            &request_id,
+        )
+    })
+    .await
+    .map_err(|_| "Conversation send acknowledgement did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -485,6 +664,7 @@ pub(crate) async fn create_conversation(
                 workspace_id: workspace_id.clone(),
                 title: title.clone(),
                 request_id: request_id.clone(),
+                first_turn: None,
             },
         )?;
         let (client, _) = initialize_create_client(&journal, &workspace_id, &request_id, || {
@@ -515,6 +695,149 @@ pub(crate) async fn create_conversation(
     })
     .await
     .map_err(|_| "Conversation creation request did not complete".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn create_conversation_with_first_turn(
+    app: AppHandle,
+    workspace_id: String,
+    title: Option<String>,
+    request_id: String,
+    first_turn: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let title = super::conversation_create_journal::normalize_title(title)?;
+        if !valid_id(&workspace_id)
+            || !super::conversation_create_journal::valid_request_id(&request_id)
+        {
+            return Err("First Conversation turn request is invalid".to_owned());
+        }
+        let journal = conversation_create_journal(&app)?;
+        let pending = super::conversation_create_journal::PendingConversationCreate {
+            workspace_id: workspace_id.clone(),
+            title: title.clone(),
+            request_id: request_id.clone(),
+            first_turn: Some(first_turn.clone()),
+        };
+        journal.record(pending)?;
+
+        let content = first_turn
+            .get("content")
+            .cloned()
+            .ok_or_else(|| "First Conversation turn content is invalid".to_owned())?;
+        let refs = first_turn
+            .get("resourceRefs")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "First Conversation turn Resources are invalid".to_owned())?;
+        let resource_refs = refs
+            .iter()
+            .map(first_turn_resource_ref_to_wire)
+            .collect::<Result<Vec<_>, _>>()?;
+        let content = content
+            .as_array()
+            .ok_or_else(|| "First Conversation turn content is invalid".to_owned())?
+            .iter()
+            .map(|block| {
+                if block.get("kind").and_then(serde_json::Value::as_str) == Some("RESOURCE") {
+                    let mut block = block.clone();
+                    let reference = block.get("resourceRef").cloned().ok_or_else(|| {
+                        "First Conversation turn Resource block is invalid".to_owned()
+                    })?;
+                    block
+                        .as_object_mut()
+                        .ok_or_else(|| {
+                            "First Conversation turn Resource block is invalid".to_owned()
+                        })?
+                        .remove("resourceRef");
+                    block["resource_ref"] = first_turn_resource_ref_to_wire(&reference)?;
+                    Ok(block)
+                } else {
+                    Ok(block.clone())
+                }
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let agent_binding_id = first_turn
+            .get("agentBindingId")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let presentation_preference = first_turn
+            .get("presentationPreference")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!("AUTO"));
+        let payload = serde_json::json!({
+            "workspace_id": workspace_id,
+            "title": title,
+            "content": content,
+            "resource_refs": resource_refs,
+            "agent_binding_id": agent_binding_id,
+            "presentation_preference": presentation_preference,
+        });
+        // Keep the exact message in the private journal when the local Operator is
+        // unavailable before dispatch; the user can retry after daemon recovery.
+        let (client, _) = operator_client(&app)?;
+        let response = client
+            .post("/v1/conversations/first-turn")
+            .header("X-Workspace-ID", &workspace_id)
+            .header("Idempotency-Key", &request_id)
+            .json(&payload)
+            .send()
+            .map_err(|_| "Local Conversation service is unavailable".to_owned())?;
+        let value = read_create_response(response, &journal, &workspace_id, &request_id)?;
+        let conversation = value.get("conversation");
+        let turn = value.get("turn");
+        let conversation_id = conversation
+            .and_then(|record| record.get("conversation_id"))
+            .and_then(serde_json::Value::as_str);
+        if conversation
+            .and_then(|record| record.get("workspace_id"))
+            .and_then(serde_json::Value::as_str)
+            != Some(workspace_id.as_str())
+            || conversation_id.is_none()
+            || conversation
+                .and_then(|record| record.get("version"))
+                .and_then(serde_json::Value::as_u64)
+                != Some(2)
+            || turn
+                .and_then(|receipt| receipt.get("conversation_id"))
+                .and_then(serde_json::Value::as_str)
+                != conversation_id
+            || turn
+                .and_then(|receipt| receipt.get("turn_id"))
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+            || turn
+                .and_then(|receipt| receipt.get("user_message_id"))
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+            || turn
+                .and_then(|receipt| receipt.get("correlation_id"))
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+        {
+            return Err("Local Runtime returned an invalid first-turn receipt".to_owned());
+        }
+        Ok(value)
+    })
+    .await
+    .map_err(|_| "First Conversation turn request did not complete".to_owned())?
+}
+
+fn first_turn_resource_ref_to_wire(value: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let workspace_id = value
+        .get("workspaceId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "First Conversation turn Resource reference is invalid".to_owned())?;
+    let resource_id = value
+        .get("resourceId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "First Conversation turn Resource reference is invalid".to_owned())?;
+    let revision_id = value
+        .get("revisionId")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    Ok(
+        serde_json::json!({"workspace_id":workspace_id,"resource_id":resource_id,"revision_id":revision_id}),
+    )
 }
 
 #[tauri::command]
@@ -628,6 +951,7 @@ pub(crate) async fn submit_conversation_turn(
     resource_refs: Option<serde_json::Value>,
     agent_binding_id: Option<String>,
     presentation_preference: Option<String>,
+    attachment_labels: Option<Vec<String>>,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !valid_id(&workspace_id)
@@ -636,25 +960,46 @@ pub(crate) async fn submit_conversation_turn(
         {
             return Err("Conversation turn request parameters are invalid".to_owned());
         }
-        let (client, _) = operator_client(&app)?;
-        let mut payload = serde_json::json!({
-            "content": content,
-            "resource_refs": resource_refs.unwrap_or_else(|| serde_json::json!([])),
-            "presentation_preference": presentation_preference.unwrap_or_else(|| "AUTO".to_owned()),
-        });
-        if let Some(binding) = agent_binding_id {
-            payload["agent_binding_id"] = serde_json::json!(binding);
-        }
-        let value = read_json(
-            client
+        let journal = conversation_create_journal(&app)?;
+        let resource_refs = resource_refs.unwrap_or_else(|| serde_json::json!([]));
+        let presentation_preference = presentation_preference.unwrap_or_else(|| "AUTO".to_owned());
+        let pending = super::conversation_create_journal::PendingConversationSend {
+            workspace_id: workspace_id.clone(),
+            conversation_id: conversation_id.clone(),
+            request_id: request_id.clone(),
+            content: content.clone(),
+            resource_refs: resource_refs.clone(),
+            agent_binding_id: agent_binding_id.clone(),
+            presentation_preference: Some(presentation_preference.clone()),
+            attachment_labels: attachment_labels.unwrap_or_default(),
+        };
+        // Durably pin the exact operation before any HTTP dispatch. Any failure below
+        // leaves this request available for same-key replay after reconnect/restart.
+        record_send_before_dispatch(&journal, pending, || {
+            let (client, _) = operator_client(&app)?;
+            let mut payload = serde_json::json!({
+                "content": content,
+                "resource_refs": resource_refs,
+                "presentation_preference": presentation_preference,
+            });
+            if let Some(binding) = agent_binding_id {
+                payload["agent_binding_id"] = serde_json::json!(binding);
+            }
+            let response = client
                 .post(format!("/v1/conversations/{conversation_id}/turns"))
                 .header("X-Workspace-ID", &workspace_id)
                 .header("Idempotency-Key", &request_id)
                 .json(&payload)
                 .send()
-                .map_err(|_| "Local Conversation service is unavailable".to_owned())?,
-        )?;
-        Ok(value)
+                .map_err(|_| "Local Conversation service is unavailable".to_owned())?;
+            let value = read_send_response(response)?;
+            if value.get("kind").and_then(serde_json::Value::as_str) == Some("REFUSED") {
+                // Keep the row until the UI receives this typed result and explicitly
+                // acknowledges it. A lost Tauri command response must remain recoverable.
+                return Ok(value);
+            }
+            admitted_send_outcome(value, &conversation_id, &presentation_preference)
+        })
     })
     .await
     .map_err(|_| "Conversation turn submission did not complete".to_owned())?
@@ -1036,7 +1381,7 @@ mod conversation_cursor_tests {
 mod create_recovery_tests {
     use super::*;
     use crate::conversation_create_journal::{
-        ConversationCreateJournal, PendingConversationCreate,
+        ConversationCreateJournal, PendingConversationCreate, PendingConversationSend,
     };
     use operator_ipc::ResponseHeader;
     use std::{
@@ -1076,6 +1421,20 @@ mod create_recovery_tests {
             workspace_id: "workspace-1".to_owned(),
             title: Some("Draft".to_owned()),
             request_id: "request-1".to_owned(),
+            first_turn: None,
+        }
+    }
+
+    fn pending_send(conversation_id: &str, request_id: &str) -> PendingConversationSend {
+        PendingConversationSend {
+            workspace_id: "workspace-1".to_owned(),
+            conversation_id: conversation_id.to_owned(),
+            request_id: request_id.to_owned(),
+            content: serde_json::json!([{"kind":"TEXT","text":"Keep this draft"}]),
+            resource_refs: serde_json::json!([]),
+            agent_binding_id: Some("binding-1".to_owned()),
+            presentation_preference: Some("RICH".to_owned()),
+            attachment_labels: Vec::new(),
         }
     }
 
@@ -1111,6 +1470,7 @@ mod create_recovery_tests {
             workspace_id: "workspace-2".to_owned(),
             title: Some("Draft".to_owned()),
             request_id: "request-2".to_owned(),
+            first_turn: None,
         };
         journal
             .record(rejected.clone())
@@ -1190,6 +1550,119 @@ mod create_recovery_tests {
     }
 
     #[test]
+    fn typed_precommit_send_refusal_is_structured_until_exact_ui_acknowledgement() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        let rejected = pending_send("conversation-1", "send-1");
+        let unrelated = pending_send("conversation-2", "send-2");
+        journal
+            .record_send(rejected.clone())
+            .expect("record exact rejected send");
+        journal
+            .record_send(unrelated.clone())
+            .expect("record unrelated pending send");
+
+        let refusal = read_send_response(
+            local_response(
+                422,
+                r#"{"error":{"code":"AGENT_UNAVAILABLE","message":"Choose an available agent","retryable":false,"correlation_id":"correlation-1","details":null}}"#,
+            ),
+        )
+        .expect("typed refusal is returned as a closed outcome");
+        assert_eq!(
+            refusal,
+            serde_json::json!({
+                "kind":"REFUSED",
+                "status":422,
+                "code":"AGENT_UNAVAILABLE",
+                "message":"Choose an available agent"
+            })
+        );
+        let contradictory_retryable_refusal = read_send_response(local_response(
+            422,
+            r#"{"error":{"code":"AGENT_UNAVAILABLE","message":"Choose an available agent","retryable":true,"correlation_id":"correlation-3","details":null}}"#,
+        ))
+        .expect_err("retryable outcomes must remain unresolved even with a precommit status/code");
+        assert_eq!(contradictory_retryable_refusal, "Choose an available agent");
+        assert_eq!(
+            journal
+                .list_sends()
+                .expect("row stays until UI acknowledges"),
+            vec![rejected.clone(), unrelated.clone()]
+        );
+        journal
+            .acknowledge_send(
+                &rejected.workspace_id,
+                &rejected.conversation_id,
+                &rejected.request_id,
+            )
+            .expect("UI can acknowledge only the exact typed refusal");
+        assert_eq!(
+            journal.list_sends().expect("unrelated send survives"),
+            vec![unrelated.clone()]
+        );
+
+        let ambiguous = read_send_response(
+            local_response(
+                503,
+                r#"{"error":{"code":"DEPENDENCY_UNAVAILABLE","message":"Provider admission unavailable","retryable":true,"correlation_id":"correlation-2","details":null}}"#,
+            ),
+        )
+        .expect_err("post-commit provider failure is not treated as a precommit refusal");
+        assert_eq!(ambiguous, "Provider admission unavailable");
+        assert_eq!(
+            journal.list_sends().expect("ambiguous request survives"),
+            vec![unrelated]
+        );
+    }
+
+    #[test]
+    fn admitted_send_outcome_stays_journaled_until_exact_ui_acknowledgement() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        let pending = pending_send("conversation-1", "send-1");
+        journal
+            .record_send(pending.clone())
+            .expect("record exact send before dispatch");
+
+        let receipt = serde_json::json!({
+            "turn_id": "turn-1",
+            "conversation_id": "conversation-1",
+            "user_message_id": "message-1",
+            "status": "OPEN",
+            "accepted_at": "2026-11-20T10:15:30Z",
+            "correlation_id": "correlation-1",
+            "presentation_preference": "RICH"
+        });
+        let outcome = admitted_send_outcome(receipt.clone(), "conversation-1", "RICH")
+            .expect("valid receipt returns a structured outcome");
+        assert_eq!(
+            outcome,
+            serde_json::json!({"kind":"ADMITTED","receipt":receipt})
+        );
+        assert_eq!(
+            journal
+                .list_sends()
+                .expect("receipt alone does not remove recovery row"),
+            vec![pending.clone()]
+        );
+
+        journal
+            .acknowledge_send(
+                &pending.workspace_id,
+                &pending.conversation_id,
+                &pending.request_id,
+            )
+            .expect("UI acknowledges exact identity after receiving outcome");
+        assert!(
+            journal
+                .list_sends()
+                .expect("acknowledged row is cleared")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn local_operator_client_initialization_failure_clears_before_any_post() {
         let directory = TestDirectory::new();
         let journal = ConversationCreateJournal::new(directory.path());
@@ -1218,6 +1691,93 @@ mod create_recovery_tests {
                 .expect("preflight failure clears request")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn send_journal_failure_prevents_dispatch() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        let journal_file = directory
+            .path()
+            .join("conversation-create-recovery")
+            .join("pending.v1.json");
+        fs::create_dir_all(&journal_file).expect("create an unreadable journal-file directory");
+        let mut dispatch_started = false;
+
+        let result =
+            record_send_before_dispatch(&journal, pending_send("conversation-1", "send-1"), || {
+                dispatch_started = true;
+                Ok(())
+            });
+
+        assert!(
+            result.is_err(),
+            "unsafe journal storage must refuse the send"
+        );
+        assert!(
+            !dispatch_started,
+            "HTTP dispatch must not start without a journal"
+        );
+    }
+}
+
+#[cfg(test)]
+mod conversation_turn_receipt_tests {
+    use super::*;
+
+    fn receipt(status: &str) -> serde_json::Value {
+        serde_json::json!({
+            "turn_id": "turn-1",
+            "conversation_id": "conversation-1",
+            "user_message_id": "message-1",
+            "status": status,
+            "accepted_at": "2026-11-20T10:15:30Z",
+            "correlation_id": "correlation-1",
+            "presentation_preference": "RICH"
+        })
+    }
+
+    #[test]
+    fn send_receipt_must_match_scope_preference_and_closed_contract() {
+        for status in [
+            "OPEN",
+            "RUNNING",
+            "WAITING_USER",
+            "WAITING_DEPENDENCY",
+            "CANCEL_REQUESTED",
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+        ] {
+            assert!(valid_conversation_turn_receipt(
+                &receipt(status),
+                "conversation-1",
+                "RICH"
+            ));
+        }
+
+        assert!(!valid_conversation_turn_receipt(
+            &receipt("OPEN"),
+            "conversation-2",
+            "RICH"
+        ));
+        assert!(!valid_conversation_turn_receipt(
+            &receipt("OPEN"),
+            "conversation-1",
+            "SIMPLE"
+        ));
+        assert!(!valid_conversation_turn_receipt(
+            &receipt("UNKNOWN"),
+            "conversation-1",
+            "RICH"
+        ));
+        let mut leaked = receipt("OPEN");
+        leaked["native_session_id"] = serde_json::json!("private-handle");
+        assert!(!valid_conversation_turn_receipt(
+            &leaked,
+            "conversation-1",
+            "RICH"
+        ));
     }
 }
 

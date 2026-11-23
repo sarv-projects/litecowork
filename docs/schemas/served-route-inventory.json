@@ -865,6 +865,13 @@
     },
     {
       "method": "POST",
+      "path": "/v1/conversations/first-turn",
+      "openapi_path": "/conversations/first-turn",
+      "operation_id": "createConversationWithFirstTurn",
+      "source": "apps/litecoworkd/src/conversation_operator.rs"
+    },
+    {
+      "method": "POST",
       "path": "/v1/conversations/{conversation_id}/turns",
       "openapi_path": "/conversations/{conversationId}/turns",
       "operation_id": "submitConversationTurn",

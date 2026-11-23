@@ -521,7 +521,7 @@ pub(crate) async fn respond_user_request(
 #[cfg(test)]
 mod response_input_tests {
     use super::response_input_wire;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     #[test]
     fn explicit_json_null_is_forwarded_as_a_present_response() {

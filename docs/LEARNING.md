@@ -6,9 +6,13 @@ crates already exist. The target must land in the actual `domain-responsibility`
 `domain-rag`, `storage-core`/`storage-sqlite`, `apps/litecoworkd` and UI owners,
 with separately reviewed boundaries for any new crates.
 
-**Current implementation checkpoint (2026-11-12; source checkpoint 6adadab):** `storage-core/src/coworker_learning.rs`
-exports candidate/policy types and deterministic eligibility, redaction, conflict and
-auto-commit gates. The deterministic learning evaluation/policy path has no production
+**Current implementation checkpoint (2026-11-20; working-tree CODE, not committed):**
+`crates/domain-responsibility/src/learning_gates.rs` owns the canonical pure candidate/policy
+types and deterministic eligibility, redaction, conflict and auto-commit gates;
+`crates/storage-core/src/coworker_learning.rs` is a compatibility re-export. The gate now
+rejects source-kind/channel spoofing, returns no permitted kind for untrusted channels, and
+emits stable disposition tokens (`AUTO_COMMIT`, `NEEDS_REVIEW`, `REJECTED`, `DEDUPLICATED`).
+Its 34 focused tests pass on native Windows. The deterministic learning evaluation/policy path has no production
 caller, candidate persistence or LearningService. Its `redact_sensitive_content` helper
 is reused by `storage-core/src/skill.rs` for SkillProposal intake; that shared redactor
 does not mean SkillProposal is being fed by a live LearningCandidate pipeline. There is
@@ -714,7 +718,9 @@ learning.feedback.recorded.v1
 coworker.learning_policy.revised.v1
 ```
 
-Event payloads contain IDs/digests/reason codes, not full candidate text.
+Event payloads contain IDs/digests/reason codes, not full candidate text. When present,
+`disposition` is one of the stable tokens `AUTO_COMMIT`, `NEEDS_REVIEW`, `REJECTED`, or
+`DEDUPLICATED`; implementations must not serialize Rust `Debug` names as wire values.
 
 ## 20. State machine
 
@@ -783,7 +789,7 @@ algorithms and classifier interfaces belong to the existing responsible owners:
 | Role | Current source location / implementation status |
 |---|---|
 | Coworker configuration policy | `crates/domain-responsibility/src/models.rs` owns the persisted `CoworkerContextPolicy` configuration type (allowed context kinds, max items, Task-summary-retention flag and legacy memory-confirmation field). CoworkerService persists this JSON as part of CoworkerRevision. It is not the separate `CoworkerLearningPolicy` described in this document. |
-| Deterministic learning data types and gates | `crates/storage-core/src/coworker_learning.rs` defines `CoworkerLearningPolicy`, `LearningCandidate`, payload/metadata types, source eligibility, secret-shaped redaction, sensitivity/conflict/auto-commit decisions and event-payload shape. It is a pure deterministic module; its own module header says it does not classify free text, call a model or persist anything. Module tests exercise these deterministic functions. The `redact_sensitive_content` helper is reused at `crates/storage-core/src/skill.rs` in SkillProposal intake. |
+| Deterministic learning data types and gates | `crates/domain-responsibility/src/learning_gates.rs` is the canonical pure module defining `CoworkerLearningPolicy`, `LearningCandidate`, payload/metadata types, source eligibility, secret-shaped redaction, sensitivity/conflict/auto-commit decisions and event-payload shape. It does not classify free text, call a model or persist anything. `crates/storage-core/src/coworker_learning.rs` and the storage-core crate-root exports preserve compatibility. The `redact_sensitive_content` helper is reused at `crates/storage-core/src/skill.rs` in SkillProposal intake. |
 | Learning classification/provider | **Not implemented in active production source.** No production caller of `evaluate_learning_candidate`, `classify_learning_conflict` or the Coworker learning policy was found in `apps/` or other crates, and no qualified agent-backed classifier exists. The SkillProposal redactor call is a shared sensitivity scan, not a LearningCandidate producer. |
 | Candidate and MemoryRecord persistence | **Not implemented.** No `storage-sqlite` learning module, LearningCandidate/MemoryRecord migration or table, candidate payload Resource commit path, policy revision store or transactional auto-commit service was found. |
 | Learning commands and events | **Not implemented.** No LearningService, Operator routes for learning policy/candidate/memory, or production learning event producer is mounted. Proposed API/event shapes in §§11, 18–19 remain target contracts and must be promoted with schemas, storage and routes together. |

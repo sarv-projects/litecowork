@@ -1,9 +1,9 @@
 # Implementation Plan - Conversation Session Supervisor and Native Turn Execution
 
-**Feature:** 001 | **Spec:** SPEC.md revision 1.1
+**Feature:** 001 | **Spec:** revision 1.1 ACCEPTED/LOCKED; revision 1.2 IN_REVIEW (T30 user-delegated direction)
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Updated:** 2026-11-12 (sequencing and evidence cross-check)
-**Rule:** Implementation evidence is recorded separately from qualification. The authoritative work list is [TASKS.md](TASKS.md) (T01 to T28, with a dependency graph reviewed 2026-11-12); the phase table below is the summary view.
+**Updated:** 2026-11-23 (T30 CODE/SERVED completion and explicit T09 dependency on T29-T30)
+**Rule:** Implementation evidence is recorded separately from qualification. The authoritative work list is [TASKS.md](TASKS.md) (T01 to T30, with T29/T30 user-delegated and not external owner ratification); the phase table below is the summary view.
 
 ## 1. Delivery strategy
 
@@ -30,11 +30,14 @@ flowchart TD
   T8 --> T20[Coordinator and failure settlement]
   T20 --> T21[Cross-layer trace]
   T21 --> T22[Source evidence sync]
-  T23[Capture pinned provider fixture] --> T24[Confirm event normalization]
+  T21 --> T29[Atomic New Chat first-send]
+  T29 --> T30[Existing Conversation exact-send recovery]
+  T30 --> T9[System and owner qualification]
+  T23[Capture live pinned provider fixture] --> T9[Native provider qualification]
+  T24[Implement pinned-source event normalization]
   T24 --> T25[Activity records and UI]
   T25 --> T27[Permission decision path]
   T24 --> T27
-  T21 --> T9[System and owner qualification]
   T22 --> T28[VERIFIED after owner sign-off]
   T9 --> T28
 ```
@@ -49,9 +52,9 @@ flowchart TD
 | D - one adapter | T04 | Version-pinned adapter handshake, prompt transport, normalized terminal/delta/error/stop observations | Provider conformance fixtures and exact readiness proof |
 | E - context dispatch | T05 | Same-Workspace bounded transcript, supported resource preparation and explicit oversize behavior | Context/resource boundary and prompt delivery tests |
 | F - durable result | T06 | Atomic AGENT message + terminal turn + event/snapshot/receipt | Failure injection at every transaction boundary passes |
-| G - user lifecycle and recovery | T07, T08, T10-T18, T20 | Stop/Retry, durable dispatch intent, single-flight, UserRequest, stream/reconnect, attachments, usage, composer and all admitted-failure settlement | UI/daemon/DB integration, race and restart tests |
-| H - event evidence and presentation | T23-T27 | Pinned OpenCode fixture, normalizer, REPORTED activity, scroll behavior and native permission display/reply when supported | Exact event contract, provider fixture, denial and recovery evidence |
-| I - cross-layer evidence and qualification | T21, T22, T09, T28 | Complete operation traces, source status sync, Windows x64 + OpenCode v2.0.32 first, then a separate native Linux row; VERIFIED only after owner sign-off | Full CODE/SYSTEM/USER/recovery report; qualification is per exact tuple |
+| G - user lifecycle and recovery | T07, T08, T10-T18, T20, T29-T30 | Stop/Retry, durable dispatch intent, single-flight, UserRequest, stream/reconnect, attachments, usage, composer, atomic first New Chat send, existing-Conversation exact-send recovery and admitted-failure settlement | UI/daemon/DB integration, race and restart tests |
+| H - event evidence and presentation | T23-T27 | Source-contract normalizer, live provider fixture, REPORTED activity, scroll behavior and native permission display/reply when supported | Exact event contract; T23 real provider capture; denial and recovery evidence. Source-derived synthetic fixtures can test CODE but cannot close T23 or qualification. |
+| I - cross-layer evidence and qualification | T21, T22, T09, T28 | Complete operation traces, source status sync, then Windows x64 + OpenCode v2.0.32 first and a separate native Linux row; T09 consumes T29's atomic New Chat admission and T30's exact existing-Conversation recovery; VERIFIED only after owner sign-off | Full CODE/SYSTEM/USER/recovery report; qualification is per exact tuple |
 
 ## 4. Scope and file ownership (candidate paths, re-inspect before implementation)
 

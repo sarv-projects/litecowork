@@ -174,3 +174,25 @@ test("the Workbench module keeps no fabricated process, diff or containment clai
   assert.doesNotMatch(source, /additions \/ -1 deletions/);
   assert.match(source, /Embedded page preview/, "the browser pane states what it really is");
 });
+
+test("no iframe combines scripts with same-origin access", async () => {
+  const source = await readFile(join(packageRoot, "src/workbench/WorkbenchPanel.tsx"), "utf8");
+  const iframeOpeningTags = [...source.matchAll(/<iframe\b[^>]*>/gi)].map((match) => match[0]);
+  const sandboxAttributes = iframeOpeningTags
+    .map((tag) => tag.match(/\bsandbox="([^"]*)"/i)?.[1])
+    .filter((value) => value !== undefined)
+    .map((value) => value.split(/\s+/));
+
+  assert.equal(
+    sandboxAttributes.length,
+    iframeOpeningTags.length,
+    "every iframe must declare an explicit sandbox policy",
+  );
+
+  for (const tokens of sandboxAttributes) {
+    assert.ok(
+      !(tokens.includes("allow-scripts") && tokens.includes("allow-same-origin")),
+      "an iframe must not combine script execution with same-origin privileges",
+    );
+  }
+});

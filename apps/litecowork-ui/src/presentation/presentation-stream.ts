@@ -195,7 +195,10 @@ export function reducePresentationFrame(
       const linkedItems: unknown[] = [];
       for (const wrapper of payload.items) {
         const entry = object(wrapper);
-        if (!entry || !exactKeys(entry, ["message", "rich_presentation", "linked_items"]) || !Array.isArray(entry.linked_items)) return state;
+        if (!entry
+          || !(exactKeys(entry, ["message", "rich_presentation", "linked_items"])
+            || exactKeys(entry, ["message", "rich_presentation", "linked_items", "turn_status"]))
+          || !Array.isArray(entry.linked_items)) return state;
         linkedItems.push(...entry.linked_items);
       }
       const parsedLinkedItems = linkedItems.map(parsePresentationItem);

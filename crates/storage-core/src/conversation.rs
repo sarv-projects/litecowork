@@ -267,6 +267,30 @@ pub struct CreateConversationTurnCommit {
     pub turn_event: EventDraft,
 }
 
+/// Atomically creates a new Conversation and admits its first USER turn. The one request
+/// identity covers the Conversation, message, turn, events, receipt and dispatch intent.
+#[derive(Clone, Debug)]
+pub struct CreateConversationWithFirstTurnCommit {
+    pub request: WorkspaceCreateRequest,
+    pub principal_id: String,
+    pub workspace_id: String,
+    pub conversation: ConversationRecord,
+    pub conversation_event: EventDraft,
+    pub message: ConversationMessageRecord,
+    pub turn: ConversationTurn,
+    pub message_event: EventDraft,
+    pub turn_event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommittedConversationFirstTurn {
+    pub conversation: ConversationRecord,
+    pub message: ConversationMessageRecord,
+    pub turn: ConversationTurn,
+    pub events: Vec<DomainEvent>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommittedConversationTurn {
@@ -353,6 +377,13 @@ pub trait ConversationTurnStore: Send + Sync {
         &self,
         commit: CreateConversationTurnCommit,
     ) -> Result<CommittedConversationTurn, StoreError>;
+
+    /// Atomically commits the first USER message and OPEN turn with the new Conversation,
+    /// their events, the idempotency receipt and the UNCLAIMED dispatch intent.
+    fn create_conversation_with_first_turn(
+        &self,
+        commit: CreateConversationWithFirstTurnCommit,
+    ) -> Result<CommittedConversationFirstTurn, StoreError>;
 
     /// Atomically commits the final AGENT response message, settles the turn,
     /// closes the agent session, cleans up the local host binding, and writes

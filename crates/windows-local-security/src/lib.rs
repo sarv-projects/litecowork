@@ -296,6 +296,30 @@ pub fn windows_absolute_paths_overlap(
 #[cfg(windows)]
 pub use win32::ContainedChild;
 
+/// Local evidence used to bind a process ID to its start, executable, and token owner.
+/// This value is private Runtime state and must not be projected or logged.
+#[cfg(windows)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentProcessDetails {
+    pub process_id: u32,
+    pub creation_filetime: u64,
+    pub owner_sid: Vec<u8>,
+    pub executable_path: std::path::PathBuf,
+}
+
+/// Read identity evidence through the still-owned process handle returned at spawn.
+#[cfg(windows)]
+pub fn contained_child_process_details(child: &ContainedChild) -> io::Result<AgentProcessDetails> {
+    win32::contained_child_process_details(child)
+}
+
+/// Reopen a prior process ID for read-only identity comparison. A missing process is
+/// returned as `None`; any other observation failure remains an error.
+#[cfg(windows)]
+pub fn agent_process_details(process_id: u32) -> io::Result<Option<AgentProcessDetails>> {
+    win32::agent_process_details(process_id)
+}
+
 /// Starts a process suspended, assigns it to a kill-on-close Job Object, and returns it without
 /// allowing its main thread to execute. If containment setup fails, the suspended process is
 /// terminated and reaped; no uncontained process is returned.
@@ -394,9 +418,10 @@ mod win32 {
     };
     use windows_sys::Win32::{
         Foundation::{
-            CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_FILES, GENERIC_READ,
-            GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, LocalFree, OBJ_DONT_REPARSE,
-            STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_EXISTS, UNICODE_STRING,
+            CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES,
+            FILETIME, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+            LocalFree, OBJ_DONT_REPARSE, STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_EXISTS,
+            UNICODE_STRING,
         },
         Globalization::{CSTR_EQUAL, CompareStringOrdinal},
         Security::Authorization::{
@@ -404,11 +429,11 @@ mod win32 {
             SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
         },
         Security::{
-            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetSecurityDescriptorControl,
-            GetSecurityDescriptorDacl, GetTokenInformation, OWNER_SECURITY_INFORMATION,
-            PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
-            SID_AND_ATTRIBUTES, TOKEN_GROUPS, TOKEN_QUERY, TokenLogonSid,
-            UNPROTECTED_DACL_SECURITY_INFORMATION,
+            DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetLengthSid,
+            GetSecurityDescriptorControl, GetSecurityDescriptorDacl, GetTokenInformation,
+            IsValidSid, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+            SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, TOKEN_GROUPS, TOKEN_QUERY,
+            TOKEN_USER, TokenLogonSid, TokenUser, UNPROTECTED_DACL_SECURITY_INFORMATION,
         },
         Storage::FileSystem::{
             CreateFileW, DELETE, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_COMPRESSED,
@@ -437,8 +462,9 @@ mod win32 {
                 QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
             },
             Threading::{
-                CREATE_SUSPENDED, GetCurrentProcess, OpenProcess, OpenProcessToken, OpenThread,
-                PROCESS_SET_QUOTA, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME,
+                CREATE_SUSPENDED, GetCurrentProcess, GetProcessTimes, OpenProcess,
+                OpenProcessToken, OpenThread, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
+                PROCESS_TERMINATE, QueryFullProcessImageNameW, ResumeThread, THREAD_SUSPEND_RESUME,
             },
         },
     };
@@ -499,6 +525,138 @@ mod win32 {
 
     fn containment_error() -> io::Error {
         io::Error::other("Windows process containment setup failed")
+    }
+
+    fn read_agent_process_details(
+        process: HANDLE,
+        process_id: u32,
+    ) -> io::Result<super::AgentProcessDetails> {
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        // SAFETY: `process` is a borrowed process handle and each FILETIME pointer
+        // names a writable, correctly aligned output value.
+        if unsafe { GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) }
+            == 0
+        {
+            return Err(redacted_error());
+        }
+        let creation_filetime =
+            (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+        if creation_filetime == 0 {
+            return Err(redacted_error());
+        }
+
+        let mut image = vec![0_u16; 32_768];
+        let mut image_length = image.len() as u32;
+        // SAFETY: `image` has `image_length` writable UTF-16 units and the handle
+        // grants limited query access. The API writes no more than that length.
+        if unsafe { QueryFullProcessImageNameW(process, 0, image.as_mut_ptr(), &mut image_length) }
+            == 0
+            || image_length == 0
+            || image_length as usize > image.len()
+        {
+            return Err(redacted_error());
+        }
+        let executable_path = std::path::PathBuf::from(
+            String::from_utf16(&image[..image_length as usize]).map_err(|_| redacted_error())?,
+        );
+        if !executable_path.is_absolute() {
+            return Err(redacted_error());
+        }
+
+        let mut token = ptr::null_mut();
+        // SAFETY: `process` is a borrowed handle and `token` is a writable output slot.
+        let opened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
+        if opened == 0 || token.is_null() || token == INVALID_HANDLE_VALUE {
+            return Err(redacted_error());
+        }
+        let token = OwnedHandle(token);
+        let mut required = 0_u32;
+        // SAFETY: Null output buffer and zero length are the documented sizing query.
+        let queried =
+            unsafe { GetTokenInformation(token.0, TokenUser, ptr::null_mut(), 0, &mut required) };
+        // SAFETY: Capture the error from the immediately preceding sizing query.
+        let query_error = unsafe { GetLastError() };
+        if queried != 0
+            || query_error != ERROR_INSUFFICIENT_BUFFER
+            || required == 0
+            || required as usize > MAX_TOKEN_INFO_BYTES
+        {
+            return Err(redacted_error());
+        }
+        let word_count = (required as usize).div_ceil(size_of::<usize>());
+        let mut information = vec![0_usize; word_count];
+        let mut returned = 0_u32;
+        // SAFETY: `information` is suitably aligned and has at least `required`
+        // writable bytes. The token remains owned through the call.
+        let fetched = unsafe {
+            GetTokenInformation(
+                token.0,
+                TokenUser,
+                information.as_mut_ptr().cast(),
+                required,
+                &mut returned,
+            )
+        };
+        let information_start = information.as_ptr() as usize;
+        let information_end = information_start
+            .checked_add(returned as usize)
+            .ok_or_else(redacted_error)?;
+        if fetched == 0 || returned == 0 || returned > required {
+            return Err(redacted_error());
+        }
+        // SAFETY: `returned` includes the TOKEN_USER header, and the queried API
+        // returned that structure in this aligned buffer.
+        let token_user = unsafe { ptr::read_unaligned(information.as_ptr().cast::<TOKEN_USER>()) };
+        if token_user.User.Sid.is_null() || unsafe { IsValidSid(token_user.User.Sid) } == 0 {
+            return Err(redacted_error());
+        }
+        let sid_length = unsafe { GetLengthSid(token_user.User.Sid) } as usize;
+        let sid_start = token_user.User.Sid as usize;
+        let sid_end = sid_start
+            .checked_add(sid_length)
+            .ok_or_else(redacted_error)?;
+        if sid_length == 0 || sid_end > information_end || sid_start < information_start {
+            return Err(redacted_error());
+        }
+        // SAFETY: SID bounds above prove this exact byte slice lies inside the
+        // initialized GetTokenInformation output buffer.
+        let owner_sid = unsafe {
+            std::slice::from_raw_parts(token_user.User.Sid.cast::<u8>(), sid_length).to_vec()
+        };
+        Ok(super::AgentProcessDetails {
+            process_id,
+            creation_filetime,
+            owner_sid,
+            executable_path,
+        })
+    }
+
+    pub(super) fn contained_child_process_details(
+        child: &ContainedChild,
+    ) -> io::Result<super::AgentProcessDetails> {
+        use std::os::windows::io::AsRawHandle;
+        read_agent_process_details(child.child.as_raw_handle().cast(), child.id())
+    }
+
+    pub(super) fn agent_process_details(
+        process_id: u32,
+    ) -> io::Result<Option<super::AgentProcessDetails>> {
+        // SAFETY: A PID is only a lookup key here. The returned handle is used to
+        // compare its creation time, image and owner before any action is considered.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if process.is_null() || process == INVALID_HANDLE_VALUE {
+            // SAFETY: Read the error from the immediately preceding OpenProcess call.
+            let error = unsafe { GetLastError() };
+            if error == ERROR_INVALID_PARAMETER {
+                return Ok(None);
+            }
+            return Err(redacted_error());
+        }
+        let process = OwnedHandle(process);
+        read_agent_process_details(process.0, process_id).map(Some)
     }
 
     fn relative_create_error(status: i32) -> io::Error {

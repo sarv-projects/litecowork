@@ -786,6 +786,12 @@ occurs before session lookup or Task mutation. This fail-closed statement applie
 TASK_PLANNING only. Conversation turn admission now atomically writes the USER message,
 OPEN turn, durable UNCLAIMED dispatch intent, and request receipt, with a transactional
 single-flight guard; SQLite also exposes compare-and-swap intent claiming and settlement.
+The exact existing-turn receipt lookup is the idempotency boundary for desktop recovery:
+after owner/Workspace/Conversation authorization and request canonicalization, the Operator
+checks the receipt before mutable Resource admission checks. A matching receipt is returned
+as stored for any turn status and cannot enqueue another dispatch; no receipt continues
+through fresh admission and its current Resource/binding checks. The desktop's pending-send
+journal is private retry material only, not a second receipt store.
 The daemon has a startup sweep that fails prior-incarnation unsettled turns closed and
 releases stranded STARTING sessions rather than resuming native sessions. Retry creates a
 new intent atomically with reopening the FAILED turn. The current OpenCode-only supervisor
@@ -1177,12 +1183,18 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   and the same Attempt/session/runtime identities. Conversation sessions remain unbound. The migration
   creates no Environment, Attempt, lease, Effect, grant or ApprovalUse, and the Task admission/provider
   path remains fail-closed.
+- migration 34 (`schemas/sqlite-v34.sql`, Feature 015 T22; user-delegated implementation direction,
+  Feature 015 remains IN_REVIEW) enriches already non-null v28 TaskSpec delegation snapshots from
+  their immutable Task/Coworker/Workspace-settings/profile-revision records, then replaces the v28
+  insert guard with closed-shape, identity, Workspace-ceiling, strategy and profile-policy checks.
+  Pre-v28 NULL history remains NULL and is presented as unavailable; migration does not infer past
+  policy from current mutable settings. Snapshot values are immutable after insertion.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
   the schema-object fingerprint at that migration boundary. Reopening verifies every
   recorded migration name/source checksum and compares the active schema version's
   fingerprint with the current non-internal `sqlite_master` objects; historical
   fingerprints are retained because later migrations intentionally add schema objects.
-  The current wired schema version is 33, so the v33 fingerprint is checked against the full
+  The current wired schema version is 34, so the v34 fingerprint is checked against the full
   current schema. Missing migration records, changed
   source checksums, or changed current schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances
@@ -1378,15 +1390,18 @@ secret-shaped raw values in fields that are contractually non-secret where feasi
 
 ## Target connector/workflow/learning storage migration
 
-Accepted target records from [Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and
-[Learning](LEARNING.md) require an explicit future migration; they are not claimed by the
-current SQLite version.
+Accepted and proposed target records from [Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and
+[Learning](LEARNING.md) require explicit future migrations; they are not claimed by the
+current SQLite version. Feature 006 revision 1.1 is IN_REVIEW with USER-DELEGATED direction,
+not a shipped or accepted migration.
 
 Planned logical storage:
 
 ~~~text
 connections                         # extend existing normalized metadata only
-auth_attempts                       # no token/code/verifier bytes
+auth_attempts                       # proposed: purpose/state/version/expiry, optional connection id,
+                                    # bounded correlation metadata and private staged SecretRef IDs;
+                                    # no token/code/verifier bytes
 task_conversation_links             # unique PRIMARY_FOLLOW_UP per Task
 learning_candidates                 # Resource-backed proposed payload refs
 coworker_learning_policy_revisions
@@ -1394,19 +1409,29 @@ memory_record_metadata
 feedback_records
 
 # Runtime-local encrypted/operational:
-oauth_loopback_attempt_bindings
 workflow_run_bindings
 connector_provider_bindings
 ~~~
+
+For Feature 006 device authorization, the device code is bounded process memory only; the
+user code is returned only to the authenticated Settings UI. Neither code is persisted in
+SQLite, events, logs, Conversation or agent context. Before token bytes reach the OS
+SecretStore, `AuthAttempt` stores caller-generated opaque access/refresh `SecretRef` IDs and
+enters `TOKEN_CUSTODY_PENDING`. `write_at` is create-only; a committed Connection and the
+AuthAttempt-to-Connection reference transfer commit atomically. Startup removes only staged
+refs not owned by a committed Connection, records `CLEANUP_PENDING` if cleanup fails, and
+retries idempotent removal. This contract is TARGET until Feature 006 T01/T03/T14 implement it.
 
 Required constraints include same-Workspace ownership, SecretRefs-only Connection secret
 fields, no OAuth verifier/code/token SQL fields, unique primary Task follow-up, immutable
 Resource-backed learning payload provenance, versioned learning policies, and
 incarnation-fenced provider handles excluded from Workspace backup/replication.
 
-Migration/race tests must cover token-exchange-then-commit failure, duplicate callback,
-scope downgrade, revoke during Invocation, duplicate follow-up creation, auto-commit
-versus user correction, and daemon restart.
+Migration/race tests must cover device authorization replay/cancel/expiry, staged keyring
+write and Connection-commit crash boundaries, cleanup failure and restart, committed-SecretRef
+preservation, ambiguous refresh-token rotation without blind replay, scope downgrade, revoke
+during Invocation, duplicate follow-up creation, auto-commit versus user correction, and
+daemon restart.
 
 ## V1 detailed design integration — 2026-10-12
 

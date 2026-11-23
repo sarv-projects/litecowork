@@ -341,6 +341,7 @@ impl OpenCodeServerConfig {
 /// Environment independently before replacing an Attempt.
 pub(crate) struct OpenCodeServer {
     child: AgentChild,
+    process_identity_ref: String,
     address: SocketAddr,
     password: Vec<u8>,
     request_timeout: Duration,
@@ -403,6 +404,7 @@ impl OpenCodeServer {
         // below drops this value, which kills and waits for the direct child.
         let mut server = Self {
             child,
+            process_identity_ref: String::new(),
             address: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
             password,
             request_timeout: config.request_timeout,
@@ -460,6 +462,9 @@ impl OpenCodeServer {
                     ) =>
                 {
                     server.request_timeout = config.request_timeout;
+                    server.process_identity_ref =
+                        super::process_identity::capture(&server.child)
+                            .map_err(|_| OpenCodeError::ProcessObservationFailed)?;
                     return Ok(server);
                 }
                 Ok(response) if response.status == 401 || response.status == 403 => {
@@ -491,7 +496,7 @@ impl OpenCodeServer {
     /// Runtime-local process identity for the private AgentHostInstance row.
     /// This is not a native handle and is never projected or logged.
     pub(crate) fn process_identity_ref(&self) -> String {
-        format!("pid:{}", self.child.id())
+        self.process_identity_ref.clone()
     }
 
     /// Reads the native provider connection summary. This is deliberately
@@ -656,6 +661,22 @@ impl OpenCodeServer {
             }
         })?;
         self.send_message_async(session_id, native_message_id, &prompt, None)
+    }
+
+    /// Opens the volatile event feed successfully before dispatching the
+    /// Conversation prompt, then returns that exact feed to the turn driver.
+    /// The caller must retain it for the complete turn. If subscription fails,
+    /// the prompt is never sent; if prompt dispatch fails, the local stream is
+    /// dropped and must not be reused.
+    pub(crate) fn subscribe_before_sending_conversation_context(
+        &mut self,
+        session_id: &str,
+        native_message_id: &str,
+        context: &ConversationContextPackage,
+    ) -> Result<OpenCodeEventStream, OpenCodeError> {
+        let stream = self.subscribe_events()?;
+        self.send_conversation_context_async(session_id, native_message_id, context)?;
+        Ok(stream)
     }
 
     /// Requests cancellation of one native OpenCode session. `true` is only
@@ -1645,6 +1666,7 @@ mod tests {
         child.resume().expect("resume disposable child");
         let mut server = OpenCodeServer {
             child,
+            process_identity_ref: String::new(),
             address,
             password: b"test-password".to_vec(),
             request_timeout: Duration::from_secs(3),
@@ -1752,6 +1774,7 @@ mod tests {
         child.resume().expect("resume disposable child");
         let mut server = OpenCodeServer {
             child,
+            process_identity_ref: String::new(),
             address,
             password: b"test-password".to_vec(),
             request_timeout: Duration::from_millis(50),
@@ -1846,6 +1869,7 @@ mod tests {
         child.resume().expect("resume disposable child");
         let mut server = OpenCodeServer {
             child,
+            process_identity_ref: String::new(),
             address,
             password: b"test-password".to_vec(),
             request_timeout: Duration::from_secs(10),
@@ -2099,6 +2123,8 @@ mod tests {
         let mut child = AgentChild::spawn(command).expect("spawn disposable child");
         child.resume().expect("resume disposable child");
         let mut server = OpenCodeServer {
+            process_identity_ref: super::super::process_identity::capture(&child)
+                .expect("capture disposable child identity"),
             child,
             address,
             password: b"test-password".to_vec(),
@@ -2123,10 +2149,375 @@ mod tests {
                 second_path.to_str().unwrap().to_owned()
             ]
         );
+        let process_identity_ref = server.process_identity_ref();
+        assert!(process_identity_ref.starts_with("lcproc:v1:"));
+        let identity: serde_json::Value = serde_json::from_str(
+            process_identity_ref
+                .strip_prefix("lcproc:v1:")
+                .expect("versioned local identity"),
+        )
+        .expect("opaque process identity is valid JSON");
+        assert_eq!(identity["pid"], server.child.id());
+        assert!(process_identity_ref.len() <= 512);
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn conversation_turn_subscribes_before_dispatching_prompt() {
+        use serde_json::{Value, json};
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+        use storage_core::conversation::{ConversationContextMessage, ConversationContextPackage};
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        listener
+            .set_nonblocking(true)
+            .expect("make fake server accept bounded");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            let mut request_lines = Vec::new();
+            for index in 0..2 {
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(accepted) => break accepted,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept ordered request before deadline: {error}"),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .expect("make fake-server socket blocking");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .expect("set request read timeout");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                let header_end = loop {
+                    if let Some(header_end) = request
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|offset| offset + 4)
+                    {
+                        break header_end;
+                    }
+                    let count = stream.read(&mut buffer).expect("read request headers");
+                    assert_ne!(count, 0, "client closed before sending request headers");
+                    request.extend_from_slice(&buffer[..count]);
+                };
+                let headers = String::from_utf8(request[..header_end].to_vec())
+                    .expect("HTTP headers are UTF-8");
+                let request_line = headers.lines().next().expect("request line").to_owned();
+                request_lines.push(request_line);
+                if index == 0 {
+                    assert!(headers.contains("Accept: text/event-stream"));
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n",
+                        )
+                        .expect("accept event subscription before prompt");
+                    // Keep the event response open while the second request is
+                    // accepted, matching the long-lived volatile feed.
+                    let (mut prompt, _) = loop {
+                        match listener.accept() {
+                            Ok(accepted) => break accepted,
+                            Err(error)
+                                if error.kind() == std::io::ErrorKind::WouldBlock
+                                    && Instant::now() < deadline =>
+                            {
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(error) => panic!("accept prompt after event subscription: {error}"),
+                        }
+                    };
+                    prompt
+                        .set_nonblocking(false)
+                        .expect("make prompt socket blocking");
+                    prompt
+                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .expect("set prompt read timeout");
+                    let mut prompt_request = Vec::new();
+                    let (header_end, content_length) = loop {
+                        if let Some(header_end) = prompt_request
+                            .windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                            .map(|offset| offset + 4)
+                        {
+                            let headers = String::from_utf8(prompt_request[..header_end].to_vec())
+                                .expect("prompt headers are UTF-8");
+                            let content_length = headers
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    name.eq_ignore_ascii_case("content-length")
+                                        .then(|| value.trim().parse::<usize>().ok())
+                                        .flatten()
+                                })
+                                .expect("prompt content length");
+                            if prompt_request.len() >= header_end + content_length {
+                                break (header_end, content_length);
+                            }
+                        }
+                        let count = prompt.read(&mut buffer).expect("read prompt request");
+                        assert_ne!(count, 0, "client closed before sending prompt");
+                        prompt_request.extend_from_slice(&buffer[..count]);
+                    };
+                    let prompt_headers = String::from_utf8(prompt_request[..header_end].to_vec())
+                        .expect("prompt headers are UTF-8");
+                    request_lines.push(
+                        prompt_headers
+                            .lines()
+                            .next()
+                            .expect("prompt request line")
+                            .to_owned(),
+                    );
+                    let body = serde_json::from_slice::<Value>(
+                        &prompt_request[header_end..header_end + content_length],
+                    )
+                    .expect("prompt JSON body");
+                    assert_eq!(body["id"], "msg_test_one");
+                    assert!(
+                        body["prompt"]["text"]
+                            .as_str()
+                            .unwrap()
+                            .contains("Please summarize.")
+                    );
+                    prompt
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":{}}")
+                        .expect("acknowledge prompt");
+                    drop(prompt);
+                    drop(stream);
+                    break;
+                }
+            }
+            request_lines
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            process_identity_ref: String::new(),
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(2),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+        let message = ConversationContextMessage {
+            message_id: "user-one".to_owned(),
+            role: "USER".to_owned(),
+            turn_id: Some("turn-one".to_owned()),
+            source_agent_binding_id: None,
+            content: json!([{"kind":"TEXT","text":"Please summarize."}]),
+            resource_refs: json!([]),
+            created_at: "2026-10-25T12:00:00Z".to_owned(),
+        };
+        let context = ConversationContextPackage {
+            conversation_id: "conversation-one".to_owned(),
+            target_agent_binding_id: "binding-a".to_owned(),
+            through_message_id: "user-one".to_owned(),
+            omitted_message_count: 0,
+            messages: vec![message],
+        };
+
+        let event_stream = server
+            .subscribe_before_sending_conversation_context("session-a", "msg_test_one", &context)
+            .expect("event stream is established before prompt dispatch");
         assert_eq!(
-            server.process_identity_ref(),
-            format!("pid:{}", server.child.id()),
-            "the host store receives only the Runtime-local PID identity, never a handle"
+            captured
+                .join()
+                .expect("capture ordered event and prompt requests"),
+            vec![
+                "GET /api/event HTTP/1.1".to_owned(),
+                "POST /api/session/session-a/prompt HTTP/1.1".to_owned(),
+            ]
+        );
+        drop(event_stream);
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn conversation_turn_does_not_dispatch_when_event_subscription_fails() {
+        use serde_json::json;
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+        use storage_core::conversation::{ConversationContextMessage, ConversationContextPackage};
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        listener
+            .set_nonblocking(true)
+            .expect("make fake server accept bounded");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept event subscription before deadline: {error}"),
+                }
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("make fake-server socket blocking");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .expect("set subscription request timeout");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let header_end = loop {
+                if let Some(header_end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|offset| offset + 4)
+                {
+                    break header_end;
+                }
+                let count = stream.read(&mut buffer).expect("read subscription request");
+                assert_ne!(count, 0, "client closed before subscription request");
+                request.extend_from_slice(&buffer[..count]);
+            };
+            let headers = String::from_utf8(request[..header_end].to_vec())
+                .expect("subscription headers are UTF-8");
+            assert!(headers.contains("Accept: text/event-stream"));
+            let request_line = headers.lines().next().expect("request line").to_owned();
+            stream
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("reject event subscription");
+            drop(stream);
+
+            // Give an incorrect implementation a chance to issue the prompt;
+            // only the event subscription request is expected in this window.
+            let prompt_deadline = Instant::now() + Duration::from_millis(300);
+            loop {
+                match listener.accept() {
+                    Ok((mut unexpected, _)) => {
+                        unexpected
+                            .set_read_timeout(Some(Duration::from_secs(1)))
+                            .expect("bound unexpected request read");
+                        let mut bytes = [0_u8; 256];
+                        let count = unexpected
+                            .read(&mut bytes)
+                            .expect("read unexpected follow-up request");
+                        let unexpected_line = String::from_utf8_lossy(&bytes[..count])
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned();
+                        return vec![request_line, unexpected_line];
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < prompt_deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        return vec![request_line];
+                    }
+                    Err(error) => panic!("observe prompt after subscription failure: {error}"),
+                }
+            }
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            process_identity_ref: String::new(),
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(2),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+        let context = ConversationContextPackage {
+            conversation_id: "conversation-one".to_owned(),
+            target_agent_binding_id: "binding-a".to_owned(),
+            through_message_id: "user-one".to_owned(),
+            omitted_message_count: 0,
+            messages: vec![ConversationContextMessage {
+                message_id: "user-one".to_owned(),
+                role: "USER".to_owned(),
+                turn_id: Some("turn-one".to_owned()),
+                source_agent_binding_id: None,
+                content: json!([{"kind":"TEXT","text":"Please summarize."}]),
+                resource_refs: json!([]),
+                created_at: "2026-10-25T12:00:00Z".to_owned(),
+            }],
+        };
+
+        assert!(
+            server
+                .subscribe_before_sending_conversation_context(
+                    "session-a",
+                    "msg_test_one",
+                    &context
+                )
+                .is_err()
+        );
+        assert_eq!(
+            captured
+                .join()
+                .expect("capture requests after rejected subscription"),
+            vec!["GET /api/event HTTP/1.1".to_owned()]
         );
         assert_eq!(server.stop(), OpenCodeProcessState::Exited);
     }

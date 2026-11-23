@@ -1,9 +1,10 @@
 # 006 - Golden Connection and One Capability Write
 
-**Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Revision:** 1.0 | **Updated:** 2026-11-12
-**Implementation state (2026-11-12):** Not implemented. T01/T02 are BLOCKED pending renewed owner decisions for B-19 authentication and A-82 effective provider permissions; T05 is blocked behind them; migration v40 is allocated. E2E-05 Task-write platform order is OPEN under register A-80 because its Environment requirement is unresolved.
-**Owners:** Connectors, Capability Fabric, Security, LiteSPM boundary, Desktop UI. Accepted by the repository owner via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md).
+**Status:** IN_REVIEW - revision 1.1 carries USER-DELEGATED direction; formal domain-owner ratification remains pending.
+**Revision:** 1.1 | **Updated:** 2026-11-20
+**Implementation state (2026-11-20):** No Connection service/storage writer, device authorization flow, account UI, or external provider dispatch is served. T02 is complete as a USER-DELEGATED design direction: GitHub App user-to-server device flow, expiring tokens, `Issues: write` app permission, and a narrower LiteCowork repository/operation grant. T01 canonical schema/API promotion and implementation tasks remain NOT STARTED; migration v41 remains allocated. E2E-05 Task-write platform order remains OPEN under register A-80 because its Environment requirement is unresolved.
+**Revision 1.0 history:** B-19 and B-20 were accepted via [docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md](../../docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md); revision 1.1 supersedes only the B-19 auth recipe for current implementation planning. B-20 remains the golden issue-comment write. Revision 1.1 is not owner acceptance, implementation, INTEGRATED evidence or qualification.
+**Owners:** Connectors, Capability Fabric, Security, LiteSPM boundary, Desktop UI.
 
 ## User outcome
 
@@ -11,7 +12,7 @@ The owner completes one real account Connection, performs one authorized read, t
 
 ## Current truth
 
-The active checkout serves Discover projections, fail-closed connect-or-install/test routes, exact Approval list/get/resolve and a narrow Task-planning Resource-read grant. Connect-or-install returns 503 without a receipt or grant; test returns UNKNOWN without contacting a provider. Account Connection/OAuth routes are not mounted; CapabilityInvocation is read-only; Trust/Effect provider dispatch and reconciliation are not wired. The Approval UI records an exact action decision but does not execute it. This package is ACCEPTED/LOCKED (B-19 and B-20 accepted 2026-11-09); no golden provider read/write journey is implemented or qualified. The 2026-11-12 provider check confirms the web-flow client-secret blocker and finds that GitHub OAuth App scopes do not match the operation-specific permissions implied by B-19; A-82 and task T02 in [TASKS.md](TASKS.md) hold the owner decision.
+The active checkout serves Discover projections, fail-closed connect-or-install/test routes, exact Approval list/get/resolve and a narrow Task-planning Resource-read grant. Connect-or-install returns 503 without a receipt or grant; test returns UNKNOWN without contacting a provider. Account Connection/authentication routes are not mounted; CapabilityInvocation is read-only; Trust/Effect provider dispatch and reconciliation are not wired. The Approval UI records an exact action decision but does not execute it. No golden provider read/write journey is implemented or qualified. The 2026-11-20 provider review led to the delegated revision 1.1 device-flow direction; A-82 formal owner ratification is still pending and no provider credentials or live evidence exist.
 
 Cross-feature review found that T15's former Windows-first wording could conflict with Feature 005's Linux-first Task execution rider if the Task-scoped `STRUCTURED_API` write needs an admitted Environment. Feature 006 SPEC §18 leaves that requirement open; the dependency is now tracked as A-80. T15 must separate Connection/read evidence from Task-write qualification until Trust and Environments owners resolve it.
 

@@ -57,4 +57,4 @@ Candidates are retained for `candidate_retention_days` (default 30) after a term
 
 ## 6. Migration
 
-One forward-only migration (allocated v43 in docs/LITECOWORK-BUILD-TASKS.md; take the next free number if another package merges first). No backfill: existing Coworkers have no policy row and read as REVIEW_ALL; no existing Suggestion changes.
+One forward-only migration (allocated v44 in docs/LITECOWORK-BUILD-TASKS.md; take the next free number if another package merges first). No backfill: existing Coworkers have no policy row and read as REVIEW_ALL; no existing Suggestion changes.

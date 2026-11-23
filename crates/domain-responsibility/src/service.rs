@@ -131,6 +131,12 @@ pub fn validate_coworker_definition(definition: &CoworkerDefinition) -> Result<(
     {
         return Err(DomainError::InvalidDefinition);
     }
+    if definition.delegation_policy_source == CoworkerDelegationPolicySource::WorkspaceDefault
+        && (definition.delegation_strategy != DelegationStrategy::NativeDefault
+            || !definition.enabled_delegation_profile_ids.is_empty())
+    {
+        return Err(DomainError::InvalidDefinition);
+    }
     Ok(())
 }
 

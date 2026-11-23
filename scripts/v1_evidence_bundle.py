@@ -119,6 +119,28 @@ def run_text(command: list[str]) -> str | None:
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
+def format_os_build(
+    system: str, version: str, release: str, os_release: dict[str, str] | None = None
+) -> str:
+    """Capture an OS identifier that can be compared with the declared release minimum."""
+    if system == "Windows":
+        return f"Windows {version or release}".strip()
+    if system == "Linux":
+        release_facts = os_release
+        if release_facts is None:
+            try:
+                release_facts = platform.freedesktop_os_release()
+            except (AttributeError, OSError, ValueError):
+                release_facts = {}
+        name = release_facts.get("NAME", "Linux")
+        version_id = release_facts.get("VERSION_ID", "")
+        return f"{name} {version_id}".strip() if version_id else f"{name} {release}".strip()
+    if system == "Darwin":
+        mac_version = platform.mac_ver()[0]
+        return f"macOS {mac_version or version or release}".strip()
+    return f"{system} {version or release}".strip()
+
+
 def collect_facts(row_id: str, agent_version: str | None) -> dict[str, Any]:
     sha = run_text(["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"]) or ""
     status = run_text(["git", "-C", str(REPOSITORY_ROOT), "status", "--porcelain"])
@@ -129,7 +151,7 @@ def collect_facts(row_id: str, agent_version: str | None) -> dict[str, Any]:
     facts: dict[str, Any] = {
         "repo_sha": sha,
         "dirty": bool(status),
-        "os_build": f"{platform.system()} {platform.release()}",
+        "os_build": format_os_build(platform.system(), platform.version(), platform.release()),
         "arch": "x86_64" if platform.machine().lower() in ("x86_64", "amd64") else platform.machine(),
     }
     if agent_version:

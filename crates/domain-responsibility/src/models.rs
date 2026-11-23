@@ -35,6 +35,10 @@ string_enum!(DelegationStrategy {
     CostSaver,
     HostDelegationOnly
 });
+string_enum!(CoworkerDelegationPolicySource {
+    WorkspaceDefault,
+    CoworkerOverride
+});
 string_enum!(InteractionDefault {
     StandardTrustPolicy,
     RequireOwnerApproval,
@@ -137,6 +141,10 @@ pub struct CoworkerDefinition {
     pub avatar_ref: Option<ContractObject>,
     pub role_description: String,
     pub default_lead_agent_binding_id: Option<String>,
+    /// Older persisted revisions predate this field and used Coworker overrides.
+    /// New UI-created Coworkers choose Workspace defaults explicitly.
+    #[serde(default = "legacy_coworker_delegation_policy_source")]
+    pub delegation_policy_source: CoworkerDelegationPolicySource,
     pub delegation_strategy: DelegationStrategy,
     pub enabled_delegation_profile_ids: Vec<String>,
     pub delegation_budget_policy: Option<ContractObject>,
@@ -144,6 +152,10 @@ pub struct CoworkerDefinition {
     pub interaction_policy: CoworkerInteractionPolicy,
     pub context_policy: CoworkerContextPolicy,
     pub notification_policy: NotificationPolicy,
+}
+
+fn legacy_coworker_delegation_policy_source() -> CoworkerDelegationPolicySource {
+    CoworkerDelegationPolicySource::CoworkerOverride
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

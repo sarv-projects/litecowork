@@ -51,7 +51,7 @@ nodes:
   - id: "coworker_owner"
     owner: "Coworker / Responsibility domain"
     kind: "service"
-    evidence: "SERVED for identity, revisions, status and Workspace primary; target Coworker-specific policy consumers are incomplete"
+    evidence: "SERVED for identity, revisions, status and Workspace primary; USER-DELEGATED T19 closes delegation_policy_source round-trip; policy consumers remain incomplete"
   - id: "conversation_owner"
     owner: "Conversation domain, Feature 001"
     kind: "service"
@@ -160,7 +160,7 @@ edges:
     from: "coworker_owner"
     to: "storage"
     kind: "durable transaction"
-    contract: "Coworker head, immutable revision, event and replay receipt are committed by the Coworker owner."
+    contract: "Coworker head, immutable revision (including exact delegation_policy_source), event and replay receipt are committed by the Coworker owner; v28 Workspace-default constraints and override ceiling remain enforced."
   - id: "e-conversation-storage"
     from: "conversation_owner"
     to: "storage"
@@ -208,7 +208,7 @@ transactions:
     status: "SERVED"
     atomic_records: ["coworker head", "immutable revision", "domain event", "idempotency receipt"]
     external_calls_inside: false
-    fence: "Workspace owner, expected version, Coworker lifecycle and replay digest."
+    fence: "Workspace owner, expected version, Coworker lifecycle, delegation source/strategy normalization, profile ceiling and replay digest."
   - id: "tx-conversation-origin"
     owner: "Conversation owner"
     status: "TARGET"
@@ -313,7 +313,7 @@ cross_layer_trace:
   current_gap: "The operation trace is TARGET except for current Coworker configuration, supported Resource operations and Workspace retrieval; no end-to-end Coworker chat or memory path is qualified."
 
 current_source_boundary:
-  coworker: "Identity/revisions/status/primary selection are SERVED; several persisted policies have no production consumer."
+  coworker: "Identity/revisions/status/primary selection are SERVED. T19 adds source round-trip via the existing v28 column; delegation strategy/profile preferences still have no production dispatch consumer."
   conversation: "Ordinary Conversation is SERVED; Coworker origin/list/create is absent."
   memory: "Personal Profile and Workspace Notes create/status/purge paths exist. Coworker Notes create, Coworker retrieval, manual memory metadata, Memory UI and LearningService are absent."
   pause: "A-22 remains partial: TriggerHost does not recheck Coworker pause for enabled schedules; Home blocks an owner Task that the target allows."

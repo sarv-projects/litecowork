@@ -1,6 +1,6 @@
 {
-  "host_class": "CONTAINER",
-  "host_system": "linux",
+  "host_class": "NATIVE",
+  "host_system": "windows",
   "later_rows": [
     {
       "reason": "Claude Code row is declared after the first two rows qualify",
@@ -22,18 +22,18 @@
       "cells": {
         "E2E-01": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-02": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-03": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-04": {
           "evidence_bundle_digest": null,
@@ -42,18 +42,18 @@
         },
         "E2E-05": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-06": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-07": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-08": {
           "evidence_bundle_digest": null,
@@ -62,68 +62,88 @@
         },
         "E2E-09": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-10": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-11": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "E2E-12": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
+        },
+        "E2E-14": {
+          "evidence_bundle_digest": null,
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
+        },
+        "E2E-15": {
+          "evidence_bundle_digest": null,
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
+        },
+        "E2E-16": {
+          "evidence_bundle_digest": null,
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
+        },
+        "E2E-17": {
+          "evidence_bundle_digest": null,
+          "reason": "no schema-valid evidence bundle is linked",
+          "state": "NOT_RUN"
         },
         "backup_restore": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "browser_takeover": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "coworker_private_learner": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "effect_reconciliation": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "independent_verification": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "native_conversation_send": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "packaging": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "producer_scoped_planner_isolation": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "secret_scan": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         },
         "terminal_pty": {
           "evidence_bundle_digest": null,
@@ -132,17 +152,16 @@
         },
         "workspace_root_revalidation": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "capability evidence needs a linked bundle from the qualified operator",
+          "state": "NOT_RUN"
         }
       },
-      "counted": false,
+      "counted": true,
       "desktop_runtime": "WebView2",
-      "not_counted_reason": "CONTAINER",
       "os": "windows",
       "os_min_build": "10.0.19045",
       "priority": 1,
-      "protocol": "acp",
+      "protocol": "opencode-v2-http-sse",
       "row_id": "windows-x64-opencode-v2.0.32",
       "target_triple": "x86_64-pc-windows-msvc"
     },
@@ -154,127 +173,147 @@
       "cells": {
         "E2E-01": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-02": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-03": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-04": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-05": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-06": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-07": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-08": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-09": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-10": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-11": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "E2E-12": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
+        },
+        "E2E-14": {
+          "evidence_bundle_digest": null,
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
+        },
+        "E2E-15": {
+          "evidence_bundle_digest": null,
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
+        },
+        "E2E-16": {
+          "evidence_bundle_digest": null,
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
+        },
+        "E2E-17": {
+          "evidence_bundle_digest": null,
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "backup_restore": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "browser_takeover": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "coworker_private_learner": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "effect_reconciliation": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "independent_verification": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "native_conversation_send": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "packaging": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "producer_scoped_planner_isolation": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "secret_scan": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "terminal_pty": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         },
         "workspace_root_revalidation": {
           "evidence_bundle_digest": null,
-          "reason": "run under CONTAINER: container marker (/.dockerenv, /run/.containerenv or cgroup)",
-          "state": "NOT_COUNTED"
+          "reason": "this host is windows; the row needs a native linux host",
+          "state": "NOT_RUN"
         }
       },
       "counted": false,
       "desktop_runtime": "WebKitGTK",
-      "not_counted_reason": "CONTAINER",
+      "not_counted_reason": "UNSUPPORTED_HOST",
       "os": "linux",
       "os_min_build": "Ubuntu 24.04",
       "priority": 2,
-      "protocol": "acp",
+      "protocol": "opencode-v2-http-sse",
       "row_id": "linux-x64-opencode-v2.0.32",
       "target_triple": "x86_64-unknown-linux-gnu"
     }

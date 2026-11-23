@@ -313,6 +313,25 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
         super::validate_task_create_commit(&commit.task)?;
         validate_suggestion_acceptance_commit(&commit)?;
 
+        if let Some(receipt) = self.get_suggestion_task_acceptance_receipt(
+            &commit.task.request.principal_id,
+            &commit.task.task.workspace_id,
+            &commit.suggestion_id,
+            commit.expected_suggestion_version,
+            &commit.task.request.request_id,
+            &commit.task.task.task_id,
+        )? {
+            return Ok(receipt);
+        }
+        commit.task.initial_spec_revision.delegation_policy_snapshot =
+            Some(self.resolve_task_delegation_policy_before_blob(
+                &commit.task.request.principal_id,
+                &commit.task.task.workspace_id,
+                commit.task.task.origin_coworker_id.as_deref(),
+                commit.task.task.origin_coworker_revision,
+                &commit.task.initial_spec_revision.created_at,
+            )?);
+
         let workspace = commit.task.task.workspace_id.clone();
         let owner = commit.task.request.principal_id.clone();
         let suggestion_id = commit.suggestion_id.clone();
@@ -2140,6 +2159,7 @@ mod acceptance_receipt_tests {
                 preferred_lead_agent_binding_id: Some("lead-1".to_owned()),
                 authored_by: json!({"principal_id": "owner", "kind": "USER"}),
                 created_at: "2026-10-09T10:01:00Z".to_owned(),
+                delegation_policy_snapshot: None,
             },
         }
     }

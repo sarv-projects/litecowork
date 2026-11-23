@@ -34,7 +34,7 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 
 ## Migration
 
-The blockers are ACCEPTED (2026-11-09). One new immutable SQLite migration is authorized for BrowserSession, BrowserControlLease, ChromeAttachConsent/epoch, BrowserActionReceipt, TerminalSession, CommandReceipt and QuiescenceReceipt. It is designed and promoted by 008-T01 (allocated `sqlite-v41.sql`) and implemented by T03 and T08. No migration exists yet.
+The blockers are ACCEPTED (2026-11-09). One new immutable SQLite migration is authorized for BrowserSession, BrowserControlLease, ChromeAttachConsent/epoch, BrowserActionReceipt, TerminalSession, CommandReceipt and QuiescenceReceipt. It is designed and promoted by 008-T01 (allocated `sqlite-v42.sql`) and implemented by T03 and T08. No migration exists yet.
 
 ## Current implementation boundary (2026-11-06)
 

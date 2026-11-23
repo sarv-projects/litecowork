@@ -3,7 +3,7 @@
 **Status:** IN_REVIEW - not owner-accepted; does not authorize implementation; not a claim of implementation or qualification.
 **Feature:** 014 | **Authority:** DATA-MODEL.md, STATE-MACHINES.md, STORAGE.md, EVENTS.md, SCHEMAS.md.
 
-This feature extends the canonical Conversation record. It must not create a second Conversation catalog or a second deletion framework. Only the `conversation_history_state` side table exists in source (migration v31, `docs/schemas/sqlite-v31.sql`, 014-T03 storage layer, 2026-11-10); every other record below (search index, purge plans, purge receipts) is still target and takes a later number than v32. The migration chain ends at `sqlite-v32.sql`.
+This feature extends the canonical Conversation record. It must not create a second Conversation catalog or a second deletion framework. Only the `conversation_history_state` side table exists in source (migration v31, `docs/schemas/sqlite-v31.sql`, 014-T03 storage layer, 2026-11-10); every other record below (search index, purge plans, purge receipts) is still target and takes a later number than the current v34 chain. The 2026-11-20 migration chain ends at `sqlite-v34.sql`.
 
 ## 1. Existing records
 
@@ -48,13 +48,19 @@ ACTIVE | ARCHIVED -> DELETION_PENDING -> DELETED
 
 `MESSAGE_ROW`, `SEARCH_TERMS`, `TURN_CONTENT`, `USER_REQUEST_DETAIL`, `USER_REQUEST_RESPONSE`, `RICH_PRESENTATION_ROW`, `RICH_PRESENTATION_BLOB`, `SNAPSHOT_BLOB`, `REQUEST_RECEIPT_RESPONSE`, `CHANNEL_THREAD_MAPPING`. Bounded like the ContextDocument manifest; an oversized manifest refuses delete with no partial write. `AgentSessionHostBinding` is not a purge target: deletion admission first proves the session CLOSED/LOST and the local binding released; UNKNOWN cleanup blocks tombstoning. Native-harness transcripts and external channel copies remain outside this local purge boundary.
 
-## 5. Events (proposed)
+## 5. Events (source-backed and proposed)
+
+The first three event types below are emitted by the current rename/archive/unarchive
+storage transactions and are registered in `docs/EVENTS.md` and
+`docs/schemas/domain-event.schema.json` under user-directed implementation review.
+Feature 014 remains IN_REVIEW; this source alignment does not record formal domain-owner
+acceptance. The deletion events remain target-only until their owner tasks and routes exist.
 
 | Event | Payload |
 |---|---|
-| `conversation.renamed.v1` | conversation_id, aggregate_version, title_digest (or null) |
-| `conversation.archived.v1` | conversation_id, aggregate_version |
-| `conversation.unarchived.v1` | conversation_id, aggregate_version |
+| `conversation.renamed.v1` | workspace_id, conversation_id, title_digest (SHA-256 digest or null only when the title is cleared), changed_by (USER principal), aggregate_version; never title text |
+| `conversation.archived.v1` | workspace_id, conversation_id, changed_by (USER principal), aggregate_version |
+| `conversation.unarchived.v1` | workspace_id, conversation_id, changed_by (USER principal), aggregate_version |
 | `conversation.deletion_requested.v1` | conversation_id, aggregate_version, plan_id, target_count |
 | `conversation.deleted.v1` | conversation_id, plan_id |
 

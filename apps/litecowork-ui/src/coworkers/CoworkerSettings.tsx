@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
-  Coworker, CoworkerContextKind, CoworkerDelegationStrategy, CoworkerInteractionDefault,
+  Coworker, CoworkerContextKind, CoworkerDelegationPolicySource, CoworkerDelegationStrategy, CoworkerInteractionDefault,
   CoworkerPresence, CoworkerRevisionInput, CoworkerSettingsApi, LeadFailoverPolicy,
   WorkspacePrimaryReceipt,
 } from "./coworker-api";
@@ -59,7 +59,8 @@ function newRevision(): CoworkerRevisionInput {
     avatar_ref: null,
     role_description: "",
     default_lead_agent_binding_id: null,
-    delegation_strategy: "BALANCED",
+    delegation_policy_source: "WORKSPACE_DEFAULT",
+    delegation_strategy: "NATIVE_DEFAULT",
     enabled_delegation_profile_ids: [],
     delegation_budget_policy: null,
     lead_failover_policy: { mode: "DISABLED", triggers: [], fallback_agent_binding_ids: [], max_lead_changes: 0 },
@@ -535,8 +536,9 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
 
                 <section className="coworker-summary-section"><h3>Lead and workers</h3>
                   <dl className="coworker-summary-list"><div><dt>Lead agent</dt><dd>{selected.revision.default_lead_agent_binding_id ? leadBindings?.find(item => item.agent_binding_id === selected.revision.default_lead_agent_binding_id)?.display_name ?? `Saved binding ${selected.revision.default_lead_agent_binding_id}` : "Use Workspace default"}</dd></div>
+                    <div><dt>Delegation source</dt><dd>{selected.revision.delegation_policy_source === "WORKSPACE_DEFAULT" ? "Use Workspace defaults" : "Customize for this Coworker"}</dd></div>
                     <div><dt>Delegation strategy</dt><dd>{strategyLabel(selected.revision.delegation_strategy)}</dd></div>
-                    <div><dt>Worker profiles</dt><dd>{selected.revision.enabled_delegation_profile_ids.length ? `${selected.revision.enabled_delegation_profile_ids.length} assigned` : "None assigned"}</dd></div></dl>
+                    <div><dt>Worker profiles</dt><dd>{selected.revision.delegation_policy_source === "WORKSPACE_DEFAULT" ? "Inherited from Workspace" : selected.revision.enabled_delegation_profile_ids.length ? `${selected.revision.enabled_delegation_profile_ids.length} assigned` : "None assigned"}</dd></div></dl>
                   {workerProfiles === undefined && <p className="coworker-helper">Enabling profiles happens separately in Settings → Agents. Assignment here only allows this Coworker to consider an enabled profile; it does not start an agent or grant app access.</p>}
                 </section>
                 <section className="coworker-summary-section"><h3>Interaction defaults</h3><p className="coworker-helper">These preferences never create a Grant or override a stricter Trust rule.</p>
@@ -583,6 +585,7 @@ function CoworkerEditor({ form, mode, nameInputRef, leadBindings, eligibleLeadBi
     updateFailover({ ...currentFailover, fallback_agent_binding_ids });
   }
   const currentWorkerIds = form.enabled_delegation_profile_ids;
+  const usesWorkspaceDefaults = form.delegation_policy_source === "WORKSPACE_DEFAULT";
   const knownWorkerIds = new Set(workerProfiles?.map(item => item.delegation_profile_id) ?? []);
   const unavailableAssignedWorkers = currentWorkerIds.filter(id => !knownWorkerIds.has(id));
   const failoverValid = isValidLeadFailoverDraft(currentFailover, form.default_lead_agent_binding_id);
@@ -607,6 +610,18 @@ function CoworkerEditor({ form, mode, nameInputRef, leadBindings, eligibleLeadBi
 
     <details className="coworker-advanced coworker-customize"><summary>Customize agent, workers and access (optional)</summary>
     <section className="coworker-form-section"><h3>Lead and worker profiles</h3>
+      <label className="coworker-field">Delegation settings<select value={form.delegation_policy_source} onChange={event => {
+        const source = event.currentTarget.value as CoworkerDelegationPolicySource;
+        if (source === "WORKSPACE_DEFAULT") {
+          onChange("delegation_policy_source", source);
+          onChange("delegation_strategy", "NATIVE_DEFAULT");
+          onChange("enabled_delegation_profile_ids", []);
+        } else {
+          onChange("delegation_policy_source", source);
+          onChange("delegation_strategy", "BALANCED");
+          onChange("enabled_delegation_profile_ids", []);
+        }
+      }}><option value="WORKSPACE_DEFAULT">Use Workspace defaults</option><option value="COWORKER_OVERRIDE">Customize for this Coworker</option></select><small>{usesWorkspaceDefaults ? "This Coworker follows the Workspace strategy and worker-profile settings." : "This Coworker can narrow the Workspace worker-profile allowlist; it cannot add profiles outside that ceiling."}</small></label>
       {leadBindings === undefined ? <div className="coworker-field"><span>Lead agent</span><p className="coworker-helper">{form.default_lead_agent_binding_id ? `Saved binding ${form.default_lead_agent_binding_id} is preserved.` : "Use the Workspace default."} Agent bindings are managed in Settings → Agents.</p></div>
         : <label className="coworker-field">Lead agent<select value={form.default_lead_agent_binding_id ?? ""} onChange={event => {
           const bindingId = event.currentTarget.value || null;
@@ -615,9 +630,9 @@ function CoworkerEditor({ form, mode, nameInputRef, leadBindings, eligibleLeadBi
             updateFailover({ ...currentFailover, fallback_agent_binding_ids: excludeCurrentLeadFallbacks(currentFailover.fallback_agent_binding_ids, bindingId) });
           }
         }}><option value="">Use Workspace default</option>{form.default_lead_agent_binding_id && !eligibleLeadBindings.some(item => item.agent_binding_id === form.default_lead_agent_binding_id) && <option value={form.default_lead_agent_binding_id}>Saved binding · revalidation required</option>}{eligibleLeadBindings.map(item => <option key={item.agent_binding_id} value={item.agent_binding_id}>{item.display_name}</option>)}</select><small>Only enabled, lead-eligible bindings are offered.</small></label>}
-      <label className="coworker-field">Delegation strategy<select value={form.delegation_strategy} onChange={event => onChange("delegation_strategy", event.currentTarget.value as CoworkerDelegationStrategy)}><option value="NATIVE_DEFAULT">Use the lead’s native behavior</option><option value="BALANCED">Balanced</option><option value="COST_SAVER">Prefer lower-cost suitable workers</option><option value="HOST_DELEGATION_ONLY">Host-delegated workers only when supported</option></select></label>
+      <label className="coworker-field">Delegation strategy<select value={form.delegation_strategy} disabled={usesWorkspaceDefaults} onChange={event => onChange("delegation_strategy", event.currentTarget.value as CoworkerDelegationStrategy)}><option value="NATIVE_DEFAULT">Use the lead’s native behavior</option><option value="BALANCED">Balanced</option><option value="COST_SAVER">Prefer lower-cost suitable workers</option><option value="HOST_DELEGATION_ONLY">Host-delegated workers only when supported</option></select></label>
       {workerProfiles === undefined ? <div className="coworker-field"><span>Allowed worker profiles</span><p className="coworker-helper">{workerProfilesError ?? `${currentWorkerIds.length ? `${currentWorkerIds.length} assignment${currentWorkerIds.length === 1 ? " is" : "s are"} preserved.` : "No worker profiles assigned."} Enable profiles separately in Settings → Agents. Enabling a profile does not start it.`}</p></div>
-        : <fieldset className="coworker-check-group"><legend>Allowed worker profiles</legend><p className="coworker-helper">Only enabled profiles may be assigned. Assignment does not start an agent, grant app access, or override Trust.</p>
+        : <fieldset className="coworker-check-group" disabled={usesWorkspaceDefaults}><legend>Allowed worker profiles</legend><p className="coworker-helper">{usesWorkspaceDefaults ? "Worker profiles follow the Workspace allowlist." : "Only enabled profiles may be assigned. Assignment does not start an agent, grant app access, or override Trust."}</p>
           {workerProfiles.length === 0 && currentWorkerIds.length === 0 && <p className="coworker-helper">No enabled worker profiles are available in this Workspace.</p>}
           {workerProfiles.map(profile => <label key={profile.delegation_profile_id}><input type="checkbox" checked={currentWorkerIds.includes(profile.delegation_profile_id)} disabled={!profile.enabled && !currentWorkerIds.includes(profile.delegation_profile_id)} onChange={event => onChange("enabled_delegation_profile_ids", event.currentTarget.checked ? [...currentWorkerIds, profile.delegation_profile_id] : currentWorkerIds.filter(id => id !== profile.delegation_profile_id))} /><span><strong>{profile.name}</strong><small>{profile.enabled ? "Enabled in Workspace" : "Not enabled · remove this assignment to clear it"}</small></span></label>)}
           {unavailableAssignedWorkers.map(id => <label key={id} className="coworker-stale-option"><input type="checkbox" checked onChange={() => onChange("enabled_delegation_profile_ids", currentWorkerIds.filter(item => item !== id))} /><span><strong>Unavailable profile</strong><small>{id} · remove it to clear this saved assignment</small></span></label>)}

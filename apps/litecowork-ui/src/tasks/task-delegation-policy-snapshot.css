@@ -1,0 +1,17 @@
+.task-delegation-policy { display: grid; gap: 12px; margin-top: 18px; padding: 13px 14px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-muted, var(--color-surface)); }
+.task-delegation-policy h3,
+.task-delegation-policy h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.task-delegation-policy > dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 16px; margin: 0; }
+.task-delegation-policy > dl div { display: grid; gap: 3px; min-width: 0; }
+.task-delegation-policy dt,
+.task-delegation-policy small { color: var(--color-text-subtle); font-size: 11px; }
+.task-delegation-policy dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
+.task-delegation-policy-profiles { display: grid; gap: 7px; }
+.task-delegation-policy-profiles > p,
+.task-delegation-policy-note { margin: 0; color: var(--color-text-subtle); font-size: 11px; line-height: 1.5; }
+.task-delegation-policy-profiles ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.task-delegation-policy-profiles li { display: grid; gap: 3px; padding: 8px 9px; border: 1px solid var(--color-border); border-radius: 7px; }
+.task-delegation-policy-profiles li strong { overflow-wrap: anywhere; font-size: 11px; font-weight: 550; }
+@media (max-width: 720px) {
+  .task-delegation-policy > dl { grid-template-columns: minmax(0, 1fr); }
+}

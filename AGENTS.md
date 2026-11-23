@@ -19,6 +19,10 @@ Resolve conflicts using this order:
 
 Never silently choose the newest file. Identify the owner of the disputed semantic decision, resolve it there, then update dependent contracts, UI mappings, indexes and traceability. Do not create a parallel schema or state-machine authority.
 
+### Explicitly delegated product decisions
+
+When the product owner explicitly delegates open owner decisions to the implementation agent, resolve the internal product/engineering choice against these global invariants and record it in the owning package and alignment register before implementation. Label it **OWNER DIRECTION RECORDED** or **USER-DELEGATED DECISION**; never relabel it as domain-owner approval, ACCEPTED/LOCKED package status, USER qualification or external evidence. Implement the directed decision when the user explicitly requests implementation, while keeping cross-owner ratification, external protocol facts, credentials, platform evidence and release qualification as separate gates. Do not stop for another confirmation on decisions already delegated in this session.
+
 ## 2. Product invariants
 
 - LiteCowork is local-first, chat-first and BYOA-first. Ordinary Conversation does not require a Task or Coworker.

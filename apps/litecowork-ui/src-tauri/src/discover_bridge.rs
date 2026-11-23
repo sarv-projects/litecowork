@@ -1,5 +1,5 @@
-use super::{operator_client, read_bounded_response, AppHandle};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use super::{AppHandle, operator_client, read_bounded_response};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::Serialize;
 
 const MAX_QUERY_BYTES: usize = 512;

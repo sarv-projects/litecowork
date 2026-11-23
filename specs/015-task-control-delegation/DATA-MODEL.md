@@ -9,7 +9,7 @@ Canonical entity definitions live in [docs/DATA-MODEL.md](../../docs/DATA-MODEL.
 | Record | Location | Fields used here |
 |---|---|---|
 | `tasks` | `docs/schemas/sqlite-v1.sql` | status (text), version, lead agent binding, current spec revision, Coworker revision pin |
-| `task_spec_revisions` | `sqlite-v1.sql` | revision, `parent_revisions_json` (siblings for concurrent steering) |
+| `task_spec_revisions` | `sqlite-v1.sql`, delegation snapshot column in `sqlite-v28.sql` | immutable TaskSpec fields, sibling `parent_revisions_json`, non-null resolved delegation snapshot for post-v28 admissions; exact read schema is `ResolvedDelegationPolicySnapshot` |
 | `plan_revisions`, `steps` | `sqlite-v1.sql` | accepted plan pin, Step status READY |
 | `attempts` | `sqlite-v1.sql` | `parent_attempt_id`, `delegation_profile_id`, `delegation_profile_revision`, `execution_lease_id`, state (`AttemptState`) |
 | `execution_leases` | `sqlite-v1.sql` | `epoch` with `UNIQUE(step_id, epoch)` and immutable identity trigger |
@@ -19,6 +19,12 @@ Canonical entity definitions live in [docs/DATA-MODEL.md](../../docs/DATA-MODEL.
 | `delegation_results` | `sqlite-v24.sql` | ResultEnvelope per child Attempt |
 | `verification_runs` | `sqlite-v1.sql` | status PENDING, RUNNING, PASSED, FAILED, INCONCLUSIVE |
 | `event_journal`, `request_dedup` | `sqlite-v1.sql` | events and idempotency receipts |
+
+### Resolved delegation policy snapshot (USER-DELEGATED direction, T22)
+
+Each post-v28 TaskSpec revision carries the canonical `ResolvedDelegationPolicySnapshot`: policy source, Workspace settings revision, Coworker ID/revision or null, effective strategy, native child-model policy, exact selected profile revisions with each `worker_model_selection_policy`, and `resolved_at`. Workspace settings form the ceiling even for Coworker overrides. The persisted value is server-resolved; a Task caller cannot submit authority or choose historical revisions. The Task's immutable Coworker origin revision remains the source for that Task; a later Coworker head does not replace it. An explicit TaskSpec revision re-resolves the snapshot against that fixed origin and the current Workspace settings head; existing revisions and Attempts remain pinned.
+
+The canonical OpenAPI schema already defines this closed shape. Pre-v28 TaskSpec rows may remain null and render as legacy/unavailable. Migration v34 upgrades only non-null reduced v28 snapshots using the immutable Task, Coworker, Workspace settings and profile revision records; it never reconstructs from current mutable heads. Feature 015 migration v43 remains separate and owns Task-control rows.
 
 ## 2. New records (accepted target after T02, not yet in source)
 
@@ -61,4 +67,4 @@ Steering text is user content stored with the Task and deleted with it; it is ne
 
 ## 7. Migration and compatibility
 
-Additive migration only. The allocated Feature 015 migration is v42 and covers control requests and resume packets; it does not assume a new `on_exhaustion` column because the DELEGATION owner owns its contract/storage shape. Existing Tasks have no control requests and no resume packets. Stored statuses are parsed by `TaskStatus`; an unknown value fails closed. Legacy delegation packets without `on_exhaustion` remain valid and the accepted field stays TARGET-not-yet-wired until the owning dispatcher is implemented (A-37).
+Additive migration only. The allocated Feature 015 migration is v43 and covers control requests and resume packets; T22 separately uses global migration v34 to complete and constrain the already-existing v28 TaskSpec snapshot. Neither migration assumes a new `on_exhaustion` column because the DELEGATION owner owns its contract/storage shape. Existing Tasks have no control requests and no resume packets. Stored statuses are parsed by `TaskStatus`; an unknown value fails closed. Legacy delegation packets without `on_exhaustion` remain valid and the accepted field stays TARGET-not-yet-wired until the owning dispatcher is implemented (A-37).

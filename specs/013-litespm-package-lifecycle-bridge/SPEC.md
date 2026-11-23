@@ -44,7 +44,7 @@ No LiteCowork package database, resolver, catalog cache, CAS or host-config writ
 | Discover entry model | CODE: `DiscoverCatalogEntry`, `DiscoverInstallState`, `DiscoverEntrySource::LiteSpmPackage`, `derive_discover_availability` in `crates/storage-core/src/discover.rs`; `validate()` rejects `authoritative = true` | No LiteSPM-sourced rows exist |
 | Desktop Discover | CODE: `apps/litecowork-ui/src/discover/DiscoverPage.tsx` tabs Explore, "Installed / native", Managed, Connections; `connectActionOutcome()` in `discover-state.ts` disables every row action; Managed and Connections render "Not available"; `discover_request` in `apps/litecowork-ui/src-tauri/src/discover_bridge.rs` supports only `search` and `item`; test `apps/litecowork-ui/tests/discover-catalog-state.test.ts` | Truthful unavailable states; no lifecycle UI |
 | LiteSPM client, transport, peer auth | ABSENT: no `LiteSpm*` type in `apps/` or `crates/` | Whole bridge is target |
-| Package approval and receipt records | ABSENT: no table after `docs/schemas/sqlite-v32.sql` | Target |
+| Package approval and receipt records | ABSENT: no table after `docs/schemas/sqlite-v34.sql` | Target |
 | Reusable primitives | CODE: `crates/operator-ipc` (`BudgetedBody`, `InFlightBodyBudget`, framed read/write), `crates/windows-local-security` (`current_logon_sid`, `connect_operator_pipe`) | Built for LiteCowork's own Operator pipe; reuse for a LiteSPM client is unproven |
 | Upstream LiteSPM | Source SHAs `9f42b25d`, `111fd9b8`, `f77a3a3` and research snapshot `84d5fab` describe different dates/interfaces. `84d5fab` is research only, not the owner-approved LiteCowork MCP pin. Current root Architecture identifies published local MCP stdio as the boundary; exact schemas and operation coverage have not been requalified | MCP bridge/tool manifest not pinned; see B-36 and O-01 |
 
@@ -241,7 +241,7 @@ See [contracts/errors-recovery.md](contracts/errors-recovery.md). Rules: unavail
 - The LiteCowork client consumes a session from the process/session owner defined by Feature 011/O-08. It does not discover a private LiteSPM endpoint, create a daemon descriptor or spawn an unmanaged process.
 - Host compatibility profile is data: host, host version, OS/build, scope, kind, operation, evidence ref. Only rows qualified in 013-T18 are enabled.
 - Deadlines and caps are finite; proposed initial values (MCP initialization 5 s, tool call 30 s, response 4 MiB, inventory page 200) are checked against the pinned MCP bridge contract in 013-T04.
-- Migration: one forward-only `sqlite-vNN.sql` (allocated v39 in docs/LITECOWORK-BUILD-TASKS.md; the chain currently ends at `sqlite-v32.sql`).
+- Migration: one forward-only `sqlite-vNN.sql` (allocated v40 in docs/LITECOWORK-BUILD-TASKS.md; the 2026-11-20 chain ends at `sqlite-v34.sql`).
 
 ## 13. Observability
 

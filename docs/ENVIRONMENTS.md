@@ -238,13 +238,15 @@ requested Bubblewrap namespace and blocks before native harness creation until a
 signal; its builder, protocol and no-retry helper tests pass. It does not yet run same-scope
 enforcement probes, resolve a SQLite admission receipt or have a Task Runtime caller. A
 separate `RuntimeLocalPreparationJournal` now has CODE for private durable intent/phase/receipt
-records and fail-closed recovery classification; the focused daemon test filter passed 22/22
-on native Windows. This primitive is not wired before provider creation or into startup
-recovery. Before a caller, pending-entry enumeration still needs no-follow/regular-file/
-owner/mode/canonical-key validation, and phase updates need serialization across shared or
-cross-process users. The revised target still requires the trusted idle supervisor, probes,
-exact receipt lookup, attestation, admission and restart reconciliation; the contract remains
-IN_REVIEW, and no current attestation or qualification claim is made.
+records and fail-closed recovery classification. Reads are capped at 16 KiB, use no-follow
+regular-file opens, validate Unix owner/private mode and canonical Attempt-key filenames, and
+phase updates serialize across processes. The native-Windows journal filter passes 6/6,
+including oversized-entry and cross-process lock regressions; a Unix-only symlink denial test
+is present but was not run on this Windows host. This primitive is not wired before provider
+creation or into startup recovery. The revised target still requires the trusted idle
+supervisor, same-scope probes, exact receipt lookup, attestation, admission and restart
+reconciliation; the contract remains IN_REVIEW, and no current attestation or qualification
+claim is made.
 Import limits apply before extraction or copying; an unsupported format is rejected or
 exposed as opaque bytes, never silently treated as parsed content.
 

@@ -325,6 +325,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/conversations/first-turn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createConversationWithFirstTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/conversations/{conversationId}": {
         parameters: {
             query?: never;
@@ -805,7 +821,8 @@ export type paths = {
         };
         get: operations["listTaskAttempts"];
         put?: never;
-        post?: never;
+        /** @description TARGET ONLY; no Operator handler is currently mounted. Admission is owner-authorized only after a fresh ATTEMPT_PRIVATE Environment is prepared and attested outside SQLite by a trusted idle supervisor holding the exact probed scope. Runtime writes a private recovery intent before provider creation; no native harness, tool server, credential or user code may start before admission. In one transaction recheck Workspace, Task version/status, accepted plan, READY Step, current Runtime incarnation and replay identity, then persist the public Environment identity, Attempt, Step binding, lease, STARTING AgentSession and receipt. Resolve the exact receipt, then use a one-time private handoff to start the native provider inside the held scope. The service selects the current lead; request data cannot assert Runtime, AgentBinding, Environment, attestation, grant, lease, provider handle or transcript. If storage admission fails after preparation, destroy or quarantine the unbound Environment before retry. */
+        post: operations["admitTaskAttempt"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4560,7 +4577,7 @@ export type components = {
             attempt_id: string;
             capability_ref?: components["schemas"]["CapabilityRef"] | null;
             operation: string;
-            target: components["schemas"]["ResourceRef"] | string;
+            target: components["schemas"]["ResourceRef"] | components["schemas"]["FileReplacementTarget"] | string;
             idempotency_key?: string | null;
             /** @enum {string} */
             state: "PROPOSED" | "STARTED" | "ACKNOWLEDGED" | "RECONCILING" | "OBSERVED" | "VERIFIED" | "FAILED" | "AMBIGUOUS";
@@ -4598,6 +4615,15 @@ export type components = {
             /** Format: date-time */
             accepted_at: string;
             correlation_id: string;
+        };
+        /** @description Caller-selected input only. Task/Workspace/version/idempotency come from authenticated route metadata; lead, Runtime, Environment, grant, lease, attestation and provider session are resolved by their owning services. */
+        AdmitTaskAttemptRequest: {
+            plan_revision: number;
+            step_id: string;
+        };
+        AttemptAdmissionReceipt: {
+            attempt: components["schemas"]["Attempt"];
+            receipt: components["schemas"]["CommandReceipt"];
         };
         RuntimeIncarnation: {
             runtime_incarnation_id: string;
@@ -4819,7 +4845,20 @@ export type components = {
              * @description Exact advertised SKILL.md URI
              */
             component: string;
+        } | {
+            /** @constant */
+            capability_id: "workspace.file.replace";
+            /** @constant */
+            identity_kind: "CORE_BUILTIN";
+            /** @constant */
+            source: "litecowork.core";
+            /** @constant */
+            digest: "sha256:5600e4897d63fffee5edfcd3c82f0da99e58f3fa3bfad37d07a50b11b37dda99";
+            /** @constant */
+            component: "workspace.file.replace";
         };
+        /** @description Package-component or MCP Skill identity accepted by the generic owner read-grant route; Core built-ins are Trust-issued through their owning operation. */
+        ReadCapabilityRef: components["schemas"]["CapabilityRef"] & unknown;
         GrantResourceRef: {
             resource_id: string;
             revision_id?: string | null;
@@ -4839,7 +4878,7 @@ export type components = {
         /** @description Expiry must be in the future and no more than 24 hours after issuance. Only same-Workspace Resources are accepted. The only operation granted is workspace.resource.read; SecretRefs and Approval consumption are not supported by this owner path. */
         CreateCapabilityGrantRequest: {
             task_id: string;
-            capability_ref: components["schemas"]["CapabilityRef"];
+            capability_ref: components["schemas"]["ReadCapabilityRef"];
             resource_refs: components["schemas"]["GrantResourceRef"][];
             /** Format: date-time */
             expires_at: string;
@@ -5126,6 +5165,23 @@ export type components = {
             workspace_id: string;
             title?: string | null;
         };
+        CreateConversationFirstTurnRequest: {
+            workspace_id: string;
+            title?: string | null;
+            content: components["schemas"]["MessageContentBlock"][];
+            resource_refs?: components["schemas"]["ResourceRef"][];
+            /** @description Exact same-Workspace enabled lead-eligible binding selected in New Chat, including the currently displayed Workspace default; pinned for idempotent replay */
+            agent_binding_id: string;
+            /**
+             * @default AUTO
+             * @enum {string}
+             */
+            presentation_preference: "AUTO" | "SIMPLE" | "RICH";
+        };
+        ConversationFirstTurnAdmission: {
+            conversation: components["schemas"]["Conversation"];
+            turn: components["schemas"]["ConversationTurnReceipt"];
+        };
         SetConversationAgentBindingRequest: {
             /** @description A same-Workspace enabled lead-eligible AgentBinding ID; null clears the Conversation override and resumes Workspace-default resolution. */
             agent_binding_id: string | null;
@@ -5177,6 +5233,11 @@ export type components = {
             message: components["schemas"]["ConversationMessage"];
             rich_presentation: components["schemas"]["RichPresentationRef"] | null;
             linked_items: components["schemas"]["PresentationItem"][];
+            /**
+             * @description Canonical status of the exact owning Conversation turn from the same SQLite snapshot; null when this message has no exact same-Conversation turn. Read-only lineage metadata, never command authority.
+             * @enum {string|null}
+             */
+            turn_status: "OPEN" | "RUNNING" | "WAITING_USER" | "WAITING_DEPENDENCY" | "CANCEL_REQUESTED" | "COMPLETED" | "FAILED" | "CANCELLED" | null;
         };
         PresentationItem: {
             item_key: string;
@@ -5247,6 +5308,14 @@ export type components = {
             active_turn: components["schemas"]["ConversationTurnPresentation"] | null;
             /** @description The latest turn when it is FAILED; carries the aggregate version Retry must send as If-Match and the typed settlement reason. */
             retryable_turn: components["schemas"]["ConversationRetryableTurn"] | null;
+            /** @description Latest Conversation turn identity for reloading its REPORTED activity; read-only and not Stop/Retry authority. */
+            activity_turn: components["schemas"]["ConversationActivityTurn"] | null;
+        };
+        ConversationActivityTurn: {
+            turn_id: string;
+            retry_ordinal: number;
+            /** @enum {string} */
+            status: "OPEN" | "RUNNING" | "WAITING_USER" | "WAITING_DEPENDENCY" | "CANCEL_REQUESTED" | "COMPLETED" | "FAILED" | "CANCELLED";
         };
         ConversationRetryableTurn: {
             turn_id: string;
@@ -5284,7 +5353,9 @@ export type components = {
         };
         CreateTaskRequest: {
             workspace_id: string;
+            /** @description For explicit Conversation-to-Task promotion, identifies the source Conversation. Pair with exactly two distinct source_message_refs in USER-prompt then AGENT-reply order. Both source messages and their COMPLETED turn are revalidated in the Task-create transaction; they already exist and are not appended or mutated. */
             conversation_id?: string | null;
+            /** @description Empty for a standalone Task; for Conversation promotion, the immutable existing USER prompt followed by its AGENT reply from one COMPLETED turn. */
             source_message_refs?: string[];
             objective: string;
             /** @enum {string|null} */
@@ -5307,7 +5378,7 @@ export type components = {
             coworker_id?: string | null;
             /** @description Optional optimistic check for the selected Coworker head; the service pins its current revision. */
             expected_coworker_version?: number | null;
-        } & unknown;
+        } & (unknown & unknown & unknown & unknown);
         ReviseTaskSpecRequest: {
             parent_revisions: number[];
             objective: string;
@@ -6272,6 +6343,32 @@ export type components = {
         };
         PinnedResourceRef: components["schemas"]["ResourceRef"] & {
             revision_id: string;
+        };
+        /** @description Canonical UTF-8 root-relative path using slash separators. No leading or trailing slash, empty, dot or parent segment, backslash, drive/UNC/device prefix, NUL or control character. This lexical check does not prove confinement; the provider resolves beneath an opened WorkspaceRoot handle and rejects symlink/reparse escapes. */
+        WorkspaceRelativePath: string;
+        /** @description Internal Trust storage request only; no HTTP operation accepts it. Attempt and Step IDs are untrusted selectors checked against the live admitted session and current accepted Step. This is requested scope, not a CapabilityGrant or write authorization. */
+        FileWriteScopeRequest: {
+            attempt_id: string;
+            step_id: string;
+            workspace_root_id: string;
+            target_relative_path: components["schemas"]["WorkspaceRelativePath"];
+            base_revision_digest: string;
+            requested_max_bytes: number;
+            /** @description Exact managed immutable ResourceRevision; external-only content is not eligible. */
+            candidate_resource: components["schemas"]["PinnedResourceRef"];
+        };
+        /** @description Closed Effect target shape with CODE validation in the domain Effect validator and SQLite proposal and dispatch boundaries. The atomic dispatch store also requires the exact Core file-write grant ResourceRef and root/path/base/candidate digest/size/ plan-action/max-byte scope to match this target. This is not a standalone request body and creates no authority; Task proposal/Attempt/dispatch production remains unintegrated. */
+        FileReplacementTarget: {
+            /** @constant */
+            kind: "FILE_REPLACEMENT";
+            workspace_root_id: string;
+            target_relative_path: components["schemas"]["WorkspaceRelativePath"];
+            base_revision_digest: string;
+            /** @description Exact managed immutable ResourceRevision; the target's digest and size must match its bytes. */
+            content: components["schemas"]["PinnedResourceRef"];
+            content_digest: string;
+            content_bytes: number;
+            plan_action_digest: string;
         };
         ResourceInput: {
             resource_ref: components["schemas"]["PinnedResourceRef"];
@@ -8349,6 +8446,33 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    createConversationWithFirstTurn: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConversationFirstTurnRequest"];
+            };
+        };
+        responses: {
+            /** @description Conversation creation and first-turn admission were committed atomically; exact retries replay the same composite receipt */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationFirstTurnAdmission"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getConversation: {
         parameters: {
             query?: never;
@@ -9323,6 +9447,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Attempt"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    admitTaskAttempt: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdmitTaskAttemptRequest"];
+            };
+        };
+        responses: {
+            /** @description Exact idempotent replay returns the original Attempt and receipt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptAdmissionReceipt"];
+                };
+            };
+            /** @description New Attempt and admission receipt committed; native provider/harness launch follows receipt resolution */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptAdmissionReceipt"];
+                };
+            };
+            /** @description Stale Task or plan version, non-READY Step, lease conflict, or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];

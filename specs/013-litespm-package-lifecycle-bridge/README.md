@@ -2,7 +2,7 @@
 
 - **Status:** IN_REVIEW - authored 2026-11-09; not owner-accepted; does not authorize implementation; not a claim of implementation or qualification.
 - **Revision:** 0.1 | **Updated:** 2026-11-12 | **Open blockers:** B-36 (owner-approved MCP bridge pin/tool schemas, Runtime-owned process identity and consent/recovery path) and B-37 (first package kind and host for plan/apply), both PROPOSED, pending owner.
-- **Implementation state (2026-11-10):** DEFERRED by the owner on 2026-11-10 (A-62): every LiteSPM task. Nothing implemented; migration v39 allocated and unused. See the DEFERRED note at the top of TASKS.md for why, what unblocks it and where to test later.
+- **Implementation state (2026-11-10):** DEFERRED by the owner on 2026-11-10 (A-62): every LiteSPM task. Nothing implemented; migration v40 allocated and unused. See the DEFERRED note at the top of TASKS.md for why, what unblocks it and where to test later.
 - **Owners:** Capability Fabric (LiteSPM boundary), Operator/API, Storage, Trust/Approval, Desktop UI, Security and Product. Upstream LiteSPM owns catalog, inventory, host registration, mutation and lifecycle.
 
 ## User outcome

@@ -16,6 +16,7 @@ pub(crate) mod control_descriptor;
 mod conversation_prompt;
 pub(crate) mod conversation_recovery;
 pub(crate) mod descriptor_service;
+pub(crate) mod host_recovery;
 pub(crate) mod host_supervisor;
 pub(crate) mod matchmaker;
 pub(crate) mod module_registry;
@@ -27,6 +28,7 @@ mod opencode;
 mod opencode_profile_probe;
 mod opencode_server;
 mod planning;
+pub(crate) mod process_identity;
 pub(crate) mod resource_materializer;
 pub(crate) mod supervisor;
 pub(crate) mod turn_coordinator;
@@ -601,6 +603,15 @@ impl AgentChild {
             Self::Unix(child) => child.id(),
             #[cfg(windows)]
             Self::Windows(child) => child.id(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn windows_process_details(
+        &self,
+    ) -> std::io::Result<windows_local_security::AgentProcessDetails> {
+        match self {
+            Self::Windows(child) => windows_local_security::contained_child_process_details(child),
         }
     }
 

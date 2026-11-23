@@ -97,7 +97,18 @@ struct RuntimeLocalState {
     recovered_from_unclean_shutdown: bool,
     last_shutdown_clean: bool,
     blockers: Vec<String>,
+    #[serde(default)]
+    startup_recovery: StartupRecoveryFacts,
     version: u64,
+}
+
+/// Safe counts from the bounded prior-incarnation host reconciliation pass.
+/// These contain no process identifiers, paths, executable names, or native handles.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+struct StartupRecoveryFacts {
+    prior_agent_hosts_examined: u64,
+    prior_agent_hosts_stopped: u64,
+    prior_agent_hosts_unresolved: u64,
 }
 
 impl RuntimeLocalState {
@@ -133,6 +144,7 @@ impl RuntimeLocalState {
             recovered_from_unclean_shutdown,
             last_shutdown_clean: false,
             blockers: Vec::new(),
+            startup_recovery: StartupRecoveryFacts::default(),
             version: previous.map_or(1, |state| state.version.saturating_add(1)),
         };
         Ok(state)
@@ -350,6 +362,7 @@ fn run_with_identity_providers(
         &storage.store,
         &owner_principal_id,
         &mut state,
+        &mut incarnation_version,
         blockers,
     )?;
 
@@ -622,6 +635,7 @@ fn recover_and_persist_startup_blockers(
     store: &SqliteWorkspaceStore,
     owner_principal_id: &str,
     state: &mut RuntimeLocalState,
+    incarnation_version: &mut u64,
     mut blockers: Vec<RuntimeLifecycleBlocker>,
 ) -> Result<Vec<RuntimeLifecycleBlocker>, String> {
     if recover_expired_execution_leases(
@@ -648,7 +662,38 @@ fn recover_and_persist_startup_blockers(
             created_at: timestamp_now()?,
         });
     }
+    let observed_at = timestamp_now()?;
+    let host_recovery = crate::agents::host_recovery::recover_prior_agent_hosts(
+        store,
+        &state.runtime_id,
+        &state.local_incarnation_id,
+        &|| observed_at.clone(),
+    );
+    state.startup_recovery = StartupRecoveryFacts {
+        prior_agent_hosts_examined: host_recovery.examined as u64,
+        prior_agent_hosts_stopped: host_recovery.stopped as u64,
+        prior_agent_hosts_unresolved: host_recovery.failures as u64,
+    };
+    if host_recovery.failures > 0 {
+        blockers.push(RuntimeLifecycleBlocker {
+            code: "AGENT_HOST_PROCESS_RECOVERY_FAILED".to_owned(),
+            created_at: observed_at,
+        });
+    }
+
+    // The initial Runtime readiness transition precedes these bounded reconciliation
+    // passes so the recovery services can use the current incarnation. If any late
+    // blocker is discovered, make DEGRADED durable before starting the Operator.
+    if !blockers.is_empty() && state.recovery_state == RuntimeState::Ready {
+        let blocker_codes = blockers
+            .iter()
+            .map(|blocker| blocker.code.clone())
+            .collect();
+        state.transition(RuntimeState::Degraded, blocker_codes);
+        persist_degraded_catalog_transition(data_directory, store, state, incarnation_version)?;
+    }
     persist_final_recovery_blockers(data_directory, state, &blockers)?;
+    persist_state(data_directory, state)?;
     Ok(blockers)
 }
 
@@ -1283,9 +1328,8 @@ fn persist_final_recovery_blockers(
     };
     if state.recovery_state != target_state || state.blockers != blocker_codes {
         state.transition(target_state, blocker_codes);
-        persist_state(data_directory, state)?;
     }
-    Ok(())
+    persist_state(data_directory, state)
 }
 
 /// Owns the Operator thread and attempts bounded shutdown on every early return.
@@ -1873,6 +1917,7 @@ mod tests {
             recovered_from_unclean_shutdown: false,
             last_shutdown_clean: false,
             blockers: Vec::new(),
+            startup_recovery: super::StartupRecoveryFacts::default(),
             version: 4,
         }
     }
@@ -2161,6 +2206,7 @@ mod tests {
             recovered_from_unclean_shutdown: false,
             last_shutdown_clean: true,
             blockers: Vec::new(),
+            startup_recovery: super::StartupRecoveryFacts::default(),
             version: 1,
         };
         persist_state(directory.path(), &legacy_state).expect("persist existing state");
@@ -2185,6 +2231,7 @@ mod tests {
             recovered_from_unclean_shutdown: false,
             last_shutdown_clean: false,
             blockers: Vec::new(),
+            startup_recovery: super::StartupRecoveryFacts::default(),
             version: 2,
         };
 
@@ -2224,6 +2271,7 @@ mod lifecycle_file_tests {
             recovered_from_unclean_shutdown: false,
             last_shutdown_clean: true,
             blockers: Vec::new(),
+            startup_recovery: super::StartupRecoveryFacts::default(),
             version: 1,
         };
         fs::write(
@@ -2270,6 +2318,7 @@ mod bootstrap_state_tests {
             recovered_from_unclean_shutdown: false,
             last_shutdown_clean,
             blockers: Vec::new(),
+            startup_recovery: super::StartupRecoveryFacts::default(),
             version,
         }
     }

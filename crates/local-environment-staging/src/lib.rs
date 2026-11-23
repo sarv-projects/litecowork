@@ -860,6 +860,7 @@ mod tests {
                 preferred_lead_agent_binding_id: None,
                 authored_by: serde_json::Value::Null,
                 created_at: "2026-10-09T00:00:00Z".to_owned(),
+                delegation_policy_snapshot: None,
             },
         }
     }

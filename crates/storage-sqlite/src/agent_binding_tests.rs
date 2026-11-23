@@ -2318,6 +2318,156 @@ fn conversation_activation_fixture() -> (
 }
 
 #[test]
+fn agent_host_requires_stopping_before_terminal_state() {
+    use storage_core::AgentHostStore;
+
+    for from in ["STARTING", "READY", "BUSY", "DEGRADED"] {
+        assert!(
+            !valid_agent_host_transition(from, "STOPPED"),
+            "{from} must not jump directly to STOPPED"
+        );
+    }
+    assert!(!valid_agent_host_transition("STARTING", "STOPPING"));
+    assert!(valid_agent_host_transition("READY", "STOPPING"));
+    assert!(valid_agent_host_transition("DEGRADED", "STOPPING"));
+    assert!(valid_agent_host_transition("STOPPING", "STOPPED"));
+
+    let (fixture, _, _, _, _, host_id) = conversation_activation_fixture();
+    let direct_stop = fixture.store.transition_agent_host_instance(
+        RUNTIME_ID,
+        INCARNATION_ID,
+        &host_id,
+        "READY",
+        "STOPPED",
+        NOW,
+        None,
+    );
+    assert!(
+        direct_stop.is_err(),
+        "READY must enter STOPPING before it can become STOPPED"
+    );
+    assert_eq!(
+        fixture
+            .store
+            .get_agent_host_instance(RUNTIME_ID, INCARNATION_ID, &host_id)
+            .expect("read unchanged AgentHost")
+            .expect("AgentHost exists")
+            .state,
+        "READY",
+        "a refused transition must not mutate the host"
+    );
+
+    let stopping = fixture
+        .store
+        .transition_agent_host_instance(
+            RUNTIME_ID,
+            INCARNATION_ID,
+            &host_id,
+            "READY",
+            "STOPPING",
+            NOW,
+            None,
+        )
+        .expect("persist STOPPING before shutdown");
+    assert_eq!(stopping.state, "STOPPING");
+    let stopped = fixture
+        .store
+        .transition_agent_host_instance(
+            RUNTIME_ID,
+            INCARNATION_ID,
+            &host_id,
+            "STOPPING",
+            "STOPPED",
+            NOW,
+            None,
+        )
+        .expect("observed exit may settle STOPPING to STOPPED");
+    assert_eq!(stopped.state, "STOPPED");
+}
+
+#[test]
+fn prior_agent_host_history_is_bounded_keyset_paged_and_excludes_current_incarnation() {
+    use storage_core::AgentHostStore;
+
+    let fixture = setup();
+    let connection = Connection::open(database_path(&fixture.directory))
+        .expect("open Runtime-local host history fixture");
+    connection
+        .pragma_update(None, "foreign_keys", "OFF")
+        .expect("seed isolated prior-incarnation rows without unrelated FK fixtures");
+    for (host_id, incarnation_id, started_at) in [
+        (
+            "prior-host-a",
+            "prior-incarnation-a",
+            "2026-10-01T00:00:00Z",
+        ),
+        (
+            "prior-host-b",
+            "prior-incarnation-b",
+            "2026-10-02T00:00:00Z",
+        ),
+        ("current-host", INCARNATION_ID, "2026-10-03T00:00:00Z"),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO agent_host_instances(
+                    host_instance_id,runtime_id,runtime_incarnation_id,agent_profile_id,
+                    endpoint_id,hosting_mode,state,process_identity_ref,ownership,
+                    started_at,last_used_at,idle_since
+                 ) VALUES (?1,?2,?3,?4,?5,'LOCAL_PER_SESSION','READY',NULL,'LITECOWORK',?6,?6,NULL)",
+                params![
+                    host_id,
+                    RUNTIME_ID,
+                    incarnation_id,
+                    PROFILE_ID,
+                    ENDPOINT_ID,
+                    started_at
+                ],
+            )
+            .expect("insert scoped AgentHostInstance row");
+    }
+    drop(connection);
+
+    let first = fixture
+        .store
+        .list_prior_agent_host_instances(RUNTIME_ID, INCARNATION_ID, None, None, 1)
+        .expect("first bounded host-history page");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].host_instance_id, "prior-host-a");
+    let second = fixture
+        .store
+        .list_prior_agent_host_instances(
+            RUNTIME_ID,
+            INCARNATION_ID,
+            Some(&first[0].started_at),
+            Some(&first[0].host_instance_id),
+            1,
+        )
+        .expect("second bounded host-history page");
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].host_instance_id, "prior-host-b");
+    assert!(
+        fixture
+            .store
+            .list_prior_agent_host_instances(
+                RUNTIME_ID,
+                INCARNATION_ID,
+                Some(&second[0].started_at),
+                Some(&second[0].host_instance_id),
+                1,
+            )
+            .expect("exhausted prior host-history page")
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .store
+            .list_prior_agent_host_instances(RUNTIME_ID, INCARNATION_ID, None, None, 101)
+            .is_err()
+    );
+}
+
+#[test]
 fn conversation_activation_commits_session_turn_and_local_host_binding_atomically() {
     use storage_core::AgentSessionStore;
     use storage_core::conversation::ConversationTurnStatus;
@@ -2789,6 +2939,57 @@ fn conversation_agent_response_commit_settles_turn_and_session_atomically() {
             ),
         }
     };
+
+    // User-request waiting states have their own immutable response and continuation
+    // operations (B-06); they are not final Agent response commits (B-04).
+    for (request_id, message_id, status) in [
+        (
+            "req-waiting-user",
+            "msg-waiting-user",
+            ConversationTurnStatus::WaitingUser,
+        ),
+        (
+            "req-waiting-dependency",
+            "msg-waiting-dependency",
+            ConversationTurnStatus::WaitingDependency,
+        ),
+    ] {
+        let mut waiting = make_commit(request_id, message_id, 2, 2, OWNER_ID);
+        waiting.turn_status = status;
+        let error = conv_store
+            .commit_conversation_agent_response(waiting)
+            .expect_err("B-04 response commit must reject a nonterminal waiting state");
+        assert!(matches!(
+            error,
+            storage_core::StoreError::Invalid(message)
+                if message == "Conversation response commit requires a terminal turn status"
+        ));
+    }
+    let conn = Connection::open(database_path(&fixture.directory)).expect("open db");
+    let (agent_messages, response_commits, waiting_receipts, turn_status, session_status): (
+        i64,
+        i64,
+        i64,
+        String,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM conversation_messages WHERE role='AGENT' AND turn_id=?1),
+                    (SELECT COUNT(*) FROM conversation_response_commits WHERE turn_id=?1),
+                    (SELECT COUNT(*) FROM request_dedup WHERE request_id IN ('req-waiting-user','req-waiting-dependency')),
+                    (SELECT status FROM conversation_turns WHERE turn_id=?1),
+                    (SELECT status FROM agent_sessions WHERE agent_session_id=?2)",
+            params![turn_id, session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .expect("query unchanged state after rejected waiting commits");
+    assert_eq!(
+        (agent_messages, response_commits, waiting_receipts),
+        (0, 0, 0)
+    );
+    assert_eq!(turn_status, "RUNNING");
+    assert_eq!(session_status, "ACTIVE");
+    drop(conn);
 
     // Stale turn version fails
     assert!(

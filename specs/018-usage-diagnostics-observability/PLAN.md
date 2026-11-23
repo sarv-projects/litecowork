@@ -59,7 +59,7 @@ Each task lists exact allowed paths. Summary: `crates/storage-core/src/usage.rs`
 
 ## 5. Migrations
 
-The usage record table is created by Feature 001's migration. This package adds at most one forward-only migration (allocated v46 in docs/LITECOWORK-BUILD-TASKS.md, only if needed) for a covering index if 001's migration lacks one. Logs and crash records are files, not tables. No migration ships in IN_REVIEW.
+The usage record table is created by Feature 001's migration. This package adds at most one forward-only migration (allocated v47 in docs/LITECOWORK-BUILD-TASKS.md, only if needed) for a covering index if 001's migration lacks one. Logs and crash records are files, not tables. No migration ships in IN_REVIEW.
 
 ## 6. Rollout
 

@@ -537,33 +537,39 @@ mod save_as_tests {
     #[test]
     fn native_save_as_rejects_media_and_size_mismatches() {
         let expected_digest = format!("sha256:{:x}", sha2::Sha256::digest(b"expected"));
-        assert!(verify_artifact_download(
-            Some("application/octet-stream"),
-            Some(8),
-            "text/plain",
-            8,
-            &expected_digest,
-            b"expected"
-        )
-        .is_err());
-        assert!(verify_artifact_download(
-            Some("text/plain"),
-            Some(7),
-            "text/plain",
-            8,
-            &expected_digest,
-            b"expected"
-        )
-        .is_err());
-        assert!(verify_artifact_download(
-            Some("text/plain"),
-            Some(8),
-            "text/plain",
-            8,
-            &expected_digest,
-            b"short"
-        )
-        .is_err());
+        assert!(
+            verify_artifact_download(
+                Some("application/octet-stream"),
+                Some(8),
+                "text/plain",
+                8,
+                &expected_digest,
+                b"expected"
+            )
+            .is_err()
+        );
+        assert!(
+            verify_artifact_download(
+                Some("text/plain"),
+                Some(7),
+                "text/plain",
+                8,
+                &expected_digest,
+                b"expected"
+            )
+            .is_err()
+        );
+        assert!(
+            verify_artifact_download(
+                Some("text/plain"),
+                Some(8),
+                "text/plain",
+                8,
+                &expected_digest,
+                b"short"
+            )
+            .is_err()
+        );
     }
 
     #[test]

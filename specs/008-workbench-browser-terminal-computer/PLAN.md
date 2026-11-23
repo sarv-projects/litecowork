@@ -8,7 +8,7 @@
 ## Phases
 
 1. SPEC section 5 blockers B-22, B-23 and B-32 are ACCEPTED (2026-11-09). Workbench truthfulness baseline (A-51) is verified in source; finish Activity fallthrough and the Computer UNAVAILABLE surface.
-2. Promote accepted browser, terminal, Activity and Diff interfaces in the canonical owner docs and `docs/schemas/` (OpenAPI, events, error codes, allocated immutable `sqlite-v41.sql`) in one reviewed change.
+2. Promote accepted browser, terminal, Activity and Diff interfaces in the canonical owner docs and `docs/schemas/` (OpenAPI, events, error codes, allocated immutable `sqlite-v42.sql`) in one reviewed change.
 3. Browser lane (Windows x64 row first): storage, managed Chromium provider, service/routes/bridge, UI, recovery.
 4. Terminal lane (Linux x64 row first, after Feature 005 admits a bubblewrap Environment): storage, discovery and PTY, service/routes/bridge, UI, recovery. Windows ConPTY waits on Feature 005 B-35.
 5. Activity and Diff lanes (independent of providers): read projection and exact-revision diff.
@@ -18,8 +18,8 @@ The ordered task list is [TASKS.md](TASKS.md).
 
 ## Dependency DAG
 
-- T01 (contract promotion) blocks every implementation task except T02 (UI truthfulness), which may land first.
-- Browser T03-T07, terminal T08-T13, Activity T14 and Diff T15 are independent lanes; T16-T19 close the package.
+- T01 (contract promotion) blocks every implementation task except T02 (UI truthfulness) and T19 (the source-only iframe sandbox correction); the product owner delegated T19's pre-provider sequencing on 2026-11-19 because the unsafe preview already exists and T19 does not mount or authorize Browser operations.
+- Browser T03-T07, terminal T08-T13, Activity T14 and Diff T15 are independent lanes; T16-T18 close the package, T19 is the independent pre-provider iframe safety task, and T20 adds the user-invoked Git worktree/GitHub PR surface.
 - External side effects never run inside the transactions declared in WIRING.yaml.
 - Feature 001 remains a prerequisite wherever this slice needs a committed Conversation turn.
 
@@ -30,7 +30,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-Browser session/lease/receipt and terminal session/receipt records need one new immutable SQLite migration (`docs/schemas/sqlite-v41.sql` per the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md; `sqlite-v32.sql` is highest wired on 2026-11-10; take the next free number if another package merges first), promoted by T01 and implemented by T03/T08. Activity and Diff add no tables. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
+Browser session/lease/receipt and terminal session/receipt records need one new immutable SQLite migration (`docs/schemas/sqlite-v42.sql` per the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md; v34 is wired in the 2026-11-20 checkout; take the next free number if another package merges first), promoted by T01 and implemented by T03/T08. Activity and Diff add no tables. Rollback is revert to the previous committed revision and refuse new admission that needs the new field.
 
 ## Risks
 

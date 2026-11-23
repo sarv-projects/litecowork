@@ -409,6 +409,23 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Conversation'}
         default: {$ref: '#/components/responses/Error'}
+  /conversations/first-turn:
+    post:
+      tags: [conversations]
+      operationId: createConversationWithFirstTurn
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateConversationFirstTurnRequest'}
+      responses:
+        '202':
+          description: Conversation creation and first-turn admission were committed atomically; exact retries replay the same composite receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationFirstTurnAdmission'}
+        default: {$ref: '#/components/responses/Error'}
   /conversations/{conversationId}:
     get:
       tags: [conversations]
@@ -7001,6 +7018,35 @@ components:
       properties:
         workspace_id: {type: string, minLength: 1}
         title: {type: [string, 'null'], maxLength: 160}
+    CreateConversationFirstTurnRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, content, agent_binding_id]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        title: {type: [string, 'null'], maxLength: 160}
+        content:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items: {$ref: '#/components/schemas/MessageContentBlock'}
+        resource_refs:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/ResourceRef'}
+        agent_binding_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Exact same-Workspace enabled lead-eligible binding selected in New Chat, including the currently displayed Workspace default; pinned for idempotent replay
+        presentation_preference: {type: string, enum: [AUTO, SIMPLE, RICH], default: AUTO}
+    ConversationFirstTurnAdmission:
+      type: object
+      additionalProperties: false
+      required: [conversation, turn]
+      properties:
+        conversation: {$ref: '#/components/schemas/Conversation'}
+        turn: {$ref: '#/components/schemas/ConversationTurnReceipt'}
     SetConversationAgentBindingRequest:
       type: object
       additionalProperties: false
@@ -7076,7 +7122,7 @@ components:
     ConversationPresentationMessage:
       type: object
       additionalProperties: false
-      required: [message, rich_presentation, linked_items]
+      required: [message, rich_presentation, linked_items, turn_status]
       properties:
         message: {$ref: '#/components/schemas/ConversationMessage'}
         rich_presentation: {oneOf: [{$ref: '#/components/schemas/RichPresentationRef'}, {type: 'null'}]}
@@ -7084,6 +7130,10 @@ components:
           type: array
           maxItems: 200
           items: {$ref: '#/components/schemas/PresentationItem'}
+        turn_status:
+          type: [string, 'null']
+          enum: [OPEN, RUNNING, WAITING_USER, WAITING_DEPENDENCY, CANCEL_REQUESTED, COMPLETED, FAILED, CANCELLED, null]
+          description: 'Canonical status of the exact owning Conversation turn from the same SQLite snapshot; null when this message has no exact same-Conversation turn. Read-only lineage metadata, never command authority.'
     PresentationItem:
       type: object
       additionalProperties: false
@@ -7150,7 +7200,7 @@ components:
     ConversationPresentationSnapshot:
       type: object
       additionalProperties: false
-      required: [workspace_id, conversation_id, projection_revision, stream_cursor, origin_sequence, items, active_turn, retryable_turn]
+      required: [workspace_id, conversation_id, projection_revision, stream_cursor, origin_sequence, items, active_turn, retryable_turn, activity_turn]
       properties:
         workspace_id: {type: string, minLength: 1}
         conversation_id: {type: string, minLength: 1}
@@ -7164,6 +7214,15 @@ components:
         next_cursor: {type: [string, 'null'], description: 'Conversation message pagination cursor.'}
         active_turn: {oneOf: [{$ref: '#/components/schemas/ConversationTurnPresentation'}, {type: 'null'}]}
         retryable_turn: {oneOf: [{$ref: '#/components/schemas/ConversationRetryableTurn'}, {type: 'null'}], description: 'The latest turn when it is FAILED; carries the aggregate version Retry must send as If-Match and the typed settlement reason.'}
+        activity_turn: {oneOf: [{$ref: '#/components/schemas/ConversationActivityTurn'}, {type: 'null'}], description: 'Latest Conversation turn identity for reloading its REPORTED activity; read-only and not Stop/Retry authority.'}
+    ConversationActivityTurn:
+      type: object
+      additionalProperties: false
+      required: [turn_id, retry_ordinal, status]
+      properties:
+        turn_id: {type: string, minLength: 1}
+        retry_ordinal: {type: integer, minimum: 0}
+        status: {type: string, enum: [OPEN, RUNNING, WAITING_USER, WAITING_DEPENDENCY, CANCEL_REQUESTED, COMPLETED, FAILED, CANCELLED]}
     ConversationRetryableTurn:
       type: object
       additionalProperties: false
@@ -7212,9 +7271,13 @@ components:
       required: [workspace_id, objective]
       properties:
         workspace_id: {type: string}
-        conversation_id: {type: [string, 'null']}
+        conversation_id: {type: [string, 'null'], description: 'For explicit Conversation-to-Task promotion, identifies the source Conversation. Pair with exactly two distinct source_message_refs in USER-prompt then AGENT-reply order. Both source messages and their COMPLETED turn are revalidated in the Task-create transaction; they already exist and are not appended or mutated.'}
         source_message_refs:
           type: array
+          minItems: 0
+          maxItems: 2
+          uniqueItems: true
+          description: 'Empty for a standalone Task; for Conversation promotion, the immutable existing USER prompt followed by its AGENT reply from one COMPLETED turn.'
           items: {type: string}
         objective: {type: string, minLength: 1}
         task_category: {type: [string, 'null'], enum: [SOFTWARE_ENGINEERING, RESEARCH, WRITING, DATA_ANALYSIS, OFFICE, BROWSER, PERSONAL_ADMIN, OTHER, null]}
@@ -7246,6 +7309,21 @@ components:
         coworker_id: {type: [string, 'null'], description: Explicit Task origin selection; if omitted, no Coworker origin is used. The Operator may prefill the Workspace primary Coworker ID.}
         expected_coworker_version: {type: [integer, 'null'], minimum: 1, description: Optional optimistic check for the selected Coworker head; the service pins its current revision.}
       allOf:
+      - if:
+          properties: {conversation_id: {type: string, minLength: 1}}
+          required: [conversation_id]
+        then:
+          properties: {source_message_refs: {minItems: 2, maxItems: 2}}
+          required: [source_message_refs]
+      - if:
+          properties: {source_message_refs: {minItems: 1}}
+          required: [source_message_refs]
+        then: {properties: {conversation_id: {type: string, minLength: 1}}}
+      - if:
+          properties: {conversation_id: {type: string, minLength: 1}}
+          required: [conversation_id]
+        then:
+          properties: {input_refs: {description: 'For Conversation promotion, every Task input must exactly match a pinned ResourceRef attached to the source USER message. Unpinned and unrelated refs are refused by storage.'}}
       - if:
           properties: {expected_coworker_version: {type: integer}}
           required: [expected_coworker_version]

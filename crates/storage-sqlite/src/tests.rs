@@ -65,6 +65,375 @@ use storage_core::{
 };
 use zeroize::Zeroizing;
 
+#[test]
+fn conversation_origin_task_creation_persists_exact_completed_source_and_replays() {
+    use storage_core::{
+        ConversationTurnStore, EventDraft, ResourceRecord, ResourceRevisionRecord, ResourceStore,
+        TaskCreateCommit, TaskRecord, TaskSpecRevisionRecord, WorkspaceCreateRequest,
+    };
+
+    const WORKSPACE: &str = "workspace-turn";
+    const CONVERSATION: &str = "conversation-turn";
+    const USER_MESSAGE: &str = "message-turn";
+    const AGENT_MESSAGE: &str = "message-agent-promotion";
+    const TURN: &str = "turn-one";
+    const OWNER: &str = "owner-local";
+    const NOW: &str = "2026-10-09T12:00:01Z";
+    let pinned_input = serde_json::json!({
+        "workspace_id": WORKSPACE,
+        "resource_id": "resource-promotion-source",
+        "revision_id": "revision-promotion-source",
+    });
+    fn canonical_string(value: &serde_json::Value) -> String {
+        String::from_utf8(canonical_json(value).expect("canonical JSON")).expect("JSON is UTF-8")
+    }
+
+    let (directory, store, mut turn_create) = conversation_turn_tests::fixture();
+    let resource_content = b"immutable promotion context";
+    let resource_content_digest = digest(resource_content);
+    store
+        .create_resource(
+            WorkspaceCreateRequest {
+                principal_id: OWNER.into(),
+                request_id: "request-create-resource-promotion-source".into(),
+                request_payload: serde_json::json!({
+                    "operation": "resource.quick_import.v1",
+                    "workspace_id": WORKSPACE,
+                    "display_name": "source.txt",
+                    "media_type": "text/plain",
+                    "content_digest": resource_content_digest,
+                    "size_bytes": resource_content.len(),
+                }),
+            },
+            ResourceRecord {
+                resource_id: "resource-promotion-source".into(),
+                workspace_id: WORKSPACE.into(),
+                kind: "FILE".into(),
+                provider_identity: serde_json::json!({}),
+                identity_digest: None,
+                display_name: "source.txt".into(),
+                current_revision_id: Some("revision-promotion-source".into()),
+                sensitivity: "PERSONAL".into(),
+                provenance: serde_json::json!({
+                    "source_inputs": [],
+                    "transformations": [],
+                    "tool_reports": []
+                }),
+                created_at: NOW.into(),
+                updated_at: NOW.into(),
+                version: 1,
+            },
+            ResourceRevisionRecord {
+                resource_revision_id: "revision-promotion-source".into(),
+                resource_id: "resource-promotion-source".into(),
+                parent_revision_ids: Vec::new(),
+                provider_revision: None,
+                content_digest: Some(resource_content_digest.clone()),
+                size_bytes: Some(resource_content.len() as u64),
+                media_type: Some("text/plain".into()),
+                observed_at: NOW.into(),
+                created_by: serde_json::json!({"kind":"USER","principal_id":OWNER}),
+            },
+            EventDraft {
+                event_id: "event-resource-promotion-source".into(),
+                workspace_id: WORKSPACE.into(),
+                entity_type: "Resource".into(),
+                entity_id: "resource-promotion-source".into(),
+                origin_runtime_id: "runtime-local".into(),
+                entity_revision: 1,
+                hlc_timestamp: NOW.into(),
+                correlation_id: "correlation-resource-promotion-source".into(),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "resource.created.v1".into(),
+                payload: serde_json::json!({
+                    "resource_id":"resource-promotion-source",
+                    "workspace_id":WORKSPACE,
+                    "kind":"FILE",
+                    "aggregate_version":1
+                }),
+                recorded_at: NOW.into(),
+            },
+            resource_content.to_vec(),
+        )
+        .expect("create the exact pinned source Resource");
+    turn_create.message.resource_refs = serde_json::json!([pinned_input]);
+    turn_create.message_event.payload["resource_refs"] = serde_json::json!([pinned_input]);
+    turn_create.request.request_payload["resource_refs"] = serde_json::json!([pinned_input]);
+    SqliteConversationStore::new(store.clone())
+        .create_conversation_turn(turn_create)
+        .expect("admit source USER message and turn");
+
+    let answer = serde_json::json!([{"kind":"TEXT","text":"The answer is 42."}]);
+    let author = serde_json::json!({"kind":"AGENT","agent_binding_id":"binding-turn"});
+    let refs = serde_json::json!([]);
+    let connection =
+        Connection::open(state_database(&directory)).expect("inspect fixture database");
+    connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    connection.execute(
+        "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,agent_session_id,agent_binding_id,turn_id,content_json,resource_refs_json,source_channel_ref_json,created_at)
+         VALUES (?1,?2,?3,'AGENT',NULL,?4,?5,?6,?7,NULL,?8)",
+        rusqlite::params![AGENT_MESSAGE, CONVERSATION, canonical_string(&author), "binding-turn", TURN, canonical_string(&answer), canonical_string(&refs), NOW],
+    ).expect("commit source AGENT message");
+    connection.execute(
+        "UPDATE conversation_turns SET status='COMPLETED', settled_at=?1, version=version+1 WHERE turn_id=?2 AND conversation_id=?3",
+        rusqlite::params![NOW, TURN, CONVERSATION],
+    ).expect("settle the exact source turn");
+    let content_digest = digest(&canonical_json(&answer).unwrap());
+    let payload = serde_json::json!({
+        "message_id": AGENT_MESSAGE,
+        "conversation_id": CONVERSATION,
+        "author": author,
+        "content_digest": content_digest,
+        "resource_refs": refs,
+    });
+    let payload_json = canonical_string(&payload);
+    let payload_digest = digest(payload_json.as_bytes());
+    connection.execute(
+        "INSERT INTO domain_events(event_id,workspace_id,entity_type,entity_id,origin_runtime_id,origin_sequence,entity_revision,hlc_timestamp,correlation_id,causation_id,schema_version,type,payload_json,aggregate_state_ref_json,recorded_at,payload_digest)
+         SELECT ?1,?2,'Conversation',?3,'runtime-local',last_sequence+1,3,?4,'correlation-promotion',NULL,1,'conversation.message.added.v1',?5,'{}',?4,?6
+         FROM workspace_origin_sequences WHERE workspace_id=?2 AND origin_runtime_id='runtime-local'",
+        rusqlite::params!["event-agent-promotion", WORKSPACE, CONVERSATION, NOW, payload_json, payload_digest],
+    ).expect("commit canonical source message event");
+    connection.execute(
+        "UPDATE workspace_origin_sequences SET last_sequence=last_sequence+1 WHERE workspace_id=?1 AND origin_runtime_id='runtime-local'",
+        [WORKSPACE],
+    ).expect("advance event sequence");
+    drop(connection);
+
+    let request_payload = serde_json::json!({
+        "workspace_id": WORKSPACE,
+        "conversation_id": CONVERSATION,
+        "source_message_refs": [USER_MESSAGE, AGENT_MESSAGE],
+        "objective": "Please summarize this.",
+        "constraints": [], "non_goals": [], "input_refs": [pinned_input],
+        "required_outputs": [], "acceptance_criteria": [], "approvals_required": [],
+        "preferred_lead_agent_binding_id": "binding-turn",
+        "placement_preference": "AUTO",
+    });
+    let created_by = serde_json::json!({"kind":"USER","principal_id":OWNER});
+    let request_id = "promote-request-1";
+    let commit = TaskCreateCommit {
+        request: WorkspaceCreateRequest {
+            principal_id: OWNER.into(),
+            request_id: request_id.into(),
+            request_payload: request_payload.clone(),
+        },
+        idempotency_payload: None,
+        expected_coworker_version: None,
+        routine_admission: None,
+        automation_admission: None,
+        automation_test_admission: None,
+        task: TaskRecord {
+            task_id: "task-from-conversation".into(),
+            workspace_id: WORKSPACE.into(),
+            conversation_id: Some(CONVERSATION.into()),
+            current_spec_revision: 1,
+            current_plan_revision: None,
+            status: "READY".into(),
+            resume_status: None,
+            routine_id: None,
+            routine_revision: None,
+            automation_id: None,
+            automation_occurrence_id: None,
+            automation_test_run_id: None,
+            origin_coworker_id: None,
+            origin_coworker_revision: None,
+            lead_agent_binding_id: "binding-turn".into(),
+            blocking_conditions: Vec::new(),
+            priority: "NORMAL".into(),
+            created_by: created_by.clone(),
+            created_at: NOW.into(),
+            updated_at: NOW.into(),
+            completed_at: None,
+            version: 1,
+        },
+        initial_spec_revision: TaskSpecRevisionRecord {
+            task_id: "task-from-conversation".into(),
+            workspace_id: WORKSPACE.into(),
+            revision: 1,
+            parent_revisions: Vec::new(),
+            objective: "Please summarize this.".into(),
+            task_category: None,
+            constraints: Vec::new(),
+            non_goals: Vec::new(),
+            input_refs: vec![pinned_input.clone()],
+            workspace_instruction_revision: None,
+            required_outputs: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            approvals_required: Vec::new(),
+            budget: None,
+            delegation_budget_policy: None,
+            lead_failover_policy: serde_json::json!({"mode":"DISABLED","triggers":[],"fallback_agent_binding_ids":[],"max_lead_changes":0}),
+            deadline: None,
+            source_message_refs: vec![USER_MESSAGE.into(), AGENT_MESSAGE.into()],
+            placement_preference: serde_json::json!("AUTO"),
+            preferred_lead_agent_binding_id: Some("binding-turn".into()),
+            authored_by: created_by.clone(),
+            created_at: NOW.into(),
+            delegation_policy_snapshot: None,
+        },
+        event: EventDraft {
+            event_id: "event-task-promotion".into(),
+            workspace_id: WORKSPACE.into(),
+            entity_type: "Task".into(),
+            entity_id: "task-from-conversation".into(),
+            origin_runtime_id: "runtime-local".into(),
+            entity_revision: 1,
+            hlc_timestamp: NOW.into(),
+            correlation_id: "correlation-promotion-task".into(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "task.created.v1".into(),
+            payload: serde_json::json!({"task_id":"task-from-conversation","conversation_id":CONVERSATION,
+                "initial_spec_revision":1,"created_by":created_by,"origin_coworker_id":null,"origin_coworker_revision":null}),
+            recorded_at: NOW.into(),
+        },
+    };
+
+    let with_task_identity =
+        |mut candidate: TaskCreateCommit, task_id: &str, event_id: &str, request_id: &str| {
+            candidate.request.request_id = request_id.to_owned();
+            candidate.task.task_id = task_id.to_owned();
+            candidate.initial_spec_revision.task_id = task_id.to_owned();
+            candidate.event.event_id = event_id.to_owned();
+            candidate.event.entity_id = task_id.to_owned();
+            candidate.event.payload["task_id"] = serde_json::json!(task_id);
+            candidate
+        };
+
+    let created = store
+        .create_task(commit.clone())
+        .expect("completed committed reply promotes to READY Task");
+    assert_eq!(
+        created.view.task.conversation_id.as_deref(),
+        Some(CONVERSATION)
+    );
+    assert_eq!(
+        created.view.current_spec_revision.source_message_refs,
+        [USER_MESSAGE, AGENT_MESSAGE]
+    );
+    assert_eq!(created.event.payload["conversation_id"], CONVERSATION);
+    assert_eq!(created.view.task.status, "READY");
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect Task admission");
+    let (tasks, attempts, plans): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM tasks WHERE task_id='task-from-conversation'),
+                (SELECT COUNT(*) FROM attempts WHERE task_id='task-from-conversation'),
+                (SELECT COUNT(*) FROM plan_revisions WHERE task_id='task-from-conversation')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("count Task and execution state");
+    assert_eq!((tasks, attempts, plans), (1, 0, 0));
+    drop(connection);
+
+    let mut unpinned_input = with_task_identity(
+        commit.clone(),
+        "task-from-unpinned-input",
+        "event-task-unpinned-input",
+        "request-unpinned-input",
+    );
+    let forged_input = serde_json::json!({
+        "workspace_id": WORKSPACE,
+        "resource_id": "resource-not-on-source-prompt",
+        "revision_id": "revision-unrelated",
+    });
+    unpinned_input.request.request_payload["input_refs"] = serde_json::json!([forged_input]);
+    unpinned_input.initial_spec_revision.input_refs =
+        vec![unpinned_input.request.request_payload["input_refs"][0].clone()];
+    let error = store
+        .create_task(unpinned_input)
+        .expect_err("Task inputs cannot be added outside the exact source USER message pins");
+    assert!(
+        matches!(error, StoreError::Invalid(_)),
+        "unexpected unpinned-input failure: {error:?}"
+    );
+
+    let mut reversed_pair = with_task_identity(
+        commit.clone(),
+        "task-from-reversed-pair",
+        "event-task-reversed-pair",
+        "request-reversed-pair",
+    );
+    reversed_pair.request.request_payload["source_message_refs"] =
+        serde_json::json!([AGENT_MESSAGE, USER_MESSAGE]);
+    reversed_pair.initial_spec_revision.source_message_refs =
+        vec![AGENT_MESSAGE.into(), USER_MESSAGE.into()];
+    let error = store
+        .create_task(reversed_pair)
+        .expect_err("source order must be USER then AGENT");
+    assert!(
+        matches!(error, StoreError::Invalid(_)),
+        "unexpected reversed-source failure: {error:?}"
+    );
+
+    let changed_source_state =
+        Connection::open(state_database(&directory)).expect("change source after commit");
+    changed_source_state
+        .execute(
+            "UPDATE conversation_turns SET status='FAILED' WHERE turn_id=?1",
+            [TURN],
+        )
+        .unwrap();
+    drop(changed_source_state);
+    assert_eq!(
+        store
+            .create_task(commit.clone())
+            .expect("exact replay precedes source revalidation"),
+        created
+    );
+    let incomplete_turn = with_task_identity(
+        commit.clone(),
+        "task-from-incomplete-turn",
+        "event-task-incomplete-turn",
+        "request-incomplete-turn",
+    );
+    let error = store
+        .create_task(incomplete_turn)
+        .expect_err("fresh promotion requires a completed source turn");
+    assert!(
+        matches!(error, StoreError::Invalid(_)),
+        "unexpected incomplete-turn failure: {error:?}"
+    );
+
+    let connection =
+        Connection::open(state_database(&directory)).expect("restore completed source turn");
+    connection
+        .execute(
+            "UPDATE conversation_turns SET status='COMPLETED' WHERE turn_id=?1",
+            [TURN],
+        )
+        .unwrap();
+    connection.execute(
+        "INSERT INTO domain_events(event_id,workspace_id,entity_type,entity_id,origin_runtime_id,origin_sequence,entity_revision,hlc_timestamp,correlation_id,causation_id,schema_version,type,payload_json,aggregate_state_ref_json,recorded_at,payload_digest)
+         SELECT 'event-agent-promotion-duplicate',d.workspace_id,d.entity_type,d.entity_id,d.origin_runtime_id,s.last_sequence+1,d.entity_revision+1,d.hlc_timestamp,'correlation-duplicate',NULL,d.schema_version,d.type,d.payload_json,d.aggregate_state_ref_json,d.recorded_at,d.payload_digest
+           FROM domain_events d CROSS JOIN workspace_origin_sequences s
+          WHERE d.event_id='event-agent-promotion' AND s.workspace_id=?1 AND s.origin_runtime_id='runtime-local'",
+        [WORKSPACE],
+    ).expect("insert a duplicate source append event");
+    connection.execute(
+        "UPDATE workspace_origin_sequences SET last_sequence=last_sequence+1 WHERE workspace_id=?1 AND origin_runtime_id='runtime-local'",
+        [WORKSPACE],
+    ).expect("advance duplicated event sequence");
+    drop(connection);
+
+    let duplicated_source = with_task_identity(
+        commit,
+        "task-from-duplicate-source",
+        "event-task-duplicate-source",
+        "promote-request-with-duplicate-source-event",
+    );
+    let error = store
+        .create_task(duplicated_source)
+        .expect_err("ambiguous source event lineage must be refused");
+    assert!(
+        matches!(error, StoreError::Invalid(_)),
+        "unexpected duplicate-source failure: {error:?}"
+    );
+}
+
 #[cfg(windows)]
 mod workspace_root_lifecycle_windows_tests {
     use super::*;
@@ -1649,6 +2018,7 @@ fn pinned_resource_content_reads_exact_historical_revision_without_head_fallback
             preferred_lead_agent_binding_id: Some("agent-1".to_owned()),
             authored_by: json!({"kind": "USER"}),
             created_at: "2026-10-08T00:01:00Z".to_owned(),
+            delegation_policy_snapshot: None,
         },
     };
     let staging_parent = directory.path().join("staging");
@@ -2320,7 +2690,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
     assert!(agent_registry_exists);
     assert!(!resource_index_exists);
 
-    migrate(&mut connection).expect("apply migrations v14 through v33 in order");
+    migrate(&mut connection).expect("apply migrations v14 through v34 in order");
 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -2336,7 +2706,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
     assert_eq!(
         applied,
         [
-            14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33
+            14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34
         ]
     );
 }
@@ -2371,7 +2741,7 @@ fn v33_agent_session_environment_binding_migration_enforces_scope_and_identity()
     let user_version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated user_version");
-    assert_eq!(user_version, 33);
+    assert_eq!(user_version, V34_SCHEMA_VERSION);
     let environment_column: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name = 'environment_id' AND \"notnull\" = 0",
@@ -2618,8 +2988,10 @@ fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() 
         .expect("verify historical v31 receipt");
     verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
         .expect("verify historical v32 receipt");
-    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
-        .expect("verify latest v33 receipt");
+    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
+        .expect("verify historical v33 receipt");
+    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
+        .expect("verify latest v34 receipt");
 }
 
 #[test]
@@ -2894,8 +3266,10 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
         .expect("verify historical v31 receipt");
     verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
         .expect("verify historical v32 receipt");
-    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
-        .expect("verify latest v33 receipt");
+    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
+        .expect("verify historical v33 receipt");
+    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
+        .expect("verify latest v34 receipt");
 
     let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
         .query_row(
@@ -3751,12 +4125,14 @@ fn v27_test_run_migration_rolls_back_and_replays() {
         .expect("verify historical v31 receipt");
     verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
         .expect("verify historical v32 receipt");
-    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
-        .expect("verify latest v33 receipt");
+    verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
+        .expect("verify historical v33 receipt");
+    verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
+        .expect("verify latest v34 receipt");
 }
 
 #[test]
-fn v28_to_v33_migrations_roll_back_and_replay() {
+fn v28_to_v34_migrations_roll_back_and_replay() {
     for (failpoint, expected_version, name) in [
         (Failpoint::DuringV28Migration, V27_SCHEMA_VERSION, "v28"),
         (Failpoint::DuringV29Migration, V28_SCHEMA_VERSION, "v29"),
@@ -3764,6 +4140,7 @@ fn v28_to_v33_migrations_roll_back_and_replay() {
         (Failpoint::DuringV31Migration, V30_SCHEMA_VERSION, "v31"),
         (Failpoint::DuringV32Migration, V31_SCHEMA_VERSION, "v32"),
         (Failpoint::DuringV33Migration, V32_SCHEMA_VERSION, "v33"),
+        (Failpoint::DuringV34Migration, V33_SCHEMA_VERSION, "v34"),
     ] {
         let directory = tempfile::tempdir().expect("temporary directory");
         let mut connection = Connection::open(directory.path().join("migration.sqlite3"))
@@ -3802,8 +4179,10 @@ fn v28_to_v33_migrations_roll_back_and_replay() {
             .expect("verify historical v31 receipt");
         verify_migration_record(&connection, 32, V32_MIGRATION_NAME, SQLITE_V32_DDL, false)
             .expect("verify historical v32 receipt");
-        verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, true)
-            .expect("verify latest v33 receipt");
+        verify_migration_record(&connection, 33, V33_MIGRATION_NAME, SQLITE_V33_DDL, false)
+            .expect("verify historical v33 receipt");
+        verify_migration_record(&connection, 34, V34_MIGRATION_NAME, SQLITE_V34_DDL, true)
+            .expect("verify latest v34 receipt");
     }
 }
 

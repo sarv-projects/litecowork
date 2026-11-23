@@ -1,4 +1,4 @@
-"""Release matrix tests (019-T14, AC-002, AC-012)."""
+"""Release matrix tests (019-T14/T24, AC-002, AC-012)."""
 import copy
 import importlib.util
 import json
@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("v1_platform_matrix", ROOT / "scripts" / "v1_platform_matrix.py")
@@ -19,12 +20,16 @@ WINDOWS = "windows-x64-opencode-v2.0.32"
 NO_FILES = lambda path: False  # noqa: E731
 
 
-def bundle(row_id=LINUX, journey="E2E-01", signoff=None, sha="a" * 40):
+def bundle(
+    row_id=LINUX, journey="E2E-01", signoff=None, sha="a" * 40,
+    protocol="opencode-v2-http-sse", auth_mode="user-configured",
+    agent_version="2.0.32", os_build="Ubuntu 24.04", packaging_mode="packaged", dirty=False, arch="x86_64",
+):
     document = {
         "journey_id": journey, "requirement_ids": ["AC-012"], "owner_contracts": ["docs/X.md"],
-        "row_id": row_id, "repo_sha": sha, "dirty": False, "os_build": "Ubuntu 24.04",
-        "arch": "x86_64", "packaging_mode": "packaged", "agent_versions": {"opencode": "2.0.32"},
-        "protocol": "acp", "code_commands": [],
+        "row_id": row_id, "repo_sha": sha, "dirty": dirty, "os_build": os_build,
+        "arch": arch, "packaging_mode": packaging_mode, "agent_versions": {"opencode": agent_version},
+        "auth_mode": auth_mode, "protocol": protocol, "code_commands": [],
         "system_trace": {"request_ids": [], "correlation_ids": [], "event_sequences": [], "receipt_refs": []},
         "user_artifacts": [], "negative_cases": [{"case": "x", "outcome": "REJECTED"}],
         "limitations": [], "reviewer": "owner", "accepted_at": "2026-11-10",
@@ -114,6 +119,39 @@ class NativeHost(unittest.TestCase):
         partial = cell(build(bundles=indexed([bundle(signoff="PARTIAL")])), LINUX, "E2E-01")
         self.assertEqual(partial["state"], "PASSED")
 
+    def test_bundle_must_match_the_declared_provider_auth_protocol_and_package_tuple(self):
+        mismatches = (
+            {"protocol": "acp"},
+            {"auth_mode": "environment-token"},
+            {"agent_version": "2.0.31"},
+            {"arch": "aarch64"},
+            {"packaging_mode": "dev"},
+            {"os_build": "Ubuntu 22.04"},
+            {"dirty": True},
+        )
+        for change in mismatches:
+            with self.subTest(change=change):
+                evidence = bundle(**change)
+                result = cell(build(bundles=indexed([evidence])), LINUX, "E2E-01")
+                self.assertEqual(result["state"], "BLOCKED")
+                self.assertIn("does not match", result["reason"])
+
+    def test_windows_bundle_meets_the_declared_minimum_build(self):
+        evidence = bundle(
+            row_id=WINDOWS,
+            os_build="Windows 10.0.19045",
+            auth_mode="user-configured",
+            protocol="opencode-v2-http-sse",
+        )
+        result = cell(build("NATIVE", "windows", bundles=indexed([evidence])), WINDOWS, "E2E-01")
+        self.assertEqual(result["state"], "PASSED")
+
+    def test_windows_bundle_below_the_declared_minimum_build_is_blocked(self):
+        evidence = bundle(row_id=WINDOWS, os_build="Windows 10.0.19044")
+        result = cell(build("NATIVE", "windows", bundles=indexed([evidence])), WINDOWS, "E2E-01")
+        self.assertEqual(result["state"], "BLOCKED")
+        self.assertIn("OS build", result["reason"])
+
     def test_bundle_for_another_row_does_not_count(self):
         matrix = build(bundles=indexed([bundle(row_id=WINDOWS)]))
         self.assertEqual(cell(matrix, LINUX, "E2E-01")["state"], "NOT_RUN")
@@ -121,6 +159,10 @@ class NativeHost(unittest.TestCase):
 
     def test_stale_bundle(self):
         matrix = build(bundles=indexed([bundle(sha="a" * 40)]), sha="b" * 40)
+        self.assertEqual(cell(matrix, LINUX, "E2E-01")["state"], "STALE")
+
+    def test_unavailable_current_repository_sha_cannot_count_bundle(self):
+        matrix = build(bundles=indexed([bundle()]), sha="")
         self.assertEqual(cell(matrix, LINUX, "E2E-01")["state"], "STALE")
 
     def test_invalid_bundle_on_disk_is_ignored(self):
@@ -145,6 +187,36 @@ class Declared(unittest.TestCase):
         matrix = build()
         self.assertEqual([r["row_id"] for r in matrix["rows"]], [WINDOWS, LINUX])
         self.assertEqual(matrix["unsupported"][0]["os"], "macos")
+
+    def test_matrix_covers_every_adopted_v1_e2e_journey(self):
+        expected = tuple([*(f"E2E-{number:02d}" for number in range(1, 13)), "E2E-14", "E2E-15", "E2E-16", "E2E-17"])
+        self.assertEqual(matrix_module.E2E_IDS, expected)
+        self.assertNotIn("E2E-13", matrix_module.E2E_IDS)
+        matrix = build()
+        for row in matrix["rows"]:
+            self.assertTrue(set(expected).issubset(row["cells"]))
+
+    def test_skip_slow_probes_does_not_start_external_discovery_or_host_checks(self):
+        with (
+            patch.object(matrix_module, "probe_host", return_value={"system": "Windows", "machine": "AMD64"}),
+            patch.object(matrix_module, "probe_toolchains", return_value={}),
+            patch.object(matrix_module, "probe_agents", side_effect=AssertionError("agent process started")),
+            patch.object(matrix_module, "probe_browsers", side_effect=AssertionError("browser process started")),
+            patch.object(matrix_module, "probe_secret_service", side_effect=AssertionError("credential probe started")),
+            patch.object(matrix_module, "probe_backup_restore", side_effect=AssertionError("backup probe started")),
+            patch.object(matrix_module, "probe_packaging", side_effect=AssertionError("packaging probe started")),
+            patch.object(matrix_module, "probe_secret_scan", side_effect=AssertionError("secret scan started")),
+        ):
+            evidence = matrix_module.build_evidence(skip_slow_probes=True)
+        self.assertTrue(evidence.agents)
+        self.assertTrue(all(agent["state"] == "NOT RUN" for agent in evidence.agents.values()))
+        self.assertTrue(evidence.browsers)
+        self.assertTrue(all(browser["state"] == "NOT RUN" for browser in evidence.browsers.values()))
+        self.assertEqual({probe.state for probe in evidence.probes.values()}, {"NOT RUN"})
+
+    def test_opencode_rows_name_the_active_v2_http_transport(self):
+        for row in ROWS["rows"]:
+            self.assertEqual(row["protocol"], "opencode-v2-http-sse")
 
     def test_three_rows_rejected(self):
         document = copy.deepcopy(ROWS)

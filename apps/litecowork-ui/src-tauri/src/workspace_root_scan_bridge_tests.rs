@@ -1,5 +1,5 @@
 use super::{parse_workspace_root_scan_response, workspace_root_scan_operator_error};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn valid_response() -> Value {
     json!({
@@ -89,11 +89,18 @@ fn accepts_only_the_partial_reasons_emitted_by_the_runtime() {
 
 #[test]
 fn rejects_unrecognized_partial_reason_codes_that_could_contain_private_data() {
-    for reason in ["ENTRY_LIMIT_REACHED", "/private/folder/name", "custom reason"] {
+    for reason in [
+        "ENTRY_LIMIT_REACHED",
+        "/private/folder/name",
+        "custom reason",
+    ] {
         let mut partial = valid_response();
         partial["status"] = json!("PARTIAL");
         partial["partial_reason"] = json!(reason);
-        assert!(parse(partial).is_err(), "accepted partial reason {reason:?}");
+        assert!(
+            parse(partial).is_err(),
+            "accepted partial reason {reason:?}"
+        );
     }
 }
 
@@ -113,7 +120,8 @@ fn maps_known_scan_operator_errors_to_stable_markers() {
     );
     assert_eq!(
         workspace_root_scan_operator_error(
-            "Folder scan could not be completed [INTERNAL; retryable=true; reference=cor_123]".to_owned()
+            "Folder scan could not be completed [INTERNAL; retryable=true; reference=cor_123]"
+                .to_owned()
         ),
         "INTERNAL"
     );

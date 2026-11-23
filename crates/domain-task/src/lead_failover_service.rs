@@ -585,6 +585,7 @@ mod tests {
                 preferred_lead_agent_binding_id: Some("lead".into()),
                 authored_by: json!({"kind":"USER","principal_id":"owner-a"}),
                 created_at: "2026-10-17T09:00:00Z".into(),
+                delegation_policy_snapshot: None,
             },
         }
     }

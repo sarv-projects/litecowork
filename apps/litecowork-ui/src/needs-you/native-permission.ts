@@ -212,7 +212,11 @@ export function applyNativePermissionReceipt(state: NativePermissionState, value
   };
 }
 
-export function markNativePermissionOutcomeUnknown(state: NativePermissionState, promptToken: string): NativePermissionState {
+export function markNativePermissionOutcomeUnknown(
+  state: NativePermissionState,
+  promptToken: string,
+  decision: NativePermissionDecision,
+): NativePermissionState {
   const current = state.prompts[promptToken];
   if (!current || current.state === "ANSWERED" || current.state === "SESSION_ENDED") return state;
   return {
@@ -220,17 +224,17 @@ export function markNativePermissionOutcomeUnknown(state: NativePermissionState,
     needsRefresh: true,
     prompts: {
       ...state.prompts,
-      [promptToken]: { ...current, state: "OUTCOME_UNKNOWN" },
+      [promptToken]: { ...current, state: "OUTCOME_UNKNOWN", decision },
     },
   };
 }
 
-export function endPendingNativePermissions(state: NativePermissionState): NativePermissionState {
+export function endLiveNativePermissions(state: NativePermissionState): NativePermissionState {
   let changed = false;
   const prompts = Object.fromEntries(Object.entries(state.prompts).map(([token, prompt]) => {
-    if (prompt.state !== "PENDING" && prompt.state !== "REPLYING") return [token, prompt];
+    if (prompt.state !== "PENDING" && prompt.state !== "REPLYING" && prompt.state !== "OUTCOME_UNKNOWN") return [token, prompt];
     changed = true;
-    return [token, { ...prompt, state: "SESSION_ENDED" as const, decision: null }];
+    return [token, { ...prompt, state: "SESSION_ENDED" as const }];
   }));
   return changed ? { ...state, prompts } : state;
 }

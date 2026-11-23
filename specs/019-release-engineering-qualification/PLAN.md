@@ -1,9 +1,9 @@
 # Implementation Plan - Release Engineering and V1 Qualification
 
-**Feature:** 019 | **Spec:** SPEC.md revision 0.1
+**Feature:** 019 | **Spec:** SPEC.md revision 0.2
 **Status:** IN_REVIEW - not owner-accepted; authorizes no implementation; not a claim of implementation or qualification.
 **Updated:** 2026-11-09
-**Rule:** the authoritative ordered work list is [TASKS.md](TASKS.md) (T01 to T23). This plan is the summary view.
+**Rule:** the authoritative ordered work list is [TASKS.md](TASKS.md) (T01 to T24). This plan is the summary view.
 
 ## 1. Delivery strategy
 
@@ -50,8 +50,8 @@ flowchart TD
 | C - hardening | T06, T07 | CSP/capability audit; IPC negative tests on packaged build | Regression fixtures fail; foreign peers rejected |
 | D - packaging | T08, T09, T10, T13 | Signed NSIS/MSI; Linux deb with signed checksums; LICENSE and notices | Install/upgrade/uninstall scripts pass on clean images |
 | E - update | T11, T12 | Updater gated on Feature 011 quiescence; update panel states | Refusal, tamper, downgrade, interruption and race tests pass |
-| F - qualification | T14, T15, T16, T17, T18, T19 | Matrix, bundles, a11y, performance, resilience and the stop/update gate per row | Per-row reports with USER sign-off |
-| G - closure | T20, T21, T22, T23 | Traces, docs sync, package VERIFIED, V1 go/no-go | Release gate prints GO and the owner records the decision |
+| F - qualification | T14, T15, T16, T17, T18, T19, T24 | Matrix covers every adopted V1 journey; bundles are checked against the exact release-row tuple; a11y, performance, resilience and stop/update gate per row | Per-row reports with USER sign-off; T24 is CODE only until native evidence exists |
+| G - closure | T20, T21, T22, T23 | Traces, docs sync, package VERIFIED, V1 go/no-go (T23 depends on T24) | Release gate prints GO and the owner records the decision |
 
 ## 4. Scope and file ownership (candidate paths, re-inspect before implementation)
 

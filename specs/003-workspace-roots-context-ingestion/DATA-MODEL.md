@@ -31,6 +31,6 @@ Follow the owner retention rules. Purge removes future visibility of payload byt
 
 ## Migration
 
-One additive migration, allocated `docs/schemas/sqlite-v36.sql` (TASKS T01/T09; see the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md). No 003 migration exists today; the 003-T02 workspace root lifecycle storage work (partial) uses existing tables.
+One additive migration, allocated `docs/schemas/sqlite-v37.sql` (TASKS T01/T09; see the Migration allocation in docs/LITECOWORK-BUILD-TASKS.md). No 003 migration exists today; the 003-T02 workspace root lifecycle storage work (partial) uses existing tables.
 
 **Open contract conflict (A-69):** this file makes `ContextAttachment.root_id` nullable for uploaded Resources and `retrieval_receipt_id` nullable for explicit ResourceRefs. SPEC §7.2 currently requires a retrieval receipt in `CommitContextAttachment` and a root id in `ContextUsedEntry`. These shapes are not interchangeable. Do not treat this proposal as the canonical schema or write v35 until the owner resolves A-69 and the Feature 001 admission boundary in A-65.

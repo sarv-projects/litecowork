@@ -1,7 +1,7 @@
 # Research and Decision Log - Proactivity and Quiet Learning
 
-**Feature:** 020 | **Status:** IN_REVIEW - not owner-accepted; authorizes no implementation; not a claim of implementation or qualification.
-**Checked:** 2026-11-09 - repository audit at HEAD 234c564 on `docs/audit-competitor-superset`. External references are the pinned revisions recorded in [REFERENCE-IMPLEMENTATIONS.md](../../docs/REFERENCE-IMPLEMENTATIONS.md); they were not re-cloned for this package.
+**Feature:** 020 | **Status:** IN_REVIEW - not formally owner-accepted. Only T03 has a narrow repository-owner delegated implementation direction; this does not authorize dependent work or claim qualification.
+**Baseline checked:** 2026-11-09 - repository audit at HEAD 234c564 on `docs/audit-competitor-superset`. **Implementation recheck:** 2026-11-20 against the active working tree. External references are the pinned revisions recorded in [REFERENCE-IMPLEMENTATIONS.md](../../docs/REFERENCE-IMPLEMENTATIONS.md); they were not re-cloned for this package.
 
 ## 1. Repository sources inspected
 
@@ -15,7 +15,7 @@
 | Bridge/UI | `apps/litecowork-ui/src-tauri/src/suggestions_bridge.rs` (338 lines), `apps/litecowork-ui/src/suggestions/` (879 lines) | Validated commands, Ideas page with recovery and live region | No quiet-hours behavior |
 | Goals | `apps/litecoworkd/src/goal_operator.rs` (533 lines), `crates/domain-responsibility/src/goals.rs` | Passive revisioned Goals; progress from verified outcomes | No conformance tests for "never schedules" |
 | Needs You | `apps/litecoworkd/src/needs_you_operator.rs` (211 lines), `crates/storage-core/src/needs_you.rs` | Read-only, no-store | - |
-| Learning gates | `crates/storage-core/src/coworker_learning.rs` (1,711 lines, 30 tests) | Deterministic gates; no caller | Three defects (SPEC 7.1) |
+| Learning gates | Historical 2026-11-09 baseline: `crates/storage-core/src/coworker_learning.rs` (1,711 lines, 30 tests). Current 2026-11-20 source: `crates/domain-responsibility/src/learning_gates.rs` (34 focused tests), with a storage-core compatibility re-export. | Pure deterministic gates; no production caller, storage, service, route or UI | The three pure-gate defects in SPEC §7.1 are fixed in the working tree and covered by regressions; this is not an active learning pipeline or qualification |
 | Quiet hours | `crates/domain-responsibility/src/notifications.rs` | `QuietHours::{parse, contains}`; event classes for Automation/Task/Dependency only | Editor not built (A-28) |
 | Owner docs | `docs/LEARNING.md`, `docs/RESPONSIBILITIES.md`, ADR-0016, ADR-0023, ADR-0024, `docs/COWORKER-FLOWS.md` CF14, `docs/BENCHMARKS.md` B18, B54, B55, B61, B62, B65, B72 | Target contracts and benchmarks | LEARNING vocabulary note still says PROPOSED although A-20/A-34 was accepted 2026-11-09 (T02 updates it) |
 
@@ -37,8 +37,8 @@
 | Candidate creation | Model extractor only; deterministic owner action only; both | Owner action first, optional extractor second | Works without a qualified classifier; extractor stays untrusted |
 | CONFIRMED certainty | Trust extractor label; verbatim span plus lexicon | Verbatim span plus lexicon | Model output cannot raise its own certainty |
 | Inferred auto mode | Offer in V1; defer | Defer | Narrowest safe V1; review path covers inferred items |
-| Gate module location | storage-core; domain-responsibility | Decide in T03 (F-04) | One definition; no new crate |
+| Gate module location | storage-core; domain-responsibility | Canonical implementation in `domain-responsibility`, storage-core compatibility re-export (repository-owner delegated T03 implementation choice, 2026-11-20; not formal Feature 020 acceptance) | Pure responsibility policy follows the existing dependency direction; one definition; no new crate |
 
 ## 4. Unresolved questions
 
-See SPEC section 17 (O-01 to O-06).
+See SPEC section 17. O-04 is resolved for T03 implementation by delegated direction only; O-01 to O-03, O-05 and O-06 remain open, and Feature 020 as a whole remains IN_REVIEW.

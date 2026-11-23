@@ -10,8 +10,8 @@ This package owns release metadata, not product data. It adds no table to the da
 | Record | Identity | Fields (PROPOSED) | Owner | Persistence |
 |---|---|---|---|---|
 | ReleaseRow | `row_id` such as `windows-x64-opencode-v2.0.32` | os, os_min_build, arch, target_triple, desktop_runtime (WebView2 / WebKitGTK version), agent, agent_version, auth_mode, protocol, priority (1 first, 2 second), counted (bool) | Release Engineering | `scripts/v1_release_matrix_rows.json` (new) |
-| QualificationCell | (`row_id`, `cell_id`) where `cell_id` is an E2E id (E2E-01..E2E-12) or a capability name | state, evidence_bundle_digest, reason, command, observed_at, host_fingerprint | QA | `docs/release/QUALIFICATION-MATRIX.json` (generated) |
-| EvidenceBundle | SHA-256 of the canonical bundle JSON | journey_id, requirement_ids, owner_contracts, repo_sha, dirty, os_build, arch, packaging_mode, agent_versions, protocol, code_commands[], system_trace (request_ids, correlation_ids, event_sequences, receipt_refs), user_artifacts[] (digest, kind, storage_ref), negative_cases[] (case, outcome), limitations[], reviewer, accepted_at | QA, Product | Redacted index in `docs/release/evidence/INDEX.md`; full bundle in owner storage |
+| QualificationCell | (`row_id`, `cell_id`) where `cell_id` is an adopted V1 E2E id (E2E-01..E2E-12, E2E-14..E2E-17) or a capability name | state, evidence_bundle_digest, reason, command, observed_at, host_fingerprint | QA | `docs/release/QUALIFICATION-MATRIX.json` (generated); conditional E2E-13 is not a V1 cell |
+| EvidenceBundle | SHA-256 of the canonical bundle JSON | journey_id, requirement_ids, owner_contracts, repo_sha, dirty, os_build, arch, packaging_mode, agent_versions, auth_mode, protocol, code_commands[], system_trace (request_ids, correlation_ids, event_sequences, receipt_refs), user_artifacts[] (digest, kind, storage_ref), negative_cases[] (case, outcome), limitations[], reviewer, accepted_at | QA, Product | Redacted index in `docs/release/evidence/INDEX.md`; full bundle in owner storage |
 | UserSignoff | (`row_id`, `journey_id`, `bundle_digest`) | reviewer, date, decision (ACCEPT, PARTIAL, REJECT), blocked_or_unknown[] | Product | Inside the bundle and the index |
 | UpdateManifest | (`channel`, `version`) | version, pub_date, platforms{target: {url, signature}}, notes_digest | Release Engineering | Static HTTPS file, signed |
 | UpdateAttempt | `request_id` (UUID) | from_version, to_version, state, started_at, last_transition_at, refusal_reasons[] | Desktop Shell | App data directory JSON, single record |
@@ -31,6 +31,7 @@ PASSED  -> STALE         (a later commit changes an input the bundle covered)
 ```
 
 PASSED requires a schema-valid bundle observed on the row host. QUALIFIED is a property of a journey cell with PASSED plus USER sign-off ACCEPT.
+Before a bundle can count, its OS minimum/build, architecture, declared agent and version, authentication mode, negotiated protocol, packaged mode and clean-checkout state must match the `ReleaseRow`. A mismatch is BLOCKED and remains linked only as diagnostic evidence; it is not transferable to another row. The current OpenCode v2 row protocol is `opencode-v2-http-sse`; the ACP route is a separate adapter and cannot be claimed by this row until it is the route actually exercised.
 
 UpdateAttempt:
 

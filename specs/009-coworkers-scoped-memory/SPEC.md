@@ -303,6 +303,7 @@ V1 gap coverage (revision 1.0):
 - **AC-021:** WHEN the owner assigns, revises or revokes a Coworker capability assignment, THE SYSTEM SHALL record it as a versioned ceiling only and SHALL NOT install a package, authenticate a Connection or issue a CapabilityGrant; revoking one assignment SHALL NOT affect another Coworker's assignment of the same Connection. Verify: assignment ceiling test.
 - **AC-022:** WHEN two Workspaces each hold Coworkers, Coworker Conversations and Coworker memory, THE SYSTEM SHALL return none of one Workspace's records through any list, retrieval, memory or Conversation read in the other, including after restart. Verify: cross-Workspace leakage CODE test plus owner USER fixture.
 - **AC-023:** WHEN Quick Create runs and no qualified AgentBinding exists, THE SYSTEM SHALL create the Coworker UNBOUND with no default lead binding, SHALL open its chat with Send shown unavailable and a link to agent setup, and SHALL NOT fabricate a binding. Verify: Quick Create UNBOUND test.
+- **AC-024 (USER-DELEGATED direction):** WHEN a Coworker revision is created or revised, THE SYSTEM SHALL persist and return the exact `delegation_policy_source`; new Coworkers SHALL use `WORKSPACE_DEFAULT` with `NATIVE_DEFAULT` and no Coworker profile overrides, legacy payloads SHALL retain `COWORKER_OVERRIDE`, and any explicit override SHALL remain within the Workspace profile ceiling. Verify: legacy deserialize, API omission/normalization, SQLite readback and UI source-toggle tests.
 
 ## 16. Executable acceptance command
 
@@ -341,6 +342,12 @@ Read from RESPONSIBILITIES, COWORKERS-TARGET, and LEARNING boundaries those docs
 - Cite createCoworker, reviseCoworker, changeCoworkerStatus, getCoworkerRevision, setPrimaryCoworker, setContextDocumentStatus, requestContextDocumentDeletion.
 
 
+## 7b. Delegation-policy source round trip (USER-DELEGATED direction, 2026-11-20)
+
+SQLite v28 and `CoworkerRevisionInput` already define `delegation_policy_source`; the current runtime model, Operator field allowlist, storage mapping and Settings UI must carry that same field rather than inventing a second policy type. New Coworker creation uses `WORKSPACE_DEFAULT`, persisted as `delegation_strategy=NATIVE_DEFAULT` and `enabled_delegation_profile_ids=[]`. Legacy serialized definitions without the field decode as `COWORKER_OVERRIDE`, matching the v28 column default and preserving historical behavior. Current API create/revise requests require the source field; compatibility for old persisted payloads does not make the current API field optional.
+
+The UI offers “Use Workspace defaults” and “Customize for this Coworker”. Workspace-default mode disables Coworker strategy/profile controls and sends the normalized pair above; the actual effective values are resolved from the immutable Workspace settings revision when a TaskSpec is admitted. Override mode may select a strategy and profile IDs only within the Workspace's enabled-profile ceiling. SQLite remains the final invariant boundary. This preference does not dispatch a worker, create a grant, or qualify a provider. Feature 015 owns TaskSpec resolution and pinning; A-110/T22 specifies that contract. T19 is authorized as USER-DELEGATED direction; Feature 009 remains IN_REVIEW and this amendment is not formal package acceptance.
+
 ## 19. Requirement traceability
 
 | Requirement | Canonical contract | Task | Acceptance | Verification method |
@@ -368,3 +375,4 @@ Read from RESPONSIBILITIES, COWORKERS-TARGET, and LEARNING boundaries those docs
 | Coworker capability assignment (gap) | COWORKERS-TARGET, CAPABILITY-FABRIC | 009-T12 | AC-021 | Assignment ceiling test |
 | No cross-Workspace leakage USER fixture (gap) | CONTEXT, SECURITY, ACCEPTANCE-AND-E2E-PLAN E2E-09 | 009-T14, 009-T16 | AC-022 | Cross-Workspace leakage CODE test plus owner USER fixture |
 | Quick Create UNBOUND until 002 (B-25) | COWORKERS-TARGET, Feature 002 | 009-T08 | AC-023 | Quick Create UNBOUND test |
+| Preserve delegation-policy source in Coworker revisions | `CoworkerRevisionInput`, SQLite v28 `delegation_policy_source`, RESPONSIBILITIES, DELEGATION | 009-T19 | AC-024 | Legacy decode, Operator normalization, SQLite readback and UI source-toggle tests |

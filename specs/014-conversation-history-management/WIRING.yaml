@@ -2,7 +2,7 @@ feature_id: "014"
 name: "Conversation History Management"
 status: "IN_REVIEW"
 spec_revision: "0.1"
-  notes: "Search, deletion and all desktop history commands are proposed target wiring. Operator rename/archive/unarchive/status-list routes and the v31 lifecycle side table are CODE/SERVED; no packaged history-management journey is qualified."
+notes: "Search, deletion and all desktop history commands are proposed target wiring. Operator rename/archive/unarchive/status-list routes and the v31 lifecycle side table are CODE/SERVED; no packaged history-management journey is qualified."
 nodes:
   - id: "sidebar-ui"
     owner: "Desktop UI (sidebar)"

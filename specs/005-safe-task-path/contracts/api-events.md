@@ -4,7 +4,7 @@
 
 ## Currently served Task operations
 
-- `POST /v1/tasks` (`createTask`): creates the durable Task envelope and initial TaskSpecRevision with an idempotency receipt. It does not start planning, an AgentSession, an Attempt or an Environment.
+- `POST /v1/tasks` (`createTask`): creates the durable Task envelope and initial TaskSpecRevision with an idempotency receipt. It does not start planning, an AgentSession, an Attempt or an Environment. For explicit Conversation promotion, the user-delegated A-115 contract requires a paired Conversation ID and exact ordered USER/AGENT source IDs; storage rechecks the source pair and commits the origin in the existing transaction.
 - `GET /v1/tasks` (`listTasks`) and `GET /v1/tasks/{task_id}` (`getTask`): Task list/detail projections.
 - `POST /v1/tasks/{task_id}/spec-revisions` (`reviseTaskSpec`) and `GET` on the same path (`listTaskSpecRevisions`): objective/specification revision write and history read.
 - `GET /v1/tasks/{task_id}/planning-readiness` (`getTaskPlanningReadiness`): read-only, version-checked preflight; `dispatch_available`, `planning_started`, `agent_session_started` and `plan_created` are all false.
@@ -65,4 +65,10 @@ schema.
 
 ## Error contract
 
-Reuse canonical errors from `docs/SCHEMAS.md` and `docs/schemas/error-codes.schema.json`, including `AGENT_UNAVAILABLE`, `STALE_TASK_VERSION`, `STALE_SPEC_REVISION`, `FORBIDDEN`, `CONFLICT`, `DEPENDENCY_UNAVAILABLE`, `STALE_FENCE` and `INTEGRITY_FAILURE` where their owner conditions apply. This package declares no new operation outside the OpenAPI target set; task T01 promotes the accepted error codes and request bodies (accepted target interfaces, not yet in source). Conversation promotion reuses `createTask` with `conversation_id` and `source_message_refs`.
+Reuse canonical errors from `docs/SCHEMAS.md` and `docs/schemas/error-codes.schema.json`, including `AGENT_UNAVAILABLE`, `STALE_TASK_VERSION`, `STALE_SPEC_REVISION`, `FORBIDDEN`, `CONFLICT`, `DEPENDENCY_UNAVAILABLE`, `STALE_FENCE` and `INTEGRITY_FAILURE` where their owner conditions apply. This package declares no new operation or event type for Conversation promotion; it reuses `createTask`, `task.created.v1`, TaskSpec source refs and the existing idempotency receipt.
+
+### Conversation-origin CreateTask (CODE/SERVED boundary)
+
+`conversation_id` is absent/null with an empty `source_message_refs` list for a standalone Task. Promotion supplies exactly two distinct refs in order: the owner-authored USER prompt and its AGENT reply. They must belong to the same Workspace, Conversation and immutable turn; the turn must be settled `COMPLETED`; each source message must have exactly one canonical `conversation.message.added.v1` whose immutable identity, author, content digest and Resource refs match storage. Every submitted Task input must equal an exact pinned ResourceRef on the source USER message. The projection's `turn_status` is only a UI visibility hint; storage revalidates all authority-bearing facts inside Task creation.
+
+The existing IMMEDIATE transaction commits Task (including `conversation_id`), TaskSpecRevision (including the ordered `source_message_refs`), `task.created.v1` and the idempotency receipt. The two Conversation messages already exist and are not appended, rewritten or re-settled by promotion. Exact request replay returns its original Task receipt; changed payload conflicts. The existing UI keeps the request key and exact body in memory while a result is ambiguous, but this slice has no durable restart journal and no packaged restart qualification. Success creates a READY Task only; planning and execution remain separate.

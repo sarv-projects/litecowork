@@ -1034,14 +1034,14 @@ reserves/activates the Conversation session, loads/sends bounded context and inv
 SQLite final-response writer. A missing host row is now created as STARTING before native
 spawn and becomes READY only after observed OpenCode startup/health. For terminal
 COMPLETED/CANCELLED/FAILED outcomes, durable Conversation/session settlement happens
-before per-turn shutdown; process exit then moves the host row to STOPPED or DEGRADED.
+before orderly teardown; the normal path persists STOPPING before process shutdown, reaches STOPPED only on observed exit, and leaves unconfirmed exit at STOPPING. StopUnconfirmed and early/error cleanup remain separate gaps.
 This removes the former false-READY insertion and premature STOPPED-before-settlement
 paths. It still starts/stops OpenCode inside each turn; no separately wired reusable
 AgentHostSupervisor or retained host-use lease exists. StopUnconfirmed still reaches
 adapter shutdown/drop while the turn remains CANCEL_REQUESTED, so its process/session
 reference is not retained for later reconciliation. Unix child cleanup uses a process
 group, not the accepted cgroup contract. The T03/T04 ownership clarification above is
-TARGET; the new per-session sequencing is CODE only, not integration or qualification. A-101 records a source gap: the active guard stops the process before persisting STOPPING and storage allows extra direct-to-STOPPED transitions.
+TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed retention and daemon-restart host reconciliation remain open; no integration or qualification is inferred.
 
 On the startup cleanup error path, if persisting READY fails and the LiteCowork-owned
 child cannot be confirmed stopped, the helper re-reads the durable host row and

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorkbenchPanel } from "./workbench/WorkbenchPanel";
 import { invoke } from "@tauri-apps/api/core";
+import type { components } from "./api/operator-api";
 import { TaskArtifactOutputs } from "./artifacts/TaskArtifactOutputs";
 import { desktopArtifactApi } from "./artifacts/desktop-artifact-api";
 import type { PinnedResourceRef } from "./artifacts/artifact-api";
@@ -18,6 +19,7 @@ import { maybeDesktopNotificationApi } from "./notifications/desktop-notificatio
 import { SuggestionsPage } from "./suggestions/SuggestionsPage";
 import { TaskPresentationPanel } from "./presentation/TaskPresentationPanel";
 import { TaskSpecRevisionHistory } from "./tasks/TaskSpecRevisionHistory";
+import { TaskDelegationPolicySnapshot } from "./tasks/TaskDelegationPolicySnapshot";
 import { AutomationsPage } from "./automations/AutomationsPage";
 import { desktopAutomationApi } from "./automations/desktop-automation-api";
 import type { AutomationStarterId, AutomationTemplateFlow } from "./automations/automation-starters";
@@ -263,8 +265,9 @@ type TaskStatus = "READY" | "RUNNING" | "WAITING_USER" | "BLOCKED" | "VERIFYING"
 type TaskSummaryView = { taskId: string; status: TaskStatus; objective: string; createdAt: string; updatedAt: string };
 type TaskPageView = { items: TaskSummaryView[]; nextCursor: string | null };
 type PlannedStepView = { stepId: string; logicalKey: string; title: string; objective: string; status: string };
-type TaskDetailView = { taskId: string; workspaceId: string; originCoworkerId: string | null; originCoworkerRevision: number | null; currentSpecRevision: number; currentPlanRevision: number | null; status: TaskStatus; taskVersion: number; objective: string; inputRefs: PinnedResourceRefView[]; planSpecRevision: number | null; planIsStale: boolean; plannedSteps: PlannedStepView[]; createdAt: string; updatedAt: string };
-type TaskSpecRevisionReceiptView = { taskId: string; revision: number; objective: string };
+type DelegationPolicySnapshot = components["schemas"]["ResolvedDelegationPolicySnapshot"];
+type TaskDetailView = { taskId: string; workspaceId: string; conversationId: string | null; sourceMessageRefs: string[]; originCoworkerId: string | null; originCoworkerRevision: number | null; currentSpecRevision: number; currentPlanRevision: number | null; status: TaskStatus; taskVersion: number; objective: string; inputRefs: PinnedResourceRefView[]; delegationPolicySnapshot: DelegationPolicySnapshot | null; planSpecRevision: number | null; planIsStale: boolean; plannedSteps: PlannedStepView[]; createdAt: string; updatedAt: string };
+type TaskSpecRevisionReceiptView = { taskId: string; revision: number; objective: string; delegationPolicySnapshot: DelegationPolicySnapshot | null };
 type UploadRangeView = { startOffset: number; endOffsetInclusive: number; sha256: string };
 type ResourceUploadView = {
   uploadId: string;
@@ -1533,6 +1536,8 @@ function App() {
       setPendingTaskSave(pending);
       const saved = await invoke<TaskDetailView>("create_task", {
         workspaceId: pending.workspaceId,
+        conversationId: null,
+        sourceMessageRefs: [],
         objective: pending.objective,
         preferredLeadAgentBindingId: pending.leadAgentBindingId,
         coworkerId: pending.coworkerId,
@@ -2643,6 +2648,10 @@ function App() {
             onOpenAgentSettings={() => requestPageNavigation("Settings")}
             selectedConversationId={selectedConversationId}
             onSelectConversation={setSelectedConversationId}
+            onTaskCreated={(taskId) => {
+              setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
+              requestPageNavigation("Work");
+            }}
             onConversationsLoaded={(loaded) => {
               setConversationsByWorkspace(current => ({ ...current, [selectedWorkspaceId]: loaded }));
             }}
@@ -2662,7 +2671,7 @@ function App() {
             }}
           />
         ) : page === "Work" ? (
-          <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
+          <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} onOpenSourceConversation={(conversationId) => { setSelectedConversationId(conversationId); requestPageNavigation("Conversations"); }} />
         ) : page === "Library" ? (
           <LibraryPage selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => {
             setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item));
@@ -3146,7 +3155,7 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
   );
 }
 
-function WorkPage({ selectedWorkspaceId, workspaceName, resourceNameCache, artifactApi, coworkerApi, operatorReady, initialTaskId }: { selectedWorkspaceId: string; workspaceName: string; resourceNameCache: Record<string, string>; artifactApi: ReturnType<typeof desktopArtifactApi>; coworkerApi: ReturnType<typeof desktopCoworkerApi>; operatorReady: boolean; initialTaskId: string | null }) {
+function WorkPage({ selectedWorkspaceId, workspaceName, resourceNameCache, artifactApi, coworkerApi, operatorReady, initialTaskId, onOpenSourceConversation }: { selectedWorkspaceId: string; workspaceName: string; resourceNameCache: Record<string, string>; artifactApi: ReturnType<typeof desktopArtifactApi>; coworkerApi: ReturnType<typeof desktopCoworkerApi>; operatorReady: boolean; initialTaskId: string | null; onOpenSourceConversation: (conversationId: string) => void }) {
   const [status, setStatus] = useState<TaskStatus | "">("");
   const [openTaskId, setOpenTaskId] = useState<string | null>(initialTaskId);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -3166,7 +3175,7 @@ function WorkPage({ selectedWorkspaceId, workspaceName, resourceNameCache, artif
         </div>}
       </div>
       {openTaskId ? (
-          <TaskDetailPanel key={`${selectedWorkspaceId}:${openTaskId}`} workspaceId={selectedWorkspaceId} taskId={openTaskId} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={operatorReady} onBack={() => setOpenTaskId(null)} />
+          <TaskDetailPanel key={`${selectedWorkspaceId}:${openTaskId}`} workspaceId={selectedWorkspaceId} taskId={openTaskId} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={operatorReady} onBack={() => setOpenTaskId(null)} onOpenSourceConversation={onOpenSourceConversation} />
       ) : (
         <TaskListPanel workspaceId={selectedWorkspaceId} operatorReady={operatorReady} status={status || null} limit={50} refreshToken={refreshToken} onOpenTask={setOpenTaskId} />
       )}
@@ -3282,7 +3291,7 @@ function TaskListPanel({ workspaceId, operatorReady, status, limit, compact = fa
   );
 }
 
-function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, coworkerApi, operatorReady, onBack }: { workspaceId: string; taskId: string; resourceNameCache: Record<string, string>; artifactApi: ReturnType<typeof desktopArtifactApi>; coworkerApi: ReturnType<typeof desktopCoworkerApi>; operatorReady: boolean; onBack: () => void }) {
+function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, coworkerApi, operatorReady, onBack, onOpenSourceConversation }: { workspaceId: string; taskId: string; resourceNameCache: Record<string, string>; artifactApi: ReturnType<typeof desktopArtifactApi>; coworkerApi: ReturnType<typeof desktopCoworkerApi>; operatorReady: boolean; onBack: () => void; onOpenSourceConversation: (conversationId: string) => void }) {
   const [task, setTask] = useState<TaskDetailView | null>(null);
   const [originCoworkerName, setOriginCoworkerName] = useState<string | null>(null);
   const [originCoworkerLoading, setOriginCoworkerLoading] = useState(false);
@@ -3455,11 +3464,13 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
         objective,
         requestId: request.requestId,
       });
-      if (receipt.taskId !== taskId || receipt.revision !== visibleTask.currentSpecRevision + 1 || receipt.objective !== objective) {
+      if (receipt.taskId !== taskId || receipt.revision !== visibleTask.currentSpecRevision + 1 || receipt.objective !== objective || receipt.delegationPolicySnapshot === null) {
         throw new Error("Local Runtime returned a revision that does not match this edit.");
       }
       const latest = await invoke<TaskDetailView>("get_task", { workspaceId, taskId });
-      if (latest.workspaceId !== workspaceId || latest.taskId !== taskId || latest.currentSpecRevision < receipt.revision) {
+      if (latest.workspaceId !== workspaceId || latest.taskId !== taskId || latest.currentSpecRevision < receipt.revision
+        || latest.currentSpecRevision === receipt.revision
+          && JSON.stringify(latest.delegationPolicySnapshot) !== JSON.stringify(receipt.delegationPolicySnapshot)) {
         throw new Error("The edit was saved, but the latest Task state could not be confirmed. Reload the Task before continuing.");
       }
       readinessGeneration.current += 1;
@@ -3504,6 +3515,10 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
                   ? `Coworker settings at creation are unavailable · revision ${visibleTask.originCoworkerRevision}.`
                   : `Coworker settings revision ${visibleTask.originCoworkerRevision} pinned when this Task was created.`}
           </p>}
+          {visibleTask.conversationId && <p className="task-detail-note task-conversation-origin">
+            Created from a completed Conversation reply.
+            <button type="button" className="text-button" onClick={() => onOpenSourceConversation(visibleTask.conversationId!)}>Open source Conversation</button>
+          </p>}
           <p className="task-detail-note">{visibleTask.currentPlanRevision === null ? "No accepted plan is currently saved for this Task." : "A plan is saved for this Task. Open details to review its Steps and pinned inputs."}</p>
           {visibleTask.currentPlanRevision === null && <section className="task-planning-readiness" aria-label="Local planning readiness">
             <div className="task-planning-readiness-heading">
@@ -3521,6 +3536,15 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
               {planningReadiness.blockers.length > 0 && <p>Planning dispatch is unavailable; this result does not authorize or start work.</p>}
             </div>}
           </section>}
+          <details className="task-work-details task-delegation-policy-disclosure">
+            <summary>
+              <span>Delegation policy</span>
+              <small>{visibleTask.delegationPolicySnapshot
+                ? `Workspace settings revision ${visibleTask.delegationPolicySnapshot.workspace_settings_revision} · ${visibleTask.delegationPolicySnapshot.source === "WORKSPACE_DEFAULT" ? "Workspace defaults" : "Coworker override"}`
+                : "Unavailable for this older Task"}</small>
+            </summary>
+            <TaskDelegationPolicySnapshot snapshot={visibleTask.delegationPolicySnapshot} />
+          </details>
           <details className="task-work-details">
             <summary>
               <span>Work details</span>

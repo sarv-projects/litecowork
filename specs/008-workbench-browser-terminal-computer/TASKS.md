@@ -27,7 +27,7 @@ The preceding baseline predates the 2026-11-11 handoff changes and is retained f
 - **Depends on:** NONE
 - **Cross-package prerequisites:** Feature 005 Environment admission contract (the terminal binds to its admitted Environment identity); Feature 003 ResourceRevision identity (Diff sources).
 - **Owner:** Desktop shell, Browser provider, Environments, Trust (contract owners)
-- **Allowed paths:** `docs/CHROME-BROWSER-LLD.md`, `docs/V1-INTEGRATED-TERMINAL-LLD.md`, `docs/ENVIRONMENTS.md`, `docs/EVENTS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/domain-event.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/sqlite-v41.sql` (new, allocated in docs/LITECOWORK-BUILD-TASKS.md; v29 is already taken by Feature 001), `apps/litecowork-ui/src/generated/` (regenerated `operator-api.ts` via `pnpm --dir apps/litecowork-ui run api:generate`), this package
+- **Allowed paths:** `docs/CHROME-BROWSER-LLD.md`, `docs/V1-INTEGRATED-TERMINAL-LLD.md`, `docs/ENVIRONMENTS.md`, `docs/EVENTS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/domain-event.schema.json`, `docs/schemas/error-codes.schema.json`, `docs/schemas/sqlite-v42.sql` (new, allocated in docs/LITECOWORK-BUILD-TASKS.md; v29 is already taken by Feature 001), `apps/litecowork-ui/src/generated/` (regenerated `operator-api.ts` via `pnpm --dir apps/litecowork-ui run api:generate`), this package
 - **Contract:** SPEC §5 (B-22, B-23, B-32), §7.2, §15; AC-002, AC-004, AC-005, AC-009, AC-013, AC-014
 - **Change intent:** In one reviewed change, promote: pinned Chromium channel/version and managed-profile policy; BrowserSession, BrowserControlLease, ChromeAttachConsent epoch and BrowserActionReceipt operations; TerminalSession create/attach/input/resize/stop, ShellProfile discovery, `CommandReceipt` and `QuiescenceReceipt`; Workbench Activity read and RevisionDiff read; events (`environment.control.lease.changed.v1` promoted from target, plus terminal session/receipt events); error codes mapping `BrowserControlError` reason codes and `TerminalError`; one immutable SQLite migration for the session/lease/receipt tables. Each operationId is marked target-only in the route inventory until its handler lands.
 - **Acceptance:**
@@ -358,19 +358,19 @@ Historical revision 1.0 browser-only scope below; revision 1.1 adds actual lapto
 
 ## 008-T19 - Remove allow-same-origin from the Browser preview iframe and add a guard test (P-06)
 
-- **Status:** NOT STARTED - added by owner approval on 2026-11-09 (docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md). Folds proposed task P-06 from docs/UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md section 9 (finding U-02) into this LOCKED package.
-- **Depends on:** T06
+- **Status:** PARTIAL (2026-11-19 CODE: removed `allow-same-origin`; focused Workbench truthfulness suite passes 12/12, including the iframe sandbox regression. Full UI/package and packaged desktop evidence remain open.) - added by owner approval on 2026-11-09 (docs/OWNER-ACCEPTANCE-REVIEW-PACKET.md). Folds proposed task P-06 from docs/UI-RENDERING-SETTINGS-ARCHITECTURE-AUDIT-2026-11.md section 9 (finding U-02) into this LOCKED package. On 2026-11-19, the product owner delegated implementation sequencing: close this existing renderer boundary before the unfinished provider-backed T06. This is a narrow pre-provider correction; it does not reduce or replace the managed Browser V1 capability.
+- **Depends on:** NONE (the vulnerable preview and its test exist before T06; the safety correction does not mount or authorize a Browser provider)
 - **Cross-package prerequisites:** NONE
 - **Owner:** Desktop shell, Security.
-- **Allowed paths:** `apps/litecowork-ui/src/workbench/WorkbenchPanel.tsx`, `apps/litecowork-ui/tests/workbench-truthfulness.test.mjs` (or new guard test), adjacent tests.
+- **Allowed paths:** `apps/litecowork-ui/src/workbench/WorkbenchPanel.tsx`, `apps/litecowork-ui/tests/workbench-truthfulness.test.mjs` (or new guard test), adjacent tests, this task's sequencing/evidence row, `specs/008-workbench-browser-terminal-computer/README.md`, `specs/008-workbench-browser-terminal-computer/PLAN.md`, `CURRENT-RUN.md`, `docs/IMPLEMENTATION-STATUS.md`, and `docs/audit/EXTERNAL-AI-AUDIT-DISPOSITION-2026-11-19.md`.
 - **Contract:** SPEC §12, §8; AC-018; CHROME-BROWSER-LLD; register A-51.
 - **Change intent:** remove `allow-same-origin` from the Browser preview iframe `sandbox` attribute (or remove the embedded preview entirely), so `allow-scripts` can never combine with `allow-same-origin` and defeat the iframe sandbox, and add a guard test that fails if any iframe in the source carries both `allow-scripts` and `allow-same-origin`. No remote frame renders in a packaged build (the CSP blocks it); this closes the exposure before any future CSP change.
 - **Acceptance:**
-  - [ ] No iframe in the source combines `allow-scripts` with `allow-same-origin` (AC-018).
-  - [ ] A guard test in the workbench-truthfulness suite fails if that attribute pair reappears (AC-018).
+  - [x] No iframe in the source combines `allow-scripts` with `allow-same-origin` (AC-018).
+  - [x] A guard test in the workbench-truthfulness suite fails if that attribute pair reappears (AC-018).
   - [ ] The Browser preview still renders an allowed URL or shows its honest unavailable notice; no model markup executes.
-- **Command:** `pnpm --dir apps/litecowork-ui test`
-- **Evidence:** guard test output in Completion evidence; register A-51 doc-sync note.
+- **Command:** `node --test tests/workbench-truthfulness.test.mjs` from `apps/litecowork-ui` (focused result); `pnpm --dir apps/litecowork-ui test` (full package gate still required).
+- **Evidence:** 2026-11-19 focused guard output: 12 passed, 0 failed. Full package and packaged desktop preview behavior remain unverified.
 - **Stop:** removing the attribute breaks the only working preview; remove the preview instead and record the decision.
 
 ## 008-T20 - Git worktree view, VCS diff and user-invoked GitHub PR ops (P-13)
@@ -417,7 +417,7 @@ Historical revision 1.0 browser-only scope below; revision 1.1 adds actual lapto
 
 ## Dependency order
 
-T01 and T02 start first (T02 needs nothing). Browser lane: T01 -> T03, T04 -> T05 -> T06 (also after T02), T07. Terminal lane: T01 -> T08 -> T09 (blocked on Feature 005 Linux Environment) -> T10 -> T11 (also after T02), T13; T10 -> T12 (blocked on Feature 005 B-35). Activity: T01, T02 -> T14. Diffs: T01, T02 -> T15. Close-out: T06, T11, T13, T14, T15 -> T16 -> T17 -> T18. Owner-approved additions: T06 -> T19 (iframe guard, P-06); T15 -> T20 (worktree/VCS diff and GitHub PR ops, P-13). T18, T19, T20 -> T21 (VERIFIED depends on all).
+T01 and T02 start first (T02 needs nothing). T19 is a pre-provider renderer safety correction: the product owner delegated moving it ahead of T06 on 2026-11-19 because the unsafe iframe already exists and the sandbox-token fix neither serves nor authorizes Browser actions. Browser lane: T01 -> T03, T04 -> T05 -> T06 (also after T02), T07. Terminal lane: T01 -> T08 -> T09 (blocked on Feature 005 Linux Environment) -> T10 -> T11 (also after T02), T13; T10 -> T12 (blocked on Feature 005 B-35). Activity: T01, T02 -> T14. Diffs: T01, T02 -> T15. Close-out: T06, T11, T13, T14, T15 -> T16 -> T17 -> T18. Owner-approved additions: T19 (pre-provider iframe guard, P-06; resequenced by product-owner direction); T15 -> T20 (worktree/VCS diff and GitHub PR ops, P-13). T18, T19, T20 -> T21 (VERIFIED depends on all).
 
 ## Cross-package dependencies
 

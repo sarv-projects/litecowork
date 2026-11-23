@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
 import type { PresentationStreamState, TransientTurn } from "../presentation/presentation-stream";
-import { appendConversationListPage, appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
+import { activityTurnForRead, appendConversationListPage, appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, parseConversationSendOutcome, parsePendingConversationSends, pendingConversationSendText, retainPendingConversationSend, restorePendingConversationAttachmentChips, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate, type PendingConversationFirstTurn, type PendingConversationSend } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
 import { buildConversationAgentChoices, type ConversationAgentBindingOption, type ConversationAgentProfileOption } from "./conversation-agent-selection";
 import {
@@ -25,10 +25,11 @@ import { addAttachment, attachmentChipLabel, attachmentRefusalNotice, classifyAt
 import { TurnActivityView } from "./TurnActivityView";
 import { mergeActivity, parseActivityPage, type ActivityEntry } from "./turn-activity";
 import { NativePermissionCard } from "../needs-you/NativePermissionCard";
+import { ConversationTaskPromotionCache, findTaskPromotionSource, isKnownNoWriteTaskError, taskPromotionKey, taskPromotionLeads, type PinnedConversationResourceRef, type TaskPromotionDraft, type TaskPromotionRequest, type TaskPromotionSource } from "./task-promotion";
 import {
   applyNativePermissionReceipt,
   emptyNativePermissionState,
-  endPendingNativePermissions,
+  endLiveNativePermissions,
   markNativePermissionOutcomeUnknown,
   parseConversationPermissionSnapshot,
   reconcileConversationPermissionSnapshot,
@@ -43,6 +44,7 @@ import "./conversations-page.css";
 // Keep ambiguous create receipts across keyed Workspace page remounts for this app session.
 const pendingCreates = new ConversationCreateRequestCache();
 const conversationWorkspaceSelections = new ConversationWorkspaceSelectionEpochs();
+const taskPromotionRequests = new ConversationTaskPromotionCache();
 
 function messageText(message: ConversationMessageView): string {
   return message.content.map(block => block.kind === "TEXT" ? block.text : "Attachment").join("\n");
@@ -69,6 +71,185 @@ function ConversationProducerLabel({
   const profile = binding && profiles.find(candidate => candidate.agentProfileId === binding.agentProfileId);
   const label = profile?.displayName.trim() || `Unknown agent · ${message.agent_binding_id}`;
   return <span className="conversation-producer-label" aria-label={`Response from ${label}`}>{label}</span>;
+}
+
+type ConversationTaskCreateResult = {
+  taskId: string;
+  workspaceId: string;
+  conversationId: string | null;
+  sourceMessageRefs: string[];
+  currentSpecRevision: number;
+  status: string;
+  objective: string;
+  inputRefs: Array<{ workspaceId: string; resourceId: string; revisionId: string }>;
+};
+
+function ConversationTaskPromotionDialog({
+  workspaceId,
+  workspaceName,
+  operatorReady,
+  source,
+  preferredLeadId,
+  bindings,
+  profiles,
+  onClose,
+  onSaved,
+}: {
+  workspaceId: string;
+  workspaceName: string;
+  operatorReady: boolean;
+  source: TaskPromotionSource;
+  preferredLeadId: string | null;
+  bindings: readonly ConversationAgentBindingOption[];
+  profiles: readonly ConversationAgentProfileOption[];
+  onClose: () => void;
+  onSaved: (taskId: string) => void;
+}) {
+  const key = taskPromotionKey(workspaceId, source);
+  const existing = taskPromotionRequests.get(key);
+  const leads = taskPromotionLeads(workspaceId, bindings, profiles);
+  const [objective, setObjective] = useState(existing?.objective ?? source.objective);
+  const [leadAgentBindingId, setLeadAgentBindingId] = useState(existing?.preferredLeadAgentBindingId
+    ?? (preferredLeadId && leads.some(lead => lead.agentBindingId === preferredLeadId) ? preferredLeadId : leads[0]?.agentBindingId ?? ""));
+  const [selectedInputs, setSelectedInputs] = useState<PinnedConversationResourceRef[]>(() =>
+    existing ? existing.inputRefs.map(reference => ({ ...reference })) : [...source.pinnedInputs]);
+  const [pending, setPending] = useState<TaskPromotionRequest | null>(existing);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const dialog = useRef<HTMLDialogElement | null>(null);
+  const objectiveInput = useRef<HTMLTextAreaElement | null>(null);
+  const canEdit = pending === null;
+  const objectiveWithinLimit = new TextEncoder().encode(objective.trim()).byteLength <= 32 * 1024;
+
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    if (!element.open) element.showModal();
+    objectiveInput.current?.focus();
+    return () => { if (element.open) element.close(); };
+  }, []);
+
+  const save = async () => {
+    if (saving || !operatorReady || !leadAgentBindingId) return;
+    const draft: TaskPromotionDraft = {
+      workspaceId,
+      source,
+      objective: objective.trim(),
+      leadAgentBindingId,
+      inputRefs: selectedInputs,
+    };
+    const request = taskPromotionRequests.create(key, draft, () => crypto.randomUUID());
+    setPending(request);
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await invoke<ConversationTaskCreateResult>("create_task", {
+        workspaceId: request.workspaceId,
+        conversationId: request.conversationId,
+        sourceMessageRefs: [...request.sourceMessageRefs],
+        objective: request.objective,
+        preferredLeadAgentBindingId: request.preferredLeadAgentBindingId,
+        coworkerId: null,
+        expectedCoworkerVersion: null,
+        inputRefs: request.inputRefs.map(reference => ({
+          workspaceId: reference.workspace_id,
+          resourceId: reference.resource_id,
+          revisionId: reference.revision_id,
+        })),
+        requestId: request.requestId,
+      });
+      const expectedInputs = request.inputRefs.map(reference => ({
+        workspaceId: reference.workspace_id,
+        resourceId: reference.resource_id,
+        revisionId: reference.revision_id,
+      }));
+      if (result.workspaceId !== request.workspaceId
+        || result.conversationId !== request.conversationId
+        || JSON.stringify(result.sourceMessageRefs) !== JSON.stringify(request.sourceMessageRefs)
+        || result.currentSpecRevision !== 1
+        || result.status !== "READY"
+        || result.objective !== request.objective
+        || JSON.stringify(result.inputRefs) !== JSON.stringify(expectedInputs)) {
+        throw new Error("The saved Task did not match this Conversation promotion. Retry the same save to reconcile it.");
+      }
+      taskPromotionRequests.clear(key, request.requestId);
+      onSaved(result.taskId);
+    } catch (failure) {
+      const message = typeof failure === "string"
+        ? failure
+        : failure instanceof Error ? failure.message : "The Task save outcome is uncertain. Retry the exact same save.";
+      if (isKnownNoWriteTaskError(message)) {
+        taskPromotionRequests.clear(key, request.requestId);
+        setPending(null);
+        setError(`${message} No Task was saved. Keep the draft and choose an available lead.`);
+      } else {
+        setPending(request);
+        setError("The save outcome is uncertain. Retry this exact save to reconcile it; its objective, lead, inputs, and request identity are locked until then.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleInput = (reference: TaskPromotionSource["pinnedInputs"][number]) => {
+    if (!canEdit) return;
+    const isSelected = selectedInputs.some(item =>
+      item.workspace_id === reference.workspace_id
+        && item.resource_id === reference.resource_id
+        && item.revision_id === reference.revision_id,
+    );
+    setSelectedInputs(current => isSelected
+      ? current.filter(item => !(item.workspace_id === reference.workspace_id
+        && item.resource_id === reference.resource_id
+        && item.revision_id === reference.revision_id))
+      : [...current, reference]);
+  };
+
+  return <dialog
+    className="task-promotion-dialog"
+    ref={dialog}
+    aria-labelledby="task-promotion-title"
+    onCancel={event => {
+      if (pending) event.preventDefault();
+      else onClose();
+    }}
+  >
+    <form className="task-promotion-form" onSubmit={event => { event.preventDefault(); void save(); }}>
+      <header className="task-promotion-heading">
+        <div><p className="eyebrow">CREATE TASK</p><h2 id="task-promotion-title">Continue this reply as a Task</h2></div>
+        {!pending && <button type="button" className="quiet-button" onClick={onClose} aria-label="Close Task promotion">Close</button>}
+      </header>
+      <p className="task-promotion-workspace">Workspace: <strong>{workspaceName}</strong></p>
+      <label className="task-promotion-field">Task objective
+        <textarea ref={objectiveInput} value={objective} onChange={event => setObjective(event.target.value)} disabled={!canEdit || saving} maxLength={32_768} rows={4} />
+      </label>
+      {!objectiveWithinLimit && <p className="task-promotion-error" role="alert">The Task objective must be 32 KiB or smaller.</p>}
+      <label className="task-promotion-field">Lead agent
+        <select value={leadAgentBindingId} onChange={event => setLeadAgentBindingId(event.target.value)} disabled={!canEdit || saving}>
+          <option value="">Choose an enabled lead agent</option>
+          {leads.map(lead => <option key={lead.agentBindingId} value={lead.agentBindingId}>{lead.label}</option>)}
+        </select>
+      </label>
+      <fieldset className="task-promotion-inputs" disabled={!canEdit || saving}>
+        <legend>Source inputs</legend>
+        {source.pinnedInputs.length === 0 && <p>No exact pinned inputs were attached to the source prompt.</p>}
+        {source.pinnedInputs.map(reference => <label key={`${reference.resource_id}:${reference.revision_id}`}>
+          <input type="checkbox" checked={selectedInputs.some(item => item.resource_id === reference.resource_id && item.revision_id === reference.revision_id)} onChange={() => toggleInput(reference)} />
+          <span>{reference.resource_id} · pinned revision</span>
+        </label>)}
+        {source.unresolvedInputs.map(reference => <p className="task-promotion-unresolved" key={`${reference.resource_id}:unresolved`}>
+          {reference.resource_id} · revision unavailable; not included
+        </p>)}
+      </fieldset>
+      {error && <p className={pending ? "task-promotion-uncertain" : "task-promotion-error"} role={pending ? "status" : "alert"}>{error}</p>}
+      <footer className="task-promotion-actions">
+        {!pending && <button type="button" className="quiet-button" onClick={onClose} disabled={saving}>Cancel</button>}
+        <button type="submit" className="primary-button" disabled={saving || !operatorReady || !objective.trim() || !objectiveWithinLimit || !leadAgentBindingId}>
+          {saving ? "Saving…" : pending ? "Retry same save" : "Create Task"}
+        </button>
+      </footer>
+    </form>
+  </dialog>;
 }
 
 function ConversationMessageContent({ workspaceId, conversationId, message, autoLoadRich, presentationEpoch }: {
@@ -194,6 +375,7 @@ export function ConversationsPage({
   workspaceDefaultAgentBindingId = null,
   selectedConversationId: externalSelectedId = null,
   onSelectConversation,
+  onTaskCreated,
   onConversationsLoaded,
   onRegisterLoadMoreConversations,
   onConversationListPaginationChange,
@@ -209,6 +391,7 @@ export function ConversationsPage({
   workspaceDefaultAgentBindingId?: string | null;
   selectedConversationId?: string | null;
   onSelectConversation?: (id: string | null) => void;
+  onTaskCreated?: (taskId: string) => void;
   onConversationsLoaded?: (items: ConversationSummary[]) => void;
   onRegisterLoadMoreConversations?: (handler: (() => void) | null) => void;
   onConversationListPaginationChange?: (workspaceId: string, hasMore: boolean, loading: boolean) => void;
@@ -221,6 +404,8 @@ export function ConversationsPage({
   
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedConversationId = useRef<string | null>(selectedId);
+  const [newChatAgentBindingId, setNewChatAgentBindingId] = useState<string | null>(null);
+  const newChatWorkspace = useRef(workspaceId);
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
   const [agentBindings, setAgentBindings] = useState<ConversationAgentBindingOption[]>([]);
   const [agentProfiles, setAgentProfiles] = useState<ConversationAgentProfileOption[]>([]);
@@ -230,13 +415,16 @@ export function ConversationsPage({
   const [agentMutationNotice, setAgentMutationNotice] = useState<ConversationAgentMutationNotice | null>(null);
   const agentMutationLock = useRef(false);
   const [snapshot, setSnapshot] = useState<ConversationSnapshotView | null>(null);
+  const [taskPromotionSource, setTaskPromotionSource] = useState<TaskPromotionSource | null>(null);
   const [richPresentationEpochs, setRichPresentationEpochs] = useState<Map<string, number>>(() => new Map());
-  const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [_listStatus, setListStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
   const [createJournalStatus, setCreateJournalStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
   const [createJournalAttempt, setCreateJournalAttempt] = useState(0);
-  const [, setPendingCreateRequests] = useState<PendingConversationCreate[]>([]);
+  const [pendingCreateRequests, setPendingCreateRequests] = useState<PendingConversationCreate[]>([]);
+  const [pendingConversationSends, setPendingConversationSends] = useState<PendingConversationSend[]>([]);
+  const [sendJournalStatus, setSendJournalStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
+  const [sendJournalAttempt, setSendJournalAttempt] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createReceiptError, setCreateReceiptError] = useState<{ workspaceId: string; requestId: string; message: string } | null>(null);
@@ -250,6 +438,7 @@ export function ConversationsPage({
   const nativePermissionScopeRef = useRef<NativePermissionScope | null>(null);
   const lastPermissionAutoRefreshKey = useRef<string | null>(null);
   const permissionActionLock = useRef(new Set<string>());
+  const taskPromotionTriggers = useRef(new Map<string, HTMLButtonElement>());
   const requests = useRef(new ConversationRequestEpochs());
   const activeListEpoch = useRef<number | null>(null);
   const activeSnapshotEpoch = useRef<number | null>(null);
@@ -261,12 +450,60 @@ export function ConversationsPage({
   const activeWorkspace = useRef(workspaceId);
   const latestDraft = useRef(draft);
   latestDraft.current = draft;
-  const pendingCreateDrafts = useRef(new Map<string, string>());
   activeWorkspace.current = workspaceId;
   selectedConversationId.current = selectedId;
 
   const streamBottomRef = useRef<HTMLDivElement>(null);
   const streamContainerRef = useRef<HTMLDivElement>(null);
+
+  const openTaskPromotion = useCallback((source: TaskPromotionSource) => {
+    setTaskPromotionSource(source);
+  }, []);
+
+  const closeTaskPromotion = useCallback(() => {
+    const messageId = taskPromotionSource?.agentMessageId;
+    setTaskPromotionSource(null);
+    if (messageId) requestAnimationFrame(() => taskPromotionTriggers.current.get(messageId)?.focus());
+  }, [taskPromotionSource]);
+
+  const reloadPendingConversationSends = useCallback(async (requestWorkspaceId: string) => {
+    const value = await invoke<unknown>("list_pending_conversation_sends", {});
+    const parsed = parsePendingConversationSends(value);
+    if (activeWorkspace.current === requestWorkspaceId) {
+      setPendingConversationSends(parsed);
+      setSendJournalStatus("READY");
+    }
+    return parsed;
+  }, []);
+
+  const acknowledgePendingConversationSend = async (request: PendingConversationSend): Promise<boolean> => {
+    try {
+      await invoke<void>("acknowledge_conversation_send", {
+        workspaceId: request.workspaceId,
+        conversationId: request.conversationId,
+        requestId: request.requestId,
+      });
+    } catch {
+      try {
+        const remaining = await reloadPendingConversationSends(request.workspaceId);
+        return !remaining.some(send =>
+          send.workspaceId === request.workspaceId
+          && send.conversationId === request.conversationId
+          && send.requestId === request.requestId);
+      } catch {
+        if (activeWorkspace.current === request.workspaceId) {
+          setPendingConversationSends(current => retainPendingConversationSend(current, request));
+          setSendJournalStatus("FAILED");
+        }
+        return false;
+      }
+    }
+    setPendingConversationSends(current => current.filter(send =>
+      send.workspaceId !== request.workspaceId
+      || send.conversationId !== request.conversationId
+      || send.requestId !== request.requestId));
+    return true;
+  };
 
   useEffect(() => {
     if (externalSelectedId !== undefined && externalSelectedId !== null && externalSelectedId !== selectedId) {
@@ -308,6 +545,15 @@ export function ConversationsPage({
   const selectionKey = workspaceId && selectedId ? conversationDraftScope(workspaceId, selectedId) : null;
   const composerDraftKey = selectionKey;
   const composerDraft = composerDraftKey ? conversationDrafts[composerDraftKey] ?? "" : draft;
+  const attachmentDraftKey = workspaceId
+    ? conversationDraftScope(workspaceId, selectedId ?? "__new_chat_draft__")
+    : null;
+
+  useEffect(() => {
+    if (newChatWorkspace.current === workspaceId) return;
+    newChatWorkspace.current = workspaceId;
+    setNewChatAgentBindingId(null);
+  }, [workspaceId]);
 
   useLayoutEffect(() => {
     conversationWorkspaceSelections.select(workspaceId);
@@ -316,7 +562,9 @@ export function ConversationsPage({
   useEffect(() => {
     if (!operatorReady || !workspaceId) {
       setPendingCreateRequests([]);
+      setPendingConversationSends([]);
       setCreateJournalStatus("READY");
+      setSendJournalStatus("READY");
       return;
     }
     let current = true;
@@ -333,8 +581,15 @@ export function ConversationsPage({
         setCreateJournalStatus("FAILED");
         setError(cause instanceof Error ? cause.message : String(cause));
       });
+    setSendJournalStatus("LOADING");
+    void reloadPendingConversationSends(requestWorkspaceId)
+      .catch(cause => {
+        if (!current || activeWorkspace.current !== requestWorkspaceId) return;
+        setSendJournalStatus("FAILED");
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
     return () => { current = false; };
-  }, [createJournalAttempt, operatorReady, workspaceId]);
+  }, [createJournalAttempt, operatorReady, reloadPendingConversationSends, sendJournalAttempt, workspaceId]);
 
   const refresh = useCallback(async (preserveCurrent = false) => {
     const current = requests.current.beginList();
@@ -523,7 +778,7 @@ export function ConversationsPage({
         && value.retry_ordinal === scope.retryOrdinal) {
         setNativePermissionRecord(current => {
           if (current?.key !== key) return current;
-          const next = endPendingNativePermissions(current.state);
+          const next = endLiveNativePermissions(current.state);
           return next === current.state ? current : { key, state: next };
         });
       }
@@ -567,7 +822,6 @@ export function ConversationsPage({
 
   const submitCreate = async (request: PendingConversationCreate) => {
     if (!operatorReady || busy || createJournalStatus !== "READY") return;
-    const createDraftKey = request.workspaceId + "" + request.requestId;
     const requestSelection = conversationWorkspaceSelections.capture(request.workspaceId);
     if (!requestSelection) return;
     const isCurrentCreateRequest = () => mounted.current
@@ -577,15 +831,49 @@ export function ConversationsPage({
     clearCreateReceiptError();
     setBusy(true); setError(null);
     try {
-      const response = await invoke<unknown>("create_conversation", {
-        workspaceId: request.workspaceId, title: request.title, requestId: request.requestId,
-      });
+      const response = request.firstTurn
+        ? await invoke<unknown>("create_conversation_with_first_turn", {
+          workspaceId: request.workspaceId,
+          title: request.title,
+          requestId: request.requestId,
+          firstTurn: request.firstTurn,
+        })
+        : await invoke<unknown>("create_conversation", {
+          workspaceId: request.workspaceId, title: request.title, requestId: request.requestId,
+        });
       if (!isCurrentCreateRequest()) return;
-      // A create receipt is one summary, not a paginated list response. Wrap it as
-      // a terminal one-item page so the strict bridge parser still sees its required
-      // next_cursor field without accepting malformed list pages elsewhere.
-      const created = parseConversationList({ items: [response], next_cursor: null }, request.workspaceId)[0];
+      let conversationValue = response;
+      let admittedConversationId: string | null = null;
+      if (request.firstTurn) {
+        if (typeof response !== "object" || response === null || Array.isArray(response)) {
+          throw new Error("Local Runtime returned an invalid first-turn receipt.");
+        }
+        const admission = response as Record<string, unknown>;
+        const receipt = admission.turn;
+        if (typeof receipt !== "object" || receipt === null || Array.isArray(receipt)) {
+          throw new Error("Local Runtime returned an invalid first-turn receipt.");
+        }
+        const turnReceipt = receipt as Record<string, unknown>;
+        conversationValue = admission.conversation;
+        admittedConversationId = typeof turnReceipt.conversation_id === "string" ? turnReceipt.conversation_id : null;
+        if (typeof turnReceipt.turn_id !== "string"
+          || typeof turnReceipt.user_message_id !== "string"
+          || typeof turnReceipt.correlation_id !== "string"
+          || typeof turnReceipt.conversation_id !== "string"
+          || turnReceipt.status !== "OPEN") {
+          throw new Error("Local Runtime returned an invalid first-turn receipt.");
+        }
+      }
+      // The first-turn response is composite; validate its Conversation with the same
+      // strict parser used by the persisted Conversation list.
+      const created = parseConversationList({ items: [conversationValue], next_cursor: null }, request.workspaceId)[0];
       if (!created) throw new Error("Local Runtime returned an invalid Conversation.");
+      if (request.firstTurn && (created.version !== 2
+        || admittedConversationId !== created.conversation_id
+        || !created.active_agent_binding_id
+        || created.active_agent_binding_id !== request.firstTurn.agentBindingId)) {
+        throw new Error("Local Runtime returned an unexpected first-turn Conversation.");
+      }
       let cleanupError: string | null = null;
       try {
         await invoke<void>("acknowledge_conversation_create", {
@@ -614,22 +902,30 @@ export function ConversationsPage({
         }
       }
       if (!isCurrentCreateRequest()) return;
-      setTitle("");
-      const carriedDraft = pendingCreateDrafts.current.get(createDraftKey);
-      if (carriedDraft) {
-        const draftKey = conversationDraftScope(request.workspaceId, created.conversation_id);
-        setConversationDrafts(current => ({ ...current, [draftKey]: carriedDraft }));
-        if (latestDraft.current === carriedDraft) onDraftChange("");
+      if (request.firstTurn) {
+        const sentText = request.firstTurn.content.find(block => block.kind === "TEXT")?.text;
+        if (sentText && latestDraft.current.trim() === sentText) onDraftChange("");
+        const firstDraftKey = conversationDraftScope(request.workspaceId, "__new_chat_draft__");
+        setAttachmentChips(current => {
+          if (!(firstDraftKey in current)) return current;
+          const next = { ...current };
+          delete next[firstDraftKey];
+          return next;
+        });
       }
-      pendingCreateDrafts.current.delete(createDraftKey);
       setItems(current => {
         const nextList = [created, ...current.filter(item => item.conversation_id !== created.conversation_id)];
         onConversationsLoaded?.(nextList);
         return nextList;
       });
       setSelectedId(created.conversation_id);
-      setSnapshot({ workspace_id: request.workspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
-      setSnapshotLoadedKey(`${request.workspaceId}\u0000${created.conversation_id}`);
+      if (request.firstTurn) {
+        setSnapshot(null);
+        setSnapshotLoadedKey(null);
+      } else {
+        setSnapshot({ workspace_id: request.workspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
+        setSnapshotLoadedKey(`${request.workspaceId}\u0000${created.conversation_id}`);
+      }
     } catch (cause) {
       if (!isCurrentCreateRequest()) return;
       const createError = cause instanceof Error ? cause.message : String(cause);
@@ -655,27 +951,12 @@ export function ConversationsPage({
     }
   };
 
-  const create = async (requestedTitle?: string) => {
-    if (!operatorReady || busy || createJournalStatus !== "READY") return;
-    const normalizedTitle = requestedTitle === undefined ? title.trim() || null : requestedTitle.trim() || null;
-    try {
-      const request = pendingCreates.get(workspaceId, normalizedTitle, () => crypto.randomUUID());
-      if (!selectedId && draft.trim()) {
-        pendingCreateDrafts.current.set(workspaceId + "" + request.requestId, draft);
-      }
-      void submitCreate(request);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-
-  
   const selected = items.find(item => item.conversation_id === selectedId) ?? null;
   const agentChoices = buildConversationAgentChoices(
     workspaceId,
     agentBindings,
     agentProfiles,
-    selected?.active_agent_binding_id ?? null,
+    selected?.active_agent_binding_id ?? newChatAgentBindingId ?? workspaceDefaultAgentBindingId,
   );
   const workspaceDefaultChoice = workspaceDefaultAgentBindingId
     ? agentChoices.find(choice => choice.agentBindingId === workspaceDefaultAgentBindingId && choice.selectable)
@@ -870,12 +1151,12 @@ export function ConversationsPage({
         const snapshot = await refreshNativePermissionSnapshot(scope, stateKey);
         if (!snapshot.items.some(item => item.promptToken === promptToken)) {
           setNativePermissionRecord(current => current?.key === stateKey
-            ? { key: stateKey, state: markNativePermissionOutcomeUnknown(current.state, promptToken) }
+            ? { key: stateKey, state: markNativePermissionOutcomeUnknown(current.state, promptToken, decision) }
             : current);
         }
       } catch {
         setNativePermissionRecord(current => current?.key === stateKey
-          ? { key: stateKey, state: markNativePermissionOutcomeUnknown(current.state, promptToken) }
+          ? { key: stateKey, state: markNativePermissionOutcomeUnknown(current.state, promptToken, decision) }
           : current);
         setNativePermissionSnapshotError(true);
       }
@@ -898,12 +1179,12 @@ export function ConversationsPage({
   const [retryPending, setRetryPending] = useState(false);
   const [stopPending, setStopPending] = useState(false);
 
-  // REPORTED activity (T25): stored records are read back for the active or failed turn so the
-  // cards survive a restart; live frames add to them. Both are observations, never Effects.
-  const activityTurn = currentSnapshot?.active_turn ?? currentSnapshot?.retryable_turn ?? null;
+  // REPORTED activity (T25): reload the latest exact turn/retry tuple, including completed
+  // turns, after restart. The activity projection is read-only and never supplies Stop/Retry authority.
+  const activityTurn = currentSnapshot ? activityTurnForRead(currentSnapshot) : null;
   const activityTurnId = activityTurn?.turn_id ?? null;
   const activityRetry = activityTurn?.retry_ordinal ?? 0;
-  const activityStatus = currentSnapshot?.active_turn?.status ?? (currentSnapshot?.retryable_turn ? "FAILED" : null);
+  const activityStatus = activityTurn?.status ?? null;
   const [storedActivity, setStoredActivity] = useState<{ key: string; entries: ActivityEntry[] } | null>(null);
   useEffect(() => {
     if (!workspaceId || !selectedId || !activityTurnId) return;
@@ -937,13 +1218,14 @@ export function ConversationsPage({
   // When no Conversation is selected yet, the composer creates one via `create()`; eligibility is
   // re-checked against the resulting Conversation's binding, so a draft with no dispatch-eligible binding
   // cannot submit a turn.
-  const selectedAgentBindingId = selected?.active_agent_binding_id ?? null;
+  const selectedAgentBindingId = selected?.active_agent_binding_id
+    ?? newChatAgentBindingId
+    ?? workspaceDefaultAgentBindingId;
   const selectedBindingEligible = selectedAgentBindingId !== null
     && agentChoices.some(choice => choice.agentBindingId === selectedAgentBindingId && choice.selectable);
   // For an unstarted Conversation (no selectedId) a dispatch-eligible binding still must exist to submit; the
   // workspace default (when selectable) or any selectable choice makes Send eligible after creation.
-  const hasEligibleBindingForNewConversation = agentChoices.some(choice => choice.selectable);
-  const bindingEligibleForSend = selectedId ? selectedBindingEligible : hasEligibleBindingForNewConversation;
+  const bindingEligibleForSend = selectedBindingEligible;
   const sendEligible = isSendEligible({
     activeTurn: currentSnapshot?.active_turn ?? null,
     transientStreaming,
@@ -968,7 +1250,7 @@ export function ConversationsPage({
   const pickerGeneration = useRef(0);
   const pickerMoreRequest = useRef<{ generation: number; cursor: string } | null>(null);
   const consumedPickerCursors = useRef(new Set<string>());
-  const pickerScopeKey = JSON.stringify([workspaceId, selectedId]);
+  const pickerScopeKey = JSON.stringify([workspaceId, selectedId ?? "__new_chat_draft__"]);
   const pickerScopeRef = useRef(pickerScopeKey);
   pickerScopeRef.current = pickerScopeKey;
 
@@ -980,9 +1262,13 @@ export function ConversationsPage({
     setPickerState({ status: "LOADING", items: [], nextCursor: null, loadingMore: false, moreFailed: false, cursorStalled: false });
   }, [pickerScopeKey]);
 
-  const chips = composerDraftKey ? attachmentChips[composerDraftKey] ?? [] : [];
+  const chips = attachmentDraftKey ? attachmentChips[attachmentDraftKey] ?? [] : [];
+  const pendingSendsInWorkspace = pendingConversationSends.filter(send => send.workspaceId === workspaceId);
+  const pendingSendForSelection = selectedId
+    ? pendingSendsInWorkspace.find(send => send.conversationId === selectedId) ?? null
+    : null;
   const openPicker = () => {
-    if (!workspaceId || !selectedId) return;
+    if (!workspaceId) return;
     const generation = pickerGeneration.current + 1;
     pickerGeneration.current = generation;
     pickerMoreRequest.current = null;
@@ -1017,7 +1303,7 @@ export function ConversationsPage({
 
   const loadMorePickerFiles = async () => {
     const cursor = pickerState.nextCursor;
-    if (!workspaceId || !selectedId || !cursor || pickerMoreRequest.current) return;
+    if (!workspaceId || !cursor || pickerMoreRequest.current) return;
     const generation = pickerGeneration.current;
     const scopeKey = pickerScopeKey;
     const request = { generation, cursor };
@@ -1045,12 +1331,119 @@ export function ConversationsPage({
     }
   };
 
+  const retryPendingConversationSend = async (request: PendingConversationSend) => {
+    if (!operatorReady || sendingTurn || request.workspaceId !== workspaceId) return;
+    const selectedAtRetryStart = selectedId;
+    setSendingTurn(true);
+    setTurnError(null);
+    try {
+      const rawOutcome = await invoke<unknown>("submit_conversation_turn", {
+        workspaceId: request.workspaceId,
+        conversationId: request.conversationId,
+        requestId: request.requestId,
+        content: request.content,
+        resourceRefs: request.resourceRefs,
+        agentBindingId: request.agentBindingId,
+        presentationPreference: request.presentationPreference,
+        attachmentLabels: request.attachmentLabels,
+      });
+      if (activeWorkspace.current !== request.workspaceId) return;
+      const draftKey = conversationDraftScope(request.workspaceId, request.conversationId);
+      const savedText = pendingConversationSendText(request);
+      const outcome = parseConversationSendOutcome(rawOutcome, request.conversationId, request.presentationPreference);
+      if (outcome.kind === "REFUSED") {
+        if (!await acknowledgePendingConversationSend(request)) {
+          setTurnError(`${attachmentRefusalNotice(outcome.message) ?? outcome.message} The saved request could not be cleared locally yet; retrying it is safe.`);
+          return;
+        }
+        setConversationDrafts(current => {
+          const currentText = current[draftKey] ?? "";
+          if (currentText.trim() && currentText.trim() !== savedText.trim()) return current;
+          return { ...current, [draftKey]: savedText };
+        });
+        const restoredChips = restorePendingConversationAttachmentChips(request, pickerState.items);
+        setAttachmentChips(current => (current[draftKey]?.length ?? 0) > 0
+          ? current
+          : { ...current, [draftKey]: restoredChips });
+        setTurnError(attachmentRefusalNotice(outcome.message) ?? outcome.message);
+        if (selectedConversationId.current === selectedAtRetryStart) setSelectedId(request.conversationId);
+        return;
+      }
+      if (!await acknowledgePendingConversationSend(request)) {
+        setTurnError("The message was admitted, but its local recovery record could not be cleared. Retry the saved send to confirm it safely.");
+        if (selectedConversationId.current === request.conversationId) await refreshSnapshot();
+        return;
+      }
+      setConversationDrafts(current => {
+        if ((current[draftKey] ?? "").trim() !== savedText.trim()) return current;
+        return { ...current, [draftKey]: "" };
+      });
+      setAttachmentChips(current => {
+        const currentChips = current[draftKey] ?? [];
+        const currentRefs = toResourceRefs(currentChips, request.workspaceId);
+        if (JSON.stringify(currentRefs) !== JSON.stringify(request.resourceRefs)) return current;
+        return { ...current, [draftKey]: [] };
+      });
+      if (selectedConversationId.current === request.conversationId) await refreshSnapshot();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setTurnError(attachmentRefusalNotice(message) ?? message);
+      try {
+        const remaining = await reloadPendingConversationSends(request.workspaceId);
+        const exactRequestStillPending = remaining.some(send =>
+          send.workspaceId === request.workspaceId
+          && send.conversationId === request.conversationId
+          && send.requestId === request.requestId);
+        if (!exactRequestStillPending) {
+          // An untyped command error cannot establish refusal. Keep the exact
+          // request visible in memory and offer same-key replay; never infer
+          // pre-commit from a missing local journal row.
+          setPendingConversationSends(current => retainPendingConversationSend(current, request));
+        }
+      } catch {
+        // Keep the exact request visible; the journal check can be retried explicitly.
+        if (activeWorkspace.current === request.workspaceId) {
+          setPendingConversationSends(current => retainPendingConversationSend(current, request));
+          setSendJournalStatus("FAILED");
+        }
+      }
+    } finally {
+      if (activeWorkspace.current === request.workspaceId) setSendingTurn(false);
+    }
+  };
+
   const sendTurn = async () => {
+    if (selectedId && pendingSendForSelection) {
+      await retryPendingConversationSend(pendingSendForSelection);
+      return;
+    }
     const text = composerDraft.trim();
     if (!text || !workspaceId || !operatorReady || sendingTurn || isTurnRunning) return;
-    if (!bindingEligibleForSend) return;
+    if (!bindingEligibleForSend || (selectedId && sendJournalStatus !== "READY")) return;
     if (!selectedId) {
-      void create(text.slice(0, 36));
+      if (busy || createJournalStatus !== "READY" || !attachmentDraftKey) return;
+      try {
+        // Pin the exact binding shown by the selector. If this is the Workspace
+        // default, retries cannot drift after the default changes while ambiguous.
+        const selectedAgent = selectedAgentBindingId;
+        if (!selectedAgent) return;
+        const firstTurn: PendingConversationFirstTurn = {
+          content: [{ kind: "TEXT", text }],
+          resourceRefs: toResourceRefs(chips, workspaceId).map(reference => ({
+            workspaceId: reference.workspace_id,
+            resourceId: reference.resource_id,
+            revisionId: reference.revision_id,
+          })),
+          agentBindingId: selectedAgent,
+          presentationPreference: "RICH",
+        };
+        const normalizedTitle = Array.from(text).slice(0, 36).join("");
+        const request = pendingCreates.get(workspaceId, normalizedTitle, () => crypto.randomUUID(), firstTurn);
+        setSendingTurn(true);
+        void submitCreate(request).finally(() => setSendingTurn(false));
+      } catch (cause) {
+        setTurnError(cause instanceof Error ? cause.message : String(cause));
+      }
       return;
     }
 
@@ -1058,44 +1451,65 @@ export function ConversationsPage({
     setTurnError(null);
     const draftKey = composerDraftKey;
     const reqId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `turn-req-${Date.now()}`;
-
-    if (draftKey) {
-      setConversationDrafts(current => ({ ...current, [draftKey]: "" }));
-    }
-
-    const optimisticMessage: ConversationMessageView = {
-      message_id: `user-msg-${Date.now()}`,
-      role: "USER",
-      agent_binding_id: null,
-      agent_session_id: null,
+    const references = toResourceRefs(chips, workspaceId);
+    const savedRequest: PendingConversationSend = {
+      workspaceId,
+      conversationId: selectedId,
+      requestId: reqId,
       content: [{ kind: "TEXT", text }],
-      created_at: new Date().toISOString(),
-      rich_presentation: null,
+      resourceRefs: references,
+      agentBindingId: selectedAgentBindingId,
+      presentationPreference: "RICH",
+      attachmentLabels: chips.map(chip => chip.displayName),
     };
-    setSnapshot(current => current && current.conversation_id === selectedId ? {
-      ...current,
-      messages: [...current.messages, optimisticMessage],
-    } : current);
-
     try {
-      await invoke<unknown>("submit_conversation_turn", {
+      const rawOutcome = await invoke<unknown>("submit_conversation_turn", {
         workspaceId,
         conversationId: selectedId,
         requestId: reqId,
-        content: [{ kind: "TEXT", text }],
-        resourceRefs: toResourceRefs(chips, workspaceId),
-        agentBindingId: selected?.active_agent_binding_id || null,
-        presentationPreference: "RICH",
+        content: savedRequest.content,
+        resourceRefs: savedRequest.resourceRefs,
+        agentBindingId: savedRequest.agentBindingId,
+        presentationPreference: savedRequest.presentationPreference,
+        attachmentLabels: savedRequest.attachmentLabels,
       });
-      if (draftKey) setAttachmentChips(current => ({ ...current, [draftKey]: [] }));
+      if (activeWorkspace.current !== workspaceId) return;
+      const outcome = parseConversationSendOutcome(rawOutcome, selectedId, savedRequest.presentationPreference);
+      if (outcome.kind === "REFUSED") {
+        if (!await acknowledgePendingConversationSend(savedRequest)) {
+          setTurnError(`${attachmentRefusalNotice(outcome.message) ?? outcome.message} The saved request could not be cleared locally yet; retrying it is safe.`);
+          return;
+        }
+        setTurnError(attachmentRefusalNotice(outcome.message) ?? outcome.message);
+        return;
+      }
+      if (!await acknowledgePendingConversationSend(savedRequest)) {
+        setTurnError("The message was admitted, but its local recovery record could not be cleared. Retry the saved send to confirm it safely.");
+        await refreshSnapshot();
+        return;
+      }
+      if (draftKey) {
+        setConversationDrafts(current => (current[draftKey] ?? "").trim() === text
+          ? { ...current, [draftKey]: "" }
+          : current);
+        setAttachmentChips(current => JSON.stringify(toResourceRefs(current[draftKey] ?? [], workspaceId)) === JSON.stringify(references)
+          ? { ...current, [draftKey]: [] }
+          : current);
+      }
+      await refreshSnapshot();
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : String(cause);
       setTurnError(attachmentRefusalNotice(msg) ?? msg);
-      if (draftKey) {
-        setConversationDrafts(current => ({ ...current, [draftKey]: text }));
+      try {
+        await reloadPendingConversationSends(workspaceId);
+      } catch {
+        if (activeWorkspace.current === workspaceId) {
+          setPendingConversationSends(current => retainPendingConversationSend(current, savedRequest));
+          setSendJournalStatus("FAILED");
+        }
       }
     } finally {
-      setSendingTurn(false);
+      if (activeWorkspace.current === workspaceId) setSendingTurn(false);
     }
   };
 
@@ -1258,6 +1672,71 @@ export function ConversationsPage({
         </div>
       )}
 
+      {sendJournalStatus === "LOADING" && operatorReady && (
+        <div className="conversation-create-journal-error" role="status">
+          <p>Checking for a message that may need safe retry…</p>
+        </div>
+      )}
+      {sendJournalStatus === "FAILED" && operatorReady && (
+        <div className="conversation-create-journal-error" role="alert">
+          <p>Pending sends could not be checked. Sending in an existing Conversation is paused until the saved request is confirmed.</p>
+          <button className="quiet-button" type="button" onClick={() => {
+            setSendJournalStatus("LOADING");
+            setSendJournalAttempt(current => current + 1);
+          }}>
+            Check pending sends again
+          </button>
+        </div>
+      )}
+      {pendingSendsInWorkspace.map(request => {
+        const text = pendingConversationSendText(request);
+        const title = items.find(item => item.conversation_id === request.conversationId)?.title;
+        return (
+          <div className="conversation-create-journal-error" role="status" key={`${request.workspaceId}\u0000${request.conversationId}\u0000${request.requestId}`}>
+            <p>
+              <strong>Saved send needs resolution.</strong> The exact request is retained on this device; retry uses the same identity to confirm or replay it without creating a duplicate message
+              {title ? ` in “${title}”` : " in this Conversation"}.
+              {text && <> Preview: “{text.slice(0, 160)}{text.length > 160 ? "…" : ""}”</>}
+              {request.attachmentLabels.length > 0 && <> Attachments: {request.attachmentLabels.join(", ")}.</>}
+            </p>
+            {text && <details>
+              <summary>View saved message</summary>
+              <p>{text}</p>
+            </details>}
+            {selectedId !== request.conversationId && (
+              <button className="quiet-button" type="button" onClick={() => setSelectedId(request.conversationId)}>
+                Open Conversation
+              </button>
+            )}
+            <button
+              className="quiet-button"
+              type="button"
+              disabled={!operatorReady || sendingTurn}
+              onClick={() => void retryPendingConversationSend(request)}
+            >
+              {sendingTurn && selectedId === request.conversationId ? "Checking saved send…" : "Retry saved send"}
+            </button>
+          </div>
+        );
+      })}
+
+      {createJournalStatus === "READY" && pendingCreateRequests
+        .filter(request => request.workspaceId === workspaceId)
+        .map(request => {
+          const firstText = request.firstTurn?.content.find(block => block.kind === "TEXT")?.text;
+          return (
+            <div className="conversation-create-journal-error" role="status" key={request.requestId}>
+              <p>{request.firstTurn
+                ? `A first message is saved for safe retry: “${firstText?.slice(0, 96) ?? request.title ?? "New conversation"}”.`
+                : `A Conversation creation receipt is awaiting confirmation: “${request.title ?? "Untitled conversation"}”.`}</p>
+              <button className="quiet-button" type="button" disabled={!operatorReady || busy}
+                onClick={() => void submitCreate(request)}>
+                Retry safely
+              </button>
+            </div>
+          );
+        })}
+
       {/* Main Conversation Canvas */}
       <div className="conversation-stream-container" ref={streamContainerRef} onScroll={onStreamScroll}>
         <div className="conversation-messages-flow">
@@ -1274,8 +1753,11 @@ export function ConversationsPage({
                 </button>
               )}
 
-              {(currentSnapshot?.messages ?? []).map(message => (
-                <article className={"message-row " + message.role.toLowerCase()} key={message.message_id}>
+              {(currentSnapshot?.messages ?? []).map(message => {
+                const source = selected?.conversation_id
+                  ? findTaskPromotionSource(workspaceId, selected.conversation_id, currentSnapshot?.messages ?? [], message.message_id)
+                  : null;
+                return <article className={"message-row " + message.role.toLowerCase()} key={message.message_id}>
                   {message.role === "USER" ? (
                     <div className="message-user-wrap">
                       <div className="message-user-bubble">{messageText(message)}</div><time className="message-time">{timeLabel(message.created_at)}</time>
@@ -1291,11 +1773,22 @@ export function ConversationsPage({
                           autoLoadRich={automaticRichIds.has(message.message_id)}
                           presentationEpoch={richPresentationEpochs.get(message.message_id) ?? 0}
                         />
+                        {source && <button
+                          ref={element => {
+                            if (element) taskPromotionTriggers.current.set(message.message_id, element);
+                            else taskPromotionTriggers.current.delete(message.message_id);
+                          }}
+                          type="button"
+                          className="conversation-task-promotion-trigger"
+                          disabled={!operatorReady}
+                          title={!operatorReady ? "Start the local Runtime to create a Task" : "Create a Task from this completed reply"}
+                          onClick={() => openTaskPromotion(source)}
+                        >Continue as Task</button>}
                       </div>
                     </div>
                   )}
-                </article>
-              ))}
+                </article>;
+              })}
 
               {activityEntries.length > 0 && !retrying && (
                 <article className="message-row agent turn-activity-row">
@@ -1412,9 +1905,9 @@ export function ConversationsPage({
           className="composer-textarea"
           aria-label="Message draft"
           ref={composerTextareaRef}
-          placeholder={isTurnRunning ? "Assistant is responding..." : COMPOSER_PLACEHOLDER}
+          placeholder={pendingSendForSelection ? "A saved send is awaiting confirmation above" : isTurnRunning ? "Assistant is responding..." : COMPOSER_PLACEHOLDER}
           value={composerDraft}
-          disabled={isTurnRunning}
+          disabled={isTurnRunning || pendingSendForSelection !== null || sendJournalStatus !== "READY"}
           onChange={event => {
             if (!composerDraftKey) return;
             setConversationDrafts(current => ({ ...current, [composerDraftKey]: event.target.value }));
@@ -1432,10 +1925,10 @@ export function ConversationsPage({
             <button
               className="composer-pill-btn"
               type="button"
-              title={selectedId ? "Attach a text file from this Workspace" : "Start the conversation first to attach files"}
+              title="Attach a text file from this Workspace"
               aria-label="Add context or file"
               aria-expanded={pickerOpen}
-              disabled={!operatorReady || !selectedId || isTurnRunning}
+              disabled={!operatorReady || !workspaceId || isTurnRunning || pendingSendForSelection !== null || sendJournalStatus !== "READY"}
               onClick={() => (pickerOpen ? closePicker() : openPicker())}
             >
               +
@@ -1451,8 +1944,8 @@ export function ConversationsPage({
                   {pickerState.items.map(item => (
                     <li key={item.resourceId}>
                       <button type="button" onClick={() => {
-                        if (!composerDraftKey || !workspaceId) return;
-                        setAttachmentChips(current => ({ ...current, [composerDraftKey]: addAttachment(current[composerDraftKey] ?? [], item, workspaceId) }));
+                        if (!attachmentDraftKey || !workspaceId || pendingSendForSelection) return;
+                        setAttachmentChips(current => ({ ...current, [attachmentDraftKey]: addAttachment(current[attachmentDraftKey] ?? [], item, workspaceId) }));
                         closePicker();
                       }}>{item.displayName}</button>
                     </li>
@@ -1465,15 +1958,17 @@ export function ConversationsPage({
             {chips.map(chip => (
               <span className="composer-attachment-chip" key={chip.resourceId}>
                 {chip.displayName}
-                <button type="button" aria-label={attachmentChipLabel(chip)} onClick={() => composerDraftKey && setAttachmentChips(current => ({ ...current, [composerDraftKey]: removeAttachment(current[composerDraftKey] ?? [], chip.resourceId) }))}>×</button>
+                <button type="button" aria-label={attachmentChipLabel(chip)} disabled={pendingSendForSelection !== null} onClick={() => attachmentDraftKey && setAttachmentChips(current => ({ ...current, [attachmentDraftKey]: removeAttachment(current[attachmentDraftKey] ?? [], chip.resourceId) }))}>×</button>
               </span>
             ))}
             <div className="model-selector-pill" title="Active Model">
               <div className="agent-select-wrapper">
                 <select
-                  value={selected?.active_agent_binding_id ?? ""}
-                  disabled={!operatorReady || agentCatalogStatus === "LOADING" || agentMutationNotice?.status === "SAVING"}
-                  onChange={event => selected && void saveConversationAgentBinding(event.target.value || null)}
+                  value={selected?.active_agent_binding_id ?? newChatAgentBindingId ?? ""}
+                  disabled={!operatorReady || agentCatalogStatus === "LOADING" || agentMutationNotice?.status === "SAVING" || pendingSendForSelection !== null}
+                  onChange={event => selected
+                    ? void saveConversationAgentBinding(event.target.value || null)
+                    : setNewChatAgentBindingId(event.target.value || null)}
                 >
                   <option value="">{defaultAgentOptionLabel(workspaceDefaultOptionLabel)}</option>
                   {agentChoices.map(choice => (
@@ -1511,11 +2006,13 @@ export function ConversationsPage({
               <button
                 className="composer-submit-btn"
                 type="button"
-                disabled={!sendEligible}
+                disabled={!sendEligible || (selectedId !== null && (sendJournalStatus !== "READY" || pendingSendForSelection !== null))}
                 title={
                   !composerDraft.trim()
                     ? "Enter a message"
-                    : !operatorReady
+                    : selectedId && sendJournalStatus !== "READY"
+                      ? "Checking pending send recovery"
+                      : !operatorReady
                       ? "Operator is not ready"
                       : !bindingEligibleForSend
                         ? "Select an available agent to send"
@@ -1531,6 +2028,20 @@ export function ConversationsPage({
           </div>
         </div>
       </div>
+      {taskPromotionSource && <ConversationTaskPromotionDialog
+        workspaceId={workspaceId}
+        workspaceName={workspaceName}
+        operatorReady={operatorReady}
+        source={taskPromotionSource}
+        preferredLeadId={(currentSnapshot?.messages ?? []).find(message => message.message_id === taskPromotionSource.agentMessageId)?.agent_binding_id ?? null}
+        bindings={agentBindings}
+        profiles={agentProfiles}
+        onClose={closeTaskPromotion}
+        onSaved={taskId => {
+          setTaskPromotionSource(null);
+          onTaskCreated?.(taskId);
+        }}
+      />}
     </div>
   );
 };

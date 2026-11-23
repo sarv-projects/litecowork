@@ -45,7 +45,7 @@ Never translate a unit pass, mocked UI, schema, catalog row, successful process 
 | E2E-02 | Switch lead A → B → A | Same canonical Conversation; bounded semantic context; no private transcript or credential transfer |
 | E2E-03 | Attach folder → index supported Resources → ask grounded question → revoke root | Exact revision citations; revoked root excluded from future attachment/retrieval |
 | E2E-04 | Conversation → explicit Task promotion → accept Plan → admit Attempt → edit one file | Exact isolation attestation, lease, Effect receipt, independent verification and restart recovery |
-| E2E-05 | Connect app → read → approve one write → reconcile → revoke | Scopes and SecretRef custody verified; no blind retries; later invocation fenced |
+| E2E-05 | Connect app → read → approve one write → reconcile → revoke | Scopes and staged SecretRef custody verified; no blind retries; later invocation fenced. Record standalone Connection/read evidence separately from Task-scoped write evidence; A-80 and Feature 005 determine the Task-write row order. A Windows Connection/read pass alone is not a complete E2E-05 qualification. |
 | E2E-06 | Discover native package → preview/adopt or install through LiteSPM → grant/use | LiteSPM-owned plan/apply receipt; Core-owned grant/effect; native config preserved |
 | E2E-07 | Create Artifact → edit/version/export/reopen | Immutable versions, correct format fidelity and source provenance |
 | E2E-08 | Browser/terminal Workbench → browser-lease takeover/return; Conversation Take control → Stop/quiescence → owner continuation; cancel/restart recovery | Real provider and explicit consent; browser epoch fencing and stale-handle rejection; Conversation turn settles only after native quiescence; continuation is a separate turn |
@@ -58,9 +58,9 @@ Never translate a unit pass, mocked UI, schema, catalog row, successful process 
 | E2E-16 (adopted 2026-11-10, Feature 018) | Turn settles → Usage shows provider-reported or ESTIMATED_LOCAL counts → crash daemon → write support bundle from preview | No fabricated zero usage; crash record present after restart; bundle contains only allowlisted, redacted categories |
 | E2E-17 (adopted 2026-11-10, Feature 020) | Coworker chat → "Remember this" → Remembered notice → correct → revoke → restart | Candidate lifecycle follows LearningCandidate; only eligible CONFIRMED private memories auto-commit; revoked memory excluded from retrieval after restart |
 
-E2E-14..E2E-17 were proposed on 2026-11-09 with packages 014, 015, 018 and 020 and adopted as journey ids by the owner on 2026-11-10 (register A-62). Adoption fixes the ids and journeys only: each stays unqualified until its package is accepted and implemented, E2E-16 also waits on B-42 (open), and the Windows legs wait for later laptop testing.
+E2E-14..E2E-17 were proposed on 2026-11-09 with packages 014, 015, 018 and 020 and adopted as journey ids by the owner on 2026-11-10 (register A-62). Adoption fixes the ids and journeys only: each stays unqualified until its package is accepted and implemented, E2E-16 also waits on B-42 (open), and the Windows legs wait for later laptop testing. The adopted V1 matrix roster is E2E-01..E2E-12 plus E2E-14..E2E-17. E2E-13 remains a conditional WorkflowBackend extension, not a current V1 release row or matrix cell.
 
-The send/stream/stop adapter exercised by E2E-01 (and the relay in E2E-02) is the owner-accepted Agent Client Protocol (ACP) client with a per-provider launch catalog (Feature 002 task 002-T17, consumed by Feature 001; register [A-54](CONTRADICTION-AND-ALIGNMENT-REGISTER.md)/[A-55](CONTRADICTION-AND-ALIGNMENT-REGISTER.md)), with OpenCode v2 HTTP kept as one non-ACP adapter until its ACP route qualifies. E2E-01 must also confirm the OpenCode event mapping against the captured v2.0.32 fixture (Feature 001 task 001-T23) rather than top-level key guessing, and render the activity, plan and inline-FAILED cards and autoscroll from the folded rendering tasks (001-T24..T26). Deterministic provider fixtures remain acceptable only for provider output control, never as a replacement for the daemon, IPC, session lifecycle, persistence or UI.
+The send/stream/stop adapter intended for the ACP route in E2E-01 (and the relay in E2E-02) is the owner-accepted Agent Client Protocol (ACP) client with a per-provider launch catalog (Feature 002 task 002-T17, consumed by Feature 001; register [A-54](CONTRADICTION-AND-ALIGNMENT-REGISTER.md)/[A-55](CONTRADICTION-AND-ALIGNMENT-REGISTER.md)). The current OpenCode v2.0.32 route is a separate non-ACP HTTP/SSE adapter (`opencode-v2-http-sse`) until an ACP route is implemented and qualified; the V1 release-matrix row must name the route actually exercised. E2E-01 must also confirm OpenCode event mapping against the captured v2.0.32 fixture (Feature 001 task 001-T23) rather than top-level key guessing, and render the activity, plan and inline-FAILED cards and autoscroll from the folded rendering tasks (001-T24..T26). Deterministic provider fixtures remain acceptable only for provider output control, never as a replacement for the daemon, IPC, session lifecycle, persistence or UI.
 
 ### Optional future extension — external WorkflowBackend adapter (not a current V1 release gate)
 
@@ -114,7 +114,7 @@ Each accepted journey stores:
 - journey ID, requirement IDs and owner contracts;
 - repository SHA and dirty/clean status;
 - OS/build/architecture and packaging/runtime mode;
-- agent/provider/LiteSPM versions and negotiated protocol;
+- agent/provider/LiteSPM versions, authentication mode and negotiated protocol;
 - CODE commands/results, SYSTEM trace and USER evidence links;
 - relevant request IDs, correlation IDs, event sequences and receipt/evidence references;
 - negative cases attempted and their outcomes;
@@ -122,6 +122,8 @@ Each accepted journey stores:
 - reviewer and acceptance date.
 
 Do not store credentials, access tokens, raw SecretLease bytes, private prompts or unredacted user content in evidence bundles.
+
+The release matrix accepts a journey bundle only when its exact row tuple matches the declared row: OS and minimum build, architecture, agent and version, authentication mode, negotiated protocol, packaged mode and a clean checkout. A schema-valid bundle for the wrong route or build is BLOCKED; it is never treated as partial evidence for another row. The canonical schema is `docs/schemas/release-evidence-bundle.schema.json`.
 
 ## 7. Release gate
 
@@ -131,7 +133,7 @@ The historical c7e9c05 acceptance matrix in docs/archive/legacy-implementation-c
 
 ### Declared V1 release rows and the NOT_COUNTED rule
 
-*Accepted target interface (not yet in source) until Feature 019 tasks T14 and T15 land; the owner is Feature 019 (see `docs/release/README.md`).*
+*Target interface owned by Feature 019. T14/T15 and the USER-DELEGATED T24 exact-row verification are present in source; the generator and artifacts are CODE evidence only. Feature 019 remains IN_REVIEW, and no release row is qualified (see `docs/release/README.md`).*
 
 V1 declares exactly two release rows. Nothing else is a V1 row.
 

@@ -4,6 +4,8 @@
 **Assembled:** 2026-11-08, after the doc audit, the doc+spec upgrade pass and the A-24/A-26 code fixes. **Decided:** 2026-11-09.
 **Effect:** packages 001-012 moved to ACCEPTED/LOCKED and implementation is authorized within each package's TASKS.md. Each resolution's full text lives at its owner (register row or specs/NNN §5); this packet summarizes and links, it does not restate authority.
 
+**Dated update (2026-11-20):** Part 4's B-19 follow-up row below accurately records that the owner had not selected a replacement recipe on 2026-11-10. The product owner later USER-DELEGATED GitHub App user-to-server device flow for internal implementation planning; Feature 006 revision 1.1 remains IN_REVIEW pending formal Connectors/Security ratification. This update preserves the historical packet answer and does not mark the package ACCEPTED/LOCKED again or qualify a provider journey. See A-82 and Feature 006 T02.
+
 Legend for my recommendation: **ACCEPT** = adopt as written; **ACCEPT (scoped)** = adopt but note a caveat; **NEEDS YOU** = a genuine product/strategy call I should not pre-bias.
 
 ---
@@ -133,7 +135,7 @@ The renumbered "Package VERIFIED for V1" tasks are 001-T28, 002-T19, 003-T18, 00
 ## Summary
 
 - Accepted 2026-11-09: Parts 1-3 in full, with the riders in the Decision cells; and Part 5 (fold the proposed P-tasks P-00..P-09 and P-11..P-19 into their owning packages under the ACP direction, register A-55).
-- Part 4 decided 2026-11-10 (A-62): B-38, B-39, B-40, B-41, B-45, D-01, the B-31 class, CONNECTOR_EVENT, E2E-14..E2E-17 and the 010-T19 deferral are accepted as proposed. Deferred: LiteSPM (B-36, B-37, all of 013), Windows rows (B-35 and Windows-only tasks, for later laptop testing) and B-43/B-44 (release dependent). Still open and BLOCKED: B-42 and the B-19 OAuth recipe (blocks 006-T02).
+- Part 4 decided 2026-11-10 (A-62): B-38, B-39, B-40, B-41, B-45, D-01, the B-31 class, CONNECTOR_EVENT, E2E-14..E2E-17 and the 010-T19 deferral are accepted as proposed. Deferred: LiteSPM (B-36, B-37, all of 013), Windows rows (B-35 and Windows-only tasks, for later laptop testing) and B-43/B-44 (release dependent). B-42 remained open; the B-19 OAuth recipe was open and blocked at that dated checkpoint, then received USER-DELEGATED direction on 2026-11-20 as described in the dated update above. Feature 006 revision 1.1 remains IN_REVIEW pending formal Connectors/Security ratification.
 - The delivery order is in [LITECOWORK-BUILD-TASKS.md](LITECOWORK-BUILD-TASKS.md) "V1 release waves".
 
 ## Part 6 — Feature 016 revision 0.4 intelligent workspace scope (proposed 2026-11-17; Saved View direction decided, whole-scope decision pending)

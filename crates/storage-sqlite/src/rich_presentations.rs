@@ -832,7 +832,7 @@ fn read_conversation_presentation_in_transaction(
         .map_err(map_database_error)?;
     let mut statement = tx
         .prepare(
-            "SELECT json_object('message_id',m.message_id,'conversation_id',m.conversation_id,'author',json(m.author_json),'role',m.role,'agent_session_id',m.agent_session_id,'agent_binding_id',m.agent_binding_id,'turn_id',m.turn_id,'content',json(m.content_json),'resource_refs',json(m.resource_refs_json),'created_at',m.created_at), m.message_id, m.role, r.presentation_id, r.schema_version, r.renderer_contract_version, r.semantic_content_digest, r.document_digest, r.document_size_bytes FROM conversation_messages m LEFT JOIN rich_presentations r ON r.message_id=m.message_id AND r.workspace_id=?1 AND r.conversation_id=m.conversation_id WHERE m.conversation_id=?2 AND (?3 IS NULL OR (m.created_at,m.message_id) > (SELECT created_at,message_id FROM conversation_messages WHERE conversation_id=?2 AND message_id=?3)) ORDER BY m.created_at,m.message_id LIMIT ?4",
+            "SELECT json_object('message_id',m.message_id,'conversation_id',m.conversation_id,'author',json(m.author_json),'role',m.role,'agent_session_id',m.agent_session_id,'agent_binding_id',m.agent_binding_id,'turn_id',m.turn_id,'content',json(m.content_json),'resource_refs',json(m.resource_refs_json),'created_at',m.created_at), m.message_id, m.role, r.presentation_id, r.schema_version, r.renderer_contract_version, r.semantic_content_digest, r.document_digest, r.document_size_bytes, t.status FROM conversation_messages m LEFT JOIN rich_presentations r ON r.message_id=m.message_id AND r.workspace_id=?1 AND r.conversation_id=m.conversation_id LEFT JOIN conversation_turns t ON t.turn_id=m.turn_id AND t.conversation_id=m.conversation_id WHERE m.conversation_id=?2 AND (?3 IS NULL OR (m.created_at,m.message_id) > (SELECT created_at,message_id FROM conversation_messages WHERE conversation_id=?2 AND message_id=?3)) ORDER BY m.created_at,m.message_id LIMIT ?4",
         )
         .map_err(map_database_error)?;
     let rows = statement
@@ -849,6 +849,7 @@ fn read_conversation_presentation_in_transaction(
                     row.get::<_, Option<String>>(6)?,
                     row.get::<_, Option<String>>(7)?,
                     row.get::<_, Option<i64>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             },
         )
@@ -876,6 +877,7 @@ fn read_conversation_presentation_in_transaction(
         semantic_digest,
         document_digest,
         document_size_bytes,
+        turn_status,
     ) in rows
     {
         if message_json.len() > MAX_CONVERSATION_PRESENTATION_MESSAGE_BYTES {
@@ -924,7 +926,8 @@ fn read_conversation_presentation_in_transaction(
         items.push(json!({
             "message": message,
             "rich_presentation": rich_presentation,
-            "linked_items": []
+            "linked_items": [],
+            "turn_status": turn_status
         }));
     }
     let active_turn: Option<Value> = tx
@@ -949,6 +952,17 @@ fn read_conversation_presentation_in_transaction(
         .map(|json| serde_json::from_str(&json))
         .transpose()
         .map_err(|_| StoreError::Integrity("invalid retryable Conversation turn".into()))?;
+    let activity_turn: Option<Value> = tx
+        .query_row(
+            "SELECT json_object('turn_id',turn_id,'retry_ordinal',retry_ordinal,'status',status) FROM conversation_turns WHERE conversation_id=?1 ORDER BY created_at DESC,turn_id DESC LIMIT 1",
+            params![conversation],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|_| StoreError::Integrity("invalid latest Conversation activity turn".into()))?;
     Ok(ConversationPresentationSnapshot {
         workspace_id: workspace.to_owned(),
         conversation_id: conversation.to_owned(),
@@ -960,6 +974,7 @@ fn read_conversation_presentation_in_transaction(
         next_cursor,
         active_turn,
         retryable_turn,
+        activity_turn,
     })
 }
 

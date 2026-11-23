@@ -555,6 +555,7 @@ fn workspace_root_revalidation_sql_failure_rolls_back_and_degrades_startup() {
         recovered_from_unclean_shutdown: true,
         last_shutdown_clean: false,
         blockers: Vec::new(),
+        startup_recovery: super::StartupRecoveryFacts::default(),
         version: 1,
     };
     let mut incarnation_version = 1;

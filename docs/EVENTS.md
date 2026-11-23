@@ -181,6 +181,9 @@ resource.upload.created.v1
 resource.upload.status.changed.v1
 conversation.created.v1
 conversation.agent_binding.changed.v1
+conversation.renamed.v1
+conversation.archived.v1
+conversation.unarchived.v1
 conversation.message.added.v1
 conversation.turn.created.v1
 conversation.turn.created.v2 # includes immutable PresentationPreference
@@ -343,7 +346,10 @@ reference existing immutable/domain records):
 validates each concrete `type`. The validator requires one payload branch for every
 registry entry; the broad `{ "type": "object" }` fallback is forbidden. Optional fields
 may be absent; fields marked `?` are optional. All envelope and payload objects are closed
-and validate known fields and types. Adding, removing, renaming, or changing the type or
+and validate known fields and types. The envelope's versioned `type` pattern intentionally
+allows an unrecognized event version to be retained for opaque forwarding; an unknown type
+must never be applied to a projection. A local producer must use a registered event type
+and its closed payload branch. Adding, removing, renaming, or changing the type or
 meaning of a payload field creates a new event type major (`.v2`); consumers may
 store/forward unknown versions but cannot apply them to projections they do not understand.
 
@@ -388,6 +394,9 @@ Resource/index state. Content-mode matches and snippets are request-local projec
 must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `conversation.created` | `conversation_id`, `created_by` |
 | `conversation.agent_binding.changed` | `workspace_id`, `conversation_id`, `from_agent_binding_id`, `to_agent_binding_id`, `changed_by`, `aggregate_version` |
+| `conversation.renamed` | `workspace_id`, `conversation_id`, `title_digest` (nullable only when the title is cleared), `changed_by`, `aggregate_version`; never the title text |
+| `conversation.archived` | `workspace_id`, `conversation_id`, `changed_by`, `aggregate_version` |
+| `conversation.unarchived` | `workspace_id`, `conversation_id`, `changed_by`, `aggregate_version` |
 | `conversation.message.added` | `message_id`, `conversation_id`, `author`, `content_digest`, `resource_refs` |
 | `conversation.turn.created` | `turn_id`, `conversation_id`, `user_message_id`, `agent_binding_id`, `aggregate_version` |
 | `rich.presentation.published` | `presentation_id`, `conversation_id`, `message_id`, `schema_version`, `renderer_contract_version`, `semantic_content_digest`, `document_digest`, `document_size_bytes`, `producer_agent_session_id?`, `host_instruction_digest?`, `host_skill_refs[]`, `aggregate_version` |
@@ -510,7 +519,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 and its prior revision in the same transaction that advances the Workspace settings head,
 Workspace aggregate version, and idempotency receipt. Workspace creation seeds revision 1
 with `NATIVE_DEFAULT`, an empty worker ceiling, and `AGENT_DEFAULT`; migration v28 (wired,
-`SCHEMA_VERSION` is 33; register A-40) seeds
+`SCHEMA_VERSION` is 34; register A-40) seeds
 existing Workspaces deterministically and does not fabricate user-authored setting events.
 The v1 settings event contains no credentials, model-provider secrets, native session data,
 or capability grant. The settings event changes future Task admission policy only.
@@ -523,6 +532,14 @@ it alongside `task.created.v1`; an explicit TaskSpec revision that re-resolves s
 emits it alongside `task.spec.revised.v1`. The original `task.created.v1` payload remains
 unchanged. No auth token, provider subscription, native transcript, or delegated secret is
 included.
+
+For explicit Conversation promotion, the existing `task.created.v1` event may carry the
+source `conversation_id`; the initial TaskSpecRevision carries the exact ordered
+`source_message_refs` (USER prompt, then AGENT reply). The original Conversation messages
+and their `conversation.message.added.v1` events remain immutable and are not appended or
+re-emitted by promotion. Storage verifies one canonical append event per source message
+and commits Task, TaskSpecRevision, `task.created.v1`, and the idempotency receipt together.
+No new event type is introduced, and Task creation does not dispatch planning or execution.
 
 `conversation.turn.status.changed` records nonterminal state changes. Its `to` values are
 `RUNNING`, `WAITING_USER`, `WAITING_DEPENDENCY`, and `CANCEL_REQUESTED`; `reason_code` is

@@ -7,6 +7,7 @@ fn coworker_definition(name: &str) -> CoworkerDefinition {
         avatar_ref: None,
         role_description: String::new(),
         default_lead_agent_binding_id: None,
+        delegation_policy_source: CoworkerDelegationPolicySource::CoworkerOverride,
         delegation_strategy: DelegationStrategy::NativeDefault,
         enabled_delegation_profile_ids: vec![],
         delegation_budget_policy: None,
@@ -231,6 +232,58 @@ fn coworker_sqlite_revisions_events_replay_and_restart() {
         .unwrap();
     assert_eq!(old_name, "Coworker");
     assert!(db.execute("UPDATE coworker_revisions SET name = 'Overwrite' WHERE coworker_id = 'coworker-1' AND revision = 1", []).is_err());
+}
+
+#[test]
+fn coworker_sqlite_roundtrips_workspace_default_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-coworker");
+    let mut definition = coworker_definition("Workspace default");
+    definition.delegation_policy_source = CoworkerDelegationPolicySource::WorkspaceDefault;
+    definition.delegation_strategy = DelegationStrategy::NativeDefault;
+    coworker_command(
+        &store,
+        "create-coworker-workspace-default",
+        ResponsibilityCommand::CreateCoworker {
+            coworker_id: "coworker-workspace-default".into(),
+            definition,
+        },
+        1,
+    )
+    .unwrap();
+    let loaded = coworker_adapter(&store, "read-workspace-default", 2)
+        .get(
+            "owner-local",
+            "workspace-coworker",
+            "coworker-workspace-default",
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        loaded.1.definition.delegation_policy_source,
+        CoworkerDelegationPolicySource::WorkspaceDefault
+    );
+    let event = store
+        .read_workspace_events("workspace-coworker")
+        .unwrap()
+        .into_iter()
+        .find(|event| event.entity_id == "coworker-workspace-default")
+        .unwrap();
+    let snapshot = store
+        .inner
+        .blobs
+        .get(
+            "workspace-coworker",
+            BlobPurpose::AggregateState,
+            &event.aggregate_state_ref.blob,
+        )
+        .unwrap();
+    let value: Value = serde_json::from_slice(&snapshot).unwrap();
+    assert_eq!(
+        value["revision"]["delegation_policy_source"],
+        "WORKSPACE_DEFAULT"
+    );
 }
 
 #[test]

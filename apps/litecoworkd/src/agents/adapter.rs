@@ -38,8 +38,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::normalizer::{NormalizedAgentEvent, NormalizerCounters, OpenCodeEventNormalizer};
-use super::opencode_server::{OpenCodeError, OpenCodeProcessState, OpenCodeServer};
+use super::normalizer::{
+    ExecutionOutcome, NormalizedAgentEvent, NormalizerCounters, OpenCodeEventNormalizer,
+};
+use super::opencode_server::{
+    OpenCodeError, OpenCodeEventStream, OpenCodeProcessState, OpenCodeServer,
+};
 use storage_core::conversation::ConversationContextPackage;
 
 /// Named, finite stream-shaping values that replace the old hard 60 s read cap
@@ -111,11 +115,20 @@ impl UsageCollector {
 
 impl TurnObserver for UsageCollector {
     fn on_event(&mut self, event: &NormalizedAgentEvent) {
-        if let NormalizedAgentEvent::UsageRecorded {
-            input_tokens,
-            output_tokens,
-        } = event
-        {
+        let token_counts = match event {
+            // OpenCode UsageSnapshot is cumulative for the whole native
+            // session. Only terminal per-step tokens belong to this turn.
+            NormalizedAgentEvent::StepEnded {
+                input_tokens,
+                output_tokens,
+            }
+            | NormalizedAgentEvent::StepFailed {
+                input_tokens,
+                output_tokens,
+            } => Some((*input_tokens, *output_tokens)),
+            _ => None,
+        };
+        if let Some((input_tokens, output_tokens)) = token_counts {
             if input_tokens.is_none() && output_tokens.is_none() {
                 return;
             }
@@ -518,6 +531,9 @@ pub(crate) fn parse_acp_session_update(
 /// on `shutdown`.
 pub(crate) struct OpenCodeAdapter {
     server: OpenCodeServer,
+    /// The v2 event feed is volatile. Retain the subscription opened before
+    /// prompt dispatch, then hand that exact stream to the turn driver.
+    pending_stream: Option<OpenCodeEventStream>,
     /// Captured once per turn so the normalizer's safe drop counters can be
     /// reported as observability facts after the stream ends.
     last_counters: NormalizerCounters,
@@ -530,6 +546,7 @@ impl OpenCodeAdapter {
     pub(crate) fn new(server: OpenCodeServer) -> Self {
         Self {
             server,
+            pending_stream: None,
             last_counters: NormalizerCounters::default(),
             cancel: None,
             observer: None,
@@ -611,9 +628,19 @@ impl AgentAdapter for OpenCodeAdapter {
         native_message_id: &str,
         context: &ConversationContextPackage,
     ) -> Result<(), TurnFailure> {
-        self.server
-            .send_conversation_context_async(native_session_id, native_message_id, context)
-            .map_err(Self::map_transport_error)
+        if self.pending_stream.is_some() {
+            return Err(TurnFailure::Transport);
+        }
+        let stream = self
+            .server
+            .subscribe_before_sending_conversation_context(
+                native_session_id,
+                native_message_id,
+                context,
+            )
+            .map_err(Self::map_transport_error)?;
+        self.pending_stream = Some(stream);
+        Ok(())
     }
 
     fn drive_turn(
@@ -624,10 +651,7 @@ impl AgentAdapter for OpenCodeAdapter {
         if !budget.is_valid() {
             return Err(TurnFailure::Transport);
         }
-        let mut stream = self
-            .server
-            .subscribe_events()
-            .map_err(Self::map_transport_error)?;
+        let mut stream = self.pending_stream.take().ok_or(TurnFailure::Transport)?;
         let mut normalizer = OpenCodeEventNormalizer::new(native_session_id);
         let cancel = self.cancel.clone();
         let server = std::cell::RefCell::new(&mut self.server);
@@ -667,6 +691,7 @@ impl AgentAdapter for OpenCodeAdapter {
     }
 
     fn shutdown(&mut self) -> bool {
+        self.pending_stream.take();
         self.server.stop() == OpenCodeProcessState::Exited
     }
 }
@@ -779,7 +804,6 @@ fn drive_opencode_stream_observed_with_control<S: RawEventSource>(
     let mut quiescence_deadline: Option<Instant> = None;
     let mut answer_text = String::new();
     let mut saw_text = false;
-    let mut saw_ended_text = false;
 
     loop {
         let now = Instant::now();
@@ -825,22 +849,16 @@ fn drive_opencode_stream_observed_with_control<S: RawEventSource>(
                     }
                     Some(NormalizedAgentEvent::TextEnded { text }) => {
                         saw_text = true;
-                        saw_ended_text = true;
                         answer_text = text;
                     }
-                    Some(NormalizedAgentEvent::Idle) => {
-                        if stopping {
-                            // The current normalizer treats a final text part followed
-                            // by the idle boundary as completion. Partial text followed
-                            // by idle remains stopped; live provider semantics still
-                            // require separate qualification.
-                            if saw_ended_text && !answer_text.trim().is_empty() {
-                                return Ok(TurnObservation::Completed {
-                                    answer_text: answer_text.trim().to_owned(),
-                                });
-                            }
-                            return Ok(TurnObservation::Stopped);
-                        }
+                    Some(NormalizedAgentEvent::ExecutionSettled {
+                        outcome: ExecutionOutcome::Failed,
+                    }) => {
+                        return Err(TurnFailure::ProviderError);
+                    }
+                    Some(NormalizedAgentEvent::ExecutionSettled {
+                        outcome: ExecutionOutcome::Succeeded,
+                    }) => {
                         if saw_text && !answer_text.trim().is_empty() {
                             return Ok(TurnObservation::Completed {
                                 answer_text: answer_text.trim().to_owned(),
@@ -848,9 +866,10 @@ fn drive_opencode_stream_observed_with_control<S: RawEventSource>(
                         }
                         return Err(TurnFailure::EmptyResponse);
                     }
-                    Some(NormalizedAgentEvent::ExecutionSettled {
-                        outcome: super::normalizer::ToolOutcome::Failed,
-                    }) => {
+                    Some(NormalizedAgentEvent::ExecutionInterrupted) => {
+                        if stopping {
+                            return Ok(TurnObservation::Stopped);
+                        }
                         return Err(TurnFailure::ProviderError);
                     }
                     // Reasoning, tool, file, todo, step, usage and other
@@ -956,7 +975,7 @@ mod tests {
 /// Offline fixture-replay tests for the adapter drive loop and normalization.
 ///
 /// These exercise the exact stream-driving path `drive_turn` uses, replacing
-/// only the live socket with the committed redacted v2.0.32 turn fixture. The
+/// only the live socket with a synthetic, pinned-source contract event fixture. The
 /// module name carries the `selected_adapter_conversation` and
 /// `opencode_turn_fixture` filter substrings so the task's `cargo test` filters
 /// select them.
@@ -966,8 +985,8 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
     use serde_json::{Value, json};
     use std::collections::VecDeque;
 
-    const FIXTURE: &str = include_str!("fixtures/opencode_v2_0_32_turn.jsonl");
-    const FIXTURE_SESSION: &str = "ses_fixture_REDACTED";
+    const FIXTURE: &str = include_str!("fixtures/opencode_v2_0_32_contract_events.jsonl");
+    const FIXTURE_SESSION: &str = "ses_fixture_0001";
 
     #[test]
     fn runtime_permission_commands_are_serviced_before_each_provider_poll() {
@@ -1091,8 +1110,8 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
         )
         .expect("fixture drives to a terminal observation");
 
-        // The idle frame arrives after the terminal text part, so the turn
-        // completes with the accumulated answer and no reasoning text.
+        // The execution terminal arrives after the full text boundary, so the
+        // turn completes with the accumulated answer and no reasoning text.
         match observation {
             TurnObservation::Completed { answer_text } => {
                 assert_eq!(answer_text, "I will update the file. Done.");
@@ -1129,7 +1148,7 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
         ] {
             assert!(!lowered.contains(forbidden), "fixture leaks `{forbidden}`");
         }
-        // Reasoning and error text are redacted placeholders, never content.
+        // Reasoning and provider-supplied explanations are redacted placeholders.
         assert!(FIXTURE.contains("[REASONING REDACTED]"));
         assert!(FIXTURE.contains("REDACTED"));
     }
@@ -1159,12 +1178,12 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
 
     #[test]
     fn selected_adapter_conversation_text_only_turn_completes_without_idle() {
-        // If the stream closes after a terminal text part but before an idle
+        // If the stream closes after a terminal text event but before execution
         // frame, the accumulated answer is still committed, never lost.
         let lines: Vec<&str> = FIXTURE
             .lines()
             .filter(|line| !line.trim().is_empty())
-            .take_while(|line| !line.contains("session.idle"))
+            .take_while(|line| !line.contains("session.execution.succeeded"))
             .collect();
         let frames = lines
             .into_iter()
@@ -1190,7 +1209,7 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
 
     #[test]
     fn opencode_event_normalizer_drops_foreign_and_unknown_from_the_fixture() {
-        // Drive the fixture to idle and confirm every drop class is counted, so
+        // Drive the fixture to execution completion and confirm every drop class is counted, so
         // an uncorrelated or foreign-session frame can never mutate state
         // (AC-008). The foreign text frame and the invented event both precede
         // the terminal idle, so the drive observes and drops both.
@@ -1227,10 +1246,15 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
         }
     }
 
-    fn idle_frame() -> RawEvent {
+    fn interrupted_frame() -> RawEvent {
         RawEvent {
-            event_type: Some("session.idle".to_owned()),
-            data: json!({"type": "session.idle", "properties": {"sessionID": FIXTURE_SESSION}}),
+            event_type: Some("session.execution.interrupted".to_owned()),
+            data: json!({
+                "id":"evt_stop_fixture",
+                "created":1,
+                "type":"session.execution.interrupted",
+                "data":{"sessionID":FIXTURE_SESSION,"reason":"user"}
+            }),
         }
     }
 
@@ -1248,7 +1272,7 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
         let cancel = CancelSignal::new();
         cancel.request();
         let mut source = ScriptedSource {
-            frames: [Ok(Some(idle_frame()))].into_iter().collect(),
+            frames: [Ok(Some(interrupted_frame()))].into_iter().collect(),
             then_quiet: false,
         };
         let mut normalizer = OpenCodeEventNormalizer::new(FIXTURE_SESSION);
@@ -1310,17 +1334,18 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
 
     #[test]
     fn selected_adapter_conversation_completion_before_the_stop_request_stays_completed() {
-        // The terminal text and idle arrive before the Stop is requested: the race is
-        // won by the completion and the interrupt is never sent.
+        // The terminal text and execution success arrive before Stop: completion wins.
         let cancel = CancelSignal::new();
         let mut frames = std::collections::VecDeque::new();
         frames.push_back(Ok(Some(RawEvent {
-            event_type: Some("message.part.updated".to_owned()),
-            data: json!({"type": "message.part.updated", "properties": {"part": {
-                "type": "text", "sessionID": FIXTURE_SESSION, "messageID": "m", "id": "p",
-                "text": "done", "time": {"start": 1, "end": 2}}}}),
+            event_type: Some("session.text.ended".to_owned()),
+            data: json!({"id":"evt_text","created":1,"type":"session.text.ended","data":{
+                "sessionID":FIXTURE_SESSION,"assistantMessageID":"m","ordinal":0,"text":"done"}}),
         })));
-        frames.push_back(Ok(Some(idle_frame())));
+        frames.push_back(Ok(Some(RawEvent {
+            event_type: None,
+            data: json!({"id":"evt_done","created":2,"type":"session.execution.succeeded","data":{"sessionID":FIXTURE_SESSION}}),
+        })));
         let mut source = ScriptedSource {
             frames,
             then_quiet: false,
@@ -1350,18 +1375,20 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
     #[test]
     fn selected_adapter_conversation_completion_observed_during_stop_wins_the_race() {
         // The stop request has already been sent, but the native stream then reports
-        // a completed text part followed by session.idle. The observed answer is the
+        // a completed text event followed by execution success. The observed answer is the
         // winning outcome; quiescence alone must not relabel it as Stopped.
         let cancel = CancelSignal::new();
         cancel.request();
         let mut frames = std::collections::VecDeque::new();
         frames.push_back(Ok(Some(RawEvent {
-            event_type: Some("message.part.updated".to_owned()),
-            data: json!({"type": "message.part.updated", "properties": {"part": {
-                "type": "text", "sessionID": FIXTURE_SESSION, "messageID": "m", "id": "p",
-                "text": "completed during stop", "time": {"start": 1, "end": 2}}}}),
+            event_type: Some("session.text.ended".to_owned()),
+            data: json!({"id":"evt_text","created":1,"type":"session.text.ended","data":{
+                "sessionID":FIXTURE_SESSION,"assistantMessageID":"m","ordinal":0,"text":"completed during stop"}}),
         })));
-        frames.push_back(Ok(Some(idle_frame())));
+        frames.push_back(Ok(Some(RawEvent {
+            event_type: None,
+            data: json!({"id":"evt_done","created":2,"type":"session.execution.succeeded","data":{"sessionID":FIXTURE_SESSION}}),
+        })));
         let mut source = ScriptedSource {
             frames,
             then_quiet: false,
@@ -1394,9 +1421,9 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
         cancel.request();
         let mut source = ScriptedSource {
             frames: [Ok(Some(RawEvent {
-                event_type: Some("session.error".to_owned()),
-                data: json!({"type": "session.error", "properties": {
-                    "sessionID": FIXTURE_SESSION, "error": {"name": "ProviderError"}
+                event_type: Some("session.execution.failed".to_owned()),
+                data: json!({"id":"evt_failed","created":1,"type":"session.execution.failed","data":{
+                    "sessionID":FIXTURE_SESSION,"error":{"name":"ProviderError"}
                 }}),
             }))]
             .into_iter()
@@ -1416,19 +1443,15 @@ mod selected_adapter_conversation_opencode_turn_fixture_tests {
     }
 
     #[test]
-    fn opencode_turn_fixture_error_frame_maps_to_execution_failed() {
-        // The committed fixture carries an error event (001-T23). Normalize that
-        // exact line directly to confirm it classifies as a typed failure.
-        let error_line = FIXTURE
-            .lines()
-            .find(|line| line.contains("session.error"))
-            .expect("fixture carries a session.error frame");
-        let data: Value = serde_json::from_str(error_line).expect("json");
+    fn opencode_turn_fixture_execution_failure_maps_to_typed_failure() {
+        let data = json!({"id":"evt_failed","created":1,"type":"session.execution.failed","data":{
+            "sessionID":FIXTURE_SESSION,"error":{"name":"ProviderError"}
+        }});
         let mut normalizer = OpenCodeEventNormalizer::new(FIXTURE_SESSION);
         assert_eq!(
             normalizer.normalize(None, &data),
             Some(NormalizedAgentEvent::ExecutionSettled {
-                outcome: crate::agents::normalizer::ToolOutcome::Failed
+                outcome: ExecutionOutcome::Failed
             })
         );
     }

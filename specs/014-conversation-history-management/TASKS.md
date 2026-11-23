@@ -18,7 +18,7 @@ Gaps to V1: every goal in SPEC section 2, plus qualification on both rows.
 
 ## 014-T01 - Owner acceptance of SPEC and blockers
 
-- **Status:** PARTIAL - B-38 accepted as proposed (2026-11-10, sarv-projects) and treated as unblocking implementation by owner instruction; whole-SPEC ACCEPTED/LOCKED flip and O-02, O-03, O-06 and O-07 remain pending, so SPEC and WIRING statuses are unchanged and this task is not DONE.
+- **Status:** PARTIAL - B-38 accepted as proposed (2026-11-10, sarv-projects) and treated as unblocking implementation by owner instruction; WIRING YAML syntax was repaired on 2026-11-19 and structural validation passes. The whole-SPEC ACCEPTED/LOCKED flip and O-02, O-03, O-06 and O-07 remain pending, so SPEC and WIRING statuses are unchanged and this task is not DONE.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE (orchestrator records B-38 in the register and review packet).
 - **Owner:** Product (repository owner); Conversation and Privacy reviewers.
@@ -35,7 +35,7 @@ Gaps to V1: every goal in SPEC section 2, plus qualification on both rows.
 
 ## 014-T02 - Promote accepted interfaces into owner docs and schemas
 
-- **Status:** PARTIAL - `docs/schemas/sqlite-v31.sql` (side table `conversation_history_state`, deviation from the column-on-`conversations` wording, see docs/STORAGE.md) is wired and migration tests pass; STORAGE, EVENTS and BUILD-TASKS version text synced. NOT done: OpenAPI routes, `error-codes.schema.json` entries for `CONVERSATION_ARCHIVED`/`CONVERSATION_DELETED`/`CONVERSATION_NOT_QUIESCENT`, `domain-event.schema.json` entries for the renamed/archived/unarchived events, STATE-MACHINES lifecycle section, search index and purge tables (later migrations).
+- **Status:** PARTIAL - `docs/schemas/sqlite-v31.sql` (side table `conversation_history_state`, deviation from the column-on-`conversations` wording, see docs/STORAGE.md) is wired and migration tests pass; STORAGE, EVENTS and BUILD-TASKS version text synced. The source-emitted `conversation.renamed.v1`, `conversation.archived.v1` and `conversation.unarchived.v1` types and payloads are now registered in EVENTS/schema under user-directed implementation review (2026-11-20). NOT done: OpenAPI route contracts, `error-codes.schema.json` entries for `CONVERSATION_ARCHIVED`/`CONVERSATION_DELETED`/`CONVERSATION_NOT_QUIESCENT`, STATE-MACHINES lifecycle section, deletion events, search index and purge tables (later migrations).
 - **Depends on:** T01
 - **Cross-package prerequisites:** Feature 001 contract promotion of `CONVERSATION_TURN_IN_PROGRESS` (001 T01); Feature 017 review of tombstone and manifest backup inclusion.
 - **Owner:** API, State Machines, Events, Storage owners.
@@ -48,6 +48,8 @@ Gaps to V1: every goal in SPEC section 2, plus qualification on both rows.
   - [ ] `conversation.renamed.v1` schema carries `title_digest` and rejects a `title` field.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py` and `python3 scripts/validate_architecture.py` and `cargo test -p storage-sqlite --locked schema`
 - **Evidence:** PR link and command output in Completion evidence.
+- **User-directed clarification (2026-11-20; not formal domain-owner acceptance):** the current storage transactions already emit the rename/archive/unarchive event types, so their closed payload contracts are promoted here. Unknown versioned types remain accepted by the generic envelope only for opaque forward-compatibility; local event creation must use a registered type. This does not mark Feature 014 ACCEPTED/LOCKED or enable delete/search behavior.
+- **Evidence (2026-11-20, contract correction only):** the three current source event names and their exact `workspace_id`, `conversation_id`, `changed_by`, `aggregate_version`, and rename-only `title_digest` payloads are now present in the canonical registry and schema. Architecture/schema validation remains to be run; unrelated lifecycle/API/deletion promotion remains open.
 - **Stop:** a name collides with an owner definition; resolve at the owner.
 
 ## 014-T03 - Storage: Conversation status, rename and archive with CAS and idempotency

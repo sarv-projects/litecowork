@@ -1,13 +1,13 @@
 # Tasks - Golden Connection and One Capability Write
 
-**Feature:** 006 | **Status:** ACCEPTED/LOCKED - implementation authorized; tasks not started unless marked.
-**Spec revision:** 1.0 | **Release target:** V1 (release matrix rows: Windows x64 + OpenCode v2.0.32 first; Linux x64 second)
+**Feature:** 006 | **Status:** IN_REVIEW - revision 1.1 records USER-DELEGATED direction; owner ratification remains a separate gate.
+**Spec revision:** 1.1 | **Release target:** V1 (release matrix rows remain subject to the platform dependencies and evidence gates below)
 
 Boundary: this package owns one GitHub account Connection, one scoped read, one approved write (create an issue comment), UNKNOWN reconciliation and revoke. It does not own the LiteSPM package lifecycle; that is package 013. Nothing here installs, adopts or mutates a LiteSPM package.
 
 ## Current baseline
 
-Historical source crosswalk checked 2026-11-09 on branch `docs/audit-competitor-superset`; current route and storage status re-checked 2026-11-12 against `docs/IMPLEMENTATION-STATUS.md` and the generated served-route inventory. The source boundary remains unchanged: no Connection service/storage writer, OAuth journey or external provider dispatch is served; B-19 remains the recipe blocker.
+Historical source crosswalk checked 2026-11-09 on branch `docs/audit-competitor-superset`; Connection-route, service and storage boundaries were rechecked against current source on 2026-11-20. No Connection service/storage writer, device-authorization journey or external provider dispatch is served. The delegated recipe direction is recorded in revision 1.1; T01 canonical contract/schema promotion remains NOT STARTED pending its listed Feature 005 Trust/Effect prerequisite.
 
 - **Discover and connect:** `apps/litecoworkd/src/discover_operator.rs` `connect_or_install_capability` always returns 503 `LITESPM_PACKAGE_SERVICE_NOT_QUALIFIED` with no receipt; `test_capability_connection` returns `health=UNKNOWN`. `apps/litecowork-ui/src/discover/DiscoverPage.tsx` renders the Connections tab as "Connections cannot be read here"; `connectActionOutcome` in `discover-state.ts` disables every row action.
 - **Connection storage:** `connections` table exists in `docs/schemas/sqlite-v1.sql` with `status CHECK (... 'DISCONNECTED')` (no `REVOKED`) and `secret_refs_json`; no Rust store reads or writes it. OpenAPI `listConnections`, `getConnection`, `disconnectConnection` are target-only.
@@ -15,45 +15,47 @@ Historical source crosswalk checked 2026-11-09 on branch `docs/audit-competitor-
 - **Dispatch:** `SqliteCapabilityDispatchStore::admit_capability_dispatch` (`crates/storage-sqlite/src/capability_dispatch.rs`) implements the combined Trust + ApprovalUse + Invocation + Effect transaction but fails closed because `docs/schemas/sqlite-v15.sql` triggers `capability_invocation_creation_admission_closed` and `capability_invocation_status_transition_guard` reject Invocation INSERT and any `DISPATCHED` transition. No daemon caller. `apps/litecoworkd/src/capability_invocations_operator.rs` is read-only (`get_invocation`, `list_task_invocations`). `crates/domain-invocations` has `InvocationStatus`, `CapabilityInvocationRecord::transition` and `reconcile_ambiguous_terminal`; `capability_bridge.rs` has `classify_agent_capability_route`.
 - **Trust and approval:** `apps/litecoworkd/src/trust.rs` is compiled `#[allow(dead_code)]` in `main.rs`. Approval list/get/resolve with exact `confirmation_digest` is served (`approval_operator.rs`) and used by `apps/litecowork-ui/src/needs-you/ApprovalDetail.tsx`. `trust_operator.rs` `create_read_grant` issues only `workspace.resource.read` grants.
 - **HTTP:** `apps/litecoworkd/Cargo.toml` already has `reqwest` 0.12 (`rustls-tls`, no default features); no brokered egress policy exists.
-- **Provider finding:** GitHub documentation rechecked 2026-11-12 confirms a `client_secret` is required for web-flow code exchange and token revocation, and separately confirms that GitHub OAuth Apps cannot express the fine-grained issue permissions implied by B-19. `repo:status` is for commit statuses and `read:user` is for profile data; private-repository issue access needs `repo`, while public-repository access uses the broad `public_repo` scope. These block final recipe/scope promotion under B-19 and A-82 until the owner reviews the provider model (T02). See the dated source table in RESEARCH.md.
+- **Historical provider finding (2026-11-12):** GitHub OAuth App loopback exchange needs a client secret and its OAuth scopes do not map to the issue-comment permissions. `repo:status` is for commit statuses and `read:user` is for profile data; this explains why revision 1.0 could not safely proceed. The current direction is recorded in T02 and the 2026-11-20 RESEARCH supplement.
 
-Gaps to V1: recipe decision, Connection aggregate and service, keystore custody with a broker-only resolver, egress policy, refresh, Invocation dispatch schema, golden read and write, reconciliation, revoke, routes and bridge, UI, recovery, qualification on both rows.
+Gaps to V1: canonical contract/schema promotion; Connection aggregate and service; keystore custody with a broker-only resolver; egress policy; refresh; Invocation dispatch schema; golden read and write; reconciliation; revoke; routes and bridge; UI; recovery; and qualification on supported rows. The B-19 implementation direction is recorded under user delegation; formal Connectors/Security ratification remains pending and is not a substitute for any implementation or qualification gate.
 
-## 006-T01 - Promote owner-approved 006 contracts into owner docs and machine schemas
+## 006-T01 - Promote the directed 006 contracts into owner docs and machine schemas
 
-- **Status:** BLOCKED pending T02 (B-19 authentication recipe and A-82 effective-permission decision).
+- **Status:** NOT STARTED (T02 direction recorded; canonical contract promotion is next).
 - **Depends on:** T02
 - **Cross-package prerequisites:** 005 contract promotion (shared Trust/Effect wording); orchestrator assigns the migration number because several packages promote migrations in parallel
 - **Owner:** Connectors, Capability Fabric, schema owner
-- **Allowed paths:** `docs/CONNECTORS-WORKFLOWS.md`, `docs/CAPABILITY-INVOCATIONS.md`, `docs/CAPABILITY-FABRIC.md`, `docs/NETWORK-SECURITY.md`, `docs/TRUST.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, `docs/schemas/sqlite-v40.sql` (new, allocated in docs/LITECOWORK-BUILD-TASKS.md; v29 is already taken by Feature 001), `specs/006-golden-connection-capability-write/`
+- **Allowed paths:** `docs/CONNECTORS-WORKFLOWS.md`, `docs/CAPABILITY-INVOCATIONS.md`, `docs/CAPABILITY-FABRIC.md`, `docs/NETWORK-SECURITY.md`, `docs/TRUST.md`, `docs/STORAGE.md` (logical storage and recovery summary), `docs/EVENTS.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`, `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, `docs/schemas/sqlite-v41.sql` (new, provisionally allocated in docs/LITECOWORK-BUILD-TASKS.md; v29 is already taken by Feature 001), `specs/006-golden-connection-capability-write/`
 - **Contract:** SPEC §5 B-19/B-20, §7.2, §7a, §13; AC-006, AC-013, AC-014, AC-015; A-82
-- **Change intent:** After T02 resolves the exact provider authentication model and effective scopes, add `REVOKED` to the OpenAPI Connection status enum and the `connections` table CHECK (SQLite needs a table rebuild migration that preserves rows). Add Connection begin, callback-complete (internal), cancel and list/get/disconnect bodies; the golden read operation (proposed: list issue comments, `GET /repos/{owner}/{repo}/issues/{number}/comments`, recorded for owner confirmation) and the golden write operationId for "create issue comment"; an `auth_attempts` table (state, expiry, PKCE/state digests only, never the verifier in clear after use); `remote_revocation` status on Connection (`CONFIRMED | OWNER_ACTION_REQUIRED | NOT_ATTEMPTED`). Reuse `connection.state.changed.v1`; add events only if missing. Keep authorization scopes truthful and tied to the selected provider model; do not encode the current unsupported implication of an operation-specific GitHub OAuth scope.
+- **Change intent:** Promote revision 1.1's device-authorization lifecycle into canonical owner docs and OpenAPI/schema together. Add `REVOKED` to the Connection status enum and a forward-only `connections` rebuild preserving rows. Define begin, poll, cancel, list/get/disconnect operations without a browser callback route; add an `auth_attempts` table with purpose (`DEVICE_AUTH | TOKEN_REFRESH`), optional Connection identity, state, expiry, version, non-secret correlation metadata and private preallocated SecretRef IDs for token finalization/cleanup (never device/user codes, token bytes, client secret, App private key or PKCE verifier). Define exact state transitions for `TOKEN_CUSTODY_PENDING`, `SUCCEEDED`, `CLEANUP_PENDING`, `FAILED`, `CANCELLED`, `DENIED`, and `EXPIRED`; AuthAttempt-to-Connection transfer occurs in one transaction. Define safe refresh ambiguity recovery: after uncertain dispatched refresh, never reuse the possibly consumed refresh token; move the Connection to REAUTH_REQUIRED unless the exact replacement pair was durably staged and reconciled. Define the exact GitHub App permission summary (`Issues: write` for this golden read/write pair), accessible-repository verification and exact LiteCowork grant target. Preserve `remote_revocation` truth (`CONFIRMED | OWNER_ACTION_REQUIRED | NOT_ATTEMPTED`): local disconnect fences and deletes credentials, while GitHub authorization revocation is a separate user action in account Settings. Reuse `connection.state.changed.v1`; add events only if missing. Do not encode provider-wide Issues permission as per-operation LiteCowork authority.
 - **Acceptance:**
   - [ ] Owner prose and OpenAPI/JSON Schema/migration change in the same commit.
   - [ ] Migration rebuild keeps existing `connections` rows and foreign keys from `channel_bindings` and later tables; a test opens a v28-era database and upgrades.
-  - [ ] No secret material column is added; only SecretRef ids.
-  - [ ] T02 records an owner-approved exact auth model, the precise provider permissions displayed to the user, and their relationship to the LiteCowork operation grant (A-82).
+  - [ ] No secret material column is added; private AuthAttempt staging stores only opaque SecretRef IDs and never exposes them through public events/projections.
+  - [ ] Startup can identify and remove partially written keyring slots after a crash without enumerating arbitrary user keyring entries or deleting refs owned by committed Connections.
+  - [ ] Canonical docs and machine contracts reflect T02's USER-DELEGATED direction, display provider Issues permission separately from LiteCowork's exact grant, and do not claim owner acceptance or qualification.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`; `cargo test -p storage-sqlite --locked migration`
 - **Evidence:** commit SHA in the completion table.
 - **Stop:** stop if `REVOKED` conflicts with another owner's Connection state machine; resolve at CONNECTORS-WORKFLOWS first.
 
-## 006-T02 - Owner decision on GitHub authentication and effective permissions
+## 006-T02 - GitHub authentication and effective-permission decision
 
-- **Status:** BLOCKED (web-flow client-secret requirement and OAuth scope mismatch; B-19/A-82 require owner review; owner: repository owner with Connectors and Security)
-- **DEFERRED/BLOCKED note:** Why: GitHub web-flow exchange and remote revocation require a client secret, and OAuth App scopes do not match the narrow operation-level permissions implied by B-19. Unblocks when: owner approves a revised authentication and provider-permission model under a new SPEC revision. Test later at: decision only; then a real GitHub account on a native machine.
+- **Status:** DONE (USER-DELEGATED DIRECTION RECORDED 2026-11-20; formal owner ratification remains pending)
+- **Decision boundary:** The product owner explicitly delegated internal product/engineering decisions and implementation. This records the selected direction for contract work; it does not claim domain-owner approval, package ACCEPTED/LOCKED status, external App registration, credentials, integration or qualification.
 - **Depends on:** NONE
 - **Cross-package prerequisites:** NONE
 - **Owner:** Repository owner; Connectors; Security
-- **Allowed paths:** `specs/006-golden-connection-capability-write/` (SPEC §5 and revision bump), `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md` (orchestrator)
+- **Allowed paths:** `specs/006-golden-connection-capability-write/`, `docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md`, `docs/audit/EXTERNAL-AI-AUDIT-DISPOSITION-2026-11-19.md` (orchestrator audit reconciliation)
 - **Contract:** SPEC §5 B-19, A-82, the provider checks in RESEARCH.md and SPECIFICATION-STANDARD §7
-- **Change intent:** Review both the client-secret/authentication mismatch and the scope mismatch before selecting an integration. Compare at least: (a) GitHub OAuth device flow with a public client id and its actual refresh/revoke limitations; (b) the loopback web flow and its actual client-secret requirements; (c) a GitHub App using fine-grained Issues permissions, including whether a desktop-safe user/installation authorization and credential model is feasible; and (d) another provider or operation. For each option, record the exact provider permissions shown to the user, public/private repository support, effective privilege, refresh/revocation behavior, and how the narrow LiteCowork grant still gates mediated actions. Re-verify and pin the official documentation at decision time. Record the choice and contract changes as a new SPEC revision with renewed approval.
+- **Change intent:** Compare GitHub OAuth App loopback web flow, OAuth device flow, GitHub App user-to-server device flow, and switching provider/operation. Re-verify official documentation for desktop suitability, secret custody, authorization and installation/resource boundaries, exact Issues permissions, token lifetime and rotation, polling/expiry behavior, phishing risk, and revocation. Record the selected GitHub App user-to-server device flow with `offline_access`, expiring tokens, app permission `Issues: write`, repository-access intersection, a narrow LiteCowork operation grant, fixed provider endpoints, and truthful local-versus-remote revoke UX. Keep the old OAuth App recipe historical; do not shrink the V1 connector capability. Record the direction in SPEC 1.1, RESEARCH, UI/API/recovery contracts and A-82/B-19. Formal Connectors/Security review remains due and is not implied by this delegated task.
 - **Acceptance:**
-  - [ ] Decision recorded with date, option, and the exact GitHub documentation revision checked.
-  - [ ] Decision explicitly resolves A-82; no operation-specific least-privilege claim is made for an OAuth App.
-  - [ ] AC-002, AC-012 wording adjusted in the new revision if the device flow removes the loopback listener.
+  - [x] Decision recorded 2026-11-20 with selected option and official GitHub documentation links/current behavior in RESEARCH.md.
+  - [x] Internal design direction resolves A-82 using App permission semantics; it makes no operation-specific OAuth-scope claim.
+  - [x] AC-002, AC-012 and lifecycle contracts describe device-flow cancel, expiry and polling without a loopback listener.
+  - [ ] Connectors/Security domain owners ratify revision 1.1; this governance gate does not erase or defer the user's selected V1 capability.
 - **Command:** `python3 .specify/scripts/validate_feature_package.py`
-- **Evidence:** SPEC revision 1.1 and register row.
-- **Stop:** no contract promotion (T01), ConnectionService code (T05), or provider qualification before this decision.
+- **Evidence:** SPEC revision 1.1, current-source RESEARCH entry, A-82/B-19 register rows and documentation validation. This task provides design evidence only.
+- **Stop:** stop only if canonical Connection, Security or API contracts make the directed flow incompatible; record and reconcile that conflict. Do not mark the package accepted, integrated or qualified from this task.
 
 ## 006-T03 - OS-keystore secret custody with a broker-only resolver and delete (Rust)
 
@@ -63,7 +65,7 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Owner:** Security, Storage
 - **Allowed paths:** `crates/storage-core/src/trust.rs`, `crates/storage-sqlite/src/trust.rs`, `crates/storage-sqlite/Cargo.toml`, `apps/litecoworkd/src/connection_secret_broker.rs` (new)
 - **Contract:** SPEC §7.2 secret custody paragraph; NETWORK-SECURITY; AC-001, AC-013
-- **Change intent:** Add `SecretStore::remove(&self, secret_ref: &SecretRef)` (idempotent) and a separate crate-private `SecretResolver` trait with `with_secret<R>(&self, secret_ref: &SecretRef, f: impl FnOnce(&[u8]) -> R) -> Result<R, StoreError>` so bytes live only inside the closure and are zeroized after. Only `ConnectionSecretBroker` in `apps/litecoworkd` holds a resolver; it is not exported to Operator handlers or Tauri. Add `SecretKind::OAuthRefreshToken` only if `Token` cannot distinguish access and refresh tokens (decide in T01). Add a keystore availability probe used by the UI to show Connect as UNAVAILABLE.
+- **Change intent:** Extend SecretStore with create-only `write_at(secret_ref, workspace_id, secret_kind, secret_bytes)` and idempotent `remove(secret_ref)`. T01 persists caller-generated opaque SecretRef IDs in the private AuthAttempt before any keyring write. `write_at` must never silently replace an occupied reference; an uncertain/duplicate create keeps the staged reference for cleanup and requires explicit reconciliation or a fresh auth attempt. Add a separate crate-private `SecretResolver` trait with scoped `with_secret` so bytes live only inside the closure and are zeroized after. Only `ConnectionSecretBroker` in `apps/litecoworkd` holds a resolver; it is not exported to Operator handlers or Tauri. Add `SecretKind::OAuthRefreshToken` only if `Token` cannot distinguish access and refresh tokens. Add a keystore availability probe used by the UI to show Connect as UNAVAILABLE.
 - **Acceptance:**
   - [ ] Keystore unavailable (locked Secret Service, no Credential Manager access) makes Connect fail closed with no plaintext fallback (AC-013).
   - [ ] Resolver is unreachable from any route or command (compile-time visibility test plus route inventory check) (AC-013).
@@ -81,7 +83,7 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Owner:** Security, Connectors
 - **Allowed paths:** `apps/litecoworkd/src/brokered_http.rs` (new), `apps/litecoworkd/src/main.rs`, `apps/litecoworkd/Cargo.toml`
 - **Contract:** SPEC §6 trust boundaries, §13 host allowlist; NETWORK-SECURITY; AC-008, AC-014
-- **Change intent:** One `BrokeredHttpClient` built on `reqwest` with redirects disabled at the client and revalidated manually, TLS verification always on with rustls, HTTPS only, a fixed allowlist (`api.github.com` for Invocations; the GitHub OAuth token endpoint for ConnectionService only), DNS resolution checked against loopback, private, link-local, multicast and cloud-metadata ranges before connect (pin the resolved address for the request), request and response byte limits, total timeout, and header redaction for `Authorization` in every log path.
+- **Change intent:** One `BrokeredHttpClient` built on `reqwest` with redirects disabled at the client and revalidated manually, TLS verification always on with rustls, HTTPS only, a fixed allowlist (`api.github.com` for Invocations; `github.com/login/device/code` and `github.com/login/oauth/access_token` for ConnectionService only), DNS resolution checked against loopback, private, link-local, multicast and cloud-metadata ranges before connect (pin the resolved address for the request), request and response byte limits, total timeout, and header redaction for `Authorization` in every log path.
 - **Acceptance:**
   - [ ] Requests to any non-allowlisted host, `http://`, a non-443 port, an IP literal or a DNS name resolving to a private or metadata address are refused before connect (AC-008, AC-014).
   - [ ] A 3xx to a non-allowlisted host is refused; a 3xx within the allowlist is revalidated (AC-014).
@@ -91,20 +93,20 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Evidence:** test names; egress matrix table.
 - **Stop:** stop if any path needs TLS verification disabled.
 
-## 006-T05 - ConnectionService: AuthAttempt, OAuth flow per T02, Connection commit after keystore write
+## 006-T05 - ConnectionService: GitHub App device authorization, Connection commit after keystore write
 
-- **Status:** BLOCKED (needs T02 recipe decision; no ConnectionService exists)
-- **DEFERRED/BLOCKED note:** Why: depends on the T02 recipe decision; no ConnectionService exists. Unblocks when: T02 decided. Qualify the standalone Connection path on the native Windows x64 row first, then native Linux x64, as required by SPEC §13 and B-28; WSL2 and containers never count. E2E-05's later Task-scoped write ordering remains separately open under A-80.
+- **Status:** NOT STARTED (T01 contract promotion is prerequisite; no ConnectionService exists)
+- **Decision boundary:** The selected device-flow direction is recorded in T02. Formal owner ratification remains pending; do not claim acceptance or qualification. Qualify the standalone Connection path on native Windows x64 then native Linux x64 as required by platform evidence; WSL2 and containers never count. E2E-05 Task-write ordering remains separately tracked under A-80.
 - **Depends on:** T01, T02, T03, T04
 - **Cross-package prerequisites:** 011 system-browser open via Tauri and Runtime readiness
 - **Owner:** Connectors
 - **Allowed paths:** `apps/litecoworkd/src/connection_service.rs` (new), `crates/storage-core/src/connection.rs` (new), `crates/storage-core/src/lib.rs`, `crates/storage-sqlite/src/connections.rs` (new), `crates/storage-sqlite/src/lib.rs`
-- **Contract:** SPEC §6 actor sequence 1-2, §7.2 `ConnectionService`, §7a; CONNECTORS-WORKFLOWS; AC-001, AC-002, AC-012, AC-013
-- **Change intent:** Implement `begin_connection`, `finish_connection` and `cancel` as `ConnectionService` in Rust in the daemon (not in TypeScript or the Tauri shell, so the verifier and tokens never enter the WebView process). For the loopback-PKCE option: bind `127.0.0.1` on an OS-chosen port, S256 challenge, single-use state, finite deadline, first terminal callback wins, callback response page carries no token. For the device-flow option: poll with the provider interval and `slow_down` handling. Tokens go to the keystore first; then one transaction commits Connection CONNECTED + AuthAttempt SUCCEEDED + event + receipt; if that commit fails the new secrets are removed.
+- **Contract:** SPEC §6 actor sequence 1-3, §7.2 `ConnectionService`, §7a; CONNECTORS-WORKFLOWS; AC-001, AC-002, AC-012, AC-013, AC-017, AC-019, AC-020, AC-022
+- **Change intent:** Implement the device-authorization begin, poll and cancel lifecycle as `ConnectionService` in Rust in the daemon, not in TypeScript or the Tauri shell, so device codes and tokens never enter an untrusted renderer. Use only the fixed GitHub App device-code and token endpoints; show the user code and exact verification URI; poll no faster than the provider interval; apply `slow_down`; and stop on cancel, denial, expiry or daemon shutdown. Keep `device_code` in bounded daemon memory only. Before writing token bytes, persist preallocated opaque access/refresh SecretRef IDs and `TOKEN_CUSTODY_PENDING`; use `SecretStore::write_at` for those refs. One transaction commits Connection CONNECTED + AuthAttempt SUCCEEDED + event + receipt and transfers the refs. If that commit fails, persist/retain cleanup state and remove staged refs idempotently; restart resumes cleanup, not authorization.
 - **Acceptance:**
   - [ ] Cancel or `access_denied` records AuthAttempt CANCELLED and no usable Connection (AC-002).
-  - [ ] Replayed or late callback, wrong state, or callback after deadline is refused (AC-012).
-  - [ ] Keystore write failure leaves no Connection; commit failure after keystore write removes the secrets (AC-013).
+  - [ ] Replayed/stale poll, expired device code, wrong AuthAttempt version or poll after cancel/restart cannot create or replace a Connection (AC-012, AC-019).
+  - [ ] Keystore write failure leaves no Connection; crash between intent/write/Connection commit removes staged refs before new auth; a committed Connection's refs survive recovery (AC-013, AC-022).
   - [ ] Token bytes absent from events, logs, Conversation and agent context (AC-001).
   - [ ] Two concurrent begin requests for the same Workspace and provider produce two independent AuthAttempts; only one Connection results per completed attempt.
 - **Command:** `cargo test -p litecoworkd --locked connection_service` (filter to be added by this task); `cargo test -p storage-sqlite --locked connections` (filter to be added by this task)
@@ -118,12 +120,12 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Cross-package prerequisites:** NONE
 - **Owner:** Connectors
 - **Allowed paths:** `apps/litecoworkd/src/connection_service.rs`, `crates/storage-sqlite/src/connections.rs`
-- **Contract:** SPEC §7a refresh rules; AC-009
-- **Change intent:** If the recipe yields expiring tokens, refresh under a per-Connection async mutex; `invalid_grant` or `bad_refresh_token` -> REAUTH_REQUIRED; other failures -> DEGRADED; refresh writes the new pair to the keystore, then commits the Connection version, then removes the old secret refs. Refresh never starts a consequential retry.
+- **Contract:** SPEC §7a refresh rules; AC-009, AC-020, AC-022
+- **Change intent:** Refresh under a per-Connection async mutex. Persist a refresh attempt and preallocated replacement SecretRefs before sending the single-use refresh token. `invalid_grant`/`bad_refresh_token` -> REAUTH_REQUIRED; a timeout, response loss or restart after dispatch is ambiguous and must not retry the consumed refresh token; resolve to REAUTH_REQUIRED and require a new explicit device flow unless the exact replacement pair was durably staged and reconciled. On a definite response, write the new pair idempotently, atomically swap Connection SecretRefs and mark refresh success, then remove old refs. Other failures before dispatch -> DEGRADED. Refresh never starts a consequential retry.
 - **Acceptance:**
   - [ ] Ten concurrent Invocations needing refresh cause one provider refresh call (AC-009).
   - [ ] `bad_refresh_token` maps to REAUTH_REQUIRED; network error maps to DEGRADED; neither deletes Effect history.
-  - [ ] Crash between keystore write and commit leaves the old pair valid and the new refs orphaned for T14 cleanup.
+  - [ ] Crash before refresh dispatch preserves the old pair; crash or timeout after dispatch never blindly retries the single-use refresh token, leaves Connection REAUTH_REQUIRED unless the new pair is durably reconciled, and cleans unowned staged refs (AC-020, AC-022).
 - **Command:** `cargo test -p litecoworkd --locked connection_refresh` (filter to be added by this task)
 - **Evidence:** test names.
 - **Stop:** stop if refresh would need to run inside a SQLite transaction.
@@ -134,7 +136,7 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Depends on:** T01
 - **Cross-package prerequisites:** 005 Trust wiring (removal of `trust` dead code) and Attempt admission, because Invocation dispatch rechecks lease and Trust decision
 - **Owner:** Storage, Capability Fabric
-- **Allowed paths:** `docs/schemas/sqlite-v40.sql` (same migration as T01), `crates/storage-sqlite/src/capability_dispatch.rs`, `crates/storage-sqlite/src/invocations.rs`, `crates/storage-sqlite/src/invocation_dispatch_migration_tests.rs`, `crates/storage-core/src/capability_invocation.rs`
+- **Allowed paths:** `docs/schemas/sqlite-v41.sql` (same migration as T01), `crates/storage-sqlite/src/capability_dispatch.rs`, `crates/storage-sqlite/src/invocations.rs`, `crates/storage-sqlite/src/invocation_dispatch_migration_tests.rs`, `crates/storage-core/src/capability_invocation.rs`
 - **Contract:** CAPABILITY-INVOCATIONS; SPEC §6 ("External dispatch waits until one transaction rechecks owner, lease, grant, activation, Trust decision, and exact ApprovalUse"); AC-004, AC-005, AC-007
 - **Change intent:** Replace the two v15 triggers with guards that allow INSERT and the `CREATED -> DISPATCHED` transition only when the same transaction writes the matching ApprovalUse/Effect rows (for example a trigger that checks a per-transaction admission marker row written by `admit_transaction`). Direct `transition` to DISPATCHED through `SqliteCapabilityInvocationStore` stays refused with `INVOCATION_DISPATCH_ADMISSION_UNAVAILABLE`.
 - **Acceptance:**
@@ -206,8 +208,8 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Cross-package prerequisites:** NONE
 - **Owner:** Connectors, Security
 - **Allowed paths:** `apps/litecoworkd/src/connection_service.rs`, `crates/storage-sqlite/src/connections.rs`, `crates/storage-sqlite/src/trust.rs`
-- **Contract:** SPEC §5 source check (revocation needs client secret), §10; AC-006, AC-015
-- **Change intent:** `disconnect` commits REVOKED and revokes all grants for the Connection in one transaction (version CAS), then removes keystore entries, then attempts remote revocation only if the T02 option allows it; otherwise records `OWNER_ACTION_REQUIRED` and returns the GitHub settings URL. In-flight Invocations are fenced at their next state transition; a DISPATCHED request already sent is reconciled, not cancelled silently.
+- **Contract:** SPEC §5 device-flow authorization/revocation behavior and §10; AC-006, AC-015, AC-021
+- **Change intent:** `disconnect` commits REVOKED and revokes all grants for the Connection in one transaction (version CAS), then removes keystore entries. It does not claim remote GitHub App authorization revocation: it records `OWNER_ACTION_REQUIRED` and directs the owner to GitHub account Settings → Applications → Authorized GitHub Apps. In-flight Invocations are fenced at their next state transition; a DISPATCHED request already sent is reconciled, not cancelled silently.
 - **Acceptance:**
   - [ ] Reads and writes after revoke fail closed for that Connection id (AC-006).
   - [ ] Keystore delete failure leaves REVOKED committed and reports the cleanup failure; it does not reopen the Connection (AC-015).
@@ -260,10 +262,10 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Cross-package prerequisites:** 011 Runtime startup recovery ordering
 - **Owner:** Connectors, Capability Fabric
 - **Allowed paths:** `apps/litecoworkd/src/connection_service.rs`, `apps/litecoworkd/src/capability_reconciler.rs`, `apps/litecoworkd/src/runtime.rs` (startup sweep hook only), `crates/storage-sqlite/src/connections.rs`
-- **Contract:** SPEC §11-§12; AC-002, AC-005, AC-013
-- **Change intent:** Startup sweep: pending AuthAttempts from a prior incarnation become EXPIRED and their listener is not reopened; keystore entries with no committed Connection reference are removed; DISPATCHED or AMBIGUOUS Invocations go to the reconciler; CONNECTED Connections are reloaded without reading token bytes.
+- **Contract:** SPEC §11-§12; AC-002, AC-005, AC-013, AC-020, AC-022
+- **Change intent:** Startup sweep: pending device AuthAttempts from a prior incarnation become EXPIRED and their flow is not reopened; TOKEN_CUSTODY_PENDING attempts reconcile their preallocated refs against committed Connections and remove unowned slots; CLEANUP_PENDING attempts retry exact removal; ambiguous refresh attempts become REAUTH_REQUIRED without reusing a possibly consumed refresh token; DISPATCHED or AMBIGUOUS Invocations go to the reconciler; CONNECTED Connections reload without projecting token bytes.
 - **Acceptance:**
-  - [ ] Kill during callback handling leaves no usable Connection and no orphan secret after restart (AC-002, AC-013).
+  - [ ] Kill during device authorization, token receipt, intent persistence, either keyring write, Connection commit or cleanup leaves no usable partial Connection; pending attempts expire, exact staged refs are removed before new auth, and committed Connection refs remain (AC-002, AC-013, AC-017, AC-020, AC-022).
   - [ ] Kill after POST sent reconciles on restart without a second POST (AC-005).
   - [ ] Restart logs contain ids and statuses only.
 - **Command:** `cargo test -p litecoworkd --locked connection_recovery` (filter to be added by this task)
@@ -278,7 +280,7 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Owner:** Connectors, QA, repository owner (USER evidence)
 - **Allowed paths:** `apps/litecoworkd/tests/` (new E2E harness files), `apps/litecowork-ui/tests/`, `scripts/v1_platform_matrix.py` (row entries only), `specs/006-golden-connection-capability-write/`
 - **Contract:** docs/ACCEPTANCE-AND-E2E-PLAN.md E2E-05; AGENTS.md §4; AC-001 to AC-016
-- **Change intent:** Record the AGENTS.md §4 trace for each user operation: (1) connect (Connect GitHub -> `begin_connection` -> begin route -> owner check -> ConnectionService -> browser -> callback or device poll -> keystore write -> Connection txn -> `connection.state.changed.v1` -> Connections list -> restart reload); (2) read (Read action -> `request_golden_read` -> grant check -> broker -> Invocation -> detail view); (3) write (Write preview -> `request_golden_write` -> Approval -> Needs You approve -> admission txn -> POST -> reconcile -> Evidence -> detail view); (4) revoke. Against a dedicated test repository, qualify Connection/read operations per available OS row and qualify the Task-scoped write in the row order established by A-80. Do not mark E2E-05 fully qualified while its write row is unavailable or unresolved. Include denial (no grant, stale approval, self-approval, non-allowlisted host), duplicate replay, timeout-after-dispatch, revoke race, crash and restart in every row that qualifies the corresponding operation.
+- **Change intent:** Record the AGENTS.md §4 trace for each user operation: (1) connect (Connect GitHub -> `begin_connection` -> authenticated begin route -> owner check -> ConnectionService -> fixed GitHub device-code request -> system browser at the fixed verification URI -> bounded poll honoring interval/`slow_down` -> SecretStore write -> Connection transaction -> `connection.state.changed.v1` -> Connections list -> restart reload); (2) read (Read action -> `request_golden_read` -> accessible-repository and exact grant check -> broker -> Invocation -> detail view); (3) write (Write preview -> `request_golden_write` -> Approval -> Needs You approve -> admission transaction -> POST -> reconcile -> Evidence -> detail view); (4) local revoke and separate GitHub authorization revoke. Against a dedicated test repository, qualify Connection/read operations per available OS row and qualify the Task-scoped write in the row order established by A-80. Do not mark E2E-05 fully qualified while its write row is unavailable or unresolved. Include missing permission/repository access, no grant, stale approval, self-approval, non-allowlisted API/auth host, poll denial/slow_down/expiry, duplicate replay, timeout-after-dispatch, revoke race, crash and restart.
 - **Acceptance:**
   - [ ] CODE, SYSTEM and owner USER evidence per row with exact OS build, keystore backend and GitHub API version header.
   - [ ] Token redaction verified across daemon logs, events and UI state dumps on both rows.
@@ -311,7 +313,7 @@ Gaps to V1: recipe decision, Connection aggregate and service, keystore custody 
 - **Owner:** Repository owner; Connectors
 - **Allowed paths:** `specs/006-golden-connection-capability-write/`
 - **Contract:** SPECIFICATION-STANDARD lifecycle; all AC IDs in SPEC
-- **Change intent:** Assemble the evidence bundle, move the package ACCEPTED/LOCKED -> IMPLEMENTING (at first code task) -> VERIFIED, and get owner sign-off per row.
+- **Change intent:** Assemble the evidence bundle only after formal owner acceptance, then move ACCEPTED/LOCKED -> IMPLEMENTING (at first code task) -> VERIFIED under the feature lifecycle and obtain owner sign-off per row. Revision 1.1 remains IN_REVIEW until that acceptance is recorded; T02 does not advance the lifecycle.
 - **Acceptance:**
   - [ ] Every AC has passing evidence on each row it claims.
   - [ ] Owner sign-off recorded with date.

@@ -41,8 +41,9 @@ fn decode_open_receipt(
     expected_profile_id: &str,
     expected_target_id: &str,
 ) -> Result<Value, String> {
-    let receipt: Value = serde_json::from_slice(body)
-        .map_err(|_| "Local Operator returned an unsupported native configuration receipt".to_owned())?;
+    let receipt: Value = serde_json::from_slice(body).map_err(|_| {
+        "Local Operator returned an unsupported native configuration receipt".to_owned()
+    })?;
     let object = receipt.as_object().ok_or_else(|| {
         "Local Operator returned an unsupported native configuration receipt".to_owned()
     })?;
@@ -50,7 +51,9 @@ fn decode_open_receipt(
         || object.get("target_id").and_then(Value::as_str) != Some(expected_target_id)
         || object.get("opened").and_then(Value::as_bool) != Some(true)
     {
-        return Err("Local Operator returned an unsupported native configuration receipt".to_owned());
+        return Err(
+            "Local Operator returned an unsupported native configuration receipt".to_owned(),
+        );
     }
     Ok(serde_json::json!({
         "agent_profile_id": expected_profile_id,
@@ -119,11 +122,13 @@ mod tests {
         .unwrap();
         assert_eq!(receipt.as_object().unwrap().len(), 3);
         assert!(receipt.get("native_path").is_none());
-        assert!(decode_open_receipt(
-            br#"{"agent_profile_id":"other","target_id":"settings","opened":true}"#,
-            "profile-1",
-            "settings"
-        )
-        .is_err());
+        assert!(
+            decode_open_receipt(
+                br#"{"agent_profile_id":"other","target_id":"settings","opened":true}"#,
+                "profile-1",
+                "settings"
+            )
+            .is_err()
+        );
     }
 }

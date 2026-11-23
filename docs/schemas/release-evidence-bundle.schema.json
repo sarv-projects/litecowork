@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:litecowork:schema:release-evidence-bundle:v1",
-  "title": "LiteCowork Release Evidence Bundle v1 (accepted target interface, not yet in source)",
-  "description": "Owner: Feature 019. Fields follow docs/ACCEPTANCE-AND-E2E-PLAN.md section 6. Never holds credentials, tokens, SecretLease bytes, private prompts or unredacted user content; attachments are referenced by SHA-256 digest only.",
+  "title": "LiteCowork Release Evidence Bundle v1 (Feature 019 target; owner review pending)",
+  "description": "Owner: Feature 019. Fields follow docs/ACCEPTANCE-AND-E2E-PLAN.md section 6. Authentication mode is explicit so bundles can be matched to a declared release row. Never holds credentials, tokens, SecretLease bytes, private prompts or unredacted user content; attachments are referenced by SHA-256 digest only.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "journey_id", "requirement_ids", "owner_contracts", "row_id", "repo_sha", "dirty",
-    "os_build", "arch", "packaging_mode", "agent_versions", "protocol", "code_commands",
+    "os_build", "arch", "packaging_mode", "agent_versions", "auth_mode", "protocol", "code_commands",
     "system_trace", "user_artifacts", "negative_cases", "limitations", "reviewer", "accepted_at"
   ],
   "properties": {
@@ -25,6 +25,7 @@
       "minProperties": 1,
       "additionalProperties": {"type": "string", "minLength": 1}
     },
+    "auth_mode": {"type": "string", "minLength": 1},
     "protocol": {"type": "string", "minLength": 1},
     "code_commands": {
       "type": "array",

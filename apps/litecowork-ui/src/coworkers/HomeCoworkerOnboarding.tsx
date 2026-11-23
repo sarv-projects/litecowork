@@ -3,7 +3,7 @@ import type { Coworker, CoworkerRevisionInput, CoworkerSettingsApi, WorkspacePri
 
 const assistantRevision: CoworkerRevisionInput = {
   name: "Assistant", avatar_ref: null, role_description: "General-purpose assistant",
-  default_lead_agent_binding_id: null, delegation_strategy: "BALANCED",
+  default_lead_agent_binding_id: null, delegation_policy_source: "WORKSPACE_DEFAULT", delegation_strategy: "NATIVE_DEFAULT",
   enabled_delegation_profile_ids: [], delegation_budget_policy: null,
   lead_failover_policy: { mode: "DISABLED", triggers: [], fallback_agent_binding_ids: [], max_lead_changes: 0 },
   interaction_policy: {

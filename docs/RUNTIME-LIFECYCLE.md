@@ -206,6 +206,32 @@ blocker to the private `runtime-state.json` projection before opening Operator I
 status update fails, startup exits without admitting requests; the durable Runtime remains
 DEGRADED and the process does not claim a clean shutdown.
 
+Startup then settles prior-incarnation Conversation turns and reconciles bounded
+Runtime-local `AgentHostInstance` history before Operator admission. The host scan is
+keyset-paged (at most 1,024 rows per start) and excludes the current incarnation. Only a
+`LITECOWORK`-owned local process mode is eligible for native cleanup; remote and externally
+owned providers are never signalled. The process reference is a versioned opaque value in
+the existing local-only `process_identity_ref` column. Linux identity binds boot ID,
+process start ticks, effective UID, executable device/inode, process group and session; a
+pidfd anchors the exact leader while its process group is checked and stopped. Windows
+identity binds process creation time, token owner SID and an executable-path digest. The
+existing per-session kill-on-close Job is expected to end its process tree when the daemon
+exits. If the exact process still exists after a new daemon incarnation starts, startup
+does not kill only its leader: it leaves the host nonterminal and blocks Runtime recovery.
+
+Host lifecycle writes preserve `STARTING → DEGRADED → STOPPING → STOPPED`,
+`BUSY → READY → STOPPING → STOPPED`, and `READY/DEGRADED → STOPPING → STOPPED`;
+`STOPPED` is committed only after the identity-matched process group is gone or its
+absence is verified. Missing, legacy PID-only, malformed or unverifiable identity leaves
+the host nonterminal and adds `AGENT_HOST_PROCESS_RECOVERY_FAILED`. Any such blocker
+discovered after the initial readiness CAS also compare-and-sets the current durable
+Runtime incarnation to `DEGRADED` before Operator admission. An ambiguous lifecycle CAS
+is not retried and prevents admission. The private `runtime-state.json` records only
+examined, stopped and unresolved host counts; it contains no process IDs, executable
+names/paths or native handles. These checks are CODE evidence only until hard-kill,
+PID-reuse, packaged restart and native Windows/Linux journeys pass their qualification
+rows.
+
 The OS-principal/keyring validation still precedes storage open. If that credential is
 missing or invalid, the current bootstrap stops before root revalidation and does not persist
 WorkspaceRoot UNAVAILABLE transitions; startup remains fail-closed to preserve authenticated

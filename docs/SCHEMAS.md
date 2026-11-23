@@ -17,6 +17,12 @@ ownership and fields are in `DATA-MODEL.md`; legal transitions are in
   implicit permissive default.
 - Wire enum values are stable uppercase strings. Unknown values are rejected for
   commands and retained opaquely in forward-compatible replication where safe.
+- `DomainEvent.type` is versioned and pattern-validated rather than globally enum-closed so
+  an intermediary can retain an unfamiliar version for opaque forwarding. This permission
+  does not allow a local producer to invent an event type: local writes use the registered
+  names and closed per-type payloads in [EVENTS.md](EVENTS.md) and
+  [domain-event.schema.json](schemas/domain-event.schema.json). Unknown event versions are
+  never applied to a projection that does not understand them.
 
 ```text
 JsonValue = null | boolean | number | string | JsonValue[] | JsonObject
@@ -173,6 +179,13 @@ ResolvedDelegationPolicySnapshot = {
     worker_model_selection_policy: WorkerModelSelectionPolicy}[0..64],
   resolved_at: Timestamp
 }
+
+`TaskSpecRevision` carries this closed server-resolved snapshot for post-v28 admissions and
+explicit revisions. It pins immutable Workspace/Coworker/profile revisions and the per-profile
+model-selection policy; it is never accepted as caller-supplied authority. A pre-v28 revision may
+remain null and must render as unavailable rather than being inferred from current settings.
+SQLite v34 backfills only already non-null legacy snapshots from their immutable source records and
+enforces the canonical shape; see [STORAGE.md](STORAGE.md) for the migration registry.
 
 NativeDelegationDescriptor = {
   support: SUPPORTED | UNSUPPORTED | UNKNOWN,

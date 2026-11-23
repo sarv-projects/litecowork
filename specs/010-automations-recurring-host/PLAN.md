@@ -24,7 +24,7 @@ Allowed implementation paths are listed per task. The active source tree is in a
 
 ## Migration, rollout, rollback
 
-No migration has shipped for this package; the current chain ends at `docs/schemas/sqlite-v32.sql`. v44 is a provisional reservation in `docs/LITECOWORK-BUILD-TASKS.md`, not permission to duplicate schema already present in `sqlite-v1.sql`: notification delivery status names, attempt Runtime/epoch/count, `next_attempt_at`, `settled_at`, and encrypted Runtime-local `automation_trigger_bindings` already exist. The required delivery row CAS/version field and whether v44 is needed at all remain unresolved under A-98. Do not add a migration until the owner defines the exact additive delta; take the next free number if another package merges first. Rollback is revert to the previous committed revision and refuse new admission that requires a newly promoted field.
+No migration has shipped for this package; the current chain ends at `docs/schemas/sqlite-v34.sql`. v45 is a provisional reservation in `docs/LITECOWORK-BUILD-TASKS.md`, not permission to duplicate schema already present in `sqlite-v1.sql`: notification delivery status names, attempt Runtime/epoch/count, `next_attempt_at`, `settled_at`, and encrypted Runtime-local `automation_trigger_bindings` already exist. The required delivery row CAS/version field and whether v45 is needed at all remain unresolved under A-98. Do not add a migration until the owner defines the exact additive delta; take the next free number if another package merges first. Rollback is revert to the previous committed revision and refuse new admission that requires a newly promoted field.
 
 ## Risks
 

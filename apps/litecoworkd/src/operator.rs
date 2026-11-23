@@ -23,7 +23,10 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
 };
-use domain_task::{CreateStandaloneTask, PreparePlanningAssignment, ReviseTaskSpec, TaskService};
+use domain_task::{
+    ConversationTaskOrigin, CreateStandaloneTask, PreparePlanningAssignment, ReviseTaskSpec,
+    TaskService,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use domain_workspace::AddWorkspaceRoot;
 use domain_workspace::{
@@ -2154,6 +2157,11 @@ fn runtime_lifecycle_blocker_copy(code: &str) -> (&'static str, &'static str, &'
             "Conversation turn recovery did not complete.",
             "Review interrupted Conversation turns before sending new messages.",
         ),
+        "AGENT_HOST_PROCESS_RECOVERY_FAILED" => (
+            "RUNTIME_UNAVAILABLE",
+            "A prior native agent process could not be verified as stopped.",
+            "Keep agent work paused and review the local Runtime recovery details before retrying.",
+        ),
         _ => (
             "RUNTIME_UNAVAILABLE",
             "Runtime recovery has unresolved requirements.",
@@ -2164,7 +2172,9 @@ fn runtime_lifecycle_blocker_copy(code: &str) -> (&'static str, &'static str, &'
 
 #[cfg(test)]
 mod runtime_lifecycle_view_tests {
-    use super::{RuntimeLifecycleBlocker, runtime_lifecycle_response};
+    use super::{
+        RuntimeLifecycleBlocker, runtime_lifecycle_blocker_copy, runtime_lifecycle_response,
+    };
     use axum::{
         body::to_bytes,
         http::{StatusCode, header},
@@ -2189,6 +2199,16 @@ mod runtime_lifecycle_view_tests {
                 version: 2,
             },
         }
+    }
+
+    #[test]
+    fn prior_agent_process_recovery_uses_safe_user_facing_copy() {
+        let (category, summary, resolution) =
+            runtime_lifecycle_blocker_copy("AGENT_HOST_PROCESS_RECOVERY_FAILED");
+        assert_eq!(category, "RUNTIME_UNAVAILABLE");
+        assert!(summary.contains("could not be verified as stopped"));
+        assert!(resolution.contains("review the local Runtime recovery details"));
+        assert!(!summary.contains("pid:") && !resolution.contains("executable"));
     }
 
     #[tokio::test]
@@ -4127,6 +4147,13 @@ async fn create_task(
             "Archived Workspaces cannot accept new Tasks",
         ));
     }
+    let conversation_origin = parse_task_conversation_origin(&body).map_err(|_| {
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation Task source must identify one Conversation and an ordered USER/AGENT message pair",
+        )
+    })?;
     let explicit_binding = match body.get("preferred_lead_agent_binding_id") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
@@ -4289,60 +4316,139 @@ async fn create_task(
         event,
     };
     let store = state.store.clone();
-    let committed =
-        tokio::task::spawn_blocking(move || TaskService::new(store).create_standalone(command))
-            .await
-            .map_err(|_| {
-                operator_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "INTERNAL",
-                    "Task creation did not complete",
-                )
-            })?
-            .map_err(|error| match error {
-                storage_core::StoreError::Invalid(message)
-                    if message.contains("Coworker is archived") =>
-                {
-                    operator_error(
-                        StatusCode::CONFLICT,
-                        "COWORKER_ARCHIVED",
-                        "An archived Coworker cannot be selected for new work",
-                    )
-                }
-                storage_core::StoreError::Invalid(message)
-                    if message.contains("lead AgentBinding") =>
-                {
-                    operator_error(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "AGENT_UNAVAILABLE",
-                        "The selected lead AgentBinding is unavailable for new work",
-                    )
-                }
-                storage_core::StoreError::Invalid(_) => operator_error(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_ARGUMENT",
-                    "Task request is invalid or uses an unavailable origin path",
-                ),
-                storage_core::StoreError::Conflict { .. } => operator_error(
-                    StatusCode::CONFLICT,
-                    "CONFLICT",
-                    "Workspace or Task inputs changed; refresh and retry",
-                ),
-                storage_core::StoreError::NotFound => operator_error(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "INVALID_ARGUMENT",
-                    "A Task input or lead binding is unavailable",
-                ),
-                _ => operator_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "INTERNAL",
-                    "Task could not be saved",
-                ),
-            })?;
+    let committed = tokio::task::spawn_blocking(move || match conversation_origin {
+        Some(origin) => TaskService::new(store).create_from_conversation(command, origin),
+        None => TaskService::new(store).create_standalone(command),
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task creation did not complete",
+        )
+    })?
+    .map_err(|error| match error {
+        storage_core::StoreError::Invalid(message) if message.contains("Coworker is archived") => {
+            operator_error(
+                StatusCode::CONFLICT,
+                "COWORKER_ARCHIVED",
+                "An archived Coworker cannot be selected for new work",
+            )
+        }
+        storage_core::StoreError::Invalid(message) if message.contains("lead AgentBinding") => {
+            operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "AGENT_UNAVAILABLE",
+                "The selected lead AgentBinding is unavailable for new work",
+            )
+        }
+        storage_core::StoreError::Invalid(_) => operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task request is invalid or uses an unavailable origin path",
+        ),
+        storage_core::StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Workspace or Task inputs changed; refresh and retry",
+        ),
+        storage_core::StoreError::NotFound => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_ARGUMENT",
+            "A Task input or lead binding is unavailable",
+        ),
+        _ => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task could not be saved",
+        ),
+    })?;
     Ok(committed_task_create_response(
         committed,
         StatusCode::CREATED,
     ))
+}
+
+fn parse_task_conversation_origin(
+    body: &serde_json::Value,
+) -> Result<Option<ConversationTaskOrigin>, ()> {
+    let conversation_id = match body.get("conversation_id") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(value)) if valid_task_query_id(value) => Some(value.clone()),
+        Some(_) => return Err(()),
+    };
+    let source_message_refs = match body.get("source_message_refs") {
+        None => Vec::new(),
+        Some(serde_json::Value::Array(values)) if values.len() <= 2 => values
+            .iter()
+            .map(|value| match value {
+                serde_json::Value::String(id) if valid_task_query_id(id) => Ok(id.clone()),
+                _ => Err(()),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err(()),
+    };
+    match (conversation_id, source_message_refs.as_slice()) {
+        (None, []) => Ok(None),
+        (Some(conversation_id), [user_message_id, agent_message_id])
+            if user_message_id != agent_message_id =>
+        {
+            Ok(Some(ConversationTaskOrigin {
+                conversation_id,
+                user_message_id: user_message_id.clone(),
+                agent_message_id: agent_message_id.clone(),
+            }))
+        }
+        _ => Err(()),
+    }
+}
+
+#[cfg(test)]
+mod task_conversation_origin_request_tests {
+    use super::parse_task_conversation_origin;
+    use domain_task::ConversationTaskOrigin;
+    use serde_json::json;
+
+    #[test]
+    fn standalone_task_request_has_no_conversation_origin() {
+        assert_eq!(parse_task_conversation_origin(&json!({})), Ok(None));
+        assert_eq!(
+            parse_task_conversation_origin(&json!({
+                "conversation_id": null,
+                "source_message_refs": []
+            })),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn explicit_promotion_requires_one_distinct_ordered_source_pair() {
+        assert_eq!(
+            parse_task_conversation_origin(&json!({
+                "conversation_id": "conversation-1",
+                "source_message_refs": ["message-user", "message-agent"]
+            })),
+            Ok(Some(ConversationTaskOrigin {
+                conversation_id: "conversation-1".into(),
+                user_message_id: "message-user".into(),
+                agent_message_id: "message-agent".into(),
+            }))
+        );
+        for value in [
+            json!({"conversation_id": "conversation-1"}),
+            json!({"source_message_refs": ["message-user", "message-agent"]}),
+            json!({"conversation_id": "conversation-1", "source_message_refs": ["one"]}),
+            json!({"conversation_id": "conversation-1", "source_message_refs": ["one", "one"]}),
+            json!({"conversation_id": "conversation-1", "source_message_refs": ["one", "two", "three"]}),
+            json!({"conversation_id": "\n", "source_message_refs": ["one", "two"]}),
+        ] {
+            assert!(
+                parse_task_conversation_origin(&value).is_err(),
+                "accepted malformed origin: {value}"
+            );
+        }
+    }
 }
 
 fn committed_task_create_response(

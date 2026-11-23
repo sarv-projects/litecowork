@@ -39,7 +39,7 @@ nodes:
     owner: "AgentSessionSupervisor"
     kind: "runtime supervisor"
     responsibility: "Partially implemented per-turn AgentSession reservation, OpenCode Server startup, readiness activation, bounded event reading and result commit"
-    implementation_status: "PARTIAL CODE: OpenCode v2.0.32 path and v29 dispatch-intent claim are wired. T04/T07 fixtures preserve explicit normalized completion or provider failure observed during Stop; SQLite accepts exactly the observed Stop version edge and emits the actual CANCEL_REQUESTED-to-COMPLETED aggregate edge. StopUnconfirmed leaves CANCEL_REQUESTED but its private outcome is discarded and no typed recovery state is projected. Live pinned-provider semantics and partial/ambiguous output remain unqualified. T03 now persists a unique per-session AgentHostInstance as STARTING before OpenCode spawn, records READY only after the native startup and health checks, stores a Runtime-local PID reference, and records STOPPED only on observed exit; early-error drop attempts DEGRADED. On a READY persistence error, the helper re-reads the durable host state. If READY is present (including a lost commit acknowledgement), it attempts READY→STOPPING before process cleanup. If that transition commits, an observed exit commits STOPPING→STOPPED. If the first STOPPING write fails, confirmed exit triggers bounded state re-reads and retries through legal transitions; an observed retry after an earlier unconfirmed stop also reconciles DEGRADED→STOPPING→STOPPED. Ambiguous acknowledgements are accepted only after a re-read proves a terminal row. A still-STARTING row uses failed-start handling. If storage cannot confirm lifecycle transitions within the bounded reconciliation, the outcome remains unconfirmed; this does not establish restart recovery. Nine recording-store host-helper tests cover ordering, expected-state compare-and-set, lost acknowledgements, failed STOPPING writes and retry settlement; they do not inject real SQLite commit faults or run OpenCode startup. A 2026-11-15 T03 CODE regression also carries the committed STARTING AgentSession version into activation CAS and derives the started-event revision with checked arithmetic; the helper regression covers a non-initial version and rejects zero/overflow. This is not a SQLite fault-injection or successful provider-turn test. A-101 remains open: the current post-stop persistence skips STOPPING and storage allows direct-to-STOPPED edges absent from STATE-MACHINES; the owner-authorized T03/T04 storage alignment is not implemented. The former fabricated READY insertion is removed, but this does not implement the target shared AgentHostSupervisor, process reuse, retained lease, idle TTL, restart reconciliation, or same-host multi-root proof. The adapter still owns and stops the process per turn, including on StopUnconfirmed; the accepted retention rule remains incomplete. Pinned v2.0.32 foreground serve has no public graceful-shutdown route; do not use the separate opencode service stop command. Linux process ownership uses a process group, not the accepted cgroup. Remaining: setup-stage fault coverage, external collector checks, host lifecycle/StopUnconfirmed recovery, and packaged provider qualification"
+    implementation_status: "PARTIAL CODE: OpenCode v2.0.32 path and v29 dispatch-intent claim are wired. T04/T07 fixtures preserve explicit normalized completion or provider failure observed during Stop; SQLite accepts exactly the observed Stop version edge and emits the actual CANCEL_REQUESTED-to-COMPLETED aggregate edge. StopUnconfirmed leaves CANCEL_REQUESTED but its private outcome is discarded and no typed recovery state is projected. Live pinned-provider semantics and partial/ambiguous output remain unqualified. T03 now persists a unique per-session AgentHostInstance as STARTING before OpenCode spawn, records READY only after the native startup and health checks, stores a Runtime-local versioned process identity captured from the spawned child, and orderly closed-session teardown persists STOPPING before native shutdown, records STOPPED only on observed exit, and retains STOPPING when exit is unknown; after a failed-session settlement the legal path may pass DEGRADED→STOPPING. The early-return guard does not rewrite STOPPING. On a READY persistence error, the helper re-reads the durable host state. If READY is present (including a lost commit acknowledgement), it attempts READY→STOPPING before process cleanup. If that transition commits, an observed exit commits STOPPING→STOPPED. If the first STOPPING write fails, confirmed exit triggers bounded state re-reads and retries through legal transitions; an observed retry after an earlier unconfirmed stop also reconciles DEGRADED→STOPPING→STOPPED. Ambiguous acknowledgements are accepted only after a re-read proves a terminal row. A still-STARTING row uses failed-start handling. If storage cannot confirm lifecycle transitions within the bounded reconciliation, the outcome remains unconfirmed; this does not establish restart recovery. Nine recording-store host-helper tests cover ordering, expected-state compare-and-set, lost acknowledgements, failed STOPPING writes and retry settlement; they do not inject real SQLite commit faults or run OpenCode startup. A 2026-11-15 T03 CODE regression also carries the committed STARTING AgentSession version into activation CAS and derives the started-event revision with checked arithmetic; the helper regression covers a non-initial version and rejects zero/overflow. This is not a SQLite fault-injection or successful provider-turn test. A-101 orderly-stop correction is implemented under USER-DELEGATED direction: the normal close path persists STOPPING before native shutdown, records STOPPED only after observed exit, and leaves unknown exit at STOPPING; SQLite now enforces the canonical transition edges. This is CODE only and does not implement StopUnconfirmed handle retention. A-104 separately adds versioned process identity and prior-incarnation host reconciliation; helper tests have not qualified persisted daemon recovery or process termination. The former fabricated READY insertion is removed, but this does not implement the target shared AgentHostSupervisor, process reuse, retained lease, idle TTL, shared-host restart coordination beyond A-104 orphan cleanup, or same-host multi-root proof. The adapter still owns and stops the process per turn, including on StopUnconfirmed; the accepted retention rule remains incomplete. Pinned v2.0.32 foreground serve has no public graceful-shutdown route; do not use the separate opencode service stop command. Linux process ownership uses a process group, not the accepted cgroup. Remaining: setup-stage fault coverage, external collector checks, host lifecycle/StopUnconfirmed recovery, and packaged provider qualification"
     inputs: ["exact turn scope", "pinned host", "context package", "adapter observations"]
     outputs: ["storage lifecycle commands", "normalized outcome stream"]
   - id: "invocation-runner"
@@ -52,16 +52,23 @@ nodes:
     owner: "AgentHostSupervisor"
     kind: "process supervisor"
     responsibility: "Target boundary for host process, health, concurrency, references and owned-process stop"
-    implementation_status: "PARTIAL CODE: production OpenCode dispatch calls start_host_process to persist per-session STARTING before spawn and READY after observed startup/health, with a private PID reference. COMPLETED/CANCELLED/FAILED Conversation and session settlement now precedes per-turn shutdown; observed exit then records STOPPED, otherwise DEGRADED. On a READY persistence error, the helper re-reads host state and attempts READY→STOPPING before cleanup when a READY row exists; observed exit advances confirmed STOPPING to STOPPED. If the initial STOPPING write fails, confirmed exit retries the legal state path; an observed retry after an earlier unconfirmed stop reconciles DEGRADED→STOPPING→STOPPED. Ambiguous acknowledgements are accepted only after a re-read proves a terminal row. Unresolved cleanup stays at its last confirmed state, while a still-STARTING row uses failed-start handling. Nine recording-store tests cover expected-state CAS, lost acknowledgements, failed STOPPING writes and retry settlement; no real SQLite fault or provider process is exercised. A-101 remains open: native stop currently precedes the durable STOPPING transition, and storage accepts direct-to-STOPPED edges absent from STATE-MACHINES. The helper does not own a reusable process pool. The target shared AgentHostSupervisor, host-use lease, idle-TTL stop, daemon-restart reconciliation, neutral Runtime cwd, same-host multi-root proof, and StopUnconfirmed session reference remain absent; per-turn OpenCodeAdapter still owns and kills its server"
+    implementation_status: "PARTIAL CODE: production OpenCode dispatch calls start_host_process to persist per-session STARTING before spawn and READY after observed startup/health, with a private versioned Runtime-local process identity reference. After orderly COMPLETED/CANCELLED/FAILED settlement releases the AgentSession reference, teardown persists STOPPING before per-turn shutdown; observed exit records STOPPED and unknown exit remains STOPPING. On a READY persistence error, the helper re-reads host state and attempts READY→STOPPING before cleanup when a READY row exists; observed exit advances confirmed STOPPING to STOPPED. If the initial STOPPING write fails, confirmed exit retries the legal state path; an observed retry after an earlier unconfirmed stop reconciles DEGRADED→STOPPING→STOPPED. Ambiguous acknowledgements are accepted only after a re-read proves a terminal row. Unresolved cleanup stays at its last confirmed state, while a still-STARTING row uses failed-start handling. Nine recording-store tests cover expected-state CAS, lost acknowledgements, failed STOPPING writes and retry settlement; no real SQLite fault or provider process is exercised. A-101 orderly-stop ordering and transition edges are corrected under USER-DELEGATED direction; process reuse, leases and StopUnconfirmed retention remain open; A-104 wires bounded prior-incarnation host recovery but remains unqualified. The helper does not own a reusable process pool. The target shared AgentHostSupervisor, host-use lease, idle-TTL stop, shared-host daemon-restart ownership coordination beyond A-104 orphan cleanup, neutral Runtime cwd, same-host multi-root proof, and StopUnconfirmed session reference remain absent; per-turn OpenCodeAdapter still owns and kills its server"
     inputs: ["endpoint and Runtime incarnation"]
     outputs: ["host instance identity", "bounded readiness/health observation"]
   - id: "agent-adapter"
     owner: "Qualified AgentAdapter"
     kind: "protocol adapter"
     responsibility: "Harness-specific per-turn session create, input, bounded event and interrupt transport; each OpenCode session gets the revalidated Workspace location explicitly; per-turn cleanup never stops a shared host process"
-    implementation_status: "CODE: OpenCodeAdapter accepts the revalidated Workspace path and sends it in the session-create location field; one Windows fake-transport test captures two distinct paths through one server handle. OpenCodeServer also has bounded T27 permission list/get/reply methods using the pinned v2.0.32 session routes, with fake-loopback tests for exact paths, once body, 204 acknowledgment, bounded request IDs, the once/reject decision allowlist, timeout-after-dispatch without automatic reply replay, and closed 401/403/500 error mapping without exposing response body text. The active turn worker now calls reply and exact-session list through the bounded command mailbox; ambiguous-reply reconciliation is wired but synthetic only, with no successful live provider evidence. The current adapter still owns the per-turn server and its shutdown reports only whether process exit was observed; there is no shared host or live provider location/permission evidence"
+    implementation_status: "PARTIAL CODE: OpenCodeAdapter accepts the revalidated Workspace path and sends it in the session-create location field; one Windows fake-transport test captures two distinct paths through one server handle. Its Conversation send opens and validates the volatile /api/event SSE subscription before sending the prompt, then passes that same stream to the turn driver; a focused fake-loopback regression checks GET-before-POST ordering. OpenCodeServer also has bounded T27 permission list/get/reply methods using the pinned v2.0.32 session routes, with fake-loopback tests for exact paths, once body, 204 acknowledgment, bounded request IDs, the once/reject decision allowlist, timeout-after-dispatch without automatic reply replay, and closed 401/403/500 error mapping without exposing response body text. The active turn worker now calls reply and exact-session list through the bounded command mailbox; ambiguous-reply reconciliation is wired but synthetic only, with no successful live provider evidence. The current adapter still owns the per-turn server and its shutdown reports only whether process exit was observed; there is no shared host, live provider event capture, or qualified provider route"
     inputs: ["bounded Conversation context", "native process/session identity"]
     outputs: ["untrusted bounded protocol frames"]
+  - id: "opencode-event-normalizer"
+    owner: "Agent Runtime"
+    kind: "pinned provider protocol boundary"
+    responsibility: "Map untrusted OpenCode v2.0.32 event envelopes to the closed Conversation observation enum"
+    implementation_status: "CODE COMPLETE FOR PINNED-SOURCE NORMALIZATION: reads envelope type/data and exact data.sessionID correlation; maps supported text, reasoning-boundary, tool, permission, step and execution events; distinguishes per-step token usage from cumulative session UsageSnapshot and excludes the latter from per-turn accumulation. It subscribes to the volatile feed before prompt dispatch and fails closed before sending when subscription fails. It hides reasoning content and counts/drops unknown, foreign and uncorrelated frames. This adapter does not emit FileChanged or TodoUpdated because the pinned event contract has no such events. Native-Windows normalizer, fixture/lifecycle, usage and fake-loopback tests pass. The JSONL fixture is synthetic and source-derived, not a captured provider stream. Live event sequence, permission/Form behavior and qualified runtime behavior remain unproven"
+    inputs: ["bounded OpenCode v2 SSE events"]
+    outputs: ["correlated, untrusted normalized observations"]
   - id: "native-host"
     owner: "External native agent harness"
     kind: "external process"
@@ -71,14 +78,14 @@ nodes:
   - id: "presentation-operator"
     owner: "Presentation Operator"
     kind: "projection service"
-    responsibility: "Owner-scoped durable snapshot/upsert and optional bounded transient frame"
+    responsibility: "Owner-scoped durable snapshot/upsert and optional bounded transient frame; snapshot includes the latest turn activity identity and exact per-message owning-turn status, both read-only projections from the same SQLite snapshot"
     inputs: ["committed events and projection state"]
-    outputs: ["authorized cursor page"]
+    outputs: ["authorized cursor page with active, retryable and latest activity-turn projections plus each message's nullable exact owning-turn status"]
   - id: "native-permission-registry"
     owner: "AgentSessionSupervisor / Runtime"
     kind: "ephemeral provider state"
     responsibility: "Target T27 registry correlating validated OpenCode permission requests to opaque UI tokens within one Runtime incarnation"
-    implementation_status: "PARTIAL CODE: AgentSessionSupervisor owns an in-memory registry scoped by Workspace, Conversation, turn, retry ordinal, Runtime incarnation, native session and native request. It generates random opaque tokens, caps each attempt at 32 records and each Runtime at 256 retained records, deduplicates exact events, rejects conflicting duplicates and only returns safe projections. NativePermissionObserver publishes bounded turn.permission frames from normalized events without native IDs or raw paths. Exact mailbox teardown marks pending/replying prompts SESSION_ENDED internally and then discards all records/tokens for that attempt, preventing sequential-turn capacity exhaustion; active scopes are never evicted. Authenticated snapshot GET is SERVED. Reply POST and adapter command handoff are SERVED partial; provider reply reconciliation is CODE/SERVED partial and synthetic, with confirmed pending state clearing the attempted decision. Two synthetic authenticated POST-to-worker route tests verify receipt replay dispatches once and mailbox closure after fake-provider dispatch returns GONE rather than an ANSWERED receipt, with one provider call; they do not establish a live provider decision. Decision and SESSION_ENDED frames are published with monotonic per-attempt sequence. Exact-attempt and Workspace snapshot/reply routes are bridged through strict Tauri commands; inline Conversation and Needs You cards consume validated snapshots/frames. Needs You refreshes on entry/focus/visibility and explicit refresh but has no Workspace-wide push subscription. Generic resource labels remain; live provider and packaged restart/reconnect presentation are unqualified"
+    implementation_status: "PARTIAL CODE: AgentSessionSupervisor owns an in-memory registry scoped by Workspace, Conversation, turn, retry ordinal, Runtime incarnation, native session and native request. It generates random opaque tokens, caps each attempt at 32 records and each Runtime at 256 retained records, deduplicates exact events, rejects conflicting duplicates and only returns safe projections. NativePermissionObserver publishes bounded turn.permission frames from normalized events without native IDs or raw paths. Exact mailbox teardown marks pending/replying prompts SESSION_ENDED internally and then discards all records/tokens for that attempt, preventing sequential-turn capacity exhaustion; active scopes are never evicted. Authenticated snapshot GET is SERVED. Reply POST and adapter command handoff are SERVED partial; provider reply reconciliation is CODE/SERVED partial and synthetic, with confirmed pending state clearing the attempted decision. Two synthetic authenticated POST-to-worker route tests verify receipt replay dispatches once and mailbox closure after fake-provider dispatch returns GONE rather than an ANSWERED receipt, with one provider call; they do not establish a live provider decision. Decision and SESSION_ENDED frames are published with monotonic per-attempt sequence. Exact-attempt and Workspace snapshot/reply routes are bridged through strict Tauri commands; inline Conversation and Needs You cards consume validated snapshots/frames. Needs You refreshes on entry/focus/visibility and explicit refresh but has no Workspace-wide push subscription. resource display now uses validated existing Workspace-relative labels, generic external labels, and generic fallbacks for missing, linked/reparse or uncertain paths; absolute paths remain private. OUTCOME_UNKNOWN retains attempted-decision context when exact attempt closure publishes SESSION_ENDED; no provider acknowledgment is inferred. Live provider and packaged restart/reconnect presentation are unqualified"
     inputs: ["correlated permission.asked observation", "authenticated owner decision"]
     outputs: ["sanitized live snapshot", "exact-session OpenCode reply", "bounded transient state frame"]
   - id: "tauri-bridge"
@@ -87,12 +94,47 @@ nodes:
     responsibility: "Projection subscription, backpressure and UI event bridge"
     inputs: ["authorized cursor page"]
     outputs: ["resumable client frames"]
+  - id: "desktop-send-journal"
+    owner: "Desktop Tauri bridge"
+    kind: "private bounded local recovery store"
+    responsibility: "Versioned atomic journal for exact pending New Chat and existing-Conversation sends; protects file identity, permissions, total size, entry count and one unresolved send per Conversation; stores retry material only, never transcript authority, credentials, native handles or provider state"
+    implementation_status: "CODE: version 3 shares the existing private journal with New Chat create records; version 1/2 remain readable. Pending sends are persisted before HTTP; the bridge retains each row until the UI receives a validated ADMITTED or closed typed REFUSED result and explicitly acknowledges the exact identity. If acknowledgement and journal re-read both fail, the UI retains the exact request in memory for retry"
+    inputs: ["exact typed send request", "validated ADMITTED/REFUSED UI outcome", "exact journal acknowledgement"]
+    outputs: ["bounded pending send for same-key retry after uncertainty/restart"]
 edges:
   - id: "e01"
     from: "desktop-ui"
     to: "operator"
     kind: "authenticated-request"
     contract: "docs/API.md POST /v1/conversations/{id}/turns"
+  - id: "e34"
+    from: "desktop-ui"
+    to: "tauri-bridge"
+    kind: "typed existing-Conversation send and recovery commands"
+    implementation_status: "CODE: the UI reads pending sends, submits exact selected payloads and requests same-key retry; pending text is rendered outside canonical transcript rows"
+    contract: "Feature 001 T30 UI behavior; no local optimistic ConversationMessage"
+  - id: "e35"
+    from: "tauri-bridge"
+    to: "desktop-send-journal"
+    kind: "durable local journal write/list/ack"
+    implementation_status: "CODE: record exact send before HTTP; retain ambiguous rows across restart; acknowledge only exact row"
+    contract: "private version-3 journal, backward-readable v1/v2, bounded and file-locked"
+  - id: "e36"
+    from: "tauri-bridge"
+    to: "operator"
+    kind: "authenticated exact send request"
+    contract: "POST /v1/conversations/{id}/turns with stable principal-scoped Idempotency-Key after the journal write commits"
+  - id: "e37"
+    from: "operator"
+    to: "sqlite-store"
+    kind: "exact receipt lookup before fresh admission checks"
+    implementation_status: "CODE: authenticated owner/Workspace/Conversation checks and canonical request validation precede receipt lookup; matching receipts are returned before mutable Resource/binding admission checks and cannot reach dispatch"
+    contract: "original immutable ConversationTurnReceipt plus immutable turn-created binding comparison; fresh requests continue through existing admission transaction"
+  - id: "e38"
+    from: "operator"
+    to: "tauri-bridge"
+    kind: "admission receipt or typed refusal"
+    contract: "bridge returns structured ADMITTED receipt or closed typed REFUSED outcome without clearing; UI validates the outcome and explicitly acknowledges the exact row. Receipt fields or refusal status/code pairs are defined in contracts/errors-recovery.md"
   - id: "e02"
     from: "operator"
     to: "conversation-service"
@@ -115,13 +157,19 @@ edges:
     to: "turn-coordinator"
     kind: "post-commit dispatch handoff"
     implementation_status: "PARTIAL CODE: submit and retry invoke dispatch_admitted_turn after the durable storage commit; exact same-Runtime attempt replays are suppressed before setup by the supervisor owner guard"
-    contract: "admitted turn, correlation ID and local Runtime incarnation; per-Runtime exact-attempt owner suppresses duplicates; durable intent CAS precedes host/binding/profile preflight; only the confirmed claimant may settle setup failures, and a losing/ambiguous claim is left for recovery; first-send intent on an unselected New Chat does not reach this edge"
+    contract: "admitted turn, correlation ID and local Runtime incarnation; per-Runtime exact-attempt owner suppresses duplicates; durable intent CAS precedes host/binding/profile preflight; only the confirmed claimant may settle setup failures, and a losing/ambiguous claim is left for recovery. First-send reaches this existing post-commit edge only after the atomic first-turn transaction commits"
   - id: "e23"
     from: "desktop-ui"
     to: "operator"
-    kind: "Conversation create command"
-    implementation_status: "CODE/SERVED: when sendTurn has no selected Conversation it invokes create_conversation only, then restores the draft into the created Conversation for a separate second Send; no USER message, turn or dispatch intent is admitted by the first click"
-    contract: "POST /v1/conversations; authenticated selected-Workspace owner and Idempotency-Key; create receipt is distinct from turn admission; the carried draft is process-local and has no turn receipt"
+    kind: "atomic New Chat first-turn command"
+    implementation_status: "CODE/SERVED after 001-T29 focused daemon/UI tests and route audit: when no Conversation is selected, one Send journals the exact body/key and invokes the first-turn command; the old create-only then second-Send path and process-local draft map are removed. Provider/packaged journey remains unqualified"
+    contract: "Tauri create_conversation_with_first_turn -> authenticated POST /v1/conversations/first-turn; selected Workspace and idempotency key; the bounded private journal retains the exact first-turn body across response ambiguity/restart and clears only after validating the composite Conversation/turn receipt"
+  - id: "e30"
+    from: "operator"
+    to: "turn-coordinator"
+    kind: "post-commit first-turn dispatch handoff"
+    implementation_status: "CODE/SERVED after 001-T29 focused daemon test: the Operator commits the combined Conversation/first-turn transaction before invoking dispatch_admitted_turn; no native provider journey or packaged UI qualification is established"
+    contract: "committed Conversation ID, turn ID, request key/digest and selected Runtime incarnation; dispatch uses the existing exact-attempt durable-intent claim and recovery boundary"
   - id: "e04"
     from: "conversation-service"
     to: "turn-coordinator"
@@ -149,7 +197,7 @@ edges:
     from: "session-supervisor"
     to: "host-supervisor"
     kind: "local-process-control"
-    implementation_status: "PARTIAL CODE: session supervisor calls start_host_process for OpenCode and reconciles STOPPED/DEGRADED on shutdown; failed READY persistence plus unconfirmed cleanup best-effort records DEGRADED after re-reading state. A-101 also records the unresolved STOPPING-before-stop order and unsupported direct terminal edges in the storage validator. No reusable pool or TTL"
+    implementation_status: "PARTIAL CODE: session supervisor calls start_host_process for OpenCode and reconciles STOPPED/DEGRADED on shutdown; failed READY persistence plus unconfirmed cleanup best-effort records DEGRADED after re-reading state. A-101 orderly STOPPING-before-stop order and canonical storage transition edges are now covered by focused CODE regressions; A-104 bounded prior-incarnation host reconciliation is wired; shared-host process ownership and lease recovery remain open. No reusable pool or TTL"
     contract: "exact endpoint and Runtime incarnation"
   - id: "e09"
     from: "session-supervisor"
@@ -168,8 +216,14 @@ edges:
     contract: "size, correlation, ordering and schema validation"
   - id: "e12"
     from: "agent-adapter"
+    to: "opencode-event-normalizer"
+    kind: "raw-provider-observation"
+    contract: "exact pinned v2 envelope is untrusted; normalize type/data and correlate session-scoped data by data.sessionID only"
+  - id: "e33"
+    from: "opencode-event-normalizer"
     to: "session-supervisor"
     kind: "normalized-input"
+    implementation_status: "CODE: closed event enum is consumed by the active OpenCode turn driver; it is not a durable event or authority"
     contract: "raw frames are not domain events or authority"
   - id: "e13"
     from: "session-supervisor"
@@ -193,7 +247,7 @@ edges:
     from: "sqlite-store"
     to: "presentation-operator"
     kind: "projection-read"
-    contract: "durable committed projection and opaque cursor"
+    contract: "durable committed projection and opaque cursor; the same authorized SQLite snapshot includes active, retryable and latest activity-turn identities"
   - id: "e17"
     from: "presentation-operator"
     to: "tauri-bridge"
@@ -218,7 +272,7 @@ edges:
     from: "agent-adapter"
     to: "native-permission-registry"
     kind: "normalized-observation"
-    implementation_status: "CODE: pinned payload normalizer feeds an ephemeral Runtime-local prompt registry after native session creation; exact duplicate events are idempotent, conflicting duplicates and foreign sessions are rejected, and public frames use opaque tokens and generic resource labels. Duplicate events republish current prompt state. Synthetic tests pass; no live provider event captured; accepted replies and attempt teardown publish sequenced state frames"
+    implementation_status: "CODE: pinned payload normalizer feeds an ephemeral Runtime-local prompt registry after native session creation; exact duplicate events are idempotent, conflicting duplicates and foreign sessions are rejected, and public frames use opaque tokens and validated Workspace-relative display labels where safe, otherwise generic labels; absolute paths are excluded. Duplicate events republish current prompt state. Synthetic tests pass; no live provider event captured; accepted replies and attempt teardown publish sequenced state frames"
     contract: "Feature 001 T27: validate pinned OpenCode v2.0.32 permission.asked payload, correlate exact native session, keep native IDs Runtime-local"
   - id: "e25"
     from: "desktop-ui"
@@ -236,7 +290,7 @@ edges:
     from: "native-permission-registry"
     to: "desktop-ui"
     kind: "ephemeral-projection"
-    implementation_status: "CODE/SERVED partial: supervisor publishes bounded ephemeral turn.permission frames without native identifiers or absolute paths, and authenticated GET/reply routes are mounted. Reply transitions and SESSION_ENDED are published. Authenticated exact-attempt and Workspace snapshot/reply routes are mounted; three tests exercise synthetic authenticated replies through the active worker queue: allow-once replay dispatches once, rejection replay dispatches one fake native reject without creating a LiteCowork grant, and mailbox closure after fake-provider dispatch returns GONE rather than ANSWERED. Typed Tauri commands and inline/Needs You consumers have CODE coverage. Needs You has snapshot refresh, not push subscription. Real provider and packaged restart/recovery presentation remain unqualified"
+    implementation_status: "CODE/SERVED partial: supervisor publishes bounded ephemeral turn.permission frames without native identifiers or absolute paths; resource labels are Workspace-relative only after safe validation, otherwise generic. An attempted decision remains unconfirmed if OUTCOME_UNKNOWN transitions to SESSION_ENDED. Authenticated GET/reply routes are mounted. Reply transitions and SESSION_ENDED are published. Authenticated exact-attempt and Workspace snapshot/reply routes are mounted; three tests exercise synthetic authenticated replies through the active worker queue: allow-once replay dispatches once, rejection replay dispatches one fake native reject without creating a LiteCowork grant, and mailbox closure after fake-provider dispatch returns GONE rather than ANSWERED. Typed Tauri commands and inline/Needs You consumers have CODE coverage. Needs You has snapshot refresh, not push subscription. Real provider and packaged restart/recovery presentation remain unqualified"
     contract: "turn.permission contains no native session/request ID, credential, raw metadata or absolute resource path; restart invalidates token and never replays a decision"
   - id: "e28"
     from: "native-permission-registry"
@@ -255,7 +309,12 @@ transactions:
     owner: "Operator route via Storage (target owner: ConversationService)"
     atomic_records: ["Conversation", "conversation.created.v1", "idempotency receipt"]
     external_calls_inside: false
-    implementation_status: "CODE/SERVED: creates an empty Conversation only. The current New Chat first-Send UI carries its draft outside this transaction and does not admit a turn until a later Send; that cross-transaction user journey is incomplete"
+    implementation_status: "CODE/SERVED: remains the explicit empty-Conversation create operation; New Chat Send uses tx-new-chat-first-turn so it cannot create an empty intermediate Conversation"
+  - id: "tx-new-chat-first-turn"
+    owner: "Operator route via SQLite storage (target owner: ConversationService)"
+    atomic_records: ["Conversation revision 1 and conversation.created.v1", "USER ConversationMessage", "OPEN ConversationTurn", "UNCLAIMED v29 dispatch intent", "Conversation revision 2 and conversation.message.added.v1", "conversation.turn.created.v2", "Conversation snapshots", "composite idempotency receipt"]
+    external_calls_inside: false
+    implementation_status: "CODE/SERVED after focused native-Windows daemon test: one IMMEDIATE transaction validates/replays the exact request and stores the new Conversation, first message, OPEN turn, events, snapshots, intent and receipt. Post-commit dispatch is separate; test supervisor absence settles the committed attempt FAILED and retry/replay creates no duplicate records. Full rollback-denial matrix, real provider, packaged UI and restart qualification remain open"
   - id: "tx-turn-admission"
     owner: "Operator route via Storage (target owner: ConversationService)"
     atomic_records: ["USER ConversationMessage", "OPEN ConversationTurn", "conversation.message.added.v1", "conversation.turn.created.v2", "request receipt", "snapshot/projection", "v29 dispatch intent"]
@@ -269,7 +328,7 @@ transactions:
     owner: "AgentHostStore via start_host_process (target owner: AgentHostSupervisor)"
     atomic_records: ["STARTING AgentHostInstance", "READY after observed OpenCode startup/health", "FAILED if native startup fails"]
     external_calls_inside: false
-    implementation_status: "PARTIAL CODE: each OpenCode Conversation session has a unique local host row; process startup/readiness run outside SQLite; terminal turn/session settlement runs before per-turn shutdown, followed by STOPPED/DEGRADED reconciliation. StopUnconfirmed still drops/stops the owned process without retaining its session reference. Shared-host leases, TTL, restart reconciliation, neutral Runtime cwd, same-host multi-root proof and uncertain-stop retention are not implemented"
+    implementation_status: "PARTIAL CODE: each OpenCode Conversation session has a unique local host row; process startup/readiness run outside SQLite; terminal turn/session settlement runs before per-turn shutdown, followed by STOPPED/DEGRADED reconciliation. StopUnconfirmed still drops/stops the owned process without retaining its session reference. Shared-host leases, TTL, neutral Runtime cwd, same-host multi-root proof and uncertain-stop retention are not implemented; A-104 separately wires bounded prior-incarnation AgentHost recovery"
   - id: "tx-session-activation"
     owner: "AgentSessionStore"
     atomic_records: ["ACTIVE AgentSession", "RUNNING ConversationTurn", "agent.session.started.v1", "conversation.turn.status.changed.v1", "snapshots", "Runtime-local AgentSessionHostBinding"]
@@ -281,7 +340,7 @@ transactions:
     external_calls_inside: false
   - id: "tx-final-response"
     owner: "Storage implementation called by AgentSessionSupervisor"
-    status: "CODE - active OpenCode caller commits COMPLETED through SQLite; ConversationService ownership and qualification remain open. Storage validation also accepts WAITING_USER and WAITING_DEPENDENCY, writes settled_at for them and closes the active AgentSession in the same transaction, although locked B-04 defines terminal outcomes only; that unused status mismatch is open under register A-93 and must not be treated as continuation support."
+    status: "CODE - active OpenCode caller commits COMPLETED through SQLite; ConversationService ownership and qualification remain open. The 2026-11-19 user-delegated A-93 source correction rejects WAITING_USER and WAITING_DEPENDENCY before writes because locked B-04 allows only terminal outcomes and B-06 owns UserRequest continuation. This is CODE alignment, not provider continuation evidence or owner re-acceptance."
     atomic_records: ["AGENT ConversationMessage", "conversation.message.added.v1", "COMPLETED ConversationTurn", "conversation.turn.settled.v1", "snapshots", "response receipt"]
     external_calls_inside: false
 external_boundaries:
@@ -308,7 +367,7 @@ external_boundaries:
 recovery:
   owner: "Runtime startup recovery with Storage (target orchestration owners: AgentTurnCoordinator / ConversationService)"
   source_of_truth: ["AgentSession", "ConversationTurn", "DomainEvent", "AgentSessionHostBinding"]
-  implementation_status: "PARTIAL CODE: runtime startup invokes agents/conversation_recovery.rs before Operator admission; tests cover seeded RUNNING/CANCEL_REQUESTED/OPEN-UNCLAIMED states, a CLAIMED intent after settlement failure, prior-incarnation RUNNING + ACTIVE AgentSession recovery to FAILED/LOST with binding release, an orphan STARTING -> LOST with turn/intent settlement and idempotency, and a real SQLite final-response commit followed by a new-incarnation recovery sweep that preserves the AGENT answer and exact replayable receipt. Workspace catalog enumeration errors now increment the Conversation recovery failure count; a shared list_workspaces() failure also yields EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED and CONVERSATION_SESSION_RECOVERY_FAILED, persisted as DEGRADED before Operator admission. CODE regressions: conversation_session_recovery_reports_workspace_enumeration_failure and startup_workspace_enumeration_failure_persists_recovery_blockers. A-104: startup does not reconcile prior-incarnation AgentHostInstance process rows; OpenCode's persisted process identity is PID-only. Exact failed-turn UI/Retry projection, host-process reconciliation, the full crash-window matrix, and real process-kill or packaged restart qualification remain open"
+  implementation_status: "PARTIAL CODE: runtime startup invokes agents/conversation_recovery.rs before Operator admission; tests cover seeded RUNNING/CANCEL_REQUESTED/OPEN-UNCLAIMED states, a CLAIMED intent after settlement failure, prior-incarnation RUNNING + ACTIVE AgentSession recovery to FAILED/LOST with binding release, an orphan STARTING -> LOST with turn/intent settlement and idempotency, and a real SQLite final-response commit followed by a new-incarnation recovery sweep that preserves the AGENT answer and exact replayable receipt. Workspace catalog enumeration errors now increment the Conversation recovery failure count; a shared list_workspaces() failure also yields EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED and CONVERSATION_SESSION_RECOVERY_FAILED, persisted as DEGRADED before Operator admission. CODE regressions: conversation_session_recovery_reports_workspace_enumeration_failure and startup_workspace_enumeration_failure_persists_recovery_blockers. A-104: runtime startup invokes agents/host_recovery.rs after Conversation recovery and before Operator admission. It pages prior-incarnation AgentHost rows, captures and uses a versioned Runtime-local process identity, fails closed on missing/legacy/unverifiable ownership, and durably degrades Runtime on unresolved cleanup. Native-Windows helper tests pass host_recovery 2/2 and process_identity 5/5; a separate SQLite keyset-pagination regression passes 1/1. The daemon host-recovery tests use an in-memory store, so full SQLite-backed startup reconciliation and actual process termination are not demonstrated. Exact failed-turn UI/Retry projection, the full crash-window matrix, Linux process-group cleanup, hard process-kill/PID-reuse and packaged restart qualification remain open"
   known_gap: "Live provider quiescence, crash/restart and packaged recovery qualification remain open; Settings displays a degraded lifecycle and blockers but Conversation Send eligibility consumes Operator readiness without consuming lifecycle recoveryState/executionReady"
   restart_action: "Settle prior-incarnation unsettled intents FAILED with RUNTIME_RESTARTED, release orphan STARTING sessions LOST; never replay uncertain prompt across incarnation"
   ui_action: "On startup, resume the durable projection cursor and authorized snapshot; discard non-replayable transient frames. Settings > Runtime > Refresh Status reads Runtime status and, when available, the identity-scoped lifecycle snapshot and safe blocker hints. Current Conversation Send still checks Operator readiness rather than the lifecycle recovery state; it is not fail-closed on DEGRADED"

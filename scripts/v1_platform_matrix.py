@@ -9,8 +9,9 @@ command a qualified operator has to run.
 The script never invents a PASSED cell, never claims an operating system it did
 not run on, and never claims an agent version it did not observe.
 
-Release rows (019-T14): the declared rows in `scripts/v1_release_matrix_rows.json` each get a
-cell per E2E-01..E2E-12 and per capability. A run under WSL2, a container or a CI image is
+Release rows (019-T14/T24): the declared rows in `scripts/v1_release_matrix_rows.json` each
+get a cell for adopted V1 journeys E2E-01..E2E-12 and E2E-14..E2E-17, plus per capability.
+Conditional E2E-13 is not a V1 release cell. A run under WSL2, a container or a CI image is
 NOT_COUNTED and can never produce a PASSED cell (AC-002). A cell is PASSED only when a
 schema-valid evidence bundle for that exact row is linked and the run was observed on a native
 host of that row's operating system (AC-012); it is QUALIFIED only with an ACCEPT USER sign-off.
@@ -32,6 +33,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -369,11 +371,40 @@ def tail(output: str, lines: int = 6) -> str:
     return "\n".join(trimmed[-lines:]) if trimmed else ""
 
 
-def build_evidence() -> Evidence:
+def build_evidence(skip_slow_probes: bool = False) -> Evidence:
     evidence = Evidence()
     evidence.generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     evidence.host = probe_host()
     evidence.toolchains = probe_toolchains()
+    if skip_slow_probes:
+        evidence.agents = {
+            agent: {
+                "executable": None,
+                "version": None,
+                "state": "NOT RUN",
+                "command": "",
+                "observation": "skipped by --skip-slow-probes",
+            }
+            for agent in AGENT_EXECUTABLES
+        }
+        evidence.browsers = {
+            browser: {
+                "executable": None,
+                "version": None,
+                "state": "NOT RUN",
+                "command": "",
+                "observation": "skipped by --skip-slow-probes",
+            }
+            for browser in BROWSER_EXECUTABLES
+        }
+        for name in ("os_credential_store", "backup_restore", "packaging", "secret_scan"):
+            evidence.probes[name] = Cell(
+                state="NOT RUN",
+                command="re-run without --skip-slow-probes",
+                observation="skipped by request",
+                reason="the probe was not started because the caller requested a fast matrix run",
+            )
+        return evidence
     evidence.agents = probe_agents()
     evidence.browsers = probe_browsers()
     evidence.probes["os_credential_store"] = probe_secret_service()
@@ -568,16 +599,56 @@ def render(evidence: Evidence) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Row-aware release matrix (019-T14)
+# Row-aware release matrix (019-T14 plus USER-DELEGATED 019-T24 follow-up)
 # ---------------------------------------------------------------------------
 
-E2E_IDS: tuple[str, ...] = tuple(f"E2E-{number:02d}" for number in range(1, 13))
+E2E_IDS: tuple[str, ...] = (
+    *(f"E2E-{number:02d}" for number in range(1, 13)),
+    "E2E-14", "E2E-15", "E2E-16", "E2E-17",
+)
 DEFAULT_ROWS = "scripts/v1_release_matrix_rows.json"
 DEFAULT_OUT = "docs/release/QUALIFICATION-MATRIX.md"
 SCHEMA_DIR = REPOSITORY_ROOT / "docs" / "schemas"
 STATES = (
     "QUALIFIED", "PASSED", "FAILED", "BLOCKED", "UNAVAILABLE", "NOT_RUN", "NOT_COUNTED", "STALE",
 )
+
+
+def evidence_tuple_mismatches(row: dict[str, Any], document: dict[str, Any]) -> list[str]:
+    """Return route/build facts that do not match the exact declared release row."""
+    mismatches: list[str] = []
+    if document.get("arch") != row["arch"]:
+        mismatches.append("architecture")
+    if document.get("protocol") != row["protocol"]:
+        mismatches.append("protocol")
+    if document.get("auth_mode") != row["auth_mode"]:
+        mismatches.append("authentication mode")
+    if document.get("agent_versions", {}).get(row["agent"]) != row["agent_version"]:
+        mismatches.append("agent version")
+    if document.get("packaging_mode") != "packaged":
+        mismatches.append("packaging mode")
+    if document.get("dirty") is not False:
+        mismatches.append("dirty checkout")
+    if not evidence_os_build_meets_minimum(row, document.get("os_build", "")):
+        mismatches.append("OS build")
+    return mismatches
+
+
+def evidence_os_build_meets_minimum(row: dict[str, Any], observed: str) -> bool:
+    minimum = row["os_min_build"]
+    if row["os"] == "windows":
+        expected = tuple(int(part) for part in re.findall(r"\d+", minimum))
+        match = re.search(r"10\.0\.\d+(?:\.\d+)*", observed)
+        if not expected or match is None or not observed.casefold().startswith("windows "):
+            return False
+        actual = tuple(int(part) for part in match.group(0).split("."))
+        width = max(len(actual), len(expected))
+        actual += (0,) * (width - len(actual))
+        expected += (0,) * (width - len(expected))
+        return actual >= expected
+    if row["os"] == "linux":
+        return observed.casefold().startswith(minimum.casefold())
+    return False
 
 
 def detect_host_class(
@@ -676,7 +747,7 @@ def row_cells(
     probes: dict[str, Cell] | None,
     current_sha: str | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Computes one cell per E2E id and capability for one declared row."""
+    """Computes one cell per adopted V1 E2E journey and capability for one declared row."""
     cells: dict[str, dict[str, Any]] = {}
     native_for_row = host_class == "NATIVE" and host_system == row["os"]
     for cell_id in (*E2E_IDS, *CAPABILITIES):
@@ -697,7 +768,14 @@ def row_cells(
             else:
                 document = bundle["document"]
                 cell["evidence_bundle_digest"] = bundle["digest"]
-                if current_sha and document["repo_sha"] != current_sha:
+                tuple_mismatches = evidence_tuple_mismatches(row, document)
+                if tuple_mismatches:
+                    cell["state"] = "BLOCKED"
+                    cell["reason"] = (
+                        "evidence bundle does not match the declared row tuple: "
+                        + ", ".join(tuple_mismatches)
+                    )
+                elif current_sha is not None and document["repo_sha"] != current_sha:
                     cell["state"] = "STALE"
                     cell["reason"] = "the bundle was recorded at a different repository SHA"
                 else:
@@ -838,19 +916,11 @@ def main() -> int:
     parser.add_argument(
         "--skip-slow-probes",
         action="store_true",
-        help="skip the cargo test and packaging probes (the matrix then reports them as NOT RUN)",
+        help="skip agent/browser version discovery and credential-store, backup, packaging, and secret-scan probes; record them as NOT RUN",
     )
     arguments = parser.parse_args()
 
-    evidence = build_evidence()
-    if arguments.skip_slow_probes:
-        for name in ("backup_restore", "packaging", "secret_scan"):
-            evidence.probes[name] = Cell(
-                state="NOT RUN",
-                command="re-run without --skip-slow-probes",
-                observation="skipped by request",
-                reason="the probe was skipped by the caller",
-            )
+    evidence = build_evidence(skip_slow_probes=arguments.skip_slow_probes)
 
     output_path = Path(arguments.out)
     if not output_path.is_absolute():
@@ -862,6 +932,9 @@ def main() -> int:
         rows_path = REPOSITORY_ROOT / rows_path
     host_class, host_detail = detect_host_class()
     bundles_dir = Path(arguments.bundles_dir) if arguments.bundles_dir else None
+    sha_exit, current_sha = run(["git", "rev-parse", "HEAD"], cwd=REPOSITORY_ROOT, timeout=10)
+    if sha_exit != 0:
+        current_sha = ""
     matrix = build_release_matrix(
         load_rows(rows_path),
         evidence.host["system"].lower(),
@@ -869,6 +942,7 @@ def main() -> int:
         host_detail,
         load_bundles(bundles_dir),
         evidence.probes,
+        current_sha=current_sha,
     )
     output_path.write_text(render_release_markdown(matrix), encoding="utf-8", newline="\r\n")
     output_path.with_suffix(".json").write_text(

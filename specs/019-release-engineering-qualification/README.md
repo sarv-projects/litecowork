@@ -2,7 +2,8 @@
 
 - **Status:** IN_REVIEW - authored complete for owner review on 2026-11-09; not owner-accepted; authorizes no implementation; not a claim of implementation or qualification.
 - **Revision:** 0.1 | **Updated:** 2026-11-09 | **Blockers:** B-43 (signing identity and update channel), B-44 (licensing/packaging decision), both PROPOSED, pending owner.
-- **Implementation state (2026-11-10):** CODE skeleton, nothing run on GitHub. DONE: T02, T14, T15. PARTIAL: T03 (CI workflow), T05 (secret scan), T06 (CSP audit), T08, T10 (Linux deb config and scripts, no deb built), T12 (updater state, not mounted), T16, T17, T18, T21, plus CODEOWNERS. BLOCKED/deferred as release dependent: T01, T09, T11, T13 (B-43, B-44). Plans no daemon migration.
+- **Historical implementation snapshot (2026-11-10):** CODE skeleton, nothing run on GitHub. This dated status is superseded by [CURRENT-RUN.md](../../CURRENT-RUN.md) and [IMPLEMENTATION-STATUS.md](../../docs/IMPLEMENTATION-STATUS.md).
+- **2026-11-20 current slice:** T14/T15 have CODE implementations; T24 is IMPLEMENTING under USER-DELEGATED direction to cover the full adopted journey roster and enforce exact evidence-row matching. Matrix generation is not native-row qualification. Feature 019 remains IN_REVIEW; no package acceptance, release bundle or QUALIFIED journey is claimed.
 - **Owners:** Release Engineering, Security, Desktop Shell, Runtime (Feature 011 interface), QA/Accessibility, Product.
 - **Release matrix rows:** Windows 11/10 x64 + OpenCode v2.0.32 first; Linux x64 + OpenCode v2.0.32 second; WSL2 never counts.
 
@@ -12,13 +13,13 @@ The owner installs a signed LiteCowork build on Windows (then Linux), updates it
 
 ## Current truth
 
-There is no CI (`.github/` is absent), no signing, no updater (`tauri-plugin-updater` is not a dependency), no LICENSE and no license fields. `tauri.conf.json` bundles `"targets": "all"`; `run-tauri.mjs` already limits Linux to deb and refuses AppImage. The release scripts in `scripts/` (`v1_packaging_check.py`, `v1_platform_matrix.py`, `v1_resilience_matrix.py`, `v1_soak_harness.py`, `v1_secret_scan.py`) exist but have no owner, are not gated, and several do not run or do not measure the shipped code on the Windows row. This package owns them from here.
+The release blockers remain substantial: CI, signing/updater, licensing/notices, native provider journeys, and per-row release evidence are incomplete. The matrix tools are now owned by this feature and are CODE; T24 corrects journey coverage, the active OpenCode HTTP/SSE route label and exact-row bundle validation. Windows and Linux release rows still require their respective native packaged journeys and owner USER evidence. No matrix generation on a development host qualifies a release.
 
 ## Package
 
 - [SPEC.md](SPEC.md) - problem, goals, decisions B-43/B-44, HLD/LLD, security, EARS acceptance.
 - [PLAN.md](PLAN.md) - phases, waves, dependency graph, rollout and gates.
-- [TASKS.md](TASKS.md) - T01 to T23 including the V1 go/no-go.
+- [TASKS.md](TASKS.md) - T01 to T24 including exact-row evidence validation and the V1 go/no-go.
 - [DATA-MODEL.md](DATA-MODEL.md) - release rows, cells, bundles, update attempts and decision records.
 - [RESEARCH.md](RESEARCH.md) - pinned sources, Tauri updater and signing references, alternatives.
 - [WIRING.yaml](WIRING.yaml) - CI, release job, signing, updater, gate and matrix wiring.

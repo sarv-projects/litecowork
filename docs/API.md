@@ -296,6 +296,7 @@ Create defaults to `LOCAL_ONLY`; `SELECTED_FOLDERS` is unavailable in the create
 
 ```text
 POST /v1/conversations
+POST /v1/conversations/first-turn
 GET  /v1/conversations?cursor=&limit=
 GET  /v1/conversations/{id}
 PATCH /v1/conversations/{id}/agent-binding
@@ -357,6 +358,18 @@ aggregate-state reference, and request receipt atomically. The authenticated loc
 is newest-first and uses a Workspace-bound opaque cursor. Conversation reads are owner
 scoped and remain separate from provider/session state. The desktop Conversation page can
 create, list, read persisted semantic messages, and choose a Conversation AgentBinding.
+`POST /v1/conversations/first-turn` is the atomic New Chat Send operation. Its body includes
+`workspace_id`, optional `title`, bounded `content[]`, optional pinned `resource_refs[]`,
+the exact selected `agent_binding_id`, and `presentation_preference`. The New Chat UI sends
+the binding displayed in its selector, including the current Workspace default, rather than
+asking the server to resolve a mutable default during retry. The selected Workspace
+header must match the body and the authenticated local principal must own the active
+Workspace. The eligible binding becomes the new Conversation's initial override. One SQLite IMMEDIATE
+transaction writes the Conversation, first USER message, OPEN turn, three events, receipt
+and UNCLAIMED dispatch intent. The `202` response is `{conversation, turn}` with Conversation
+version 2. Exact retry returns the original composite receipt; a changed payload under the
+same key conflicts. Provider dispatch occurs only after commit. This is CODE/SERVED evidence
+for atomic admission, not proof of a working native provider or packaged first-send journey.
 `PATCH /v1/conversations/{id}/agent-binding` requires the selected Workspace,
 `If-Match` with the observed Conversation version, and `Idempotency-Key`; its body is
 `{ "agent_binding_id": "..." }` or `{ "agent_binding_id": null }`. The atomic
@@ -403,14 +416,28 @@ distinct requests against the current Conversation version and stamps
 `conversation.message.added.v1` with the actual next entity revision at commit time.
 Two distinct submits prepared from the same earlier snapshot therefore append in commit
 order instead of failing because the second carried a stale event revision. Exact replay
-returns the existing receipt before mutable AgentBinding selection is read; changed
-payload under the same key conflicts. This persists the USER message and OPEN turn only:
+returns the existing receipt before mutable admission checks (including Resource availability
+and current AgentBinding selection) are read; changed payload under the same key conflicts.
+For a receipt replay, a supplied binding is compared with the immutable binding pinned in the
+turn-created event. A replay returns the immutable admission receipt captured at commit (normally
+with status `OPEN`) and never starts another dispatch, even if the current turn has since become
+RUNNING, waiting, or terminal. The desktop reloads the canonical projection for current lifecycle
+status. Fresh admission still reauthorizes current Resource refs and binding eligibility. This
+persists the USER message and OPEN turn only:
 while native session supervision/readiness is unavailable, the route settles that turn
 FAILED and returns `503 DEPENDENCY_UNAVAILABLE`; it does not claim that a message was sent.
 
 The Conversation presentation route returns a bounded authenticated snapshot of committed
-messages, linked trusted items, active-turn state, optional immutable RichPresentation refs,
-and the snapshot cursor. The target GET /v1/conversations/{id}/usage returns the
+messages, linked trusted items, separate active-turn and retryable-turn control projections,
+the latest activity-turn identity for reloading bounded REPORTED activity, optional immutable
+RichPresentation refs, each message wrapper's exact nullable `turn_status`, and the snapshot
+cursor. `activity_turn` and per-message `turn_status` are read-only metadata from the same
+SQLite snapshot; neither authorizes Stop or Retry. `turn_status` is resolved by joining the
+message's immutable `turn_id` to a turn with the same `conversation_id`; null or a legacy omitted
+field means unknown. Downstream explicit flows such as Feature 005 Task promotion must
+revalidate source messages and turn settlement in their own write transaction. The projection
+does not imply an Effect. The target
+GET /v1/conversations/{id}/usage returns the
 Conversation-wide usage rollup across every AgentBinding used in the chat. It deduplicates
 verified inference leaves, keeps agent/turn/provider attribution, separates
 provider-billed, agent/gateway-reported, and estimated costs, groups by currency, and reports
@@ -2306,7 +2333,9 @@ and source revision, not network arrival order, determine replacement and orderi
 Presentation delivery uses the closed `projection` frame. A
 `conversation_presentation` snapshot carries the exact Conversation API projection shape:
 `payload: { conversation_id, stream_cursor, origin_sequence, items, next_cursor,
-active_turn }`. Each `items` entry retains its `{ message, rich_presentation,
+active_turn, retryable_turn, activity_turn }`. `activity_turn` carries the latest turn's exact
+identity for read-only REPORTED activity reload and remains separate from Stop/Retry control
+projections. Each `items` entry retains its `{ message, rich_presentation,
 linked_items }` wrapper so streaming preserves semantic roles, content, and authorized
 presentation references. A later generic presentation item replacement may carry
 `payload: { "item": ... }`. Both carry the selected Workspace, projection revision, and

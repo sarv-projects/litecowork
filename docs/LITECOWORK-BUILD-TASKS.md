@@ -13,7 +13,7 @@ The tables below are the plan and carry no per-row status. Per-task status lives
 | BT-02 | 003-T01 BLOCKED on A-69 provenance owner decision; T02 Linux storage tests PARTIAL; T03-T06 Windows work DEFERRED to owner's Windows laptop; T09/T10 BLOCKED on A-65/A-69 | See Feature 003 TASKS and current cross-check |
 | BT-03 | Registry/descriptors and limited discovery CODE/SERVED; Claude Code module BLOCKED; relay (004) PARTIAL CODE (producer attribution/context builder only), no qualified second dispatch path | 002 and 004 TASKS; see `docs/audit/FEATURE-004-CURRENT-CROSSCHECK-2026-11-13.md` |
 | BT-04 | In progress: 005-T01 owner-directed contracts and v33 Environment binding | 005; T02 has partial CODE ahead of its T01 dependency; A-70/A-87/A-88/A-90 direction is recorded in revision 1.1 (IN_REVIEW); cross-owner review, attestation provider, Task admission, mediated write path and Linux qualification remain open; B-35 remains PROPOSED |
-| BT-05 | 013 part: whole package DEFERRED by the owner (A-62). 006 part: BLOCKED on B-19/A-82 owner decisions; E2E-05 Task-write row order remains OPEN under A-80 | See the DEFERRED note in specs/013-litespm-package-lifecycle-bridge/TASKS.md and A-80/A-82 in the contradiction register |
+| BT-05 | 013 part: whole package DEFERRED by the owner (A-62). 006 part: B-19 direction is USER-DELEGATED and recorded in revision 1.1; T02 is DONE, formal Connectors/Security ratification remains pending, and T01 contract promotion is NOT STARTED pending the listed Feature 005 shared Trust/Effect prerequisite. E2E-05 Task-write row order remains OPEN under A-80. | See the DEFERRED note in specs/013-litespm-package-lifecycle-bridge/TASKS.md, Feature 006 TASKS and A-80/A-82 in the contradiction register |
 | BT-06 to BT-09 | Existing foundations only; 010-T19 deferred out of V1. Feature 016 revision 0.3 proposes one expanded V1 scope across AC-001..AC-041; it remains TARGET/IN_REVIEW. A-84 requires Feature 007's Saved View fit decision at T25, then whole-scope owner decision at T01, then contract promotion at T02. B-46's closed component profile and explicit host-action boundary are proposed, not accepted. A-85 still blocks model-visible MCP proposal exposure until the canonical input/sequence/replay contract is resolved. No new presentation route or UI control is authorized yet. | 007, 016, 008, 009, 010 |
 | BT-10 | Partly done for Linux; Windows and packaged rows DEFERRED | 011 DONE T01, T04, T05, T07, T08, T09, T10, T21 |
 | BT-11 | Storage layer only (014-T03 partial, migration v31) | Routes, search, purge, UI NOT STARTED |
@@ -207,13 +207,13 @@ The owner accepted packages 001-012 on 2026-11-09. Packages 013-020 are IN_REVIE
 
 Windows Task execution, the daemon terminal and Windows delegation stay UNAVAILABLE until B-35 is accepted and 005-T17/005-T18 qualify. That path runs in parallel with W3 to W5 and does not block the Linux row.
 
-Feature 006's Connection/read qualification is distinct from its Task-scoped golden write. A-80 leaves open whether the write requires an admitted Environment; if it does, E2E-05's write row follows Feature 005's Linux-first qualification and Windows stays unavailable until B-35. A-82 also blocks provider contract promotion until the OAuth/App permission model and actual user-visible scopes are owner-approved. Do not describe Windows Connection/read evidence alone as a fully qualified E2E-05 journey.
+Feature 006's Connection/read qualification is distinct from its Task-scoped golden write. A-80 leaves open whether the write requires an admitted Environment; if it does, E2E-05's write row follows Feature 005's Linux-first qualification and Windows stays unavailable until B-35. A-82's product-level provider recipe and permission direction is USER-DELEGATED and recorded in Feature 006 revision 1.1; formal Connectors/Security ratification remains pending. Contract promotion is still NOT STARTED because Feature 006 T01 lists the shared Feature 005 Trust/Effect contract promotion as a prerequisite. Do not describe Windows Connection/read evidence alone as a fully qualified E2E-05 journey.
 
 Folded tasks (owner-accepted 2026-11-09, register A-55) land in the wave of their owning package. The ACP native-agent client (002-T17, consumed by Feature 001) is the W1 adapter spine and carries the OpenCode fixture and normalizer (001-T23, 001-T24) plus the activity/plan cards, autoscroll and native permission prompts (001-T25, 001-T26, 001-T27); the Agent Matchmaker (002-T18) is W1. Per-block Markdown (016-T18) and the Context Debugger (003-T17) are W2. The LiteSPM pin (013-T20) is W3; the iframe sandbox guard and Git worktree/diff/PR (008-T19, 008-T20) are W3. Mission Control and read-only Compare (015-T20) is W4. The shell reachability, decomposition, SettingsPage merge and Workspace Dashboard tasks (011-T19..011-T22) ride the W0 shell package, with the Dashboard deliverable landing once its inputs exist. The operator-api.ts codegen and drift gate (018-T18) is W6. The V1 go/no-go (019-T23) re-synced its VERIFIED-id list to the new final task ids.
 
 ## Migration allocation (provisional)
 
-The wired schema is now v33 (v28 delegation settings; v29 dispatch outbox and usage records; v30 REPORTED Conversation turn activity; v31 Conversation history lifecycle; v32 Conversation control events and owner side notes; v33 Task AgentSession Environment binding). Migrations apply in one contiguous, forward-only chain; the first unmerged change takes the next number, reservations shift only before implementation, and a wired migration is never renumbered or edited. v33 was assigned to owner-directed 005-T01 after source confirmed no v33+ migration existed; unmerged 002 and 003 reservations shifted to v34-v36. v33 has focused and full storage-suite CODE evidence; it does not mean Task admission is implemented.
+The wired schema is now v34 (v28 delegation settings; v29 dispatch outbox and usage records; v30 REPORTED Conversation turn activity; v31 Conversation history lifecycle; v32 Conversation control events and owner side notes; v33 Task AgentSession Environment binding; v34 resolved Task delegation-policy snapshots). Migrations apply in one contiguous, forward-only chain; the first unmerged change takes the next number, reservations shift only before implementation, and a wired migration is never renumbered or edited. v33 was assigned to owner-directed 005-T01 after source confirmed no v33+ migration existed. On 2026-11-20, the user delegated the internal allocation decision for 015-T22: keep its already implemented v34 migration immutable and shift every still-unwritten reservation by one. This allocation direction is not domain-owner ratification or Feature 015 acceptance. v33/v34 have focused storage and migration replay CODE evidence; neither migration means Task admission, execution, or delegation is implemented.
 
 | Migration | Package and task | Content (from the package DATA-MODEL) |
 |---|---|---|
@@ -223,23 +223,24 @@ The wired schema is now v33 (v28 delegation settings; v29 dispatch outbox and us
 | v31 (wired) | 014-T03 (partial: storage only) | `conversation_history_state` side table (status, archived_at, deleted_at); search index and purge manifest are NOT in v31 and take a later number |
 | v32 (wired) | 012-T05 (partial: storage only) | `conversation_control_events`, `conversation_owner_side_notes` (replaces the v30 named in 012) |
 | v33 (wired; focused schema/scope, legacy-row and rollback tests pass; full storage suite passed before final test-fixture refinement) | 005-T01 (W2, assigned 2026-11-17) | Nullable `agent_sessions.environment_id` binding, foreign key/index and scope/identity guards. Attempt, lease, Effect and ApprovalUse records already exist in the base schema; the migration creates none of them. |
-| v34 | 002-T07 (W1; shifted before implementation) | Runtime-local durable auth observations. The descriptor store already exists in migration 16; no descriptor DDL is needed. |
-| v35 | 002-T08 (W1; shifted before implementation) | Runtime-local credential-submission replay receipts only if the reviewed SecretStore crash-reconciliation contract requires durable DDL; otherwise release the reservation before implementation. Never store secret bytes. |
-| v36 | 003-T09 (W1; shifted before implementation) | `context_attachments`, `retrieval_receipts` (renumbered from v32) |
-| v37 | 007-T01 (W2) | `artifact_export_receipts`, source Conversation columns |
-| v38 | 009 (W2) | Reserved for Conversation Coworker origin and manual-memory fields; no migration is written, and A-91 blocks finalizing those fields until the Memory/Coworker owners resolve provenance and status |
-| v39 | 013 (W2/W3) | Package approvals and operation receipts |
-| v40 | 006-T01 (W3) | `connections` rebuild with `REVOKED` and `remote_revocation`, Connection records, and `auth_attempts` (state/expiry/digests only; no verifier or token bytes) |
-| v41 | 008-T01 (W3) | Browser session/lease/receipt and terminal session/receipt |
-| v42 | 015 (W4) | `task_control_requests`, `task_resume_packets` |
-| v43 | 020-T02 (W4) | `learning_candidates`, `coworker_learning_policies`, `memory_records` |
-| v44 | 010-T01 (provisional) | Exact owner-approved delivery CAS/schema delta only, if needed; release if no DDL is required |
-| v45 | 017 (W6) | `backup_operations` |
-| v46 (if needed) | 018 (W6) | Optional diagnostics table; the usage table comes from 001 |
+| v34 (wired; 015-T22, USER-DELEGATED direction) | 015-T22 | Additive `task_spec_revisions.delegation_policy_snapshot_json` enrichment for already non-null v28 snapshots and canonical insert guards; preserves pre-v28 null history. |
+| v35 | 002-T07 (W1; shifted before implementation) | Runtime-local durable auth observations. The descriptor store already exists in migration 16; no descriptor DDL is needed. |
+| v36 | 002-T08 (W1; shifted before implementation) | Runtime-local credential-submission replay receipts only if the reviewed SecretStore crash-reconciliation contract requires durable DDL; otherwise release the reservation before implementation. Never store secret bytes. |
+| v37 | 003-T09 (W1; shifted before implementation) | `context_attachments`, `retrieval_receipts` (renumbered from v32) |
+| v38 | 007-T01 (W2) | `artifact_export_receipts`, source Conversation columns |
+| v39 | 009 (W2) | Reserved for Conversation Coworker origin and manual-memory fields; no migration is written, and A-91 blocks finalizing those fields until the Memory/Coworker owners resolve provenance and status |
+| v40 | 013 (W2/W3) | Package approvals and operation receipts |
+| v41 | 006-T01 (W3) | `connections` rebuild with `REVOKED` and `remote_revocation`, plus `auth_attempts` with purpose, optional Connection identity, lifecycle/version/expiry, bounded non-secret correlation metadata and private preallocated access/refresh SecretRef IDs for staged-write cleanup (no device/user codes or token bytes) |
+| v42 | 008-T01 (W3) | Browser session/lease/receipt and terminal session/receipt |
+| v43 | 015 (W4) | `task_control_requests`, `task_resume_packets` |
+| v44 | 020-T02 (W4) | `learning_candidates`, `coworker_learning_policies`, `memory_records` |
+| v45 | 010-T01 (provisional) | Exact owner-approved delivery CAS/schema delta only, if needed; release if no DDL is required |
+| v46 | 017 (W6) | `backup_operations` |
+| v47 (if needed) | 018 (W6) | Optional diagnostics table; the usage table comes from 001 |
 
 Packages 004, 011, 016 and 019 plan no migration.
 
-**010 allocation recheck (2026-11-13):** SQLite v1 already contains the `notification_deliveries` status set, attempt Runtime/host epoch/count, retry deadline and settlement timestamp, plus encrypted Runtime-local `automation_trigger_bindings`. The status event/schema also exists. v44 is therefore provisional, not an instruction to duplicate those fields. A-98 requires the owner to define the missing delivery CAS/version delta (if any) and release v44 if no migration is needed.
+**010 allocation recheck (2026-11-13; reservation shifted 2026-11-20):** SQLite v1 already contains the `notification_deliveries` status set, attempt Runtime/host epoch/count, retry deadline and settlement timestamp, plus encrypted Runtime-local `automation_trigger_bindings`. The status event/schema also exists. v45 is therefore provisional, not an instruction to duplicate those fields. A-98 requires the owner to define the missing delivery CAS/version delta (if any) and release v45 if no migration is needed.
 
 ## Cross-package dependency graph
 

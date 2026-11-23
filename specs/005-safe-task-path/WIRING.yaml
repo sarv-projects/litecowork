@@ -371,11 +371,11 @@ recovery:
 # recursive quiescence plus launcher reap. Its three tests use a fake scope. The helper has
 # no production Task Runtime caller and creates no attestation, admission or Resource; no
 # TARGET wiring edge is upgraded to SERVED, INTEGRATED or QUALIFIED by this code.
-# A separate RuntimeLocalPreparationJournal storage primitive now has CODE tests, but there
-# is no provider/startup caller. Its pending-entry scan and concurrent phase transitions
-# need further validation/serialization before integration. Same-scope probes and exact
-# receipt lookup are still absent; the held protocol remains a lower-level launch-order
-# primitive and no TARGET wiring edge is promoted by this evidence.
+# A separate RuntimeLocalPreparationJournal storage primitive has CODE tests for bounded,
+# no-follow/canonical pending-entry reads and cross-process phase serialization, but there
+# is no provider/startup caller. Same-scope probes and exact receipt lookup remain absent;
+# the held protocol is still only a lower-level launch-order primitive and no TARGET wiring
+# edge is promoted by this evidence.
 # A WSL-only Bubblewrap probe runs the production command builder directly, reads back its fixed 1 MiB cap, and observes
 # ENOSPC across output and `/tmp` writes sharing one scratch tmpfs; this does not exercise EnvironmentConfig mapping, ManagedScope,
 # systemd/cgroup supervision, or any attestation/admission edge.

@@ -347,7 +347,8 @@ impl TurnObserver for TurnActivityRecorder {
                 self.record("TODO", "UPDATED", None, Some(count.min(&1000).to_string()));
             }
             NormalizedAgentEvent::StepStarted => self.record("STEP", "STARTED", None, None),
-            NormalizedAgentEvent::StepEnded => self.record("STEP", "ENDED", None, None),
+            NormalizedAgentEvent::StepEnded { .. } => self.record("STEP", "ENDED", None, None),
+            NormalizedAgentEvent::StepFailed { .. } => self.record("STEP", "FAILED", None, None),
             // ToolProgress, text, reasoning and usage are not activity records: progress
             // is noise against the per-attempt cap and the others have their own paths.
             _ => {}
@@ -573,5 +574,39 @@ mod tests {
             drain(&mut rx).len(),
             storage_core::conversation::CONVERSATION_ACTIVITY_MAX_PER_ATTEMPT
         );
+    }
+
+    #[test]
+    fn step_end_and_failure_activity_do_not_hide_reported_usage_or_failure_state() {
+        let bus = TransientFrameBus::new();
+        let mut rx = bus.subscribe();
+        let stored = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink_store = stored.clone();
+        let mut recorder = TurnActivityRecorder::new(
+            bus.clone(),
+            "ws",
+            "conv",
+            "turn",
+            1,
+            Box::new(move |record| {
+                sink_store.lock().unwrap().push(record);
+                true
+            }),
+        );
+        recorder.on_event(&NormalizedAgentEvent::StepEnded {
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+        });
+        recorder.on_event(&NormalizedAgentEvent::StepFailed {
+            input_tokens: Some(5),
+            output_tokens: Some(0),
+        });
+        let frames = drain(&mut rx);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0]["kind"], "STEP");
+        assert_eq!(frames[0]["status"], "ENDED");
+        assert_eq!(frames[1]["kind"], "STEP");
+        assert_eq!(frames[1]["status"], "FAILED");
+        assert_eq!(stored.lock().unwrap().len(), 2);
     }
 }

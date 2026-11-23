@@ -42,6 +42,10 @@ SQLite FTS5 behaviour (deleted terms remain in segments unless `secure-delete` i
 | Async indexer from event journal | Flexible (F-02 b) | Adds a lag window the UI must explain |
 | Cascade delete Tasks and Artifacts | Reject | Violates L-03 |
 
+## 4. External audit correction (2026-11-19)
+
+The supplied read-only HTML audit correctly identified that `WIRING.yaml` could not be parsed: `notes` was indented beneath the scalar `spec_revision`. The key is now at the document root beside `feature_id`, `name`, `status` and `spec_revision`. A PyYAML load confirms the original node/edge/transaction/recovery mappings parse; `python .specify/scripts/validate_feature_package.py` passes all 20 package structures. This is a syntax correction only. It does not accept the Feature 014 SPEC, close O-02/O-03/O-06/O-07, authorize implementation outside each task, or qualify the history-management journey.
+
 ## 4. Open research
 
 | ID | Topic | Next evidence | Owner |

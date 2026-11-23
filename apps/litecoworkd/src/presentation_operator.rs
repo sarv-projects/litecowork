@@ -3436,6 +3436,9 @@ mod tests {
                 next_cursor: None,
                 active_turn: Some(json!({"turn_id": "turn-1", "status": "RUNNING"})),
                 retryable_turn: None,
+                activity_turn: Some(
+                    json!({"turn_id": "turn-1", "retry_ordinal": 0, "status": "RUNNING"}),
+                ),
             },
             ConversationPresentationSnapshot {
                 workspace_id: "workspace-1".to_owned(),
@@ -3448,6 +3451,7 @@ mod tests {
                 next_cursor: None,
                 active_turn: None,
                 retryable_turn: None,
+                activity_turn: None,
             },
         ];
         let filter_digest = "a".repeat(64);
@@ -3466,6 +3470,7 @@ mod tests {
             serde_json::from_slice(&result.frames[0]).expect("changed turn snapshot JSON");
         assert_eq!(first["payload"]["conversation_id"], "conversation-1");
         assert_eq!(first["payload"]["active_turn"]["turn_id"], "turn-1");
+        assert_eq!(first["payload"]["activity_turn"]["turn_id"], "turn-1");
         let first_cursor =
             decode_batch_stream_cursor(first["cursor"].as_str().expect("snapshot frame cursor"))
                 .expect("live batch snapshot cursor is resumable");
@@ -3473,6 +3478,10 @@ mod tests {
         let checkpoint: serde_json::Value =
             serde_json::from_slice(&result.frames[1]).expect("final checkpoint JSON");
         assert_eq!(checkpoint["payload"]["conversation_id"], "conversation-2");
+        assert_eq!(
+            checkpoint["payload"]["activity_turn"],
+            serde_json::Value::Null
+        );
 
         let unchanged = serialize_conversation_batch_pages(
             &snapshots,
@@ -3504,6 +3513,7 @@ mod tests {
                 next_cursor: Some("message-1".to_owned()),
                 active_turn: None,
                 retryable_turn: None,
+                activity_turn: None,
             },
             ConversationPresentationSnapshot {
                 workspace_id: "workspace-1".to_owned(),
@@ -3516,6 +3526,7 @@ mod tests {
                 next_cursor: None,
                 active_turn: None,
                 retryable_turn: None,
+                activity_turn: None,
             },
         ];
 

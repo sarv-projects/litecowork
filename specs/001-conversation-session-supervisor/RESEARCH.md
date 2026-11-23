@@ -1,7 +1,7 @@
 # Research and Decision Log - Conversation Session Supervisor
 
 **Feature:** 001 | **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Checked:** historical baseline 2026-11-06; source cross-check refreshed 2026-11-17 for the T20 cross-Runtime dispatch-claim correction. T03 lifecycle and T23 native CLI observations retain their dated evidence below. Upstream protocol claims are limited to the pinned source links in section 8.1; no successful live provider behavior is inferred.
+**Checked:** historical baseline 2026-11-06; source cross-check refreshed 2026-11-19 for the T20 cross-Runtime dispatch-claim correction, T02 A-93 status-boundary correction, and exact OpenCode v2.0.32 event/volatile-feed source contract (§8.2). T03 lifecycle and T23 native CLI observations retain their dated evidence below. No successful live provider behavior is inferred.
 
 ## 0. Current checkout cross-check (2026-11-14 baseline; T20 source follow-up 2026-11-17)
 
@@ -13,11 +13,12 @@ The following source facts supersede the older active-source/UI audit in section
 - Retry is `FAILED -> OPEN`, increments `retry_ordinal`, creates an UNCLAIMED intent and obtains a fresh session. Stop sends an interrupt through the selected adapter path and waits for quiescence before CANCELLED; however, OpenCode's completion-vs-interrupt ambiguity is not reconciled fully and can be represented as stopped, contrary to the canonical outcome-wins rule.
 - Feature 002 T01 source computes a compatible `STARTABLE` OpenCode offer only for exact CLI 2.0.32, a complete probe and an observed host stop. This is offer/binding-readiness evidence only; it does not prove authentication, inference or a packaged Send-capable route. The active Conversation picker checks a selectable binding, not this complete qualification tuple.
 - `CommitConversationAgentResponse` storage validation accepts `COMPLETED`, `FAILED`, `CANCELLED`, `WAITING_USER` and `WAITING_DEPENDENCY`, then writes `settled_at` for each accepted status and closes the active AgentSession in the same transaction. The active OpenCode supervisor passes only `COMPLETED`. The waiting statuses conflict with locked B-04's terminal-outcome set and the AC-017/018 continuation lifecycle; track this as A-93 and do not treat the unused status acceptance as continuation support.
+- **2026-11-19 T02 follow-up (CODE; supersedes the 2026-11-14 A-93 observation above):** a red-first native-Windows regression reproduced the waiting-state commit (AGENT message, `settled_at`, closed session and receipt). Storage now rejects `WAITING_USER` and `WAITING_DEPENDENCY` before SQLite work, following locked B-04's terminal outcomes and B-06's separate UserRequest continuation. The response-commit filter passed 5/5 and `cargo fmt --all -- --check` passed. This resolves source alignment under the user's delegated implementation direction, not provider input/continuation support, owner re-acceptance or qualification.
 - The UI exposes projected active-turn versions, Stop and Retry, fences all nonterminal turn states, has a text ResourceRef picker/materializer, and shows bounded delta/activity frames. The daemon source produces `turn.delta` and `turn.settled` on the single-Conversation stream; `rich.draft` has no producer. The `turn.delta` producer/schema omit `agent_session_id` even though T13 and `contracts/api-events.md` require it; `SPEC.md` §7.6 and `docs/API.md` omit it too, so cross-layer semantics remain OPEN under A-94. This is CODE, not a packaged/live-provider qualification. Binary and WorkspaceRoot attachments, new-Conversation attachment, durable Context Used receipt, rendered packaged journey and exact provider budget remain open.
 - **2026-11-17 T20 ownership re-audit (CODE):** the durable intent CAS was after host and binding/profile preflight, so another Runtime could fail setup and settle a turn already claimed by its winner. The operator now passes its local Runtime incarnation through `AgentTurnCoordinator`; the supervisor claims before preflight and only a confirmed winner may settle. `Ok(false)` is a no-op; claim errors and worker panics before a confirmed claim leave the durable intent for startup recovery. The new SQLite-backed loser regression was first observed failing (`FAILED` vs expected `OPEN`), then native-Windows `conversation_dispatch_` passed 11/11 after the fix, including claim-error recovery. `cargo fmt --all -- --check` passed. The exact claim-error attempt remains OPEN until recovery runs; live in-process reconciliation of that failure and packaged multi-process/provider behavior remain open. This is CODE, not qualification.
 - **2026-11-17 route handoff recheck (CODE):** after the coordinator gained the local Runtime-incarnation argument, `cargo test -j 1 -p litecoworkd --locked conversation_turn_submit_returns_accepted_receipt_with_active_session_supervisor -- --nocapture` passed 1/1 on native Windows. This confirms the tested Operator-to-coordinator handoff still compiles and accepts the turn; it is not a provider send or qualification result.
 - The remaining `dispatch_turn` setup/provider errors map to closed `DispatchFailureClass` values and a confirmed claimant attempts exact-attempt settlement with bounded transient retry; exhausted storage failure is left for daemon-start reconciliation. Earlier dated CODE coverage includes host-resolution, binding decode, profile-catalog lookup, STARTING-session reservation, blocking-worker failure and settlement-failure recovery. The binding regression corrupts only the unused `configuration_json` so host resolution succeeds and full binding decode fails; the profile regression removes the catalog after host and binding resolution. Both faults settle the admitted turn FAILED, settle the intent, and create no session. A real-SQLite regression also changes the pinned endpoint offer to `NEEDS_AUTH` after admission and verifies the admitted USER message is retained while the turn settles as `AGENT_UNAVAILABLE`, its intent becomes SETTLED, and no session or AGENT answer is created. The earlier native-Windows dispatch-filter counts are historical snapshots; use the 2026-11-17 11/11 result above as the latest focused evidence. T03 lifecycle, StopUnconfirmed/shared-host gaps, provider qualification and exhaustive fault coverage remain open.
-- OpenCode Server v2.0.32 is the only Conversation dispatch branch. Its pinned source includes Form and permission reply contracts, but no live provider-generated Form event has been captured or mapped to B-06, and daemon permission routes and the active-worker reply path are SERVED partial, but the permission UI/bridge and a successful live provider decision are not integrated or qualified. No OS/provider/auth tuple is QUALIFIED.
+- OpenCode Server v2.0.32 is the only Conversation dispatch branch. Its pinned source includes Form and permission reply contracts, but no live provider-generated Form event has been captured or mapped to B-06, and daemon permission routes and the active-worker reply path are SERVED partial. The typed Tauri bridge and permission UI have CODE coverage, but the complete route-to-live-provider journey and a successful live provider decision are not INTEGRATED or QUALIFIED. No OS/provider/auth tuple is QUALIFIED.
 
 Sections 2–6 below preserve the 2026-11-06 audit as historical research; they are not current implementation evidence.
 
@@ -131,9 +132,25 @@ For T27, “no supported OpenCode permission reply API” is disproved at the pi
 - The pinned core contains no elapsed-time timeout/default for a pending permission. A permission remains pending until replied to or the Permission service closes; service close emits rejection for each pending request. Therefore T27's former acceptance wording, “times out to the harness default,” is unsupported. An app-side timer must not silently invent that behavior. The target must keep the request actionable while the native session is live, or expose an explicit Stop/close path whose provider result is handled as session termination.
 - The next implementation must correlate the exact Workspace, Conversation turn, native session and request in daemon-owned ephemeral state; it must not turn the request into a LiteCowork UserRequest/grant/Effect or persist raw resource paths, metadata, native handles or message text in ordinary activity records. UI detail should be a separately bounded/redacted projection. A lost reply acknowledgement cannot be labeled answered or denied merely because the HTTP call timed out; reconcile against the exact pending request while the same native session is live, otherwise retain an unknown/ended state and do not replay an uncertain decision.
 
-The normalizer now validates the bounded v2.0.32 permission payload, and the active per-turn adapter has a bounded mailbox-backed reply path. Remaining gaps are a redacted live event capture, successful route-to-provider evidence, rendered allow-once and session-wide rejection controls, service-close/decision-state projection, and packaged denial, ambiguity, restart and reconnect recovery evidence. ACP `request_permission` is a separate harness path and is not a prerequisite for OpenCode's HTTP permission route. These are pinned source-contract facts, not live-provider or LiteCowork integration evidence. Sources: [v2.0.32 Permission schema](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/schema/src/permission.ts), [permission routes](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/protocol/src/groups/permission.ts), [permission handler](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/server/src/handlers/permission.ts), and [permission service](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/core/src/permission.ts).
+The normalizer now validates the bounded v2.0.32 permission payload, and the active per-turn adapter has a bounded mailbox-backed reply path. The 2026-11-23 focused UI regressions now cover safe permission resource labels and preservation of an unconfirmed attempted choice through session closure (permission reducer/render tests pass 9/9); they do not prove a live provider interaction. Remaining gaps are a redacted live event capture, successful route-to-provider evidence, broader mounted interaction/accessibility coverage beyond the rendered-card assertions, the full service-close/decision/restart/reconnect race matrix, and packaged denial, ambiguity, restart and reconnect recovery evidence. ACP `request_permission` is a separate harness path and is not a prerequisite for OpenCode's HTTP permission route. These are pinned source-contract facts, not live-provider or LiteCowork integration evidence. Sources: [v2.0.32 Permission schema](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/schema/src/permission.ts), [permission routes](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/protocol/src/groups/permission.ts), [permission handler](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/server/src/handlers/permission.ts), and [permission service](https://raw.githubusercontent.com/anomalyco/opencode/v2.0.32/packages/core/src/permission.ts).
 
 The implementation and UI design are recorded in [contracts/native-permission-design.md](contracts/native-permission-design.md). It deliberately keeps live prompts in Runtime-local memory, exposes only an opaque incarnation-scoped UI token, and labels OpenCode's reject action as session-wide for currently pending requests. This design does not revise the accepted Conversation aggregate or persist native permission state. The target API and transient-frame contracts were promoted through global owner docs, canonical schemas, UI ledgers and generated API types on 2026-11-15; the normalizer, Runtime-local registry and authenticated GET/POST handlers have CODE/SERVED partial evidence; the user journey and successful provider decision remain unimplemented/unqualified.
+
+## 8.2 Pinned OpenCode v2.0.32 event envelope and volatile feed (2026-11-19)
+
+The official `v2.0.32` tag resolves to commit [`843a6c514e606b436a7fe713422ace0a93ad3d61`](https://github.com/anomalyco/opencode/commit/843a6c514e606b436a7fe713422ace0a93ad3d61). This section is source-contract evidence; it is not a live provider capture, LiteCowork route integration, or qualification.
+
+- [`packages/schema/src/event.ts`](https://github.com/anomalyco/opencode/blob/843a6c514e606b436a7fe713422ace0a93ad3d61/packages/schema/src/event.ts) defines the event envelope. Common fields include `id`, `created`, optional `metadata`, `type`, optional `location`, and `data`. Durable events additionally carry `durable` aggregate identity, sequence, and event version; ephemeral events do not. The session-scoped event payloads use `sessionID` inside `data`.
+- [`packages/protocol/src/groups/event.ts`](https://github.com/anomalyco/opencode/blob/843a6c514e606b436a7fe713422ace0a93ad3d61/packages/protocol/src/groups/event.ts) defines `GET /api/event` and explicitly documents its SSE feed as volatile: slow-consumer overflow fails the stream, and disconnection can miss events. Therefore CODE opens and validates the event subscription before dispatching the Conversation prompt, then retains that same stream for the turn driver. A pre-dispatch subscription failure sends no prompt. A timeout after prompt dispatch can still be ambiguous and must not trigger automatic prompt replay.
+- [`packages/schema/src/session-event.ts`](https://github.com/anomalyco/opencode/blob/843a6c514e606b436a7fe713422ace0a93ad3d61/packages/schema/src/session-event.ts) defines the exact session event names and payloads: `session.text.delta`/`session.text.ended`; reasoning started/delta/ended; `session.tool.input.started`/delta/ended, `session.tool.progress`, tool success/failure; step started/streamed/ended/failed; usage updated; and execution started/succeeded/failed/interrupted. Text deltas are ephemeral, while terminal text is durable. `session.step.ended.files[]` contains provider-reported relative paths; those are not LiteCowork mediated Effects.
+- [`packages/core/src/session/projector.ts`](https://github.com/anomalyco/opencode/blob/843a6c514e606b436a7fe713422ace0a93ad3d61/packages/core/src/session/projector.ts) applies token counts from `session.step.ended` and token-bearing `session.step.failed` events as step usage, then publishes `session.usage.updated` by reading the Session row's accumulated totals. Treating each `session.usage.updated` as an incremental per-turn amount and summing it with terminal-step tokens would double count and include prior turns. LiteCowork therefore retains it as a `UsageSnapshot` observation but excludes it from the current-turn usage accumulator; per-step usage remains explicitly native-reported rather than billing authority.
+- [`packages/schema/src/permission.ts`](https://github.com/anomalyco/opencode/blob/843a6c514e606b436a7fe713422ace0a93ad3d61/packages/schema/src/permission.ts) defines `permission.asked` with `id`, `sessionID`, action, resources and optional metadata/source/message. This is a native permission event, not a UserRequest or LiteCowork Trust grant.
+
+The implemented normalizer reads the JSON envelope `type` and `data` only, correlates only by `data.sessionID`, and never uses global `location`, the SSE `event:` field or legacy aliases as fallback identity. It maps bounded user-visible text, hidden reasoning boundaries, tool observations, native permission requests, distinct step start/end/failure events, cumulative usage snapshots, and execution start/success/failure/interruption. Reasoning content is discarded. Per-turn usage sums terminal step token counts and ignores cumulative session snapshots. Known but nonprojected events are ignored; unknown, foreign and uncorrelated frames are dropped and counted. The pinned source does not define `session.idle`, `todo.updated`, or `file.edited` as session events, so this OpenCode adapter cannot emit LiteCowork `TodoUpdated` or `FileChanged` activity. The local idle watchdog is independent of provider events.
+
+`apps/litecoworkd/src/agents/fixtures/opencode_v2_0_32_contract_events.jsonl` is hand-authored synthetic test data based on the pinned schema (including durable versus ephemeral envelope shape). It is not an observed provider turn, does not satisfy T23, and cannot qualify a provider path. T23 remains PARTIAL/LIVE CAPTURE BLOCKED because the available CLI attempts did not produce authenticated output. T12 Form/user-input capability remains a separate design and live-evidence question; the source-defined form API alone does not establish that all forms map to B-06 UserRequests or that same-session reply behavior fits the accepted continuation transaction.
+
+**User-delegated implementation direction (2026-11-19; not external domain-owner ratification):** implement T24 against this exact pinned source contract while keeping live capture as an explicit T23/T09 gate. The change is CODE only and does not mark the event path integrated or qualified.
 
 ## T3 Code provider-request comparison (2026-11-16; research only)
 
@@ -182,4 +199,74 @@ Read-depth limits from the study (do not over-trust): `scripts/` about 58% read,
 
 Plugin-architecture lessons (see [plugin study](../../docs/DEEPSEEK-HARNESS-PLUGIN-ARCHITECTURE-DEEP-DIVE-2026-11.md) Section 8):
   - Durable run record plus process-group liveness fence (P-27): [packages/boot/plugin-manager/src/operations.ts](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/boot/plugin-manager/src/operations.ts). Class **ADAPT**. The restart sweep (T08) is already done independently; use as a cross-check only. Reuse: pattern only, reimplement; no upstream code imported.
+
+## New Chat first-send review (2026-11-19, user-delegated direction)
+
+### Source trace and problem
+
+- `apps/litecowork-ui/src/conversations/ConversationsPage.tsx`: before T29, a first Send with no selected Conversation invoked create-only `/v1/conversations`, kept the draft in a process-local map and returned; the user had to press Send again to admit USER+OPEN+dispatch intent.
+- `crates/storage-sqlite/src/conversations.rs`: existing turn admission already owns the atomic USER message, OPEN turn, canonical events, dedup receipt, snapshots and v29 dispatch intent. A separate create transaction would preserve the two-transaction crash gap.
+- `apps/litecowork-ui/src-tauri/src/conversation_create_journal.rs`: the private bounded atomic journal is the existing recovery owner and has a v1 compatibility format. Reusing it avoids a second local secret-bearing journal.
+- Feature 001's existing turn coordinator owns post-commit dispatch; provider work must not execute inside a SQLite transaction.
+
+### Decision and alternatives
+
+- Chosen: a dedicated `POST /v1/conversations/first-turn` composite command and one SQLite IMMEDIATE transaction. This keeps the existing empty Conversation create API's meaning stable and avoids a polymorphic response. It reuses existing aggregates, events, idempotency storage and v29 dispatch intent; no new table or migration is needed.
+- Chosen: the UI resolves the selected dropdown choice—including the visible Workspace default—to one exact AgentBinding ID before it journals/sends. The route requires that ID and storage rechecks same-Workspace, enabled and lead-eligible state. Sending only `null` and resolving the current default on every attempt was rejected: after a lost acknowledgement, a changed or removed default could alter the retry's admission inputs or prevent it from reaching exact receipt replay.
+- Chosen: version the existing private journal to v2 with an optional exact bounded first-turn body, preserving v1 create-only reads. The UI cache identity includes body and binding, not only title, so distinct first messages or selected bindings cannot share a replay identity.
+- Rejected: create-then-submit, because it leaves an empty Conversation and loses the first draft on restart; changing create into a polymorphic route, because it couples two operations behind an ambiguous response; adding a separate transcript table, because canonical Conversation messages already own the history; provider dispatch inside the transaction, because external process work cannot be rolled back atomically.
+- Recovery rule: exact replay after timeout/lost response/restart uses the same request ID, body and binding. A definitive typed pre-commit 4xx may clear the replay row while preserving the draft for correction under a new ID; timeout, transport failure, 5xx or malformed success retains it. The journal has private atomic replacement and explicit size bounds; content is not copied to logs/events.
+
+### Evidence boundary
+
+The implementation and exact commands are in `CURRENT-RUN.md`. Focused Rust/Node tests and a served route establish CODE/SERVED only. They do not establish OpenCode acceptance, a real authenticated account, packaged UI behavior, stop/retry/restart/recovery as a provider journey, or QUALIFIED Windows/Linux evidence. No ACP, OpenCode or rival-specific protocol behavior was inferred or modified by this design.
+
+## Existing-Conversation Send recovery review (2026-11-20, user-delegated direction)
+
+Source cross-check found a second Send lifecycle gap separate from New Chat first-send:
+`ConversationsPage.sendTurn` generated a new request key per click, appended a local fake USER
+row before commit, restored draft text on error without removing that row, and invoked a Tauri
+bridge that did not durably journal the request. The active private journal already owns the
+atomic replace, permissions, file identity, size bound and cross-process lock needed for
+pending Conversation commands, so T30 extends that store rather than creating a second one.
+
+The Operator route currently performs Resource availability checks before asking SQLite for
+the exact request receipt. That order can turn a committed request's replay into a refusal if
+the Resource is revoked after commit. Its early replay return is also gated on supervisor
+presence and excludes FAILED receipts. T30 moves exact receipt resolution ahead of mutable
+admission checks while retaining authenticated owner/Workspace/Conversation lookup, exact
+canonical-body conflict detection, and comparison of a supplied binding to the immutable
+`conversation.turn.created.v2` event. A missing receipt still enters the existing fresh
+admission checks and transaction. An exact receipt must return as stored and cannot reach
+AgentTurnCoordinator.
+
+The pending UI item is recovery state, not transcript truth. Only the durable Presentation
+snapshot can render a USER message. An ambiguous request stays pinned to its original key and
+body; editing or clearing it would create duplicate risk because a server commit may have
+occurred even when the client did not receive the receipt. This is recorded as revision 1.2
+IN_REVIEW and is user-delegated implementation direction, not owner ratification or provider
+qualification. No competing UI protocol or new database event/schema is introduced.
+
+### Implementation cross-check and refusal boundary
+
+The source path now writes this exact record through the existing v3 private journal before
+calling the mounted turn endpoint. Receipt replay returns the stored admission receipt, which
+usually remains `OPEN` even if the current turn later becomes terminal; the UI then refreshes
+the canonical Conversation projection instead of treating the immutable receipt as current
+lifecycle state. A supplied binding is checked against the immutable turn-created event. New
+admission still validates current Resources and binding inside its existing owner boundary.
+
+The bridge returns a closed structured `REFUSED` only for typed HTTP status/code pairs whose
+Operator paths are pre-commit: 400 `INVALID_ARGUMENT` or `INVALID_RESOURCE_REF`; 409
+`RESOURCE_STALE` or `CONVERSATION_TURN_IN_PROGRESS`; and 422 `INVALID_RESOURCE_REF`,
+`AGENT_UNAVAILABLE` or `AGENT_NOT_LEAD_ELIGIBLE`. It does not clear the journal. The UI must
+receive the structured result and explicitly acknowledge the exact row before restoring a
+draft for correction. A generic 4xx/5xx, malformed error body, transport error, malformed
+success receipt or failed acknowledgement plus failed journal re-read remains unresolved; the
+exact request stays available in the recovery notice/in-memory fallback for same-key retry.
+This allowlist is not provider behavior and does not create a client-side authority to infer
+whether arbitrary failures committed.
+
+Focused native-Windows source tests, their exact results and the remaining CODE/SERVED versus
+INTEGRATED/QUALIFIED boundary are recorded in `CURRENT-RUN.md` and the T30 task evidence.
 

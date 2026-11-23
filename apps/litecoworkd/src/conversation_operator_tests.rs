@@ -12,8 +12,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use storage_core::{
     AgentSessionStore, BlobPurpose, ConversationRecord, ConversationStore, ConversationTurnStore,
-    CreateConversationCommit, EventDraft, StoreError, WorkspaceCreateRequest,
-    conversation::request_payload_value,
+    CreateConversationCommit, EventDraft, ResourceRecord, ResourceRevisionRecord, StoreError,
+    WorkspaceCreateRequest, conversation::request_payload_value,
 };
 use storage_sqlite::{
     FileBlobStore, SqliteConfig, SqliteConversationStore, SqliteWorkspaceStore, WorkspaceBlobKey,
@@ -125,6 +125,80 @@ fn seed_conversation(
             },
         })
         .expect("Conversation, event, and receipt commit to SQLite");
+}
+
+fn seed_text_resource(
+    store: &SqliteWorkspaceStore,
+    workspace_id: &str,
+    resource_id: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let content = b"durable attached text";
+    let revision_id = format!("revision-{resource_id}");
+    let digest = format!("sha256:{:x}", Sha256::digest(content));
+    let timestamp = "2026-10-15T12:00:00.000000000Z";
+    store
+        .create_resource(
+            WorkspaceCreateRequest {
+                principal_id: OWNER.to_owned(),
+                request_id: format!("create-{resource_id}"),
+                request_payload: serde_json::json!({
+                    "operation": "resource.quick_import.v1",
+                    "workspace_id": workspace_id,
+                    "resource_id": resource_id,
+                    "content_digest": digest,
+                    "size_bytes": content.len()
+                }),
+            },
+            ResourceRecord {
+                resource_id: resource_id.to_owned(),
+                workspace_id: workspace_id.to_owned(),
+                kind: "FILE".to_owned(),
+                provider_identity: serde_json::json!({}),
+                identity_digest: None,
+                display_name: "attached.txt".to_owned(),
+                current_revision_id: Some(revision_id.clone()),
+                sensitivity: "PERSONAL".to_owned(),
+                provenance: serde_json::json!({"source_inputs": [], "transformations": [], "tool_reports": []}),
+                created_at: timestamp.to_owned(),
+                updated_at: timestamp.to_owned(),
+                version: 1,
+            },
+            ResourceRevisionRecord {
+                resource_revision_id: revision_id.clone(),
+                resource_id: resource_id.to_owned(),
+                parent_revision_ids: Vec::new(),
+                provider_revision: None,
+                content_digest: Some(digest),
+                size_bytes: Some(content.len() as u64),
+                media_type: Some("text/plain".to_owned()),
+                observed_at: timestamp.to_owned(),
+                created_by: serde_json::json!({"kind": "USER", "principal_id": OWNER}),
+            },
+            EventDraft {
+                event_id: format!("event-{resource_id}"),
+                workspace_id: workspace_id.to_owned(),
+                entity_type: "Resource".to_owned(),
+                entity_id: resource_id.to_owned(),
+                origin_runtime_id: RUNTIME.to_owned(),
+                entity_revision: 1,
+                hlc_timestamp: timestamp.to_owned(),
+                correlation_id: format!("event-{resource_id}"),
+                causation_id: None,
+                schema_version: 1,
+                event_type: "resource.created.v1".to_owned(),
+                payload: serde_json::json!({
+                    "resource_id": resource_id,
+                    "workspace_id": workspace_id,
+                    "kind": "FILE",
+                    "aggregate_version": 1
+                }),
+                recorded_at: timestamp.to_owned(),
+            },
+            content.to_vec(),
+        )
+        .expect("text Resource commits for send-replay coverage");
+    revision_id
 }
 
 async fn list_page(router: &Router, workspace_id: &str, cursor: Option<&str>) -> Response {
@@ -646,7 +720,7 @@ async fn conversation_create_retry_replays_the_committed_identity_without_duplic
     )
     .expect("real temporary SQLite store opens");
     create_workspace(&store, WORKSPACE_A, "create-replay");
-    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
     let request_id = "conversation-create-replay-request-1";
 
     // Model a lost acknowledgement: the exact same durable request is sent again
@@ -688,6 +762,242 @@ async fn conversation_create_retry_replays_the_committed_identity_without_duplic
 }
 
 #[tokio::test]
+async fn new_chat_first_send_commits_and_replays_conversation_and_turn_atomically() {
+    let directory = tempfile::tempdir().expect("temporary first-send directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private first-send directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "first-send");
+    seed_agent_binding(&database, WORKSPACE_A, "first-send-binding", true, true);
+    seed_agent_binding(
+        &database,
+        WORKSPACE_A,
+        "first-send-disabled-binding",
+        false,
+        true,
+    );
+    set_workspace_default_agent(&database, WORKSPACE_A, "first-send-binding");
+    let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
+    let request_id = "conversation-first-send-request-1";
+    let body = serde_json::json!({
+        "workspace_id": WORKSPACE_A,
+        "title": "Plan a quiet weekend.",
+        "content": [{"kind":"TEXT","text":"Plan a quiet weekend."}],
+        "resource_refs": [],
+        "agent_binding_id": "first-send-binding",
+        "presentation_preference": "RICH"
+    });
+    let send = |body: serde_json::Value| {
+        let router = router.clone();
+        async move {
+            let mut request = Request::post("/v1/conversations/first-turn")
+                .header("x-workspace-id", WORKSPACE_A)
+                .header("idempotency-key", request_id)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("first-send request is valid");
+            request.extensions_mut().insert(AuthenticatedLocalPeer);
+            router
+                .oneshot(request)
+                .await
+                .expect("first-send route responds")
+        }
+    };
+    let counts = || {
+        let connection =
+            rusqlite::Connection::open(&database).expect("inspect first-send transaction");
+        connection.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM conversations WHERE workspace_id=?1),
+                (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id IN (SELECT conversation_id FROM conversations WHERE workspace_id=?1)),
+                (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id IN (SELECT conversation_id FROM conversations WHERE workspace_id=?1)),
+                (SELECT COUNT(*) FROM request_dedup WHERE principal_id=?2 AND request_id=?3),
+                (SELECT COUNT(*) FROM conversation_dispatch_intents WHERE conversation_id IN (SELECT conversation_id FROM conversations WHERE workspace_id=?1)),
+                (SELECT COUNT(*) FROM domain_events WHERE workspace_id=?1 AND type IN ('conversation.created.v1','conversation.message.added.v1','conversation.turn.created.v2'))",
+            rusqlite::params![WORKSPACE_A, OWNER, request_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?)),
+        ).expect("read atomic first-send record counts")
+    };
+    let receipt_json = || {
+        rusqlite::Connection::open(&database)
+            .expect("inspect first-send receipt")
+            .query_row(
+                "SELECT response_json FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+                rusqlite::params![OWNER, request_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("read durable first-send receipt")
+    };
+
+    let foreign_owner_router = test_router(
+        store.clone(),
+        "first-send-foreign-owner".to_owned(),
+        RUNTIME.to_owned(),
+    );
+    let mut foreign_owner_request = Request::post("/v1/conversations/first-turn")
+        .header("x-workspace-id", WORKSPACE_A)
+        .header("idempotency-key", request_id)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("foreign-owner first-send request is valid");
+    foreign_owner_request
+        .extensions_mut()
+        .insert(AuthenticatedLocalPeer);
+    assert_eq!(
+        foreign_owner_router
+            .oneshot(foreign_owner_request)
+            .await
+            .expect("foreign-owner first-send route responds")
+            .status(),
+        StatusCode::FORBIDDEN,
+        "another principal cannot create the Conversation"
+    );
+    assert_eq!(counts(), (0, 0, 0, 0, 0, 0));
+
+    let workspace_mismatch = send(serde_json::json!({
+        "workspace_id": WORKSPACE_B,
+        "title": "Plan a quiet weekend.",
+        "content": [{"kind":"TEXT","text":"Plan a quiet weekend."}],
+        "resource_refs": [],
+        "agent_binding_id": "first-send-binding",
+        "presentation_preference": "RICH"
+    }))
+    .await;
+    assert_eq!(workspace_mismatch.status(), StatusCode::FORBIDDEN);
+    assert_eq!(counts(), (0, 0, 0, 0, 0, 0));
+
+    let missing_resource = send(serde_json::json!({
+        "workspace_id": WORKSPACE_A,
+        "title": "Plan a quiet weekend.",
+        "content": [{"kind":"TEXT","text":"Plan a quiet weekend."}],
+        "resource_refs": [{
+            "workspace_id": WORKSPACE_A,
+            "resource_id": "missing-first-send-resource",
+            "revision_id": "missing-first-send-revision"
+        }],
+        "agent_binding_id": "first-send-binding",
+        "presentation_preference": "RICH"
+    }))
+    .await;
+    let (missing_resource_status, missing_resource_body) =
+        read_operator_error(missing_resource).await;
+    assert_eq!(missing_resource_status, StatusCode::NOT_FOUND);
+    assert_eq!(missing_resource_body["code"], "NOT_FOUND");
+    assert_eq!(counts(), (0, 0, 0, 0, 0, 0));
+
+    // A definitive pre-commit refusal leaves the exact request key unused, allowing
+    // correction and retry without a partial Conversation, message, turn or receipt.
+    let (rejected_status, rejected_body) = read_operator_error(
+        send(serde_json::json!({
+            "workspace_id": WORKSPACE_A,
+            "title": "Plan a quiet weekend.",
+            "content": [{"kind":"TEXT","text":"Plan a quiet weekend."}],
+            "resource_refs": [],
+            "agent_binding_id": "first-send-disabled-binding",
+            "presentation_preference": "RICH"
+        }))
+        .await,
+    )
+    .await;
+    assert_eq!(rejected_status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(rejected_body["code"], "AGENT_UNAVAILABLE");
+    assert_eq!(counts(), (0, 0, 0, 0, 0, 0));
+
+    // The test router intentionally has no native supervisor. A successful atomic
+    // admission is therefore followed by the existing typed unavailable settlement.
+    let first = send(body.clone()).await;
+    let first_status = first.status();
+    let first_body = to_bytes(first.into_body(), 8192)
+        .await
+        .expect("read first-send response");
+    assert_eq!(
+        first_status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "first-send response body: {}",
+        String::from_utf8_lossy(&first_body)
+    );
+    assert_eq!(counts(), (1, 1, 1, 1, 1, 3));
+    let admitted_receipt_json = receipt_json();
+    let admitted_receipt: serde_json::Value =
+        serde_json::from_str(&admitted_receipt_json).expect("admission receipt is valid JSON");
+    assert_eq!(admitted_receipt["conversation"]["version"], 2);
+    assert_eq!(admitted_receipt["events"].as_array().map(Vec::len), Some(3));
+
+    drop(router);
+    drop(store);
+    let restarted_store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("reopen the durable first-send database after Runtime restart");
+    let router = test_router(restarted_store, OWNER.to_owned(), RUNTIME.to_owned());
+    let send = |body: serde_json::Value| {
+        let router = router.clone();
+        async move {
+            let mut request = Request::post("/v1/conversations/first-turn")
+                .header("x-workspace-id", WORKSPACE_A)
+                .header("idempotency-key", request_id)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("first-send retry request is valid");
+            request.extensions_mut().insert(AuthenticatedLocalPeer);
+            router
+                .oneshot(request)
+                .await
+                .expect("first-send retry route responds")
+        }
+    };
+    let replay = send(body.clone()).await;
+    assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        counts(),
+        (1, 1, 1, 1, 1, 3),
+        "exact retry must not duplicate durable create or turn records"
+    );
+    assert_eq!(
+        receipt_json(),
+        admitted_receipt_json,
+        "restart replay preserves the exact original composite receipt"
+    );
+
+    let conflict = send(serde_json::json!({
+        "workspace_id": WORKSPACE_A,
+        "title": "Plan a quiet weekend.",
+        "content": [{"kind":"TEXT","text":"Different text under the same key."}],
+        "resource_refs": [],
+        "agent_binding_id": "first-send-binding",
+        "presentation_preference": "RICH"
+    }))
+    .await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        counts(),
+        (1, 1, 1, 1, 1, 3),
+        "changed payload must not write partial or duplicate rows"
+    );
+}
+
+#[tokio::test]
 async fn concurrent_conversation_create_retries_commit_only_one_identity() {
     let directory = tempfile::tempdir().expect("temporary concurrent Conversation directory");
     #[cfg(unix)]
@@ -706,7 +1016,7 @@ async fn concurrent_conversation_create_retries_commit_only_one_identity() {
     )
     .expect("real temporary SQLite store opens");
     create_workspace(&store, WORKSPACE_A, "create-race");
-    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
     let request_id = "conversation-create-race-request-1";
 
     // Both callers may be retries after a lost acknowledgement. Their generated
@@ -1039,14 +1349,34 @@ async fn conversation_turn_submit_commits_durably_then_settles_unavailable_and_r
         .expect("remove current Conversation binding after the original commit");
     drop(connection);
 
-    // Exact replay resolves the committed receipt, writes nothing, and reports the same
-    // unavailable outcome.
+    // Exact replay resolves the original admission receipt before mutable binding checks
+    // and never retries failed setup or starts another dispatch.
     let replay =
         submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, BODY).await;
-    assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(replay.headers()["cache-control"], "no-store");
-    let (_, replay_error) = read_operator_error(replay).await;
-    assert_eq!(replay_error["code"], "DEPENDENCY_UNAVAILABLE");
+    assert_eq!(replay.status(), StatusCode::ACCEPTED);
+    let replay_bytes = to_bytes(replay.into_body(), 64 * 1024)
+        .await
+        .expect("read exact replay receipt");
+    let replay_receipt: ConversationTurnReceipt =
+        serde_json::from_slice(&replay_bytes).expect("parse exact admission receipt");
+    assert_eq!(replay_receipt.conversation_id, conversation_id);
+    assert_eq!(replay_receipt.turn_id, turn_id);
+    assert_eq!(replay_receipt.user_message_id, user_message_id);
+    assert_eq!(replay_receipt.status, ConversationTurnStatus::Open);
+
+    let changed_binding = r#"{"content":[{"kind":"TEXT","text":"Please summarize this project."}],"resource_refs":[],"agent_binding_id":"different-binding","presentation_preference":"SIMPLE"}"#;
+    let binding_conflict = submit_turn_body_with_key(
+        &router,
+        WORKSPACE_A,
+        conversation_id,
+        request_id,
+        changed_binding,
+    )
+    .await;
+    assert_eq!(binding_conflict.status(), StatusCode::CONFLICT);
+    let (_, binding_conflict_error) = read_operator_error(binding_conflict).await;
+    assert_eq!(binding_conflict_error["code"], "IDEMPOTENCY_CONFLICT");
+
     let connection = rusqlite::Connection::open(&database).expect("inspect storage after replay");
     let (messages, turns, receipts, turn_events, settlements): (i64, i64, i64, i64, i64) =
         connection
@@ -1097,6 +1427,135 @@ async fn conversation_turn_submit_commits_durably_then_settles_unavailable_and_r
         )
         .expect("read counts after changed-payload conflict");
     assert_eq!((messages, turns, receipts), (1, 1, 1));
+}
+
+#[tokio::test]
+async fn existing_turn_exact_replay_precedes_resource_revocation_and_binding_drift() {
+    let directory = tempfile::tempdir().expect("temporary send replay directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private send replay directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-resource-replay");
+    let conversation_id = "a06-conversation-resource-replay";
+    let resource_id = "a06-send-resource";
+    let binding_id = "a06-send-binding";
+    let revision_id = seed_text_resource(&store, WORKSPACE_A, resource_id);
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        conversation_id,
+        "Resource replay",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    bind_conversation_agent(&database, WORKSPACE_A, conversation_id, binding_id);
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let request_id = "conversation-resource-replay-request";
+    let body = serde_json::json!({
+        "content": [{"kind": "TEXT", "text": "Summarize the attached file."}],
+        "resource_refs": [{
+            "workspace_id": WORKSPACE_A,
+            "resource_id": resource_id,
+            "revision_id": revision_id
+        }],
+        "agent_binding_id": binding_id,
+        "presentation_preference": "RICH"
+    })
+    .to_string();
+
+    let first =
+        submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, &body).await;
+    assert_eq!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let (_, first_error) = read_operator_error(first).await;
+    assert_eq!(first_error["code"], "DEPENDENCY_UNAVAILABLE");
+
+    let connection = rusqlite::Connection::open(&database).expect("open send replay database");
+    connection
+        .execute(
+            "UPDATE resources SET sensitivity='RESTRICTED' WHERE workspace_id=?1 AND resource_id=?2",
+            rusqlite::params![WORKSPACE_A, resource_id],
+        )
+        .expect("revoke Resource for new admission");
+    connection
+        .execute(
+            "UPDATE conversations SET active_agent_binding_id=NULL WHERE conversation_id=?1",
+            [conversation_id],
+        )
+        .expect("change current Conversation binding after original admission");
+    drop(connection);
+
+    let replay =
+        submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, &body).await;
+    assert_eq!(replay.status(), StatusCode::ACCEPTED);
+    let replay_bytes = to_bytes(replay.into_body(), 64 * 1024)
+        .await
+        .expect("read replay receipt");
+    let replay_receipt: ConversationTurnReceipt =
+        serde_json::from_slice(&replay_bytes).expect("parse original admission receipt");
+    assert_eq!(replay_receipt.status, ConversationTurnStatus::Open);
+
+    let changed_binding = serde_json::json!({
+        "content": [{"kind": "TEXT", "text": "Summarize the attached file."}],
+        "resource_refs": [{
+            "workspace_id": WORKSPACE_A,
+            "resource_id": resource_id,
+            "revision_id": revision_id
+        }],
+        "agent_binding_id": "different-binding",
+        "presentation_preference": "RICH"
+    })
+    .to_string();
+    let conflict = submit_turn_body_with_key(
+        &router,
+        WORKSPACE_A,
+        conversation_id,
+        request_id,
+        &changed_binding,
+    )
+    .await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    let (_, conflict_error) = read_operator_error(conflict).await;
+    assert_eq!(conflict_error["code"], "IDEMPOTENCY_CONFLICT");
+
+    let fresh = submit_turn_body_with_key(
+        &router,
+        WORKSPACE_A,
+        conversation_id,
+        "conversation-resource-replay-fresh-request",
+        &body,
+    )
+    .await;
+    assert_eq!(fresh.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, fresh_error) = read_operator_error(fresh).await;
+    assert_eq!(fresh_error["code"], "INVALID_RESOURCE_REF");
+
+    let connection = rusqlite::Connection::open(&database).expect("inspect persisted turn");
+    let (messages, turns, turn_events): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id=?1),
+               (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id=?1),
+               (SELECT COUNT(*) FROM domain_events
+                WHERE entity_type='ConversationTurn'
+                  AND entity_id=(SELECT turn_id FROM conversation_turns WHERE conversation_id=?1)
+                  AND type='conversation.turn.created.v2')",
+            [conversation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read original committed records");
+    assert_eq!((messages, turns, turn_events), (1, 1, 1));
 }
 
 #[tokio::test]

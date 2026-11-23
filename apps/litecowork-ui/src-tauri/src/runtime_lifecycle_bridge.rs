@@ -249,7 +249,9 @@ struct RuntimeStopPreviewWire {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum UpdateQuiescenceView {
     PositiveQuiescence,
-    NotQuiescent { reasons: Vec<UpdateQuiescenceReason> },
+    NotQuiescent {
+        reasons: Vec<UpdateQuiescenceReason>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -285,9 +287,11 @@ pub(crate) async fn get_runtime_stop_preview(
     runtime_id: String,
     incarnation_id: String,
 ) -> Result<RuntimeStopPreviewView, String> {
-    tauri::async_runtime::spawn_blocking(move || fetch_stop_preview(&app, &runtime_id, &incarnation_id))
-        .await
-        .map_err(|_| "Runtime stop preview request did not complete".to_owned())?
+    tauri::async_runtime::spawn_blocking(move || {
+        fetch_stop_preview(&app, &runtime_id, &incarnation_id)
+    })
+    .await
+    .map_err(|_| "Runtime stop preview request did not complete".to_owned())?
 }
 
 /// Feature 019 `install_update` calls this before any download-to-install step.
@@ -385,7 +389,9 @@ fn decode_runtime_stop_preview(
                 || blocker.blocker_id.len() > 256
                 || !matches!(
                     blocker.code.as_str(),
-                    "RUNTIME_STOP_BLOCKED" | "RUNTIME_STOP_UNSETTLED" | "RUNTIME_QUIESCENCE_UNKNOWN"
+                    "RUNTIME_STOP_BLOCKED"
+                        | "RUNTIME_STOP_UNSETTLED"
+                        | "RUNTIME_QUIESCENCE_UNKNOWN"
                 )
                 || blocker.safe_message.trim().is_empty()
                 || blocker.safe_message.len() > 1024

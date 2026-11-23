@@ -1,8 +1,8 @@
 feature_id: "019"
 name: "Release Engineering and V1 Qualification"
 status: "IN_REVIEW"
-spec_revision: "0.1"
-notes: "All edges are TARGET unless marked CODE. Nothing here is served or qualified. CI files are added via pull request only."
+spec_revision: "0.2"
+notes: "All edges are TARGET unless marked CODE. T24 is USER-DELEGATED implementation direction, not whole-SPEC owner acceptance. The row matrix/bundler are CODE only; no release journey is QUALIFIED. CI files are added via pull request only."
 nodes:
   - id: "pull-request"
     owner: "Contributor"
@@ -109,15 +109,15 @@ nodes:
   - id: "matrix-generator"
     owner: "QA"
     kind: "script"
-    responsibility: "scripts/v1_platform_matrix.py with declared rows; NOT_COUNTED detection; per E2E cells"
-    implementation_status: "CODE for host probes; rows and E2E cells TARGET"
+    responsibility: "scripts/v1_platform_matrix.py with declared rows; NOT_COUNTED detection; adopted E2E-01..E2E-12 and E2E-14..E2E-17 cells; strict row tuple matching for OS/build, arch, agent/version, auth mode, protocol, packaging and clean checkout"
+    implementation_status: "CODE under T14/T24; native journey evidence and USER qualification remain absent"
     inputs: ["release-host probes", "bundle index"]
     outputs: ["QUALIFICATION-MATRIX.md/json"]
   - id: "evidence-bundler"
     owner: "QA"
     kind: "script"
     responsibility: "scripts/v1_evidence_bundle.py assembles, validates and secret-scans bundles"
-    implementation_status: "TARGET_ONLY"
+    implementation_status: "CODE under T15/T24; no real release journey bundle is recorded"
     inputs: ["SYSTEM traces", "USER artifacts", "CODE outputs"]
     outputs: ["bundle digest", "index entry"]
   - id: "release-gate"

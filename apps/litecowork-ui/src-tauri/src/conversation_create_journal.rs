@@ -14,9 +14,12 @@ use std::{
 const JOURNAL_DIRECTORY: &str = "conversation-create-recovery";
 const JOURNAL_FILENAME: &str = "pending.v1.json";
 const JOURNAL_LOCK_FILENAME: &str = "pending.v1.lock";
-const JOURNAL_VERSION: u32 = 1;
+const JOURNAL_VERSION: u32 = 3;
 const MAX_PENDING_CREATES: usize = 64;
-const MAX_JOURNAL_BYTES: usize = 128 * 1024;
+const MAX_JOURNAL_BYTES: usize = 4 * 1024 * 1024;
+const MAX_FIRST_TURN_BYTES: usize = 2 * 1024 * 1024;
+const MAX_PENDING_SEND_BYTES: usize = 2 * 1024 * 1024;
+const MAX_PENDING_SEND_RESOURCE_REFS: usize = 16;
 const MAX_WORKSPACE_ID_BYTES: usize = 256;
 const MAX_REQUEST_ID_BYTES: usize = 200;
 const MAX_TITLE_CHARS: usize = 160;
@@ -32,6 +35,22 @@ pub(super) struct PendingConversationCreate {
     #[serde(deserialize_with = "deserialize_required_title")]
     pub(super) title: Option<String>,
     pub(super) request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) first_turn: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct PendingConversationSend {
+    pub(super) workspace_id: String,
+    pub(super) conversation_id: String,
+    pub(super) request_id: String,
+    pub(super) content: serde_json::Value,
+    pub(super) resource_refs: serde_json::Value,
+    pub(super) agent_binding_id: Option<String>,
+    pub(super) presentation_preference: Option<String>,
+    #[serde(default)]
+    pub(super) attachment_labels: Vec<String>,
 }
 
 fn deserialize_required_title<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -46,6 +65,8 @@ where
 struct JournalDocument {
     version: u32,
     entries: Vec<PendingConversationCreate>,
+    #[serde(default)]
+    sends: Vec<PendingConversationSend>,
 }
 
 pub(super) struct ConversationCreateJournal {
@@ -69,12 +90,18 @@ impl ConversationCreateJournal {
         self.read_entries()
     }
 
+    pub(super) fn list_sends(&self) -> Result<Vec<PendingConversationSend>, String> {
+        let _guard = self.acquire_lock()?;
+        Ok(self.read_document()?.sends)
+    }
+
     pub(super) fn record(&self, entry: PendingConversationCreate) -> Result<(), String> {
         validate_entry(&entry)?;
         let _guard = self.acquire_lock()?;
-        let mut entries = self.read_entries()?;
+        let mut document = self.read_document()?;
 
-        if let Some(existing) = entries
+        if let Some(existing) = document
+            .entries
             .iter()
             .find(|existing| existing.request_id == entry.request_id)
         {
@@ -86,20 +113,66 @@ impl ConversationCreateJournal {
                     .to_owned(),
             );
         }
-        if entries.iter().any(|existing| {
-            existing.workspace_id == entry.workspace_id && existing.title == entry.title
-        }) {
+        if document
+            .entries
+            .iter()
+            .any(|existing| command_signature(existing) == command_signature(&entry))
+        {
             return Err(
                 "An exact Conversation creation is already awaiting confirmation".to_owned(),
             );
         }
-        if entries.len() >= MAX_PENDING_CREATES {
+        if document.entries.len() + document.sends.len() >= MAX_PENDING_CREATES {
             return Err(
                 "Resolve a pending Conversation creation before starting another".to_owned(),
             );
         }
-        entries.push(entry);
-        self.write_entries(&entries)
+        document.entries.push(entry);
+        self.write_document(&document)
+    }
+
+    pub(super) fn record_send(&self, send: PendingConversationSend) -> Result<(), String> {
+        validate_send(&send)?;
+        let _guard = self.acquire_lock()?;
+        let mut document = self.read_document()?;
+        if let Some(existing) = document
+            .sends
+            .iter()
+            .find(|existing| existing.request_id == send.request_id)
+        {
+            if existing == &send {
+                return Ok(());
+            }
+            return Err(
+                "Conversation request identity is already pending with different content"
+                    .to_owned(),
+            );
+        }
+        if document
+            .entries
+            .iter()
+            .any(|entry| entry.request_id == send.request_id)
+        {
+            return Err(
+                "Conversation request identity is already pending with different content"
+                    .to_owned(),
+            );
+        }
+        if document.sends.iter().any(|existing| {
+            existing.workspace_id == send.workspace_id
+                && existing.conversation_id == send.conversation_id
+        }) {
+            return Err(
+                "Resolve the pending send for this Conversation before sending another".to_owned(),
+            );
+        }
+        if document.entries.len() + document.sends.len() >= MAX_PENDING_CREATES {
+            return Err(
+                "Resolve a pending Conversation request before starting another".to_owned(),
+            );
+        }
+        document.sends.push(send);
+        self.write_document(&document)
     }
 
     pub(super) fn acknowledge(&self, workspace_id: &str, request_id: &str) -> Result<(), String> {
@@ -107,8 +180,9 @@ impl ConversationCreateJournal {
             return Err("Conversation acknowledgement is invalid".to_owned());
         }
         let _guard = self.acquire_lock()?;
-        let mut entries = self.read_entries()?;
-        let Some(position) = entries
+        let mut document = self.read_document()?;
+        let Some(position) = document
+            .entries
             .iter()
             .position(|entry| entry.workspace_id == workspace_id && entry.request_id == request_id)
         else {
@@ -116,16 +190,51 @@ impl ConversationCreateJournal {
             // acknowledgement cannot remove another pending command.
             return Ok(());
         };
-        entries.remove(position);
-        self.write_entries(&entries)
+        document.entries.remove(position);
+        self.write_document(&document)
+    }
+
+    pub(super) fn acknowledge_send(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        request_id: &str,
+    ) -> Result<(), String> {
+        if !valid_workspace_id(workspace_id)
+            || !valid_workspace_id(conversation_id)
+            || !valid_request_id(request_id)
+        {
+            return Err("Conversation acknowledgement is invalid".to_owned());
+        }
+        let _guard = self.acquire_lock()?;
+        let mut document = self.read_document()?;
+        let Some(position) = document.sends.iter().position(|send| {
+            send.workspace_id == workspace_id
+                && send.conversation_id == conversation_id
+                && send.request_id == request_id
+        }) else {
+            return Ok(());
+        };
+        document.sends.remove(position);
+        self.write_document(&document)
     }
 
     fn read_entries(&self) -> Result<Vec<PendingConversationCreate>, String> {
+        Ok(self.read_document()?.entries)
+    }
+
+    fn read_document(&self) -> Result<JournalDocument, String> {
         let directory = self.ensure_directory()?;
         let path = directory.join(JOURNAL_FILENAME);
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(JournalDocument {
+                    version: JOURNAL_VERSION,
+                    entries: Vec::new(),
+                    sends: Vec::new(),
+                });
+            }
             Err(_) => return Err("Conversation recovery storage could not be read".to_owned()),
         };
         validate_journal_file_metadata(&metadata, &directory)?;
@@ -151,20 +260,15 @@ impl ConversationCreateJournal {
         let document: JournalDocument = serde_json::from_slice(&bytes)
             .map_err(|_| "Conversation recovery storage is corrupt".to_owned())?;
         validate_document(&document)?;
-        Ok(document.entries)
+        Ok(document)
     }
 
-    fn write_entries(&self, entries: &[PendingConversationCreate]) -> Result<(), String> {
-        if entries.len() > MAX_PENDING_CREATES {
-            return Err("Conversation recovery storage exceeds its entry limit".to_owned());
-        }
-        for entry in entries {
-            validate_entry(entry)?;
-        }
-        validate_unique_entries(entries)?;
+    fn write_document(&self, document: &JournalDocument) -> Result<(), String> {
+        validate_document(document)?;
         let document = JournalDocument {
             version: JOURNAL_VERSION,
-            entries: entries.to_vec(),
+            entries: document.entries.clone(),
+            sends: document.sends.clone(),
         };
         let bytes = serde_json::to_vec(&document)
             .map_err(|_| "Conversation recovery storage could not be encoded".to_owned())?;
@@ -211,13 +315,146 @@ impl ConversationCreateJournal {
 }
 
 fn validate_document(document: &JournalDocument) -> Result<(), String> {
-    if document.version != JOURNAL_VERSION || document.entries.len() > MAX_PENDING_CREATES {
+    // v1 held create-only requests, v2 added exact first-turn bodies, and v3 adds
+    // existing-Conversation sends. Missing v3 sends deserialize as an empty list.
+    if !matches!(document.version, 1 | 2 | JOURNAL_VERSION)
+        || document.entries.len() + document.sends.len() > MAX_PENDING_CREATES
+    {
         return Err("Conversation recovery storage has an unsupported version or size".to_owned());
     }
     for entry in &document.entries {
         validate_entry(entry)?;
     }
+    for send in &document.sends {
+        validate_send(send)?;
+    }
+    let mut request_ids = document
+        .entries
+        .iter()
+        .map(|entry| entry.request_id.as_str())
+        .collect::<HashSet<_>>();
+    let mut conversations = HashSet::with_capacity(document.sends.len());
+    for send in &document.sends {
+        if !request_ids.insert(send.request_id.as_str())
+            || !conversations.insert((send.workspace_id.as_str(), send.conversation_id.as_str()))
+        {
+            return Err(
+                "Conversation recovery storage contains duplicate pending requests".to_owned(),
+            );
+        }
+    }
     validate_unique_entries(&document.entries)
+}
+
+fn validate_send(send: &PendingConversationSend) -> Result<(), String> {
+    let content_valid = valid_send_content(&send.content, &send.workspace_id);
+    let refs_valid = valid_send_resource_refs(&send.resource_refs, &send.workspace_id);
+    let resource_ref_count = send.resource_refs.as_array().map(Vec::len);
+    let encoded_size_ok = serde_json::to_vec(&(
+        &send.content,
+        &send.resource_refs,
+        &send.agent_binding_id,
+        &send.presentation_preference,
+        &send.attachment_labels,
+    ))
+    .map_or(false, |bytes| bytes.len() <= MAX_PENDING_SEND_BYTES);
+    if !valid_workspace_id(&send.workspace_id)
+        || !valid_workspace_id(&send.conversation_id)
+        || !valid_request_id(&send.request_id)
+        || !content_valid
+        || !refs_valid
+        || resource_ref_count != Some(send.attachment_labels.len())
+        || send
+            .agent_binding_id
+            .as_ref()
+            .is_some_and(|binding| !valid_workspace_id(binding))
+        || send
+            .presentation_preference
+            .as_ref()
+            .is_some_and(|value| !matches!(value.as_str(), "AUTO" | "SIMPLE" | "RICH"))
+        || send.attachment_labels.len() > 256
+        || send
+            .attachment_labels
+            .iter()
+            .any(|label| label.chars().count() > 256 || label.chars().any(char::is_control))
+        || !encoded_size_ok
+    {
+        return Err("Conversation send recovery entry is invalid".to_owned());
+    }
+    Ok(())
+}
+
+fn valid_send_content(content: &serde_json::Value, workspace_id: &str) -> bool {
+    let Some(blocks) = content.as_array() else {
+        return false;
+    };
+    if blocks.is_empty() || blocks.len() > 256 {
+        return false;
+    }
+    let mut total_text_bytes = 0_usize;
+    for block in blocks {
+        let Some(object) = block.as_object() else {
+            return false;
+        };
+        match block.get("kind").and_then(serde_json::Value::as_str) {
+            Some("TEXT") if object.len() == 2 && object.contains_key("text") => {
+                let Some(text) = block.get("text").and_then(serde_json::Value::as_str) else {
+                    return false;
+                };
+                let Some(next_size) = total_text_bytes.checked_add(text.len()) else {
+                    return false;
+                };
+                total_text_bytes = next_size;
+                if total_text_bytes > 1024 * 1024 {
+                    return false;
+                }
+            }
+            Some("RESOURCE")
+                if object.keys().all(|key| {
+                    ["kind", "resource_ref", "display_name"].contains(&key.as_str())
+                }) && object.contains_key("resource_ref")
+                    && block.get("resource_ref").is_some_and(|reference| {
+                        valid_send_resource_ref(reference, workspace_id)
+                    })
+                    && block.get("display_name").is_none_or(|value| {
+                        value.is_null()
+                            || value.as_str().is_some_and(|name| {
+                                name.chars().count() <= 512 && !name.chars().any(char::is_control)
+                            })
+                    }) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn valid_send_resource_refs(refs: &serde_json::Value, workspace_id: &str) -> bool {
+    refs.as_array().is_some_and(|refs| {
+        refs.len() <= MAX_PENDING_SEND_RESOURCE_REFS
+            && refs
+                .iter()
+                .all(|reference| valid_send_resource_ref(reference, workspace_id))
+    })
+}
+
+fn valid_send_resource_ref(reference: &serde_json::Value, workspace_id: &str) -> bool {
+    let Some(object) = reference.as_object() else {
+        return false;
+    };
+    object
+        .keys()
+        .all(|key| ["workspace_id", "resource_id", "revision_id"].contains(&key.as_str()))
+        && reference
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|id| id == workspace_id && valid_workspace_id(id))
+        && reference
+            .get("resource_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(valid_workspace_id)
+        && reference
+            .get("revision_id")
+            .is_none_or(|value| value.is_null() || value.as_str().is_some_and(valid_workspace_id))
 }
 
 fn validate_unique_entries(entries: &[PendingConversationCreate]) -> Result<(), String> {
@@ -225,7 +462,7 @@ fn validate_unique_entries(entries: &[PendingConversationCreate]) -> Result<(), 
     let mut command_signatures = HashSet::with_capacity(entries.len());
     for entry in entries {
         if !request_ids.insert(entry.request_id.as_str())
-            || !command_signatures.insert((entry.workspace_id.as_str(), entry.title.as_deref()))
+            || !command_signatures.insert(command_signature(entry))
         {
             return Err(
                 "Conversation recovery storage contains duplicate pending requests".to_owned(),
@@ -244,10 +481,122 @@ fn validate_entry(entry: &PendingConversationCreate) -> Result<(), String> {
                 || title.chars().count() > MAX_TITLE_CHARS
                 || title.chars().any(char::is_control)
         })
+        || entry
+            .first_turn
+            .as_ref()
+            .is_some_and(|turn| !valid_first_turn(turn, &entry.workspace_id))
     {
         return Err("Conversation creation recovery entry is invalid".to_owned());
     }
     Ok(())
+}
+
+fn command_signature(entry: &PendingConversationCreate) -> String {
+    serde_json::to_string(&(&entry.workspace_id, &entry.title, &entry.first_turn))
+        .unwrap_or_else(|_| String::new())
+}
+
+fn valid_first_turn(turn: &serde_json::Value, workspace_id: &str) -> bool {
+    let Some(object) = turn.as_object() else {
+        return false;
+    };
+    if object.len() != 4
+        || !object.contains_key("content")
+        || !object.contains_key("resourceRefs")
+        || !object.contains_key("agentBindingId")
+        || !object.contains_key("presentationPreference")
+    {
+        return false;
+    }
+    let Some(content) = turn.get("content").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    let Some(resource_refs) = turn
+        .get("resourceRefs")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    if content.is_empty() || content.len() > 256 || resource_refs.len() > 256 {
+        return false;
+    }
+    if !turn
+        .get("agentBindingId")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(valid_workspace_id)
+    {
+        return false;
+    }
+    if !matches!(
+        turn.get("presentationPreference")
+            .and_then(serde_json::Value::as_str),
+        Some("AUTO" | "SIMPLE" | "RICH")
+    ) {
+        return false;
+    }
+    if resource_refs
+        .iter()
+        .any(|reference| !valid_first_turn_ref(reference, workspace_id))
+    {
+        return false;
+    }
+    for block in content {
+        let Some(kind) = block.get("kind").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        match kind {
+            "TEXT" => {
+                let Some(text) = block.get("text").and_then(serde_json::Value::as_str) else {
+                    return false;
+                };
+                if block.as_object().is_none_or(|value| value.len() != 2) || text.len() > 256 * 1024
+                {
+                    return false;
+                }
+            }
+            "RESOURCE" => {
+                let Some(reference) = block.get("resourceRef") else {
+                    return false;
+                };
+                if !valid_first_turn_ref(reference, workspace_id) {
+                    return false;
+                }
+                if block
+                    .as_object()
+                    .is_none_or(|value| value.len() != 2 && value.len() != 3)
+                {
+                    return false;
+                }
+                if block.get("displayName").is_some_and(|name| {
+                    !name.is_null() && name.as_str().is_none_or(|value| value.len() > 1024)
+                }) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    serde_json::to_vec(turn).is_ok_and(|bytes| bytes.len() <= MAX_FIRST_TURN_BYTES)
+}
+
+fn valid_first_turn_ref(reference: &serde_json::Value, workspace_id: &str) -> bool {
+    let Some(object) = reference.as_object() else {
+        return false;
+    };
+    if object.len() != 2 && object.len() != 3 {
+        return false;
+    }
+    reference
+        .get("workspaceId")
+        .and_then(serde_json::Value::as_str)
+        == Some(workspace_id)
+        && reference
+            .get("resourceId")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(valid_workspace_id)
+        && reference
+            .get("revisionId")
+            .is_none_or(|value| value.is_null() || value.as_str().is_some_and(valid_workspace_id))
 }
 
 pub(super) fn valid_workspace_id(value: &str) -> bool {
@@ -543,6 +892,33 @@ mod tests {
             workspace_id: workspace_id.to_owned(),
             title: title.map(str::to_owned),
             request_id: request_id.to_owned(),
+            first_turn: None,
+        }
+    }
+
+    fn first_turn(text: &str) -> serde_json::Value {
+        serde_json::json!({
+            "content": [{"kind":"TEXT","text":text}],
+            "resourceRefs": [],
+            "agentBindingId": "binding-1",
+            "presentationPreference": "RICH"
+        })
+    }
+
+    fn pending_send(
+        conversation_id: &str,
+        request_id: &str,
+        text: &str,
+    ) -> PendingConversationSend {
+        PendingConversationSend {
+            workspace_id: "workspace-1".to_owned(),
+            conversation_id: conversation_id.to_owned(),
+            request_id: request_id.to_owned(),
+            content: serde_json::json!([{"kind":"TEXT","text":text}]),
+            resource_refs: serde_json::json!([]),
+            agent_binding_id: Some("binding-1".to_owned()),
+            presentation_preference: Some("RICH".to_owned()),
+            attachment_labels: Vec::new(),
         }
     }
 
@@ -571,6 +947,178 @@ mod tests {
             restarted_process.list().expect("list exact replay"),
             vec![pending]
         );
+    }
+
+    #[test]
+    fn exact_pending_send_survives_restart_and_one_unresolved_send_is_enforced() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        let create = entry(
+            "workspace-1",
+            Some("Existing legacy create"),
+            "create-request",
+        );
+        let pending = pending_send("conversation-1", "send-request", "Exact durable send");
+        journal
+            .record(create.clone())
+            .expect("create entry persists");
+        journal
+            .record_send(pending.clone())
+            .expect("send persists before dispatch");
+
+        let restarted = ConversationCreateJournal::new(directory.path());
+        assert_eq!(
+            restarted.list().expect("legacy entries retained"),
+            vec![create]
+        );
+        assert_eq!(
+            restarted.list_sends().expect("pending send reopens"),
+            vec![pending.clone()]
+        );
+        restarted
+            .record_send(pending.clone())
+            .expect("same key and body is a replay");
+        assert!(
+            restarted
+                .record_send(pending_send(
+                    "conversation-1",
+                    "second-request",
+                    "Different body"
+                ))
+                .is_err()
+        );
+        assert!(
+            restarted
+                .record_send(pending_send(
+                    "conversation-2",
+                    "send-request",
+                    "Different conversation"
+                ))
+                .is_err()
+        );
+
+        restarted
+            .acknowledge_send("workspace-1", "other-conversation", "send-request")
+            .expect("wrong Conversation cannot acknowledge the send");
+        assert_eq!(
+            restarted.list_sends().expect("pending request remains"),
+            vec![pending]
+        );
+        restarted
+            .acknowledge_send("workspace-1", "conversation-1", "send-request")
+            .expect("exact receipt acknowledgement removes the request");
+        assert!(
+            restarted
+                .list_sends()
+                .expect("send acknowledged")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn pending_send_recovery_rejects_foreign_resources_and_uncontracted_content() {
+        let mut pending = pending_send("conversation-1", "send-request", "Exact send");
+        pending.resource_refs = serde_json::json!([{
+            "workspace_id": "workspace-1",
+            "resource_id": "resource-1",
+            "revision_id": "revision-1"
+        }]);
+        pending.attachment_labels = vec!["report.txt".to_owned()];
+        assert!(validate_send(&pending).is_ok());
+
+        pending.resource_refs[0]["workspace_id"] = serde_json::json!("workspace-2");
+        assert!(validate_send(&pending).is_err());
+
+        pending.resource_refs = serde_json::json!([]);
+        pending.attachment_labels.clear();
+        pending.content = serde_json::json!([{
+            "kind": "TEXT",
+            "text": "Exact send",
+            "native_session_id": "private-handle"
+        }]);
+        assert!(validate_send(&pending).is_err());
+
+        pending.content = serde_json::json!([{
+            "kind": "RESOURCE",
+            "resource_ref": {
+                "workspace_id": "workspace-1",
+                "resource_id": "resource-1"
+            },
+            "display_name": "report.txt"
+        }]);
+        assert!(validate_send(&pending).is_ok());
+    }
+
+    #[test]
+    fn legacy_v1_entries_remain_readable_and_first_turns_with_shared_titles_are_distinct() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        journal
+            .ensure_directory()
+            .expect("journal directory exists");
+        fs::write(
+            journal_file(directory.path()),
+            br#"{"version":1,"entries":[{"workspaceId":"workspace-1","title":"Old create","requestId":"legacy-request"}]}"#,
+        ).expect("write a v1 fixture");
+        let legacy = journal.list().expect("v1 entry stays recoverable");
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].first_turn, None);
+
+        let mut first = entry("workspace-1", Some("Shared title"), "first-message");
+        first.first_turn = Some(first_turn("First exact message"));
+        let mut second = entry("workspace-1", Some("Shared title"), "second-message");
+        second.first_turn = Some(first_turn("Second exact message"));
+        journal
+            .record(first.clone())
+            .expect("first exact body is recorded");
+        journal
+            .record(second.clone())
+            .expect("different first body does not collide by title");
+        assert_eq!(
+            journal.list().expect("list migrated journal"),
+            vec![legacy[0].clone(), first, second]
+        );
+        let document: JournalDocument = serde_json::from_slice(
+            &fs::read(journal_file(directory.path())).expect("read migrated journal"),
+        )
+        .expect("journal remains valid");
+        assert_eq!(document.version, JOURNAL_VERSION);
+    }
+
+    #[test]
+    fn legacy_v2_journal_migrates_to_v3_without_dropping_pending_create() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        journal
+            .ensure_directory()
+            .expect("journal directory exists");
+        let pending_create = entry("workspace-1", Some("Existing draft"), "create-1");
+        let legacy_v2 = serde_json::json!({
+            "version": 2,
+            "entries": [pending_create],
+        });
+        fs::write(
+            journal_file(directory.path()),
+            serde_json::to_vec(&legacy_v2).expect("encode v2 fixture"),
+        )
+        .expect("write legacy v2 document");
+
+        assert_eq!(
+            journal.list().expect("read v2 pending create"),
+            vec![entry("workspace-1", Some("Existing draft"), "create-1")]
+        );
+        let pending_send = pending_send("conversation-1", "send-1", "Draft body");
+        journal
+            .record_send(pending_send.clone())
+            .expect("migrate v2 document when recording send");
+
+        let migrated: JournalDocument = serde_json::from_slice(
+            &fs::read(journal_file(directory.path())).expect("read migrated journal"),
+        )
+        .expect("parse v3 document");
+        assert_eq!(migrated.version, JOURNAL_VERSION);
+        assert_eq!(migrated.entries, vec![pending_create]);
+        assert_eq!(migrated.sends, vec![pending_send]);
     }
 
     #[test]
@@ -640,7 +1188,7 @@ mod tests {
         let path = journal_file(directory.path());
 
         for invalid in [
-            br#"{"version":2,"entries":[]}"#.as_slice(),
+            br#"{"version":4,"entries":[]}"#.as_slice(),
             br#"{"version":1,"entries":[{"workspaceId":"workspace-1","requestId":"request-1"}]}"#
                 .as_slice(),
         ] {

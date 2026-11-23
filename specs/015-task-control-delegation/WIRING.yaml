@@ -2,7 +2,7 @@ feature_id: "015"
 name: "Task Control and Heterogeneous Delegation"
 status: "IN_REVIEW"
 spec_revision: "0.1"
-notes: "All edges are TARGET unless marked existing. Served today: lead-agent binding change (CAS only) and verification-runs read. Feature 005 revision 1.1 records an owner-directed generic Task Runtime Environment-first Attempt/session seam; the revision remains IN_REVIEW and cross-owner review is pending, so Feature 015 execution/control edges remain blocked. The generic seam is distinct from Feature 005's bounded file-write Effect path. O-07 keeps lead-binding change separate from execution replacement. A-37 on_exhaustion remains TARGET-not-yet-wired under its accepted owner contract. O-09 blocks Compare Agents until its Conversation/Agent Runtime surface and request/result/recovery owner contract exists. Linux qualification first; Windows stays UNAVAILABLE until Feature 005 B-35."
+notes: "All edges are TARGET unless marked existing. Served today: lead-agent binding change (CAS only) and verification-runs read. USER-DELEGATED T22 adds only the existing v28 TaskSpec policy-snapshot fidelity path; it does not authorize Task execution. Feature 005 revision 1.1 records an owner-directed generic Task Runtime Environment-first Attempt/session seam; the revision remains IN_REVIEW and cross-owner review is pending, so Feature 015 execution/control edges remain blocked. The generic seam is distinct from Feature 005's bounded file-write Effect path. O-07 keeps lead-binding change separate from execution replacement. A-37 on_exhaustion remains TARGET-not-yet-wired under its accepted owner contract. O-09 blocks Compare Agents until its Conversation/Agent Runtime surface and request/result/recovery owner contract exists. Linux qualification first; Windows stays UNAVAILABLE until Feature 005 B-35."
 nodes:
   - id: "work-ui"
     owner: "Desktop UI (Work screen)"
@@ -10,6 +10,13 @@ nodes:
     responsibility: "Controls enabled from allowed_commands, Activity timeline, Workers view, all UI states"
     inputs: ["Task projection", "activity page", "workers projection", "task stream frames"]
     outputs: ["typed Tauri commands"]
+  - id: "delegation-policy-snapshot"
+    owner: "TaskStore / SQLite TaskSpec owner"
+    kind: "immutable TaskSpec resolver and projection"
+    responsibility: "Resolve Coworker source/revision and Workspace ceiling, pin profile revisions/model-selection policy, revalidate before create/revision commit, and return the same snapshot in reads and aggregate state"
+    implementation_status: "USER-DELEGATED T22; CODE: typed resolver, transaction revalidation, v34 backfill/guard, current/history/receipt projection, and Work provenance disclosure are implemented; native-Windows storage tests pass for Workspace-default, Coworker-default/override, exact worker profile/model policy, explicit revision, Workspace-head race, null-preserving backfill, foreign-profile migration rollback and v28-v34 replay; Tauri projection 2/2, Work UI 2/2, TypeScript/API and 20-package structural validation pass; no Task execution integration or qualification"
+    inputs: ["Task origin Coworker revision", "Workspace delegation settings revision", "TaskSpec created_at"]
+    outputs: ["canonical ResolvedDelegationPolicySnapshot", "Task detail current-spec projection", "TaskSpec history projection", "revision receipt"]
   - id: "compare-agents-ui"
     owner: "Conversation / Agent Runtime / Product decision (O-09)"
     kind: "unresolved user interface"
@@ -166,11 +173,27 @@ edges:
     from: "sqlite-store"
     to: "presentation-operator"
     kind: "committed records"
+  - id: "e-policy-snapshot-taskstore"
+    from: "delegation-policy-snapshot"
+    to: "sqlite-store"
+    kind: "same-transaction policy revalidation and immutable TaskSpec write/readback"
+    contract: "Exact canonical snapshot equality; Workspace settings are a ceiling; no caller-supplied authority; mutable-head races conflict."
+  - id: "e-policy-snapshot-operator"
+    from: "sqlite-store"
+    to: "presentation-operator"
+    kind: "TaskSpec projection"
+    contract: "Return the stored snapshot unchanged in Task view, revision history and committed receipt."
   - id: "e-projection-ui"
     from: "presentation-operator"
     to: "work-ui"
     kind: "projection and stream (via operator and bridge)"
 transactions:
+  - id: "tx-task-spec-policy-snapshot"
+    owner: "TaskStore / SQLite"
+    status: "USER_DELEGATED_T22"
+    atomic_records: ["TaskSpec revision with canonical delegation policy snapshot", "Task aggregate-state reference", "Task event", "idempotency receipt"]
+    external_calls_inside: false
+    fence: "Resolve before content-addressed BlobStore write; recompute and compare under the same SQLite transaction; a mismatch commits no TaskSpec and leaves only an unreferenced GC-eligible blob."
   - id: "tx-request-pause"
     owner: "TaskControlService via Storage"
     atomic_records: ["Task PAUSE_REQUESTED", "task_control_requests row", "task.pause.requested.v1", "idempotency receipt"]

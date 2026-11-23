@@ -1,6 +1,6 @@
 # Spec, Build TASKS, and USER Test Traceability
 
-**Updated:** 2026-11-17
+**Updated:** 2026-11-23
 
 **Purpose:** one crosswalk between **global build tasks** ([LITECOWORK-BUILD-TASKS.md](LITECOWORK-BUILD-TASKS.md)), **feature SDD tasks** (`specs/NNN-*/TASKS.md`), **acceptance IDs** (SPEC EARS), and **competitor USER cases** ([COMPETITOR-PROMOTED-USE-CASES.md](COMPETITOR-PROMOTED-USE-CASES.md)).
 
@@ -43,12 +43,12 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 
 | SDD | Status | Tasks | Qualification / VERIFIED | E2E | USER themes | Wave |
 |---|---|---|---|---|---|---|
-| 001 | ACCEPTED/LOCKED 2026-11-09 (B-01..B-10; B-02 rider: OpenCode v2.0.32 first, Windows x64 first row; folded P-00/P-01/P-02/P-04/P-09) | T01..T28 | 001-T09, 001-T28 | E2E-01 | UC-CHAT-01..06 | W1 |
+| 001 | ACCEPTED/LOCKED 2026-11-09 (B-01..B-10; B-02 rider: OpenCode v2.0.32 first, Windows x64 first row; folded P-00/P-01/P-02/P-04/P-09); revision 1.2 IN_REVIEW with user-directed T30/T31 work | T01..T31 | 001-T09, 001-T28 | E2E-01 | UC-CHAT-01..06; T31 same-snapshot completed-turn lineage for Task promotion (CODE/SERVED) | W1 |
 | 002 | ACCEPTED/LOCKED 2026-11-09 (B-11, B-12; folded ACP client P-11, Matchmaker P-12) | T01..T19 | 002-T15, 002-T19 | E2E-01, E2E-02 | UC agent install/auth | W1 |
 | 003 | ACCEPTED/LOCKED 2026-11-09 (B-13, B-14 with Windows scanner rider; folded Context Debugger P-15) | T01..T18 | 003-T15, 003-T18 | E2E-03 | UC files and citations | W1 |
 | 004 | ACCEPTED/LOCKED 2026-11-09 (B-15, B-16) | T01..T12 | 004-T10, 004-T12 | E2E-02 | UC relay A to B to A | W4 |
-| 005 | Revision 1.0 ACCEPTED/LOCKED; revision 1.1 IN_REVIEW with owner-directed A-70/A-87/A-88/A-90 decisions; B-35 remains PROPOSED. T01 v33 Environment binding is CODE; T04 is PARTIAL; T08 has CODE for closed target validation and exact Core grant-scope revalidation in the atomic SQLite dispatch store. Provider admission, candidate producer, production dispatch caller, filesystem call, reconciliation and recovery remain unintegrated | T01..T20 | 005-T15, 005-T18, 005-T20 | E2E-04 | UC one safe task edit | W2 |
-| 006 | ACCEPTED/LOCKED 2026-11-09 (B-19, B-20); T01/T02 BLOCKED on authentication/effective permissions (A-82); Task-write row order OPEN (A-80) | T01..T17 | 006-T15, 006-T17 | E2E-05 | UC one connection write | W3 |
+| 005 | Revision 1.0 ACCEPTED/LOCKED; revision 1.1 IN_REVIEW with user-directed A-70/A-87/A-88/A-90/A-115 directions; B-35 remains PROPOSED. T12 Conversation promotion is CODE/SERVED but packaged/restart E2E is open. T01 v33 Environment binding is CODE; T04 is PARTIAL; T08 has CODE for closed target validation and exact Core grant-scope revalidation in the atomic SQLite dispatch store. Provider admission, candidate producer, production dispatch caller, filesystem call, reconciliation and recovery remain unintegrated | T01..T20, T12 (promotion); T21 (package gate) | 005-T15, 005-T18, 005-T20 | E2E-04 | UC explicit Conversation-to-Task promotion; UC one safe Task edit | W2 |
+| 006 | Revision 1.0 ACCEPTED/LOCKED (B-19/B-20); revision 1.1 IN_REVIEW with USER-DELEGATED auth direction; T02 DONE, T01 NOT STARTED pending Feature 005 Trust/Effect prerequisite; Task-write row order OPEN (A-80) | T01..T17 | 006-T15, 006-T17 | E2E-05 | UC one connection write | W3 |
 | 007 | ACCEPTED/LOCKED 2026-11-09 (B-21, B-30, B-31); T01/T06 BLOCKED on export receipt ordering/local recovery (A-81); destination-class decision closed | T01..T17 | 007-T15, 007-T17 | E2E-07 | UC one professional format | W2 |
 | 008 | Revision 1.0 ACCEPTED/LOCKED 2026-11-09 (B-22, B-23, B-32 deferred; P-06/P-13); revision 1.1 IN_REVIEW (selected laptop Computer, compact Workbench, takeover) | T01..T27 | 008-T17, 008-T21 (rev 1.0); 008-T22..T27 (rev 1.1 review/promotion/qualification gates) | E2E-08; revision 1.1 E2E mapping pending owner/schema promotion | UC browser/terminal; selected-screen Computer proposal | W3 |
 | 009 | Revision 1.0 ACCEPTED/LOCKED 2026-11-09 (B-24, B-25); revision 1.1 IN_REVIEW (A-91 gates manual-memory schema/persistence) | T01..T18 | 009-T16, 009-T18 | E2E-09 | UC optional Coworker chat and memory | W2 |
@@ -57,7 +57,7 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | 012 | ACCEPTED/LOCKED 2026-11-09 (B-34 model; implementation waits on the 001 Stop fix) | T01..T11 | 012-T09, 012-T11 | E2E-01 extension | UC co-edit / take-control | W1 (after 001-T07) |
 | 013 | IN_REVIEW (new 2026-11-09); B-36, B-37 DEFERRED by the owner 2026-11-10 (LiteSPM parts deferred); folded LiteSPM pin P-17 | T01..T21 | 013-T18, 013-T21 | E2E-06 | UC discover and install a package | W2 observe, W3 plan/apply |
 | 014 | IN_REVIEW (new); B-38 ACCEPTED as proposed 2026-11-10 | T01..T19 | 014-T17, 014-T19 | E2E-14 (adopted) | UC find, rename, archive, delete chats | W1 |
-| 015 | IN_REVIEW (new); B-39 ACCEPTED as proposed 2026-11-10; folded Mission Control/Compare P-14 | T01..T21 | 015-T17, 015-T18, 015-T21 | E2E-15 (adopted) | UC steer, pause and delegate a Task | W4 |
+| 015 | IN_REVIEW (new); B-39 ACCEPTED as proposed 2026-11-10; folded Mission Control/Compare P-14; T22 USER-DELEGATED focused snapshot implementation has native-Windows storage, migration, Tauri 2/2, UI 2/2, TS/API and structural CODE evidence; Task execution/E2E qualification remain open | T01..T22 | 015-T17, 015-T18, 015-T21 | E2E-15 (adopted) | UC steer, pause and delegate a Task | W4 |
 | 016 | IN_REVIEW; revision 0.4 proposes AC-001..AC-041 as one V1 scope (TARGET only). The owner selected Saved Views for V1 and directed the Feature 007 B-21 amendment; T25 cross-owner review, T01 whole-scope acceptance and T02 contract promotion remain open before implementation. A-85 still blocks model-visible proposal input pending canonical correlation/replay contract. | T01..T25 | 016-T16, 016-T19, 016-T24 | E2E-11 plus candidate E2E-18 pending T02 ID review | UC rich answer with fallback, contextual Canvas and Library Saved View (TARGET) | W2 |
 | 017 | IN_REVIEW (new); B-41 ACCEPTED as proposed 2026-11-10 | T01..T18 | 017-T16, 017-T18 | E2E-12 | UC back up and restore | W6 |
 | 018 | IN_REVIEW (new); B-42 PROPOSED (open, BLOCKED); folded operator-api.ts codegen + drift gate P-18 | T01..T19 | 018-T16, 018-T19 | E2E-16 (adopted) | UC usage and support bundle | W6 |
@@ -95,6 +95,8 @@ On 2026-11-09 the owner also approved folding the proposed tasks P-05 and P-11..
 | BT-15.* (release engineering) | 019-T03..019-T22 |
 
 ## Implementation snapshot (2026-11-10)
+
+**Current trace delta (2026-11-19):** Feature 001 T25 now adds the latest turn's exact read-only `activity_turn` identity to the existing authorized Conversation snapshot so completed-turn REPORTED activity can be looked up after restart. Its current CODE/SERVED status and exact tests are maintained in `specs/001-conversation-session-supervisor/TASKS.md`, `CURRENT-RUN.md` and `docs/IMPLEMENTATION-STATUS.md`. The table below remains the explicitly dated 2026-11-10 implementation snapshot and is not a current source-status inventory.
 
 A task is traced to a test only when its TASKS.md status line says so. Snapshot at tip e9abe46:
 

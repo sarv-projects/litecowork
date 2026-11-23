@@ -1,8 +1,8 @@
 # 020 - Proactivity and Quiet Learning
 
 - **Status:** IN_REVIEW - authored complete for owner review on 2026-11-09; not owner-accepted; authorizes no implementation; not a claim of implementation or qualification.
-- **Revision:** 0.1 | **Updated:** 2026-11-09 | **Decision:** B-45 (first learning source and auto-commit eligibility policy) ACCEPTED as proposed 2026-11-10 (A-62); whole-SPEC acceptance pending. Design decision D-01 (first Suggestion producers) was also ACCEPTED as proposed on 2026-11-10 (A-62).
-- **Implementation state (2026-11-10):** Not implemented beyond pre-existing partial foundations; D-01 and B-45 accepted as proposed 2026-11-10, SPEC acceptance pending; migration v43 allocated.
+- **Revision:** 0.2 | **Updated:** 2026-11-20 | **Decision:** B-45 and D-01 remain ACCEPTED as proposed by the owner on 2026-11-10; the whole SPEC remains IN_REVIEW. The repository owner delegated implementation of the isolated deterministic gate repair (T03) and its F-04 module placement on 2026-11-20. This direction does not accept the package or authorize the other tasks.
+- **Implementation state (2026-11-20):** T03 pure-gate repair is CODE-complete in the working tree with 34 domain-gate tests passing and 50 storage-core Skill tests passing. The package remains IN_REVIEW; D-01 and B-45 are accepted as proposed, but the whole SPEC is not accepted. Suggestion production, learning persistence/service/routes/UI and qualification remain absent. Migration v44 is an old allocation and must be rechecked against the current migration chain before use.
 - **Owners:** Responsibility domain, Coworker, Storage, Operator/API, Desktop UI, Security/Trust, Product.
 - **Release matrix rows:** Windows 11/10 x64 + OpenCode v2.0.32 first; Linux x64 + OpenCode v2.0.32 second.
 
@@ -12,7 +12,7 @@ The user sees a few explained ideas that never act on their own and respect quie
 
 ## Current truth
 
-Suggestions, Goals and Needs You are SERVED with UI (`suggestions_operator.rs`, `goal_operator.rs`, `needs_you_operator.rs`, `suggestions_bridge.rs`, `src/suggestions/`), but nothing produces a Suggestion, so the Ideas page is empty in a real install. The learning gates in `crates/storage-core/src/coworker_learning.rs` are pure functions with no caller, storage, route or UI, and contain three defects this package fixes first (SPEC section 7.1). Feature 009 defers automatic learning (B-24) and names this package as the pipeline owner.
+Suggestions, Goals and Needs You are SERVED with UI (`suggestions_operator.rs`, `goal_operator.rs`, `needs_you_operator.rs`, `suggestions_bridge.rs`, `src/suggestions/`), but nothing produces a Suggestion, so the Ideas page is empty in a real install. The learning gates are pure functions with no caller, storage, route or UI. T03 repairs their source-kind/channel gate and stable disposition tokens; it does not create an active learning pipeline or change which sources are eligible. Feature 009 defers automatic learning (B-24) and names this package as the pipeline owner.
 
 ## Package
 
