@@ -6,10 +6,13 @@ LiteCowork lets people **start with native-agent conversation** and, when useful
 complete managed durable work with controlled permissions, visible progress,
 scoped knowledge and real deliverables. A durable Task survives eligible
 worker or process replacement; ordinary chat does **not** require a Task or
-Coworker. The ten-part V1 scope and free-core constraint are frozen in
+Coworker. The accepted ten-part V1 baseline and free-core constraint are in
 [V1 Product Release Contract](V1-PRODUCT-RELEASE-CONTRACT.md), with
 [Final Screen Contract](V1-UI-SCREEN-CONTRACT.md) and
 [LiteSPM interoperability](LITESPM-LITECOWORK-INTEROP-LLD.md).
+The product owner has also directed that local Voice and version-anchored Visual
+Annotation/Teach-by-Demo become V1 roadmap capabilities; their scope is TARGET until
+complete Feature 021/022 designs and release-contract review are recorded.
 Provider-owned costs remain separate; LiteCowork Runtime cloud continuation,
 cross-device support and teamwork remain V2.
 

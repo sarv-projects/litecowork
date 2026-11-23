@@ -91,7 +91,7 @@ class OperatorStreamContractTests(unittest.TestCase):
                 "role": "USER", "content": [{"kind": "TEXT", "text": "Hello"}],
                 "resource_refs": [], "created_at": "2026-10-11T10:00:00Z",
             },
-            "rich_presentation": None, "linked_items": [linked_item],
+            "rich_presentation": None, "linked_items": [linked_item], "turn_status": None,
         }
         snapshot = {
             "type": "projection", "workspace_id": "workspace-1",

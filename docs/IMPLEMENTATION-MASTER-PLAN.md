@@ -21,6 +21,7 @@ The sequence below is dependency-aware, not a claim that work is absent or alrea
 - Preserve the six passing Windows WorkspaceRoot route regressions; separately qualify Windows folder scanning, which remains unsupported/not implemented.
 - Run architecture/schema, documentation, frontend, daemon, packaged desktop and owner acceptance gates.
 - Select the exact GA OS/build and first native agent/version/auth route.
+- Reconcile the 2026-11-23 superset design package against current owners and code using [the dated disposition](audit/SUPERSET-DESIGN-DISPOSITION-2026-11-23.md); do not carry forward its stale baseline, duplicate task IDs, unverified provider claims or migration numbers.
 
 **Exit:** reproducible green baseline and explicit release matrix. The current baseline is not green; see IMPLEMENTATION-STATUS.md.
 
@@ -177,6 +178,59 @@ docs/LITESPM-LITECOWORK-INTEROP-LLD.md and docs/LITESPM-INTEGRATION-PLAN.md own 
 - Run narrow tests for each change, then cross-contract, frontend, workspace and packaged desktop tests.
 - Inspect the full diff and generated outputs. Do not commit or push unless requested.
 
-## 5. Current implementation and immediate work
+## 5. Superset design additions and sequencing (2026-11-23)
+
+The product direction remains a complete, local-first, chat-first and BYOA-first workspace.
+This section preserves the supplied superset capabilities in the V1 roadmap while keeping
+unqualified providers unavailable and the existing V2 remote-runtime boundary intact. The
+line-by-line design decisions and rejected assumptions are recorded in
+[the Superset Design Disposition](audit/SUPERSET-DESIGN-DISPOSITION-2026-11-23.md). That
+document is an implementation design input, not a substitute for owner contracts or release
+evidence.
+
+Delivery follows the existing P0–P11 gates and feature dependencies:
+
+1. **P0 hygiene and verified defects:** ZIP-SUP-01 now fails closed on JSON recursion with a
+   pre-parse depth/size budget and portable regression coverage; keep its Linux-only containment
+   tests scoped to Linux. 017-T19 now bounds backup creation and untrusted header work before
+   PBKDF2 under A-122; the local optimized Rust sample is recorded, while T14 still needs the
+   full backup-operation/peak-memory baseline and slowest-row evidence before locking the ceiling.
+   019-T25 repairs stale root contract fixtures. These code fixes do not close their platform or
+   release qualification gates.
+2. **P1/P3 Conversation and provider breadth:** finish the exact OpenCode first-send, permission,
+   continuation, stop, retry, restart and recovery route; then integrate native Codex App Server,
+   Claude and negotiated ACP adapters as independent harness-specific paths. Keep a conformance
+   matrix by exact version/transport/OS/auth/capability and require full route evidence. A generic
+   ACP client is not a universal provider promise.
+3. **P4/P5 execution and Connections:** complete admitted Attempt → attested Environment →
+   Trust-mediated bounded Effect → durable receipt/reconcile → independent verification with
+   cancellation, timeout and restart recovery. Finish credential replay-safe sign-in and
+   Connection egress only through their owning service, then connect notifications and
+   Automations to actual send/settle paths.
+4. **P2/P7 context and Workbench:** finish root ingestion/retrieval and durable Context Used;
+   implement compact navigation and contextual object tabs; qualify local Computer preview and
+   Take over, managed Browser settings and non-secret import, real Browser sessions, and Terminal
+   only in an admitted Environment. Opening/restoring a surface never auto-starts it.
+5. **P6/P10 presentation and deliverables:** reconcile the single RichPresentation schema,
+   validators and renderer; implement deterministic charts/calculators, source provenance,
+   semantic fallback and a clear inline-to-Canvas path. Deliver Markdown author/publish/export
+   receipts and Saved Views in Library. Add DOCX/XLSX/PPTX/PDF authoring as separate, format-
+   qualified capabilities after engine, fidelity, macro, formula, package and recovery decisions.
+6. **Complete V1 roadmap additions:** add full Feature 021 Voice and Feature 022 Visual
+   Annotation/Teach-by-Demo SDDs. Voice starts with user-held push-to-talk and transient editable
+   transcription; annotations bind to immutable render/artifact versions and are sent only after
+   review; Teach-by-Demo is explicit, redaction-first and draft-only. Implement these only after
+   Conversation, Artifact, Browser/Computer consent and privacy dependencies are in place.
+7. **P11 release:** native Windows x64/OpenCode v2.0.32 first, native Linux x64/OpenCode v2.0.32
+   second, with the full packaged journeys, exact-provider compatibility, denial, duplicate,
+   timeout-after-dispatch, cancellation-race, crash, restart and reconnect evidence. Remote
+   Runtime/mobile continuity remains V2 under the current release contract.
+
+Do not assign the supplied task IDs or SQLite v49/v50 slots. Existing 007/008/011/016 tasks
+already use many of those IDs, and the migration allocator is v36 wired with v37–v47 reserved
+or provisional. Each extension must add owner-specific tasks, allowed paths, cross-layer traces,
+acceptance and migration changes in the owning SDD before implementation.
+
+## 6. Current implementation and immediate work
 
 The current release posture is pre-release and not qualified. The current implementation record, exact route inventory, test outcomes and release blockers live in IMPLEMENTATION-STATUS.md. Durable Conversation first-send admission/outbox and prior-incarnation recovery have CODE/SERVED evidence; the next Conversation gaps are claim ambiguity and packaged OpenCode send/stream/stop/retry/restart qualification. User-delegated Feature 015 T22 adds SQLite v34 resolution, transaction revalidation, backfill and canonical guards for immutable TaskSpec policy snapshots. Focused native-Windows storage tests now cover Workspace-default, Coworker-default and Coworker-override source resolution, exact worker profile/model policy, TaskSpec revision, Workspace-head race, legacy null preservation, invalid cross-Workspace migration rollback and v28-v34 replay; Tauri projection (2/2), Work UI (2/2), TypeScript, API and 20-package structural checks pass. The task remains CODE-only and does not implement Task execution or qualify heterogeneous delegation. Other critical release priorities remain native Windows WorkspaceRoot support, one integrated Task execution slice, real Workbench Terminal/Diffs/Browser providers, and the feature gates listed in their task ledgers.

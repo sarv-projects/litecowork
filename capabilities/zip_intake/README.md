@@ -50,6 +50,40 @@ an existing non-symlink directory and anchored directory-relative OS support; ot
 fails closed. Staging files are provider-owned private material until Core publishes them;
 they are not Resources, index entries, Task context, or Artifacts.
 
+## Worker response parsing hardening — USER-DELEGATED direction (2026-11-23)
+
+The parent process treats worker stdout as untrusted, even though the worker runs in an
+isolated process. The response is capped at `_MAX_OUTPUT_BYTES` (8 MiB) or the smaller
+operation-specific cap before parsing. Enforce a lexical JSON nesting ceiling before calling
+`json.loads`, ignore brackets inside escaped JSON strings, and reject an excessive nesting
+depth as `WorkerFailed`. Catch `RecursionError` as a second fail-closed guard around the
+standard-library parser. Keep duplicate-field rejection and exact response-shape validation.
+
+This corrects a source-confirmed defect: a 4,096-level JSON array can escape the current
+`json.loads` exception handler as `RecursionError`. A post-parse depth check is too late. The
+portable parser-boundary test belongs with `supervisor.py` tests; Bubblewrap namespace and
+descriptor-relative extraction tests remain Linux-only and must not be reported as passing
+or failing on Windows when their OS primitives are unavailable.
+
+**Work item ZIP-SUP-01 — CODE COMPLETE (2026-11-24):** `supervisor.py` now checks the 8 MiB
+or operation-specific stdout cap and a lexical depth-64 limit before `json.loads`, ignores
+escaped delimiters inside strings, and maps `RecursionError` to `WorkerFailed`. The portable
+regression covers ordinary JSON, delimiter characters inside strings, depth at/over the limit,
+output-size rejection and forced parser recursion failure. Existing duplicate-field rejection
+remains in place. `python -m unittest
+capabilities.zip_intake.tests.test_supervisor.ZipWorkerResponseValidationTests.test_worker_json_parser_bounds_bytes_depth_and_recursion`
+passed 1/1 on Windows. Keep Bubblewrap namespace and descriptor-relative extraction tests
+Linux-only; no product ZIP ingestion, extraction publication, indexing, Task context or
+qualification is claimed.
+
+**Work item ZIP-SUP-02 — Windows test classification (CODE COMPLETE, 2026-11-24):**
+`BoundedZipExtractor.materialize` deliberately requires Linux descriptor-relative filesystem
+operations and returns `DESTINATION_UNAVAILABLE` on unsupported hosts. The extraction and
+destination-containment test classes are now skipped outside Linux instead of reporting dozens
+of expected unsupported-host errors. Portable `ZipIntakeProvider` and worker-response tests
+continue to run on Windows. These skips correct test classification; they do not implement or
+qualify Windows ZIP extraction.
+
 ## Guards
 
 Admission bounds compressed input bytes, entries, declared expansion, per-entry sizes,

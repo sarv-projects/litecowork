@@ -421,5 +421,28 @@ class ZipWorkerPipeSystemTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.0)
 
 
+class ZipWorkerResponseValidationTests(unittest.TestCase):
+    def test_worker_json_parser_bounds_bytes_depth_and_recursion(self):
+        from capabilities.zip_intake import supervisor
+
+        parse_response = getattr(supervisor, "_parse_worker_json")
+        parse = lambda data, limit=1024 * 1024: parse_response(data, limit)
+
+        self.assertEqual(parse(b'{"ok":true}'), {"ok": True})
+        self.assertEqual(parse(json.dumps({"text": "[" * 200 + "{" * 200}).encode("utf-8"))["text"], "[" * 200 + "{" * 200)
+
+        at_limit = b"[" * 64 + b"0" + b"]" * 64
+        over_limit = b"[" * 65 + b"0" + b"]" * 65
+        self.assertEqual(len(parse(at_limit)), 1)
+        with self.assertRaises(WorkerFailed):
+            parse(over_limit)
+        with self.assertRaises(WorkerFailed):
+            parse(b'{"ok":true}', limit=5)
+
+        with patch("capabilities.zip_intake.supervisor.json.loads", side_effect=RecursionError):
+            with self.assertRaises(WorkerFailed):
+                parse(b"{}")
+
+
 if __name__ == "__main__":
     unittest.main()

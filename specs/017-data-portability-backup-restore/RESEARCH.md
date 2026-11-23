@@ -1,7 +1,7 @@
 # Research and Decision Log - Data Portability, Backup and Restore
 
-**Feature:** 017 | **Status:** IN_REVIEW - whole-SPEC owner acceptance remains pending; A-117/A-118 authorize the scoped T03 CODE correction only.
-**Checked:** Initial source audit 2026-11-09; source rechecked against the 2026-11-23 `main` worktree for T03. External sources below are not re-verified in this pass.
+**Feature:** 017 | **Status:** IN_REVIEW - whole-SPEC owner acceptance remains pending; A-117/A-118 authorize the scoped T03 CODE correction and user-delegated A-122 authorizes the exact KDF bound implementation.
+**Checked:** Initial source audit 2026-11-09; source rechecked against the 2026-11-23 `main` worktree for T03 and the 2026-11-24 KDF change. External sources below are not re-verified in this pass.
 
 ## 0. Current source recheck (2026-11-23)
 
@@ -10,6 +10,14 @@
 - `build_filtered_snapshot` removes incomplete upload sessions and their chunk/request receipts and empties excluded local state. It trims non-selected rows from the excluded content registry before filtering Workspace rows, temporarily retains only the selected Workspace's registry entries for snapshot-consistent blob discovery, then removes that registry subset before final snapshot validation. Excluded-table cleanup, upload removal and Workspace filtering use one immediate transaction with deferred foreign-key checks; invalid retained references abort at commit. It vacuums and checks foreign keys afterward, avoiding cross-Workspace local-registry references, child/parent deletion-order failures, and post-copy live-state drift.
 - Canary tests seed synthetic SecretStore/token, passphrase, key-material, native-locator, raw file identity, a foreign-Workspace Conversation body, and an actual native session reference. They check staged snapshot, encrypted archive, manifest, decrypted payloads and extracted files, and assert that the foreign Conversation is absent. These tests establish CODE only; they do not prove a served or packaged backup journey.
 - The original C-04 findings for Workspace scope and local request-dedup leakage are corrected in this slice. Portable re-encryption, KDF upper/lower bound reconciliation, Windows DACLs, staging cleanup, restore time/new identity, route conflict, UI, packaged E2E and release qualification remain open in later tasks.
+
+## 0.1 Container-v1 KDF decision and evidence (2026-11-24)
+
+- **Compatibility decision (A-122, USER-DELEGATED):** new archives accept 600,000–1,000,000 PBKDF2-HMAC-SHA256 iterations (600,000 default); reads accept 100,000–1,000,000. This preserves pre-release archives created at the prior 100,000 minimum while keeping new output at the accepted B-41 floor. Old archives above 1,000,000 were technically accepted by the former unbounded implementation but now fail closed to bound hostile work.
+- **Native Windows CODE:** `cargo test -p storage-sqlite --lib --locked kdf -- --nocapture` passed 2/2; `cargo test -p storage-sqlite --lib --locked backup_and_restore_round_trip_preserves_the_workspace_and_its_blobs -- --nocapture` passed 1/1, including re-encryption, verification and restore of a valid legacy 100,000-iteration archive.
+- **Debug timing sample:** ignored test `measure_container_kdf_work_factors` on Windows NT 10.0.26300.0 / 12th Gen Intel Core i3-1215U (6 cores; 1.2 GHz reported base) measured 6,965 ms at 100,000, 25,750 ms at 600,000 and 28,900 ms at 1,000,000 in an unoptimized test build. These are host-specific debug timings, not production performance evidence.
+- **Optimized Rust sample:** `cargo test -p storage-sqlite --lib --release --locked measure_container_kdf_work_factors -- --ignored --nocapture` passed 1/1 in the optimized test profile on the same host: 53 ms at 100,000, 190 ms at 600,000 and 308 ms at 1,000,000. This rerun compiled the exact current source after adding the pre-derivation hook. The test performs one PBKDF2 derivation per point; this is a local CODE performance sample, not a packaged/system or slowest-row qualification.
+- **Open:** T14 must establish the full backup/verify/import latency and peak-memory baseline on the slowest declared release row, then owners must review the responsiveness target. No packaged backup journey, formal Storage/Security acceptance or QUALIFIED claim is established.
 
 ## 1. Repository sources inspected
 

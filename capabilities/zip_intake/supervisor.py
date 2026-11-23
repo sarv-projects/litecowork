@@ -61,6 +61,7 @@ class WorkerOutputLimit(WorkerFailed):
 _MAX_INPUT_BYTES = 24 * 1024 * 1024
 _MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 _MAX_EXTRACTION_OUTPUT_BYTES = 48 * 1024 * 1024
+_MAX_WORKER_JSON_DEPTH = 64
 _WALL_TIMEOUT_SECONDS = 12.0
 _CPU_LIMIT_SECONDS = 8
 _ADDRESS_SPACE_LIMIT_BYTES = 512 * 1024 * 1024
@@ -74,6 +75,43 @@ def _object_without_duplicate_fields(pairs: list[tuple[str, Any]]) -> dict[str, 
             raise ValueError("duplicate JSON object field")
         result[key] = value
     return result
+
+
+def _json_exceeds_nesting_limit(payload: bytes) -> bool:
+    """Reject deeply nested JSON before the standard-library decoder recurses."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in payload:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:  # backslash
+                escaped = True
+            elif byte == 0x22:  # quote
+                in_string = False
+            continue
+        if byte == 0x22:  # quote
+            in_string = True
+        elif byte in (0x5B, 0x7B):  # [ {
+            depth += 1
+            if depth > _MAX_WORKER_JSON_DEPTH:
+                return True
+        elif byte in (0x5D, 0x7D) and depth > 0:  # ] }
+            depth -= 1
+    return False
+
+
+def _parse_worker_json(stdout: bytes, output_limit: int) -> Any:
+    """Decode one bounded, shallow worker response or fail closed."""
+    if len(stdout) > output_limit:
+        raise WorkerOutputLimit("isolated ZIP worker returned too much output")
+    if _json_exceeds_nesting_limit(stdout):
+        raise WorkerFailed("isolated ZIP worker returned an excessively nested response")
+    try:
+        return json.loads(stdout, object_pairs_hook=_object_without_duplicate_fields)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+        raise WorkerFailed("isolated ZIP worker returned an invalid response") from None
 
 
 class ZipWorker:
@@ -286,10 +324,7 @@ class ZipWorker:
             raise WorkerFailed("isolated ZIP worker failed") from None
         if process.returncode != 0:
             raise WorkerFailed("isolated ZIP worker failed")
-        try:
-            response = json.loads(stdout, object_pairs_hook=_object_without_duplicate_fields)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-            raise WorkerFailed("isolated ZIP worker returned an invalid response") from None
+        response = _parse_worker_json(stdout, output_limit)
         operation = request.get("operation")
         expected_fields = {"ok", "manifest"} if operation == "preview" else {"ok", "manifest", "payloads"}
         if not isinstance(response, dict) or set(response) != expected_fields:

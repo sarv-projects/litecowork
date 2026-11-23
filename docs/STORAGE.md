@@ -1064,6 +1064,19 @@ is advertised as restorable. Restore validates the manifest and every required b
 restores the point-in-time snapshot/event history through its recorded cursors, and
 registers a new Runtime identity; it must not resurrect old ExecutionLease epochs. Restore
 drills are required before cloud GA.
+
+The LCBK1 container uses XChaCha20-Poly1305 per chunk and PBKDF2-HMAC-SHA256 for its
+container key. New backups use 600,000 through 1,000,000 iterations (600,000 by default),
+matching the accepted B-41 floor while bounding caller-controlled work. The reader accepts
+pre-release v1 archives from 100,000 through 1,000,000 so archives created under the former
+100,000 minimum remain importable; the legacy range is read-only and is never emitted by
+current creation. It rejects lower or higher header values before invoking PBKDF2. Archives
+above 1,000,000 were technically admitted by the old implementation but are refused under
+the new resource bound. This is USER-DELEGATED direction A-122. One optimized Rust timing
+sample is recorded in 017-T19/RESEARCH; the slowest declared release-row and full-operation
+performance baseline remain in 017-T14. This is not Storage/Security ratification or release
+qualification.
+
 The snapshot is a Workspace-filtered serialization, not a byte-for-byte copy of the local
 SQLite database. It excludes pairing challenges, Environment provision previews, OS boot
 observations, AgentEndpoint bindings, Agent/Capability host instances and bindings,

@@ -37,6 +37,7 @@ use storage_core::{
     BACKUP_BLOB_ROOT, BACKUP_CONTAINER_MAGIC, BACKUP_CONTAINER_VERSION,
     BACKUP_CONTENT_ALGORITHM_XCHACHA20POLY1305, BACKUP_DATABASE_SNAPSHOT_PATH,
     BACKUP_EXCLUDED_BLOB_PURPOSES, BACKUP_EXCLUDED_TABLES, BACKUP_INSTALLATION_TABLES,
+    BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS, BACKUP_KDF_MAXIMUM_ITERATIONS,
     BACKUP_KDF_MINIMUM_ITERATIONS, BACKUP_KDF_PBKDF2_HMAC_SHA256, BACKUP_MAX_BLOB_DESCRIPTORS,
     BACKUP_MAX_CHUNK_BYTES, BACKUP_MAX_MANIFEST_BYTES, BACKUP_MAX_PAYLOAD_CHUNKS,
     BACKUP_WORKSPACE_SCOPED_TABLES, BackupArchiveManifest, BackupBlobDescriptor,
@@ -175,9 +176,9 @@ impl LocalBackupService {
                 "workspace ID is required for a backup".to_owned(),
             ));
         }
-        if request.kdf_iterations < BACKUP_KDF_MINIMUM_ITERATIONS {
+        if !kdf_iterations_are_supported(request.kdf_iterations) {
             return Err(StoreError::Invalid(format!(
-                "backup key derivation requires at least {BACKUP_KDF_MINIMUM_ITERATIONS} iterations"
+                "backup key derivation requires between {BACKUP_KDF_MINIMUM_ITERATIONS} and {BACKUP_KDF_MAXIMUM_ITERATIONS} iterations"
             )));
         }
         if !self.database_path.exists() {
@@ -1533,6 +1534,14 @@ fn read_container(
     archive_path: &Path,
     passphrase: &str,
 ) -> Result<DecodedBackupContainer, StoreError> {
+    read_container_with_key_deriver(archive_path, passphrase, derive_container_key)
+}
+
+fn read_container_with_key_deriver(
+    archive_path: &Path,
+    passphrase: &str,
+    derive_key: impl FnOnce(&str, &[u8; 16], u32) -> Result<Zeroizing<[u8; 32]>, StoreError>,
+) -> Result<DecodedBackupContainer, StoreError> {
     let bytes = fs::read(archive_path)
         .map_err(|error| StoreError::Io(format!("could not read the backup archive: {error}")))?;
     if bytes.len() < HEADER_LEN {
@@ -1555,16 +1564,8 @@ fn read_container(
             "the backup archive uses an unsupported container algorithm".to_owned(),
         ));
     }
-    let iterations = u32::from_be_bytes(
-        bytes[10..14]
-            .try_into()
-            .map_err(|_| StoreError::Integrity("the backup header is malformed".to_owned()))?,
-    );
-    if iterations < BACKUP_KDF_MINIMUM_ITERATIONS {
-        return Err(StoreError::Integrity(
-            "the backup archive uses a weakened key derivation".to_owned(),
-        ));
-    }
+    // Validate the attacker-controlled KDF cost before deriving any key.
+    let iterations = parse_container_kdf_iterations(&bytes[..HEADER_LEN])?;
     let mut salt = [0_u8; 16];
     salt.copy_from_slice(&bytes[14..30]);
     let mut manifest_nonce = [0_u8; NONCE_LEN];
@@ -1641,7 +1642,7 @@ fn read_container(
     }
     let directory = bytes[HEADER_LEN..offset].to_vec();
 
-    let key = derive_container_key(passphrase, &salt, iterations)?;
+    let key = derive_key(passphrase, &salt, iterations)?;
     let cipher = XChaCha20Poly1305::new_from_slice(key.as_ref())
         .map_err(|_| StoreError::Blob("invalid backup container key".to_owned()))?;
 
@@ -1763,6 +1764,30 @@ fn read_container(
     }
 
     Ok((manifest, header, files))
+}
+
+fn kdf_iterations_are_supported(iterations: u32) -> bool {
+    (BACKUP_KDF_MINIMUM_ITERATIONS..=BACKUP_KDF_MAXIMUM_ITERATIONS).contains(&iterations)
+}
+
+fn parse_container_kdf_iterations(header: &[u8]) -> Result<u32, StoreError> {
+    if header.len() < 14 {
+        return Err(StoreError::Integrity(
+            "the backup header is malformed".to_owned(),
+        ));
+    }
+    let iterations = u32::from_be_bytes(
+        header[10..14]
+            .try_into()
+            .map_err(|_| StoreError::Integrity("the backup header is malformed".to_owned()))?,
+    );
+    if !(BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS..=BACKUP_KDF_MAXIMUM_ITERATIONS).contains(&iterations)
+    {
+        return Err(StoreError::Integrity(
+            "the backup archive uses an unsupported key derivation work factor".to_owned(),
+        ));
+    }
+    Ok(iterations)
 }
 
 /// Writes the decrypted container payload into the staging directory.
@@ -2326,6 +2351,131 @@ mod tests {
     }
 
     #[test]
+    fn container_v1_kdf_range_is_enforced_before_key_derivation() {
+        assert_eq!(BACKUP_KDF_MINIMUM_ITERATIONS, 600_000);
+        assert_eq!(BACKUP_KDF_MAXIMUM_ITERATIONS, 1_000_000);
+        assert!(kdf_iterations_are_supported(BACKUP_KDF_MINIMUM_ITERATIONS));
+        assert!(kdf_iterations_are_supported(BACKUP_KDF_MAXIMUM_ITERATIONS));
+        assert!(!kdf_iterations_are_supported(
+            BACKUP_KDF_MINIMUM_ITERATIONS - 1
+        ));
+        assert!(!kdf_iterations_are_supported(
+            BACKUP_KDF_MAXIMUM_ITERATIONS + 1
+        ));
+
+        let mut header = build_header(
+            BACKUP_KDF_MAXIMUM_ITERATIONS + 1,
+            &[0; 16],
+            &[0; NONCE_LEN],
+            1,
+            1,
+        );
+        assert!(matches!(
+            parse_container_kdf_iterations(&header),
+            Err(StoreError::Integrity(_))
+        ));
+        let directory = tempfile::tempdir().expect("temporary archive directory");
+        let invalid_archive = directory.path().join("over-limit.lcbbackup");
+        fs::write(&invalid_archive, &header).expect("write invalid KDF header");
+        let derivation_called = std::cell::Cell::new(false);
+        assert!(matches!(
+            read_container_with_key_deriver(&invalid_archive, PASSPHRASE, |_, _, _| {
+                derivation_called.set(true);
+                Err(StoreError::Invalid("unexpected KDF call".to_owned()))
+            }),
+            Err(StoreError::Integrity(_))
+        ));
+        assert!(!derivation_called.get());
+        header = build_header(
+            BACKUP_KDF_MINIMUM_ITERATIONS,
+            &[0; 16],
+            &[0; NONCE_LEN],
+            1,
+            1,
+        );
+        assert_eq!(
+            parse_container_kdf_iterations(&header).expect("accepted header KDF"),
+            BACKUP_KDF_MINIMUM_ITERATIONS
+        );
+        header = build_header(
+            BACKUP_KDF_MAXIMUM_ITERATIONS,
+            &[0; 16],
+            &[0; NONCE_LEN],
+            1,
+            1,
+        );
+        assert_eq!(
+            parse_container_kdf_iterations(&header).expect("accepted maximum header KDF"),
+            BACKUP_KDF_MAXIMUM_ITERATIONS
+        );
+        header = build_header(
+            BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS,
+            &[0; 16],
+            &[0; NONCE_LEN],
+            1,
+            1,
+        );
+        assert_eq!(
+            parse_container_kdf_iterations(&header).expect("accepted legacy v1 KDF"),
+            BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS
+        );
+        header = build_header(
+            BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS - 1,
+            &[0; 16],
+            &[0; NONCE_LEN],
+            1,
+            1,
+        );
+        assert!(matches!(
+            parse_container_kdf_iterations(&header),
+            Err(StoreError::Integrity(_))
+        ));
+    }
+
+    #[test]
+    #[ignore = "manual KDF timing probe; use only as a host-specific benchmark"]
+    fn measure_container_kdf_work_factors() {
+        let salt = [0x5a; 16];
+        for iterations in [
+            BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS,
+            BACKUP_KDF_MINIMUM_ITERATIONS,
+            BACKUP_KDF_MAXIMUM_ITERATIONS,
+        ] {
+            let started = std::time::Instant::now();
+            let key = derive_container_key(PASSPHRASE, &salt, iterations)
+                .expect("derive a benchmark container key");
+            std::hint::black_box(key.as_ref());
+            eprintln!(
+                "backup_kdf iterations={iterations} elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
+    }
+
+    #[test]
+    fn backup_creation_rejects_kdf_values_outside_the_supported_range() {
+        let directory = tempfile::tempdir().expect("temporary backup directory");
+        let service = LocalBackupService::new(directory.path());
+        for iterations in [
+            BACKUP_KDF_MINIMUM_ITERATIONS - 1,
+            BACKUP_KDF_MAXIMUM_ITERATIONS + 1,
+        ] {
+            let mut create = request("invalid-kdf");
+            create.kdf_iterations = iterations;
+            assert!(matches!(
+                service.create_backup(&FixedKeys, &create),
+                Err(StoreError::Invalid(_))
+            ));
+        }
+        let mut upper_bound_request = request("valid-upper-bound");
+        upper_bound_request.kdf_iterations = BACKUP_KDF_MAXIMUM_ITERATIONS;
+        assert!(matches!(
+            service.create_backup(&FixedKeys, &upper_bound_request),
+            Err(StoreError::NotFound)
+        ));
+    }
+
+    #[test]
     fn backup_and_restore_round_trip_preserves_the_workspace_and_its_blobs() {
         let installation = install();
         create_workspace(&installation.store);
@@ -2339,19 +2489,42 @@ mod tests {
         assert!(outcome.manifest_row_recorded);
         assert_eq!(outcome.schema_version, crate::SCHEMA_VERSION);
 
+        // Repackage this pre-release v1 fixture at the former 100,000 floor.
+        // Current creation never emits this cost, but existing user archives
+        // within the bounded compatibility range must remain readable.
+        let (manifest, _header, payloads) =
+            read_container(Path::new(&outcome.archive_path), PASSPHRASE)
+                .expect("read the newly created archive before legacy repackaging");
+        let legacy_staging = tempfile::tempdir().expect("temporary legacy archive staging");
+        let legacy_files = payloads
+            .iter()
+            .enumerate()
+            .map(|(index, payload)| {
+                let source = legacy_staging.path().join(format!("payload-{index}.bin"));
+                fs::write(&source, payload).expect("write staged archive payload");
+                ContainerFile { source }
+            })
+            .collect::<Vec<_>>();
+        let legacy_archive = legacy_staging.path().join("legacy.lcbbackup");
+        write_container(
+            &legacy_archive,
+            PASSPHRASE,
+            BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS,
+            &canonical_json(&manifest).expect("serialize archive manifest"),
+            &legacy_files,
+        )
+        .expect("write the old-work-factor v1 fixture");
+
         let verification = service
-            .verify_backup(
-                Path::new(&outcome.archive_path),
-                &BackupPassphrase::new(PASSPHRASE),
-            )
-            .expect("the backup verifies");
+            .verify_backup(&legacy_archive, &BackupPassphrase::new(PASSPHRASE))
+            .expect("the legacy v1 backup verifies");
         assert_eq!(verification.backup_id, "round-trip");
         assert!(verification.compatibility.is_compatible());
 
         let destination = installation._directory.path().join("restored");
         let restored = service
             .restore_backup(
-                Path::new(&outcome.archive_path),
+                &legacy_archive,
                 &BackupPassphrase::new(PASSPHRASE),
                 &destination,
                 &FixedKeys,

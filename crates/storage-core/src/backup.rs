@@ -37,9 +37,17 @@ pub const BACKUP_KDF_PBKDF2_HMAC_SHA256: u8 = 1;
 /// Production PBKDF2 iteration count for the container key.
 pub const BACKUP_KDF_DEFAULT_ITERATIONS: u32 = 600_000;
 
-/// Lowest iteration count the API accepts. Values below this are refused so a
-/// caller cannot silently downgrade the container key.
-pub const BACKUP_KDF_MINIMUM_ITERATIONS: u32 = 100_000;
+/// Lowest iteration count accepted for newly created backups. Values below
+/// this remain readable only for compatibility with pre-release v1 archives.
+pub const BACKUP_KDF_MINIMUM_ITERATIONS: u32 = 600_000;
+
+/// Maximum iteration count accepted for new backups and v1 archive reads.
+/// This bounds work driven by an untrusted archive header.
+pub const BACKUP_KDF_MAXIMUM_ITERATIONS: u32 = 1_000_000;
+
+/// Lowest iteration count accepted when reading pre-release v1 backups.
+/// New backup creation must use `BACKUP_KDF_MINIMUM_ITERATIONS` or greater.
+pub const BACKUP_KDF_LEGACY_MINIMUM_ITERATIONS: u32 = 100_000;
 
 /// Maximum number of payload chunks a container may declare.
 pub const BACKUP_MAX_PAYLOAD_CHUNKS: u32 = 1_000_000;

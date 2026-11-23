@@ -478,6 +478,25 @@ Gaps to V1: CI, both installers, signing, updater, licensing record, row-aware m
 - **Evidence:** `python -m unittest tests.test_platform_matrix tests.test_evidence_bundle -v` passed **34/34**; `python scripts/v1_platform_matrix.py --rows scripts/v1_release_matrix_rows.json --skip-slow-probes` exited 0 and regenerated the matrix on native Windows; `python .specify/scripts/validate_feature_package.py` passed all 20 packages. The generated Windows row remains NOT_RUN except explicit B-35 Windows Task/terminal UNAVAILABLE cells; Linux is NOT_COUNTED because this generator ran on Windows. No native user qualification is implied by these checks; details are in `CURRENT-RUN.md`.
 - **Stop:** any tuple mismatch must remain visible and blocked; never coerce it into a passing row.
 
+## 019-T25 - Repair stale root contract fixtures
+
+- **Status:** CODE COMPLETE on 2026-11-24; both modules pass against unchanged canonical schemas. This fixture repair is not release qualification.
+- **Depends on:** none.
+- **Cross-package prerequisites:** none.
+- **Owner:** Release Engineering, API contracts.
+- **Allowed paths:** `tests/test_operator_stream_contract.py`, `tests/test_release_schemas.py`, `specs/019-release-engineering-qualification/TASKS.md`, `docs/IMPLEMENTATION-STATUS.md`, `CURRENT-RUN.md`.
+- **Contract:** `docs/schemas/operator-stream.schema.json` and `docs/schemas/release-evidence-bundle.schema.json`; current route protocol identity in the declared release row.
+- **Change intent:** add the correct nullable `turn_status` to the no-turn Conversation presentation fixture; supply `auth_mode` in the positive release-evidence fixture; correct any fixture protocol that falsely labels the current OpenCode HTTP/SSE route as ACP. Do not weaken or regenerate schemas to make an invalid fixture pass.
+- **Acceptance:**
+  - [x] Both module tests pass using unchanged canonical schemas.
+  - [x] Malformed/missing required properties remain rejected.
+  - [x] Fixture row identity matches the declared OS, provider, auth and protocol tuple.
+- **Command:** `python -m unittest tests.test_operator_stream_contract tests.test_release_schemas`
+- **Evidence:** exact result and fixture/schema comparison in CURRENT-RUN.md; CODE only.
+- **Stop:** a schema must be changed to accept the fixture or the row protocol cannot be determined from the canonical release row.
+
+**Completion evidence (2026-11-24):** `python -m unittest tests.test_operator_stream_contract tests.test_release_schemas` passed 15/15 on the current Windows checkout with unchanged canonical schemas. Evidence class: CODE only.
+
 ## Implementation and optimization notes (Rust and TypeScript)
 
 Findings from reading the source, folded into the tasks above. They do not add scope.

@@ -1,6 +1,7 @@
 # LiteCowork V1 — Product and Release Contract
 
-**Status:** accepted V1 TARGET; **not a claim of implementation or release qualification**.  
+**Status:** accepted ten-area V1 baseline; user-directed additions for Voice and Visual Annotation/Teach-by-Demo are TARGET and require complete owner SDDs and release-contract review. **No implementation or release qualification is implied.**
+
 **Authority:** subordinate to [Architecture](../ARCHITECTURE.md) for Core safety/ownership, and the companion to [Product Contract](PRODUCT.md) for complete desktop scope.  
 **Supersedes:** ambiguous Task-first product framing and transitional Home as the *default* UX; no Task identity, safety, evidence, or accepted ADR is revoked.  
 **Implementation truth:** [Implementation status](IMPLEMENTATION-STATUS.md), [current engineering handoff](../CURRENT-RUN.md), active owner TASKS, exact source, and CODE/SYSTEM/USER evidence for the identified build and provider tuple. `docs/archive/` materials are dated historical records and do not establish current implementation or qualification.
@@ -25,22 +26,33 @@ LiteSPM may **observe** external capabilities without modifying them, **adopt** 
 
 Native agent and provider support is qualified by exact agent build, transport, feature and operating system. An agent appearing in a catalog is never a supported claim.
 
-## 3. Ten required V1 desktop product areas
+## 3. Ten accepted V1 baseline desktop product areas
 
 | # | Area | Minimum working V1 acceptance; qualify each claimed format/provider |
 |---|---|---|
-| 1 | Universal Chat | New Chat; real native agent Send; streaming with stop/recovery; semantic committed history; search, rename/archive/delete; supported attachments; agent-dependent model, effort, commands and references. No Coworker/Task required. |
+| 1 | Universal Chat | New Chat; real native agent Send; streaming with stop/recovery; semantic committed history; search, rename/archive/delete; supported attachments; agent-dependent model, effort, commands and references; validated rich answers with semantic fallback and registered safe components. No Coworker/Task required. |
 | 2 | Bring Your Own Agent | Real detection, installation/configuration observation, exact version support, native account sign-in, session start/resume/stop, supported models/options, native tools/subagent honesty, update/repair when qualified. No universal model-router substitution. |
 | 3 | Persistent Coworkers | Quick Create or Customize; usable first chat; multiple scoped chats; stable identity; editable context/memory and selected chief; optional bounded worker allowlist; separately approved grants/responsibilities; pause/archive and recovery. |
-| 4 | Real Computer and Workbench | Contextual right Workbench with truthful Activity, Files, Browser, Computer, Terminal and qualified artifact views; local file/API/site operations; real provider/session/controller identity; human takeover and return when actually supported. |
+| 4 | Real Computer and Workbench | Contextual right-side object workspace with truthful Activity, Files, Browser, Computer, Terminal and qualified artifact views; local file/API/site operations; real provider/session/controller identity; local live computer preview with separately authorized agent disclosure and input; urgent Take over fences further agent computer input while Stop run cancels the owning Conversation/Task. Browser settings expose only implemented profile, site-permission, history, download and data controls; import is limited to explicitly selected non-secret data. |
 | 5 | Capabilities, Plugins, MCP, Connections | LiteSPM discovery, live installed/external inventory, source and compatibility, plan-before-write install/adopt/copy/update/repair/unmanage/remove; separate Connection, Coworker assignment and Task/Conversation grant; permitted invocation and evidence. |
 | 6 | Real Tasks and Multi-Agent Work | Plain-language outcome to reviewed durable work; planning by native lead; accepted versioned plan; authorized Attempts/Effects; eligible native or heterogeneous delegation; control, steering, cancellation, recovery, independent verification and handoff. |
 | 7 | Routines, Automations and Proactivity | Explicit saved Routine/Trigger preview; schedule timezone/DST/overlap/misfire; local host dependency; exact occurrence and Task identity; durable settlement, notification and history; approved triggers, bounded proactive suggestions. |
 | 8 | Memory, Knowledge and Learning | Workspace and Coworker scopes; local documents/folders and grounded retrieval; transparent eligibility/confidence; quiet eligible learning only within accepted policy; inspect, correct, revoke, purge and avoid cross-scope leakage. |
-| 9 | Library and Finished Work | Real file/revision ownership and provenance; format-specific preview/edit/save/export/compare or clearly read-only state; reopen across app restart; association to Conversation and Task and source revisions. The owner also selected a bounded non-executable Saved View Artifact in Library for V1, pending Feature 007 amendment review and Feature 016 T01/T02. |
+| 9 | Library and Finished Work | Real file/revision ownership and provenance; format-specific preview/edit/save/export/compare or clearly read-only state; reopen across app restart; association to Conversation and Task and source revisions. The owner also selected a bounded non-executable Saved View Artifact in Library for V1, pending Feature 007 amendment review and Feature 016 T01/T02. DOCX/XLSX/PPTX/PDF each require their own fidelity, calculation, macro, import/export, recovery and qualification contract before an editing/export claim. |
 | 10 | Desktop Shell, Settings, Background Runtime | Windows/Linux/macOS ambitions qualified individually; clean left navigation/chat/right Workbench; accessible keyboard and responsive UI; local-first data and permission controls, usage/diagnostics; backups/recovery, install/update, start/stop and machine-awake background runtime. |
 
 **Completeness means one qualified real flow in every area, not that all agents and all formats are identical.** For each supported row publish supported exact combinations; unsupported optional integrations remain visibly unavailable and do not masquerade as passes. V1 cannot claim the whole area complete based only on mocks, enum values, schema fixtures or a catalog listing.
+
+### User-directed V1 scope additions — TARGET / owner designs pending
+
+The product owner directed that the following capabilities join the V1 roadmap. This is an explicit scope amendment direction, not Feature 021/022 acceptance or release qualification. Their complete HLD/LLD, UI/API/event contracts, state and recovery behavior, privacy/security, dependency map, acceptance criteria and implementation sequencing must be authored in the owning packages before implementation:
+
+| # | Area | Direction and release gate |
+|---|---|---|
+| 11 | Local Voice | User-held push-to-talk, visible recording state, editable transcription in the normal composer, and optional local speech playback. Keep audio transient by default; voice may not approve or authorize consequential actions. Select engines and platform support only through Feature 021 research and qualification. |
+| 12 | Visual Annotation and Teach-by-Demo | Bind annotations to an immutable ArtifactVersion or render digest; review before adding them to a prompt. Teach-by-Demo is explicit, pauses or obscures secrets, records a draft procedure only, and never grants permissions or treats observed actions as approved execution. Full capture, retention, redaction, editing and recovery semantics belong to Feature 022. |
+
+The existing ten areas remain the accepted baseline. Feature 021/022 and this scope amendment must be reviewed against the release matrix before a release can claim these additions; they do not replace any current area or V1 gate.
 
 ## 4. Canonical UX contract
 

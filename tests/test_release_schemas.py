@@ -29,7 +29,8 @@ BUNDLE = {
     "arch": "x86_64",
     "packaging_mode": "packaged",
     "agent_versions": {"opencode": "2.0.32"},
-    "protocol": "acp-1",
+    "auth_mode": "user-configured",
+    "protocol": "opencode-v2-http-sse",
     "code_commands": [{"command": "cargo test", "exit_code": 0, "output_digest": "b" * 64}],
     "system_trace": {
         "request_ids": ["r1"],
@@ -54,7 +55,7 @@ ROW = {
     "agent": "opencode",
     "agent_version": "2.0.32",
     "auth_mode": "user-configured",
-    "protocol": "acp-1",
+    "protocol": "opencode-v2-http-sse",
     "priority": 1,
     "counted": True,
 }

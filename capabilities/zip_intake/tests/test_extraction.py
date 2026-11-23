@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import stat
 import struct
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -53,6 +54,7 @@ def with_extra(name, tag, payload):
     return info
 
 
+@unittest.skipUnless(sys.platform == "linux", "bounded local extraction uses Linux descriptor-relative filesystem operations")
 class ExtractionPlanTests(unittest.TestCase):
     def extractor(self, **limits):
         return BoundedZipExtractor(ZipIntakeProvider(Limits(**limits)))
@@ -316,6 +318,7 @@ class ExtractionPlanTests(unittest.TestCase):
             self.assertEqual(os.listdir(root), [])
 
 
+@unittest.skipUnless(sys.platform == "linux", "destination containment uses Linux descriptor-relative filesystem operations")
 class DestinationContainmentTests(unittest.TestCase):
     def test_never_writes_outside_root_or_follows_a_link(self):
         data = make_zip([("escape/pwned.txt", b"pwned"), ("safe.txt", b"safe")])
