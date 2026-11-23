@@ -1,6 +1,6 @@
 # UI behavior - Settings Storage & Backup and Deletion status (Feature 017)
 
-**Status:** IN_REVIEW - pending owner acceptance of B-41; does not authorize implementation; not a claim of implementation or qualification. Binds UI to owner contracts; not pixels.
+**Status:** TARGET / IN_REVIEW - whole-SPEC owner acceptance remains pending. User-delegated A-117/A-118 authorize only the storage T03 slice. No UI behavior below is implemented or qualified. Binds UI to owner contracts; not pixels.
 **Normative UI indexes:** [V1-UI-SCREEN-CONTRACT.md](../../../docs/V1-UI-SCREEN-CONTRACT.md) (Settings category 13 "Storage & Backup"), [V1-SETTINGS-CONTRACT-LEDGER.md](../../../docs/V1-SETTINGS-CONTRACT-LEDGER.md) (rows `previewBackup`, `exportWorkspace`, `verifyManifest`, `importBackup`, `previewRestore`, `confirmRestore`, `inspectStorageUsage`), [DESKTOP-SHELL-LLD.md](../../../docs/DESKTOP-SHELL-LLD.md).
 **Wire:** [api-events.md](api-events.md).
 

@@ -28,6 +28,8 @@ pub use rich_presentations::SqliteRichPresentationStore;
 #[cfg(test)]
 mod agent_binding_tests;
 #[cfg(test)]
+mod backup_table_map_tests;
+#[cfg(test)]
 mod context_document_migration_tests;
 #[cfg(test)]
 mod context_document_purge_tests;

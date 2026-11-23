@@ -1073,6 +1073,24 @@ ResourceLocation/FileIdentity bindings, transient upload chunk bytes, active res
 uploads, active leases, and other Runtime-local process/provider handles. It includes
 durable Environment and checkpoint metadata only. Portable checkpoint blobs are selected only if both the
 Environment's `INCLUDE_CHECKPOINTS` policy and Workspace replication policy permit them.
+The executable snapshot policy classifies every migrated application table exactly once as
+Workspace-scoped, installation metadata, or excluded local/authority state. Workspace rows
+are selected by a direct Workspace column or an explicit owner join. A table missing from
+the map, duplicated across classes, or referenced by a stale map entry fails backup
+creation before an archive is published. Installation metadata is limited to
+`schema_migrations`, `runtimes`, and `runtime_incarnations`; generic `request_dedup` is
+excluded because its opaque responses have no Workspace identity. Blob discovery reads
+the selected Workspace's rows from the excluded local `resource_content_blob_registry` in the same `VACUUM INTO` copy, derives blob candidates from that consistent copy, then removes the registry before the final archive snapshot is validated.
+The code map currently covers 98 Workspace-scoped tables, 3 installation tables and 41
+excluded tables; these counts are source evidence at the current schema revision, not a
+second normative list.
+For this storage CODE path, removal of excluded local/authority rows, unfinished upload
+state, and non-selected Workspace rows is performed in one immediate SQLite transaction
+with `defer_foreign_keys` enabled. This allows related child and parent records to be pruned
+as one unit despite immediate foreign keys. A dangling reference among retained records
+fails the transaction at commit; after commit the snapshot is vacuumed and checked again.
+This implementation detail supports the one-Workspace snapshot invariant and does not
+change the accepted owner of any record or the target backup contract.
 For desktop V1, E13-S01's required backup/restore contract includes ContextDocument
 tombstones, the exact sealed purge target manifests, and per-target acknowledgement states
 as durable Resource recovery state. When deletion expired a linked revision upload, retain
@@ -1095,8 +1113,10 @@ per-target receipt state (or an equivalent reconstructible record); local SQL re
 are not themselves replicated. Backups are separate from Runtime Mesh replication and are
 not a substitute for it.
 Backup manifests are control-plane recovery metadata stored with their backup target; they
-are not replicated Workspace DomainEvents. Create/restore request deduplication and the
-corresponding AuditRecord are retained. The database snapshot excludes the manifest row
+are not replicated Workspace DomainEvents. The generic `request_dedup` table is excluded
+from Workspace backups because its rows are not attributable to one Workspace. The target
+`backup_operations` contract assigns future Workspace-scoped request replay and its audit
+receipt; that operation store is not yet implemented. The database snapshot excludes the manifest row
 being created, so it never recursively contains a reference to its own output.
 The canonical immutable record is `WorkspaceBackupManifest` in `DATA-MODEL.md`. A row is
 inserted only after the database snapshot, per-origin event cursors, blob manifest, and

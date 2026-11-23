@@ -24,7 +24,7 @@ use chacha20poly1305::{
 };
 use fs2::FileExt;
 use hmac::{Hmac, Mac};
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
@@ -36,12 +36,14 @@ use std::{
 use storage_core::{
     BACKUP_BLOB_ROOT, BACKUP_CONTAINER_MAGIC, BACKUP_CONTAINER_VERSION,
     BACKUP_CONTENT_ALGORITHM_XCHACHA20POLY1305, BACKUP_DATABASE_SNAPSHOT_PATH,
-    BACKUP_EXCLUDED_BLOB_PURPOSES, BACKUP_EXCLUDED_TABLES, BACKUP_KDF_MINIMUM_ITERATIONS,
-    BACKUP_KDF_PBKDF2_HMAC_SHA256, BACKUP_MAX_BLOB_DESCRIPTORS, BACKUP_MAX_CHUNK_BYTES,
-    BACKUP_MAX_MANIFEST_BYTES, BACKUP_MAX_PAYLOAD_CHUNKS, BackupArchiveManifest,
-    BackupBlobDescriptor, BackupCreateOutcome, BackupEventCursor, BackupKeyReference,
-    BackupPayloadDescriptor, BackupRestoreOutcome, BackupVerification, BlobPurpose,
-    SchemaCompatibility, StoreError, backup_integrity_payload, check_schema_compatibility,
+    BACKUP_EXCLUDED_BLOB_PURPOSES, BACKUP_EXCLUDED_TABLES, BACKUP_INSTALLATION_TABLES,
+    BACKUP_KDF_MINIMUM_ITERATIONS, BACKUP_KDF_PBKDF2_HMAC_SHA256, BACKUP_MAX_BLOB_DESCRIPTORS,
+    BACKUP_MAX_CHUNK_BYTES, BACKUP_MAX_MANIFEST_BYTES, BACKUP_MAX_PAYLOAD_CHUNKS,
+    BACKUP_WORKSPACE_SCOPED_TABLES, BackupArchiveManifest, BackupBlobDescriptor,
+    BackupCreateOutcome, BackupEventCursor, BackupKeyReference, BackupPayloadDescriptor,
+    BackupRestoreOutcome, BackupVerification, BackupWorkspaceFilter, BackupWorkspaceTable,
+    BlobPurpose, SchemaCompatibility, StoreError, backup_integrity_payload,
+    check_schema_compatibility,
 };
 use zeroize::Zeroizing;
 
@@ -218,15 +220,14 @@ impl LocalBackupService {
         staging: &Path,
     ) -> Result<BackupCreateOutcome, StoreError> {
         let snapshot_path = staging.join(DATABASE_FILE_NAME);
-        let snapshot = build_filtered_snapshot(&self.database_path, &snapshot_path)?;
-
-        let candidates = collect_blob_ref_candidates_from(&open_database(&self.database_path)?)?;
+        let snapshot =
+            build_filtered_snapshot(&self.database_path, &snapshot_path, &request.workspace_id)?;
         let blobs = collect_backup_blobs(
             keys,
             &request.workspace_id,
             &self.blob_root,
             staging,
-            &candidates,
+            &snapshot.blob_ref_candidates,
         )?;
 
         let database_descriptor = BackupPayloadDescriptor {
@@ -420,6 +421,7 @@ struct SnapshotSummary {
     schema_version: i64,
     source_runtime_id: Option<String>,
     dropped_local_row_counts: BTreeMap<String, u64>,
+    blob_ref_candidates: Vec<BlobRefCandidate>,
 }
 
 /// Produces a Workspace-filtered snapshot of the local database.
@@ -430,13 +432,22 @@ struct SnapshotSummary {
 fn build_filtered_snapshot(
     source_path: &Path,
     destination_path: &Path,
+    workspace_id: &str,
 ) -> Result<SnapshotSummary, StoreError> {
     let source = open_database(source_path)?;
-    let schema_version: i64 = source
-        .pragma_query_value(None, "user_version", |row| row.get(0))
+    validate_backup_table_map(&source)?;
+    let workspace_exists: i64 = source
+        .query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE workspace_id = ?1",
+            params![workspace_id],
+            |row| row.get(0),
+        )
         .map_err(map_database_error)?;
-    let source_runtime_id = read_single_runtime_id(&source)?;
-
+    if workspace_exists != 1 {
+        return Err(StoreError::Invalid(
+            "the requested Workspace does not exist in this installation".to_owned(),
+        ));
+    }
     if destination_path.exists() {
         fs::remove_file(destination_path).map_err(|error| {
             StoreError::Io(format!("could not clear the snapshot destination: {error}"))
@@ -452,18 +463,85 @@ fn build_filtered_snapshot(
         )
         .map_err(map_database_error)?;
 
-    let snapshot = open_database(destination_path)?;
+    let mut snapshot = open_database(destination_path)?;
+    validate_backup_table_map(&snapshot)?;
+    let snapshot_workspace_count: i64 = snapshot
+        .query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE workspace_id = ?1",
+            params![workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if snapshot_workspace_count != 1 {
+        return Err(StoreError::Invalid(
+            "the requested Workspace changed while the backup snapshot was being created"
+                .to_owned(),
+        ));
+    }
+    let schema_version: i64 = snapshot
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    let source_runtime_id = read_single_runtime_id(&snapshot)?;
+
+    // Delete excluded records and foreign-Workspace rows together. The owner
+    // graph includes cyclic and immediate foreign keys, so filtering parent
+    // tables one at a time would fail before their children can be removed.
+    let transaction = snapshot
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch("PRAGMA defer_foreign_keys = ON")
+        .map_err(map_database_error)?;
+
+    // Temporary upload objects and the open session/chunk receipts that name
+    // them are Runtime-local execution state. Keep terminal upload history,
+    // but never make an unfinished upload appear resumable after restore.
+    drop_resumable_upload_state(&transaction)?;
 
     let mut dropped_local_row_counts = BTreeMap::new();
+    let mut content_registry_row_count = None;
     for table in BACKUP_EXCLUDED_TABLES {
-        if !table_exists(&snapshot, table)? {
+        if !table_exists(&transaction, table)? {
             continue;
         }
-        let deleted = empty_table(&snapshot, table)?;
+        if *table == "resource_content_blob_registry" {
+            // Keep only the selected Workspace's local registry entries until
+            // candidate discovery. This keeps blob refs aligned with the exact
+            // VACUUM INTO snapshot without including the registry in the
+            // resulting archive.
+            content_registry_row_count = Some(count_table_rows(&transaction, table)?);
+            let registry_scope = BackupWorkspaceTable {
+                table: "resource_content_blob_registry",
+                filter: BackupWorkspaceFilter::Column("workspace_id"),
+            };
+            delete_rows_outside_workspace(&transaction, &registry_scope, workspace_id)?;
+            continue;
+        }
+        let deleted = empty_table(&transaction, table)?;
         if deleted > 0 {
             dropped_local_row_counts.insert((*table).to_owned(), deleted);
         }
     }
+
+    // Excluded operational registries may still reference a Workspace (for
+    // example, resource_content_blob_registry), so remove them before deleting
+    // the other Workspaces' parent rows.
+    for table in BACKUP_WORKSPACE_SCOPED_TABLES {
+        delete_rows_outside_workspace(&transaction, table, workspace_id)?;
+    }
+
+    let blob_ref_candidates = collect_blob_ref_candidates_from(&transaction, workspace_id)?;
+
+    // The Workspace-scoped registry subset was used only to authenticate blob
+    // references. It is Runtime-local and must not be restored.
+    if let Some(original_count) = content_registry_row_count {
+        empty_table(&transaction, "resource_content_blob_registry")?;
+        if original_count > 0 {
+            dropped_local_row_counts
+                .insert("resource_content_blob_registry".to_owned(), original_count);
+        }
+    }
+    transaction.commit().map_err(map_database_error)?;
 
     // Reclaim the pages that held the excluded rows so the retained snapshot
     // cannot be mined for them.
@@ -477,7 +555,162 @@ fn build_filtered_snapshot(
         schema_version,
         source_runtime_id,
         dropped_local_row_counts,
+        blob_ref_candidates,
     })
+}
+
+fn drop_resumable_upload_state(connection: &Connection) -> Result<(), StoreError> {
+    for (table, predicate) in [
+        (
+            "resource_upload_chunk_requests",
+            "EXISTS (SELECT 1 FROM resource_upload_sessions owner WHERE owner.upload_id = resource_upload_chunk_requests.upload_id AND owner.state IN ('OPEN', 'CONTENT_RECEIVED'))",
+        ),
+        (
+            "resource_upload_chunks",
+            "EXISTS (SELECT 1 FROM resource_upload_sessions owner WHERE owner.upload_id = resource_upload_chunks.upload_id AND owner.state IN ('OPEN', 'CONTENT_RECEIVED'))",
+        ),
+        (
+            "resource_upload_sessions",
+            "state IN ('OPEN', 'CONTENT_RECEIVED')",
+        ),
+    ] {
+        let triggers = delete_triggers_for_table(connection, table)?;
+        let sql = format!(
+            "DELETE FROM \"{}\" WHERE {predicate}",
+            escape_identifier(table)
+        );
+        let result = connection.execute(&sql, []);
+        let restore_result = restore_delete_triggers(connection, table, triggers);
+        result.map_err(map_database_error)?;
+        restore_result?;
+    }
+    Ok(())
+}
+
+/// Refuses to create a backup unless every migrated application table has one
+/// explicit and valid scope classification. This check is also run against the
+/// copied schema so backup behavior cannot depend on an unchecked source DB.
+pub(crate) fn validate_backup_table_map(connection: &Connection) -> Result<(), StoreError> {
+    let actual_tables = application_tables(connection)?;
+    let mut classified = BTreeSet::new();
+
+    for table in BACKUP_WORKSPACE_SCOPED_TABLES {
+        if !classified.insert(table.table) {
+            return Err(StoreError::CorruptSchema(format!(
+                "backup table map classifies {} more than once",
+                table.table
+            )));
+        }
+        if !actual_tables.contains(table.table) {
+            return Err(StoreError::CorruptSchema(format!(
+                "backup table map references missing table {}",
+                table.table
+            )));
+        }
+
+        let expression = workspace_match_expression(table);
+        let sql = format!(
+            "SELECT 1 FROM \"{}\" WHERE ({expression}) LIMIT 0",
+            escape_identifier(table.table)
+        );
+        let statement = connection.prepare(&sql).map_err(|error| {
+            StoreError::CorruptSchema(format!(
+                "backup Workspace filter for {} is invalid: {error}",
+                table.table
+            ))
+        })?;
+        if statement.parameter_count() != 1 {
+            return Err(StoreError::CorruptSchema(format!(
+                "backup Workspace filter for {} must use exactly one parameter",
+                table.table
+            )));
+        }
+    }
+
+    for table in BACKUP_INSTALLATION_TABLES {
+        if !classified.insert(*table) {
+            return Err(StoreError::CorruptSchema(format!(
+                "backup table map classifies {table} more than once"
+            )));
+        }
+        if !actual_tables.contains(*table) {
+            return Err(StoreError::CorruptSchema(format!(
+                "backup table map references missing installation table {table}"
+            )));
+        }
+    }
+
+    for table in BACKUP_EXCLUDED_TABLES {
+        if !classified.insert(*table) {
+            return Err(StoreError::CorruptSchema(format!(
+                "backup table map classifies {table} more than once"
+            )));
+        }
+        if !actual_tables.contains(*table) {
+            return Err(StoreError::CorruptSchema(format!(
+                "backup table map references missing excluded table {table}"
+            )));
+        }
+    }
+
+    let unclassified: Vec<String> = actual_tables
+        .iter()
+        .filter(|table| !classified.contains(table.as_str()))
+        .cloned()
+        .collect();
+    if !unclassified.is_empty() {
+        return Err(StoreError::CorruptSchema(format!(
+            "backup table map has unclassified application tables: {}",
+            unclassified.join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
+fn application_tables(connection: &Connection) -> Result<BTreeSet<String>, StoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .map_err(map_database_error)?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(map_database_error)?;
+    let mut tables = BTreeSet::new();
+    for name in names {
+        tables.insert(name.map_err(map_database_error)?);
+    }
+    Ok(tables)
+}
+
+fn workspace_match_expression(table: &BackupWorkspaceTable) -> String {
+    match table.filter {
+        BackupWorkspaceFilter::Column(column) => format!(
+            "\"{}\".\"{}\" IS ?1",
+            escape_identifier(table.table),
+            escape_identifier(column)
+        ),
+        BackupWorkspaceFilter::Predicate(predicate) => predicate.to_owned(),
+    }
+}
+
+fn delete_rows_outside_workspace(
+    connection: &Connection,
+    table: &BackupWorkspaceTable,
+    workspace_id: &str,
+) -> Result<(), StoreError> {
+    let triggers = delete_triggers_for_table(connection, table.table)?;
+    let expression = workspace_match_expression(table);
+    let sql = format!(
+        "DELETE FROM \"{}\" WHERE NOT ({expression})",
+        escape_identifier(table.table)
+    );
+    let result = connection.execute(&sql, params![workspace_id]);
+    let restore_result = restore_delete_triggers(connection, table.table, triggers);
+    result.map_err(map_database_error)?;
+    restore_result?;
+    Ok(())
 }
 
 /// Deletes every row of `table` while preserving the table's delete guards.
@@ -488,9 +721,18 @@ fn build_filtered_snapshot(
 /// is byte-identical to the source schema.
 fn empty_table(connection: &Connection, table: &str) -> Result<u64, StoreError> {
     let triggers = delete_triggers_for_table(connection, table)?;
-    let deleted = connection
-        .execute(&format!("DELETE FROM \"{}\"", escape_identifier(table)), [])
-        .map_err(map_database_error)?;
+    let result = connection.execute(&format!("DELETE FROM \"{}\"", escape_identifier(table)), []);
+    let restore_result = restore_delete_triggers(connection, table, triggers);
+    let deleted = result.map_err(map_database_error)?;
+    restore_result?;
+    Ok(deleted as u64)
+}
+
+fn restore_delete_triggers(
+    connection: &Connection,
+    table: &str,
+    triggers: Vec<(String, String)>,
+) -> Result<(), StoreError> {
     for (name, sql) in triggers {
         connection.execute_batch(&sql).map_err(|error| {
             StoreError::Integrity(format!(
@@ -498,7 +740,7 @@ fn empty_table(connection: &Connection, table: &str) -> Result<u64, StoreError> 
             ))
         })?;
     }
-    Ok(deleted as u64)
+    Ok(())
 }
 
 fn delete_triggers_for_table(
@@ -535,6 +777,15 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, StoreError
         )
         .map_err(map_database_error)?;
     Ok(count > 0)
+}
+
+fn count_table_rows(connection: &Connection, table: &str) -> Result<u64, StoreError> {
+    let sql = format!("SELECT COUNT(*) FROM \"{}\"", escape_identifier(table));
+    let count: i64 = connection
+        .query_row(&sql, [], |row| row.get(0))
+        .map_err(map_database_error)?;
+    u64::try_from(count)
+        .map_err(|_| StoreError::CorruptSchema(format!("table {table} has a negative row count")))
 }
 
 fn assert_snapshot_is_valid(connection: &Connection) -> Result<(), StoreError> {
@@ -759,16 +1010,21 @@ fn collect_backup_blobs(
 /// hold a `BlobRef` object, and the registry tables hold the `BlobRef` fields
 /// in dedicated columns.
 fn collect_blob_ref_candidates_from(
-    connection: &Connection,
+    snapshot: &Connection,
+    workspace_id: &str,
 ) -> Result<Vec<BlobRefCandidate>, StoreError> {
     let mut candidates: BTreeSet<BlobRefCandidate> = BTreeSet::new();
 
-    if table_exists(connection, "resource_content_blob_registry")? {
-        let mut statement = connection
-            .prepare("SELECT digest, size_bytes, media_type FROM resource_content_blob_registry")
+    // This local registry is excluded from the archived database, but its
+    // Workspace-owned content references are needed to discover Resource blobs.
+    // Read them from the copied database state so another Workspace or a later
+    // live update cannot nominate a candidate for this backup.
+    if table_exists(snapshot, "resource_content_blob_registry")? {
+        let mut statement = snapshot
+            .prepare("SELECT digest, size_bytes, media_type FROM resource_content_blob_registry WHERE workspace_id = ?1")
             .map_err(map_database_error)?;
         let rows = statement
-            .query_map([], |row| {
+            .query_map(params![workspace_id], |row| {
                 Ok(BlobRefCandidate {
                     digest: row.get(0)?,
                     size_bytes: row.get::<_, i64>(1)? as u64,
@@ -781,8 +1037,8 @@ fn collect_blob_ref_candidates_from(
         }
     }
 
-    if table_exists(connection, "resource_text_indexes")? {
-        let mut statement = connection
+    if table_exists(snapshot, "resource_text_indexes")? {
+        let mut statement = snapshot
             .prepare(
                 "SELECT extracted_blob_digest, extracted_size_bytes FROM resource_text_indexes",
             )
@@ -801,15 +1057,15 @@ fn collect_blob_ref_candidates_from(
         }
     }
 
-    for table in included_tables(connection)? {
-        for column in text_json_columns(connection, &table)? {
+    for table in included_tables(snapshot)? {
+        for column in text_json_columns(snapshot, &table)? {
             let sql = format!(
                 "SELECT \"{}\" FROM \"{}\" WHERE \"{}\" IS NOT NULL",
                 escape_identifier(&column),
                 escape_identifier(&table),
                 escape_identifier(&column)
             );
-            let mut statement = match connection.prepare(&sql) {
+            let mut statement = match snapshot.prepare(&sql) {
                 Ok(statement) => statement,
                 Err(_) => continue,
             };
@@ -858,21 +1114,10 @@ fn collect_blob_refs_from_value(value: &Value, candidates: &mut BTreeSet<BlobRef
     }
 }
 
-fn included_tables(connection: &Connection) -> Result<Vec<String>, StoreError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-        )
-        .map_err(map_database_error)?;
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(map_database_error)?;
-    let tables = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(map_database_error)?;
-    Ok(tables
-        .into_iter()
-        .filter(|table| !BACKUP_EXCLUDED_TABLES.contains(&table.as_str()))
+fn included_tables(_connection: &Connection) -> Result<Vec<String>, StoreError> {
+    Ok(BACKUP_WORKSPACE_SCOPED_TABLES
+        .iter()
+        .map(|table| table.table.to_owned())
         .collect())
 }
 
@@ -2024,12 +2269,16 @@ mod tests {
     }
 
     fn create_workspace(store: &SqliteWorkspaceStore) {
+        create_workspace_named(store, WORKSPACE, "event-backup-create");
+    }
+
+    fn create_workspace_named(store: &SqliteWorkspaceStore, workspace_id: &str, event_id: &str) {
         WorkspaceService::new(store.clone())
             .create(CreateWorkspace {
-                workspace_id: WORKSPACE.to_owned(),
-                name: "Backup workspace".to_owned(),
+                workspace_id: workspace_id.to_owned(),
+                name: format!("Backup workspace {workspace_id}"),
                 owner_principal_id: "owner-local".to_owned(),
-                event: context("event-backup-create"),
+                event: context(event_id),
             })
             .expect("the workspace commits");
     }
@@ -2164,6 +2413,7 @@ mod tests {
         let summary = build_filtered_snapshot(
             &installation._directory.path().join(DATABASE_FILE_NAME),
             &snapshot_path,
+            WORKSPACE,
         )
         .expect("the filtered snapshot is built");
         assert_eq!(summary.schema_version, crate::SCHEMA_VERSION);
@@ -2193,6 +2443,184 @@ mod tests {
             )
             .expect("count triggers");
         assert_eq!(triggers, 1, "the snapshot keeps the source schema guards");
+    }
+
+    #[test]
+    fn snapshot_contains_only_the_requested_workspace_and_its_events() {
+        let installation = install();
+        create_workspace_named(&installation.store, "workspace-a", "event-workspace-a");
+        create_workspace_named(&installation.store, "workspace-b", "event-workspace-b");
+
+        let database_path = installation._directory.path().join(DATABASE_FILE_NAME);
+        let source = rusqlite::Connection::open(&database_path).expect("open the source store");
+        for (workspace_id, bytes) in [
+            ("workspace-a", b"workspace-a-blob".as_slice()),
+            ("workspace-b", b"workspace-b-blob".as_slice()),
+        ] {
+            source
+                .execute(
+                    "INSERT INTO resource_content_blob_registry (workspace_id, digest, size_bytes, media_type, created_at, state) VALUES (?1, ?2, ?3, 'application/octet-stream', '2026-10-20T10:00:00Z', 'TRACKED')",
+                    params![workspace_id, digest_bytes(bytes), bytes.len() as i64],
+                )
+                .expect("seed a Workspace-owned content blob registry row");
+        }
+
+        let snapshot_path = installation._directory.path().join("workspace-a.sqlite3");
+        let summary = build_filtered_snapshot(&database_path, &snapshot_path, "workspace-a")
+            .expect("the Workspace snapshot is built");
+        assert_eq!(summary.schema_version, crate::SCHEMA_VERSION);
+
+        // A post-copy live registry change must not alter blob candidates
+        // associated with the already-created database snapshot.
+        source
+            .execute(
+                "DELETE FROM resource_content_blob_registry WHERE workspace_id = 'workspace-a'",
+                [],
+            )
+            .expect("change the live Workspace registry after snapshot creation");
+        let post_snapshot_digest = digest_bytes(b"workspace-a-post-snapshot-blob");
+        source
+            .execute(
+                "INSERT INTO resource_content_blob_registry (workspace_id, digest, size_bytes, media_type, created_at, state) VALUES ('workspace-a', ?1, ?2, 'application/octet-stream', '2026-10-20T10:00:00Z', 'TRACKED')",
+                params![post_snapshot_digest, b"workspace-a-post-snapshot-blob".len() as i64],
+            )
+            .expect("add a live registry row after snapshot creation");
+
+        let snapshot = rusqlite::Connection::open(&snapshot_path).expect("open the snapshot");
+        let workspaces: Vec<String> = snapshot
+            .prepare("SELECT workspace_id FROM workspaces ORDER BY workspace_id")
+            .expect("prepare Workspace query")
+            .query_map([], |row| row.get(0))
+            .expect("query Workspaces")
+            .collect::<Result<_, _>>()
+            .expect("read Workspaces");
+        assert_eq!(workspaces, vec!["workspace-a"]);
+
+        let event_workspaces: Vec<String> = snapshot
+            .prepare("SELECT DISTINCT workspace_id FROM domain_events ORDER BY workspace_id")
+            .expect("prepare event query")
+            .query_map([], |row| row.get(0))
+            .expect("query event Workspaces")
+            .collect::<Result<_, _>>()
+            .expect("read event Workspaces");
+        assert_eq!(event_workspaces, vec!["workspace-a"]);
+        assert!(
+            foreign_key_violations(&snapshot)
+                .expect("check Workspace snapshot foreign keys")
+                .is_empty()
+        );
+
+        let blob_candidates = &summary.blob_ref_candidates;
+        let requested_digest = digest_bytes(b"workspace-a-blob");
+        let foreign_digest = digest_bytes(b"workspace-b-blob");
+        assert!(
+            blob_candidates
+                .iter()
+                .any(|candidate| candidate.digest == requested_digest)
+        );
+        assert!(
+            !blob_candidates
+                .iter()
+                .any(|candidate| candidate.digest == foreign_digest),
+            "another Workspace's registry row cannot nominate its blob"
+        );
+        assert!(
+            !blob_candidates
+                .iter()
+                .any(|candidate| candidate.digest == post_snapshot_digest),
+            "a post-snapshot live registry row cannot alter the candidate set"
+        );
+        let retained_registry_rows: i64 = snapshot
+            .query_row(
+                "SELECT COUNT(*) FROM resource_content_blob_registry",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count excluded registry rows in the final snapshot");
+        assert_eq!(retained_registry_rows, 0);
+    }
+
+    #[test]
+    fn snapshot_drops_resumable_uploads_and_their_chunk_receipts() {
+        let installation = install();
+        create_workspace(&installation.store);
+        let database_path = installation._directory.path().join(DATABASE_FILE_NAME);
+        let connection = rusqlite::Connection::open(&database_path).expect("inspect the store");
+
+        for (upload_id, state) in [
+            ("upload-open", "OPEN"),
+            ("upload-received", "CONTENT_RECEIVED"),
+            ("upload-failed", "FAILED"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO resource_upload_sessions (upload_id, workspace_id, display_name, media_type, expected_size_bytes, expected_digest, chunk_size_bytes, state, expires_at, parent_revision_ids_json, created_at) VALUES (?1, ?2, ?3, 'application/octet-stream', 4, ?4, 4, ?5, '2026-10-21T10:00:00Z', '[]', '2026-10-20T10:00:00Z')",
+                    params![upload_id, WORKSPACE, upload_id, digest_bytes(upload_id.as_bytes()), state],
+                )
+                .expect("seed a Workspace upload state");
+            if state == "OPEN" {
+                let chunk_digest = digest_bytes(upload_id.as_bytes());
+                connection
+                    .execute(
+                        "INSERT INTO resource_upload_chunk_blob_registry (workspace_id, digest, size_bytes, created_at, state) VALUES (?1, ?2, 4, '2026-10-20T10:00:00Z', 'TRACKED')",
+                        params![WORKSPACE, chunk_digest],
+                    )
+                    .expect("track a temporary upload chunk object");
+                connection
+                    .execute(
+                        "INSERT INTO resource_upload_chunks (upload_id, chunk_index, start_offset, end_offset_exclusive, sha256, temporary_blob_ref, received_at) VALUES (?1, 0, 0, 4, ?2, ?3, '2026-10-20T10:00:00Z')",
+                        params![upload_id, chunk_digest, chunk_digest],
+                    )
+                    .expect("seed upload chunk metadata");
+                connection
+                    .execute(
+                        "INSERT INTO resource_upload_chunk_requests (upload_id, request_id, chunk_index, request_payload_digest, created_at) VALUES (?1, ?2, 0, ?3, '2026-10-20T10:00:00Z')",
+                        params![upload_id, format!("request-{upload_id}"), digest_bytes(upload_id.as_bytes())],
+                    )
+                    .expect("seed the upload chunk request receipt");
+            }
+        }
+        drop(connection);
+
+        let snapshot_path = installation._directory.path().join("uploads.sqlite3");
+        build_filtered_snapshot(&database_path, &snapshot_path, WORKSPACE)
+            .expect("build the Workspace snapshot");
+        let snapshot = rusqlite::Connection::open(&snapshot_path).expect("open the snapshot");
+
+        let upload_states: Vec<(String, String)> = snapshot
+            .prepare("SELECT upload_id, state FROM resource_upload_sessions ORDER BY upload_id")
+            .expect("prepare upload state query")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query upload states")
+            .collect::<Result<_, _>>()
+            .expect("read upload states");
+        assert_eq!(
+            upload_states,
+            vec![("upload-failed".to_owned(), "FAILED".to_owned())]
+        );
+
+        for table in ["resource_upload_chunks", "resource_upload_chunk_requests"] {
+            let count: i64 = snapshot
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("count upload child receipts");
+            assert_eq!(
+                count, 0,
+                "active upload child state is removed from {table}"
+            );
+        }
+        assert!(
+            foreign_key_violations(&snapshot)
+                .expect("check upload snapshot foreign keys")
+                .is_empty()
+        );
+        let snapshot_bytes = fs::read(snapshot_path).expect("read the filtered snapshot");
+        assert!(!contains_bytes(&snapshot_bytes, b"temporary-upload-open"));
+        assert!(!contains_bytes(
+            &snapshot_bytes,
+            b"temporary-upload-received"
+        ));
     }
 
     #[test]
@@ -2369,24 +2797,258 @@ mod tests {
     }
 
     #[test]
-    fn the_passphrase_never_appears_in_the_archive_or_its_name() {
+    fn excluded_secrets_and_local_locators_never_appear_in_backup_payloads() {
         let installation = install();
         create_workspace(&installation.store);
+        create_workspace_named(
+            &installation.store,
+            "workspace-native-handle-canary",
+            "event-native-handle-canary-workspace",
+        );
+
+        let secret_store_canary = "secretstore-token-canary-8f21";
+        let native_locator_canary = "native-locator-canary-C:\\private\\agent.sock";
+        let native_session_handle_canary = "native-session-handle-canary-6b2d";
+        let foreign_workspace_content_canary = "foreign-workspace-conversation-canary";
+        let token_canary = "provider-token-canary-lc-0042";
+        let filesystem_instance_canary = "filesystem-canary";
+        let raw_file_id_canary = "raw-file-id-canary";
+        let key_material = sha256(WORKSPACE.as_bytes());
+        let key_material_canary = format!(
+            "key-material-canary:{}",
+            key_material
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        let canaries = [
+            secret_store_canary.as_bytes(),
+            native_locator_canary.as_bytes(),
+            native_session_handle_canary.as_bytes(),
+            foreign_workspace_content_canary.as_bytes(),
+            token_canary.as_bytes(),
+            PASSPHRASE.as_bytes(),
+            &key_material,
+            key_material_canary.as_bytes(),
+            filesystem_instance_canary.as_bytes(),
+            raw_file_id_canary.as_bytes(),
+        ];
+
+        let database_path = installation._directory.path().join(DATABASE_FILE_NAME);
+        let mut connection = rusqlite::Connection::open(&database_path).expect("inspect the store");
+        let response_json = serde_json::json!({
+            "secret_store": secret_store_canary,
+            "provider_token": token_canary,
+            "passphrase": PASSPHRASE,
+            "key_material": key_material_canary,
+        });
+        connection
+            .execute(
+                "INSERT INTO request_dedup (principal_id, request_id, request_digest, response_json, created_at) VALUES ('local-canary', 'canary-request', ?1, ?2, '2026-10-20T10:00:00Z')",
+                params![
+                    digest_bytes(b"canary request"),
+                    serde_json::to_string(&response_json).expect("encode canary response"),
+                ],
+            )
+            .expect("seed a generic deduplication response canary");
+        connection
+            .execute(
+                "INSERT INTO agent_registry_cache (registry_agent_id, source_registry, metadata_json, observed_at) VALUES ('canary-agent', 'test-registry', ?1, '2026-10-20T10:00:00Z')",
+                params![serde_json::to_string(&serde_json::json!({
+                    "private_locator": native_locator_canary,
+                }))
+                .expect("encode locator canary")],
+            )
+            .expect("seed local agent metadata canary");
+
+        let transaction = connection
+            .transaction()
+            .expect("begin the local binding fixture transaction");
+        transaction
+            .execute(
+                "INSERT INTO runtimes (runtime_id, device_identity_json, runtime_version, platform, architecture, roles_json, trust_zone, availability, startup_policy, current_incarnation_id, resource_capacity_json, last_seen, version) VALUES ('runtime-locator-canary', '{}', '0.1.0', 'windows', 'x86_64', '[]', 'LOCAL', 'ONLINE', 'MANUAL', 'incarnation-locator-canary', '{}', '2026-10-20T10:00:00Z', 1)",
+                [],
+            )
+            .expect("seed a Runtime for a valid local locator binding");
+        transaction
+            .execute(
+                "INSERT INTO runtime_incarnations (runtime_incarnation_id, runtime_id, process_started_at, litecowork_version, recovered_from_unclean_shutdown, recovery_state, version) VALUES ('incarnation-locator-canary', 'runtime-locator-canary', '2026-10-20T10:00:00Z', '0.1.0', 0, 'READY', 1)",
+                [],
+            )
+            .expect("seed the Runtime incarnation for the local locator binding");
+        transaction
+            .execute(
+                "INSERT INTO agent_profiles (agent_profile_id, provider_key, display_name, discovered_at) VALUES ('profile-native-handle-canary', 'test-provider', 'Native handle canary', '2026-10-20T10:00:00Z')",
+                [],
+            )
+            .expect("seed an agent profile for the native session handle");
+        transaction
+            .execute(
+                "INSERT INTO agent_endpoints (endpoint_id, agent_profile_id, protocol, topology, protocol_version, capabilities_json) VALUES ('endpoint-native-handle-canary', 'profile-native-handle-canary', 'ACP', 'PROCESS_ADAPTER', '1', '{}')",
+                [],
+            )
+            .expect("seed an endpoint for the native session handle");
+        transaction
+            .execute(
+                "INSERT INTO agent_bindings (agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy_json, auth_ref, configuration_json, enabled, lead_eligible, created_at) VALUES ('binding-native-handle-canary', 'workspace-native-handle-canary', 'profile-native-handle-canary', 'runtime-locator-canary', '{}', NULL, '{}', 0, 0, '2026-10-20T10:00:00Z')",
+                [],
+            )
+            .expect("seed a Workspace-owned binding for the native session handle");
+        transaction
+            .execute(
+                "INSERT INTO conversations (conversation_id, workspace_id, title, active_agent_binding_id, created_at) VALUES ('conversation-native-handle-canary', 'workspace-native-handle-canary', 'Native handle canary', 'binding-native-handle-canary', '2026-10-20T10:00:00Z')",
+                [],
+            )
+            .expect("seed the Conversation for the native session handle");
+        transaction
+            .execute(
+                "INSERT INTO conversation_messages (message_id, conversation_id, author_json, role, agent_binding_id, turn_id, content_json, resource_refs_json, created_at) VALUES ('message-native-handle-canary', 'conversation-native-handle-canary', '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}', 'USER', NULL, 'turn-native-handle-canary', '[{\"kind\":\"TEXT\",\"text\":\"foreign-workspace-conversation-canary\"}]', '[]', '2026-10-20T10:00:00Z')",
+                [],
+            )
+            .expect("seed the USER message for the native session turn");
+        transaction
+            .execute(
+                "INSERT INTO conversation_turns (turn_id, conversation_id, user_message_id, status, created_at) VALUES ('turn-native-handle-canary', 'conversation-native-handle-canary', 'message-native-handle-canary', 'RUNNING', '2026-10-20T10:00:00Z')",
+                [],
+            )
+            .expect("seed the running Conversation turn for the native session handle");
+        transaction
+            .execute(
+                "INSERT INTO agent_host_instances (host_instance_id, runtime_id, runtime_incarnation_id, agent_profile_id, endpoint_id, hosting_mode, state, process_identity_ref, ownership, started_at, last_used_at, idle_since) VALUES ('host-native-handle-canary', 'runtime-locator-canary', 'incarnation-locator-canary', 'profile-native-handle-canary', 'endpoint-native-handle-canary', 'LOCAL_PER_SESSION', 'BUSY', NULL, 'LITECOWORK', '2026-10-20T10:00:00Z', '2026-10-20T10:00:00Z', NULL)",
+                [],
+            )
+            .expect("seed the Runtime-local host for the native session handle");
+        transaction
+            .execute(
+                "INSERT INTO agent_sessions (agent_session_id, workspace_id, scope_kind, conversation_id, conversation_turn_id, agent_binding_id, endpoint_id, runtime_id, runtime_incarnation_id, status, started_at) VALUES ('session-native-handle-canary', 'workspace-native-handle-canary', 'CONVERSATION', 'conversation-native-handle-canary', 'turn-native-handle-canary', 'binding-native-handle-canary', 'endpoint-native-handle-canary', 'runtime-locator-canary', 'incarnation-locator-canary', 'ACTIVE', '2026-10-20T10:00:00Z')",
+                [],
+            )
+            .expect("seed the Workspace session for the native session handle");
+        transaction
+            .execute(
+                "UPDATE conversation_turns SET agent_session_id = 'session-native-handle-canary' WHERE turn_id = 'turn-native-handle-canary'",
+                [],
+            )
+            .expect("bind the turn to its exact AgentSession");
+        transaction
+            .execute(
+                "INSERT INTO agent_session_host_bindings (agent_session_id, host_instance_id, native_session_ref, bound_at) VALUES ('session-native-handle-canary', 'host-native-handle-canary', ?1, '2026-10-20T10:00:00Z')",
+                params![native_session_handle_canary],
+            )
+            .expect("seed the opaque native session handle in its Runtime-local binding");
+        let (runtime_id, runtime_incarnation_id): (String, String) = transaction
+            .query_row(
+                "SELECT runtime_id, current_incarnation_id FROM runtimes WHERE runtime_id = 'runtime-locator-canary'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the installation has a current Runtime incarnation");
+        transaction
+            .execute(
+                "INSERT INTO resources (resource_id, workspace_id, kind, provider_identity_json, display_name, sensitivity, provenance_json, created_at, updated_at) VALUES ('resource-locator-canary', ?1, 'FILE', '{}', 'Locator canary', 'PERSONAL', '{}', '2026-10-20T10:00:00Z', '2026-10-20T10:00:00Z')",
+                params![WORKSPACE],
+            )
+            .expect("seed a resource for a valid local locator binding");
+        transaction
+            .execute(
+                "INSERT INTO resource_locations (location_id, resource_id, runtime_id, provider_ref, locator_ref_id, availability, writable, observed_at) VALUES ('location-locator-canary', 'resource-locator-canary', ?1, 'test.local', 'locator-ref-canary', 'AVAILABLE', 0, '2026-10-20T10:00:00Z')",
+                params![runtime_id],
+            )
+            .expect("seed a ResourceLocation for the local locator canary");
+        transaction
+            .execute(
+                "INSERT INTO resource_location_bindings (location_id, locator_ref_id, runtime_id, runtime_incarnation_id, private_locator, observed_at) VALUES ('location-locator-canary', 'locator-ref-canary', ?1, ?2, ?3, '2026-10-20T10:00:00Z')",
+                params![runtime_id, runtime_incarnation_id, native_locator_canary],
+            )
+            .expect("seed a valid Runtime-local locator binding");
+        transaction
+            .execute(
+                "INSERT INTO file_identity_bindings (location_id, runtime_id, runtime_incarnation_id, raw_filesystem_instance_id, raw_file_id, platform_kind, observed_at) VALUES ('location-locator-canary', ?1, ?2, ?3, ?4, 'TEST', '2026-10-20T10:00:00Z')",
+                params![runtime_id, runtime_incarnation_id, filesystem_instance_canary, raw_file_id_canary],
+            )
+            .expect("seed Runtime-local raw file identity canaries");
+        transaction
+            .commit()
+            .expect("commit the local locator canary fixture");
+        drop(connection);
+
+        let staged_snapshot = installation
+            ._directory
+            .path()
+            .join("canary-staged-snapshot.sqlite3");
+        build_filtered_snapshot(&database_path, &staged_snapshot, WORKSPACE)
+            .expect("build a Workspace-filtered staged snapshot");
+        let snapshot_bytes = fs::read(&staged_snapshot).expect("read the staged snapshot");
+        for canary in canaries {
+            assert!(
+                !contains_bytes(&snapshot_bytes, canary),
+                "excluded canary {:?} never appears in the staged snapshot",
+                String::from_utf8_lossy(canary)
+            );
+        }
+        let snapshot = rusqlite::Connection::open(&staged_snapshot)
+            .expect("open the filtered snapshot for Workspace isolation checks");
+        let foreign_conversation_count: i64 = snapshot
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE workspace_id = 'workspace-native-handle-canary'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count foreign-Workspace Conversations in the archive snapshot");
+        assert_eq!(foreign_conversation_count, 0);
+
         let service = LocalBackupService::new(installation._directory.path());
         let outcome = service
             .create_backup(&FixedKeys, &request("no-secret"))
             .expect("the backup is created");
         assert!(!outcome.archive_path.contains(PASSPHRASE));
-        let bytes = fs::read(&outcome.archive_path).expect("read the archive");
-        assert!(
-            !contains_bytes(&bytes, PASSPHRASE.as_bytes()),
-            "the passphrase is never stored in the archive"
+        let archive_path = PathBuf::from(&outcome.archive_path);
+        let archive_bytes = fs::read(&archive_path).expect("read the archive");
+        let (manifest, _header, payloads) =
+            read_container(&archive_path, PASSPHRASE).expect("decrypt all payloads");
+        let manifest_bytes = serde_json::to_vec(&manifest).expect("serialize the manifest");
+        let staging = tempfile::tempdir().expect("create extraction directory");
+        extract_container(&archive_path, PASSPHRASE, staging.path(), &manifest)
+            .expect("extract authenticated payloads");
+
+        for canary in canaries {
+            assert!(
+                !contains_bytes(&archive_bytes, canary),
+                "excluded canary {:?} never appears in the encrypted archive",
+                String::from_utf8_lossy(canary)
+            );
+            assert!(
+                !contains_bytes(&manifest_bytes, canary),
+                "excluded canary {:?} never appears in the manifest",
+                String::from_utf8_lossy(canary)
+            );
+            for payload in &payloads {
+                assert!(
+                    !contains_bytes(payload, canary),
+                    "excluded canary {:?} never appears in a decrypted payload",
+                    String::from_utf8_lossy(canary)
+                );
+            }
+        }
+
+        let mut extracted_paths = vec![staging.path().join(DATABASE_FILE_NAME)];
+        extracted_paths.extend(
+            manifest
+                .blobs
+                .iter()
+                .map(|blob| staging.path().join(&blob.relative_path)),
         );
-        let key_material = sha256(WORKSPACE.as_bytes());
-        assert!(
-            !contains_bytes(&bytes, &key_material),
-            "the workspace key material is never stored in the archive"
-        );
+        for path in extracted_paths {
+            let extracted = fs::read(&path).expect("read every extracted payload file");
+            for canary in canaries {
+                assert!(
+                    !contains_bytes(&extracted, canary),
+                    "excluded canary {:?} never appears in extracted file {}",
+                    String::from_utf8_lossy(canary),
+                    path.display()
+                );
+            }
+        }
     }
 
     #[test]

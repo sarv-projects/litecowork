@@ -1,6 +1,6 @@
 # Error and Recovery Contract - Feature 017
 
-**Status:** IN_REVIEW - pending owner acceptance of B-41; does not authorize implementation; not a claim of implementation or qualification.
+**Status:** TARGET / IN_REVIEW - whole-SPEC owner acceptance remains pending. A-117/A-118 authorize only storage T03 CODE; the routes and recovery operations below are not served or qualified.
 **Owners:** Storage, Operator/API, Runtime Lifecycle, Security, Desktop UI.
 **Canonical owners:** [Failure Recovery](../../../docs/FAILURE-RECOVERY.md), [Storage](../../../docs/STORAGE.md), [API](../../../docs/API.md), [Security](../../../docs/SECURITY.md).
 
@@ -20,6 +20,12 @@
 | `STALE_VERSION` (existing) | 412 | Stale If-Match on cancel | No change | Refresh operation |
 
 ## 2. Recovery rules
+
+The current storage-only T03 snapshot path checks its three-way table classification,
+removes excluded local/authority rows and unfinished upload state on the copied database,
+filters Workspace rows, and verifies the resulting foreign keys before archiving. These
+steps are CODE only. Durable operation replay, startup cleanup, cross-installation import,
+offline restore orchestration and packaged crash/restart recovery remain later tasks.
 
 - **Create crash:** the archive is written under a temporary name and renamed only after read-back verification; the manifest is published in the same transaction as SUCCEEDED. On restart, `sweep_backup_staging` removes `.backup-staging-*` and unpublished archive files and settles the operation FAILED `BACKUP_INTERRUPTED`.
 - **Create uncertain outcome:** the client replays with the same Idempotency-Key; the daemon returns the stored operation. It never creates a second archive for one key.

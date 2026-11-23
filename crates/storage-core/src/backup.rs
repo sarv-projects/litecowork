@@ -72,12 +72,18 @@ pub const BACKUP_EXCLUDED_BLOB_PURPOSES: &[&str] = &["RESOURCE_UPLOAD_CHUNK"];
 /// local provider/process handles, local-only recovery registries, and live
 /// authority (leases, locks, secret leases) are excluded. Every table that
 /// remains carries Workspace-scoped durable truth, including ContextDocument
-/// purge plans and purge receipts.
+/// purge plans and purge receipts. The complete three-way classification is
+/// enforced by `BACKUP_WORKSPACE_SCOPED_TABLES`,
+/// `BACKUP_INSTALLATION_TABLES`, and this list; unknown tables fail closed.
 pub const BACKUP_EXCLUDED_TABLES: &[&str] = &[
     // Runtime-local provider and process handles.
     "agent_endpoint_bindings",
     "agent_session_host_bindings",
     "agent_host_instances",
+    "agent_control_descriptors",
+    "agent_installation_observations",
+    "agent_lifecycle_operations",
+    "agent_registry_cache",
     "capability_activation_host_bindings",
     "capability_host_instances",
     "capability_invocation_provider_bindings",
@@ -85,6 +91,8 @@ pub const BACKUP_EXCLUDED_TABLES: &[&str] = &[
     "automation_trigger_bindings",
     "channel_ingress_cursor_bindings",
     "channel_reply_targets",
+    "channel_host_assignments",
+    "channel_host_lease_records",
     "environment_provider_bindings",
     "environment_checkpoint_provider_bindings",
     "resource_location_bindings",
@@ -93,18 +101,514 @@ pub const BACKUP_EXCLUDED_TABLES: &[&str] = &[
     "resource_upload_chunk_blob_registry",
     "resource_index_blob_registry",
     "resource_content_blob_registry",
+    "resource_upload_blob_reservations",
+    "resource_upload_blob_gc_fences",
+    "workspace_root_cleanup_outbox",
+    "workspace_root_observation_batch_receipts",
+    "workspace_root_observation_bindings",
+    "workspace_root_observation_generations",
+    "workspace_root_observations",
     // Installation-local diagnostics and previews.
     "runtime_incarnation_local_observations",
     "environment_provision_previews",
     "runtime_offers",
     "provider_circuit_states",
     "pairing_tokens",
+    "runtime_workspace_bindings",
+    "request_dedup",
     // Live authority and leases are never restored.
     "execution_leases",
     "environment_control_leases",
     "secret_leases",
     "capability_locks",
 ];
+
+/// How a table's rows are associated with one Workspace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackupWorkspaceFilter {
+    /// The row contains a direct Workspace owner column.
+    Column(&'static str),
+    /// A fixed SQL predicate with exactly one `?1` Workspace parameter.
+    ///
+    /// Predicates are source-controlled constants, never derived from a
+    /// database value or caller input.
+    Predicate(&'static str),
+}
+
+/// One application table and its Workspace ownership rule.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackupWorkspaceTable {
+    pub table: &'static str,
+    pub filter: BackupWorkspaceFilter,
+}
+
+/// All durable records included in a one-Workspace backup.
+///
+/// A direct owner column is preferred. Tables without one use a fixed join to
+/// their owning Workspace aggregate. The SQLite adapter validates that this
+/// map, `BACKUP_INSTALLATION_TABLES`, and `BACKUP_EXCLUDED_TABLES` classify
+/// every migrated application table exactly once before creating a snapshot.
+pub const BACKUP_WORKSPACE_SCOPED_TABLES: &[BackupWorkspaceTable] = &[
+    // Direct Workspace ownership.
+    BackupWorkspaceTable {
+        table: "agent_bindings",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "agent_sessions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "aggregate_snapshots",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "artifacts",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "audit_records",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "automation_cursors",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "automation_occurrences",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "automation_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "automation_test_runs",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "automations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "budget_reservations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "capability_activations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "capability_invocations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "channel_bindings",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "channel_host_continuity_proofs",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "channel_host_drain_proofs",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "channel_host_lease_releases",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "connections",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "context_document_purge_plans",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "context_document_purge_receipts",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_control_events",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_history_state",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_owner_side_notes",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "conversations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "coworker_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "coworkers",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "delegation_profile_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "delegation_profiles",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "delegation_results",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "demonstration_sessions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "dependency_edges",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "domain_events",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "environments",
+        filter: BackupWorkspaceFilter::Column("owner_workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "event_archive_segments",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "goal_artifact_links",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "goal_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "goal_routine_links",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "goal_task_links",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "goals",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "notification_deliveries",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "notification_preferences",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "pending_replication_events",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "replication_aggregate_positions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "replication_cursors",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "replication_receipts",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "resource_edges",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "resource_text_index_terms",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "resource_text_indexes",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "resource_upload_sessions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "resources",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "rich_presentations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "routine_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "routines",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "skill_proposals",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "suggestion_preferences",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "suggestions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "task_spec_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "tasks",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "usage_observations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "user_requests",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspace_backup_manifests",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspace_delegation_settings_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspace_instruction_revisions",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspace_origin_sequences",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspace_replication_roots",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspace_root_file_locations",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspace_roots",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    BackupWorkspaceTable {
+        table: "workspaces",
+        filter: BackupWorkspaceFilter::Column("workspace_id"),
+    },
+    // Durable child records whose owner is another Workspace-scoped aggregate.
+    BackupWorkspaceTable {
+        table: "agent_binding_configurations",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM agent_bindings owner WHERE owner.agent_binding_id = agent_binding_configurations.agent_binding_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "agent_endpoints",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM agent_bindings owner WHERE owner.agent_profile_id = agent_endpoints.agent_profile_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "agent_profiles",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM agent_bindings owner WHERE owner.agent_profile_id = agent_profiles.agent_profile_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "approval_uses",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM approvals owner JOIN tasks task_owner ON task_owner.task_id = owner.task_id WHERE owner.approval_id = approval_uses.approval_id AND task_owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "approvals",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = approvals.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "artifact_versions",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM artifacts owner WHERE owner.artifact_id = artifact_versions.artifact_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "attempts",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = attempts.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "capability_grants",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM conversations owner WHERE owner.conversation_id = capability_grants.conversation_id AND owner.workspace_id IS ?1) OR EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = capability_grants.task_id AND owner.workspace_id IS ?1) OR EXISTS (SELECT 1 FROM attempts attempt_owner JOIN tasks task_owner ON task_owner.task_id = attempt_owner.task_id WHERE attempt_owner.attempt_id = capability_grants.attempt_id AND task_owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "channel_event_receipts",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM channel_bindings owner WHERE owner.channel_binding_id = channel_event_receipts.channel_binding_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "channel_thread_mappings",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM channel_bindings owner WHERE owner.channel_binding_id = channel_thread_mappings.channel_binding_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_dispatch_intents",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM conversation_turns turn_owner JOIN conversations owner ON owner.conversation_id = turn_owner.conversation_id WHERE turn_owner.turn_id = conversation_dispatch_intents.turn_id AND turn_owner.conversation_id = conversation_dispatch_intents.conversation_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_messages",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM conversations owner WHERE owner.conversation_id = conversation_messages.conversation_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_response_commits",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM conversation_turns turn_owner JOIN conversations owner ON owner.conversation_id = turn_owner.conversation_id WHERE turn_owner.turn_id = conversation_response_commits.turn_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_turn_activity_records",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM conversation_turns turn_owner JOIN conversations owner ON owner.conversation_id = turn_owner.conversation_id WHERE turn_owner.turn_id = conversation_turn_activity_records.turn_id AND turn_owner.conversation_id = conversation_turn_activity_records.conversation_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_turn_usage_records",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM conversation_turns turn_owner JOIN conversations owner ON owner.conversation_id = turn_owner.conversation_id WHERE turn_owner.turn_id = conversation_turn_usage_records.turn_id AND turn_owner.conversation_id = conversation_turn_usage_records.conversation_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "conversation_turns",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM conversations owner WHERE owner.conversation_id = conversation_turns.conversation_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "effects",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = effects.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "environment_checkpoints",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM environments owner WHERE owner.environment_id = environment_checkpoints.environment_id AND owner.owner_workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "evidence",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = evidence.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "handoffs",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = handoffs.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "invalidation_records",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM dependency_edges owner WHERE owner.dependency_edge_id = invalidation_records.dependency_edge_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "plan_revisions",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = plan_revisions.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "resource_locations",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM resources owner WHERE owner.resource_id = resource_locations.resource_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "resource_revision_parents",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM resources owner WHERE owner.resource_id = resource_revision_parents.resource_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "resource_revisions",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM resources owner WHERE owner.resource_id = resource_revisions.resource_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "resource_upload_chunk_requests",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM resource_upload_sessions owner WHERE owner.upload_id = resource_upload_chunk_requests.upload_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "resource_upload_chunks",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM resource_upload_sessions owner WHERE owner.upload_id = resource_upload_chunks.upload_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "steps",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = steps.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "user_request_responses",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM user_requests owner WHERE owner.request_id = user_request_responses.request_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+    BackupWorkspaceTable {
+        table: "verification_runs",
+        filter: BackupWorkspaceFilter::Predicate(
+            "EXISTS (SELECT 1 FROM tasks owner WHERE owner.task_id = verification_runs.task_id AND owner.workspace_id IS ?1)",
+        ),
+    },
+];
+
+/// Installation-scoped records retained only to satisfy Workspace record
+/// references after restore. They do not authorize use in the restored Runtime.
+pub const BACKUP_INSTALLATION_TABLES: &[&str] =
+    &["runtime_incarnations", "runtimes", "schema_migrations"];
 
 /// Authority tables whose restored rows are revoked instead of restored.
 ///

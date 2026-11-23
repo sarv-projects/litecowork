@@ -1,8 +1,8 @@
 feature_id: "017"
 name: "Data Portability, Backup and Restore"
 status: "IN_REVIEW"
-spec_revision: "0.1"
-note: "All links are target design pending owner acceptance of B-41. Only the CLI path (main.rs to backup_operator to LocalBackupService) exists as CODE; nothing here is served."
+spec_revision: "0.2"
+note: "Feature 017 remains IN_REVIEW and nothing in this package is served. The CLI path and storage T03 snapshot/classification/canary logic are CODE only; routes, bridge, Settings UI and qualification remain outstanding."
 nodes:
   - id: "settings-storage-backup-ui"
     owner: "Desktop UI (Settings Storage and Backup)"
@@ -35,7 +35,7 @@ nodes:
     owner: "Storage (storage-sqlite LocalBackupService)"
     kind: "storage library"
     responsibility: "Workspace-scoped snapshot, container seal and verify, staging, import, restore"
-    implementation_status: "CODE: create_backup, verify_backup, restore_backup, check_upgrade_compatibility; scope and portability gaps per SPEC section 4"
+    implementation_status: "CODE: create_backup, verify_backup, restore_backup, check_upgrade_compatibility; T03 filters to one Workspace, validates the exhaustive migrated table map, prunes upload/local/foreign-Workspace rows in one immediate transaction with deferred FK checks, derives scoped blob candidates from the same VACUUM INTO copy before removing the local registry, then vacuums and revalidates. Portable re-encryption, staging sweep, Windows DACL, receipt/runtime corrections and packaged qualification remain open per SPEC section 4."
     inputs: ["snapshot request", "archive path", "passphrase"]
     outputs: ["outcome records"]
   - id: "sqlite-store"

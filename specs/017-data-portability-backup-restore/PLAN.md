@@ -1,22 +1,22 @@
 # Implementation Plan - Data Portability, Backup and Restore
 
-**Feature:** 017 | **Spec:** SPEC.md revision 0.1
-**Status:** IN_REVIEW - pending owner acceptance of B-41; does not authorize implementation; not a claim of implementation or qualification.
-**Updated:** 2026-11-09
-**Rule:** the authoritative ordered work list is [TASKS.md](TASKS.md) (017-T01 to 017-T18); the phase table below is a summary. Implementation evidence is recorded separately from qualification.
+**Feature:** 017 | **Spec:** SPEC.md revision 0.2
+**Status:** IN_REVIEW - whole-SPEC owner acceptance remains pending. USER-DELEGATED A-117/A-118 authorize T03's storage-only CODE slice; this is not owner ratification or qualification.
+**Updated:** 2026-11-23
+**Rule:** the authoritative ordered work list is [TASKS.md](TASKS.md) (017-T01 to 017-T18); the phase table below is a summary. USER-DELEGATED T03 implementation does not change Feature lifecycle or count as owner review. Implementation evidence is recorded separately from qualification.
 
 ## 1. Delivery strategy
 
-Promote the existing, tested storage implementation rather than writing a second one. Fix its correctness gaps (Workspace scope, portability, crash staging, Windows DACL, receipt clock) in storage before any route exists, so the first user-visible backup is already scoped and secret-free. Then add the durable operation record, the Operator routes, the Tauri bridge and the Settings panel. Whole-installation restore stays an offline sidecar operation behind the Feature 011 stop/quiescence gate; the live Operator only imports an absent Workspace. Qualify E2E-12 on Windows x64 first and Linux x64 second.
+Promote the existing storage implementation rather than writing a second one. T03 now fixes Workspace scope, table classification, local/authority exclusion, unfinished upload state, and canary coverage in CODE. Portability, crash staging, Windows DACL, receipt clock and restore identity remain later storage tasks before routes exist. Then add the durable operation record, Operator routes, Tauri bridge and Settings panel. Whole-installation restore stays an offline sidecar operation behind the Feature 011 stop/quiescence gate; the live Operator only imports an absent Workspace. Qualify E2E-12 on Windows x64 first and Linux x64 second.
 
-Before implementation, inspect the working tree and worktrees, preserve user changes, and use a clean task worktree. Never run restore against the owner's real installation in tests.
+Before implementation, inspect the working tree and worktrees and preserve user changes. T03 may proceed under the exact USER-DELEGATED A-117/A-118 scope while the package remains IN_REVIEW; all other tasks retain their listed dependencies and review gates. Never run restore against the owner's real installation in tests.
 
 ## 2. Dependency graph
 
 ```mermaid
 flowchart TD
-  T01[T01 owner acceptance B-41] --> T02[T02 contract promotion]
-  T02 --> T03[T03 Workspace scope and secret canary]
+  T01[T01 formal whole-SPEC acceptance - still BLOCKED] --> T02[T02 contract promotion]
+  A117[A-117/A-118 USER-DELEGATED storage containment] --> T03[T03 Workspace scope and secret canary]
   T02 --> T04[T04 restore fixes, staging sweep, Windows DACL]
   T02 --> T06[T06 operation record and single-flight]
   T03 --> T05[T05 portable export and import]

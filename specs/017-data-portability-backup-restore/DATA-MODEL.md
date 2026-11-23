@@ -1,6 +1,6 @@
 # Data Model - Data Portability, Backup and Restore
 
-**Status:** IN_REVIEW - pending owner acceptance of B-41; does not authorize implementation; not a claim of implementation or qualification.
+**Status:** IN_REVIEW - formal owner acceptance of the whole SPEC remains pending. USER-DELEGATED A-117/A-118 authorize the storage-only T03 correctness slice; current CODE evidence does not imply SERVED, INTEGRATED or QUALIFIED behavior.
 **Feature:** 017 | **Authority:** [STORAGE.md](../../docs/STORAGE.md) "Backup and disaster recovery", [DATA-MODEL.md](../../docs/DATA-MODEL.md), [SECURITY.md](../../docs/SECURITY.md), [EVENTS.md](../../docs/EVENTS.md).
 
 This package reuses the canonical Workspace records and must not create a parallel copy of any domain aggregate. A backup is a sealed file; the only new durable record is the operation lifecycle row.
@@ -14,7 +14,28 @@ This package reuses the canonical Workspace records and must not create a parall
 | `context_document_purge_receipts` | per-target acknowledgement | Feature 003 / Storage | Carried; ACKNOWLEDGED targets never reintroduced |
 | `capability_grants` | grant identity within Workspace | Trust | Carried and set REVOKED on restore/import |
 | `runtime_incarnations` | Runtime incarnation | Runtime | Carried and set STOPPED; a new identity is minted on first start |
-| Excluded tables | the 26 names in `BACKUP_EXCLUDED_TABLES` | Runtime-local owners | Never carried |
+| Excluded tables | the 41 names in `BACKUP_EXCLUDED_TABLES` at the current schema revision | Runtime-local and authority owners | Never carried |
+
+The executable table policy currently classifies the post-migration schema as 98
+Workspace-scoped tables, 3 installation metadata tables (`schema_migrations`, `runtimes`,
+`runtime_incarnations`), and 41 excluded local/authority tables. Workspace tables use a
+direct Workspace column or an explicit owner join. The runtime check rejects missing,
+stale, duplicate, unclassified, invalid-filter, or incorrectly parameterized entries
+before an archive is published. The structural test runs the real migration chain rather
+than a hand-written table subset. These counts describe current CODE and are not a parallel
+schema authority.
+
+Open `resource_upload_sessions` (`OPEN`, `CONTENT_RECEIVED`) and their chunk/request rows
+are removed from the snapshot before Workspace filtering, because their temporary chunk
+objects are not portable backup payloads and their presence must not imply that upload
+resume is available after restore. Terminal upload history remains Workspace-scoped.
+
+The T03 CODE path applies upload removal, excluded local/authority-table cleanup, and
+non-selected Workspace row filtering in one immediate transaction on the copied database
+with `defer_foreign_keys` enabled. It commits only after the retained records satisfy
+foreign-key constraints; then it vacuums and revalidates the snapshot. The purpose is to
+remove related parent and child records together without weakening integrity for records
+that remain. This describes current storage behavior, not a new record or state machine.
 
 ## 2. PROPOSED new record (accepted target interface after acceptance; not yet in source)
 
@@ -57,6 +78,7 @@ Manifest publication and SUCCEEDED commit in the same transaction. An archive fi
 | Other Workspaces' rows | Never | Never |
 | Installation tables (`BACKUP_INSTALLATION_TABLES`) | Carried as metadata needed for foreign keys | Carried as metadata |
 | Excluded tables (`BACKUP_EXCLUDED_TABLES`) | Never | Never |
+| `OPEN` or `CONTENT_RECEIVED` upload sessions and their chunk/request rows | Never | Never |
 | Blob envelopes | Copied verbatim with key references | Decrypted and re-encrypted inside the container; no key references |
 | `RESOURCE_UPLOAD_CHUNK` bytes | Never | Never |
 | Acknowledged purged content | Never | Never |
