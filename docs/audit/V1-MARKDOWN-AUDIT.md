@@ -6,7 +6,7 @@ semantic correctness, implementation, integration or release qualification.
 
 - Files read: 369
 - Lines read: 80427
-- Bytes read: 8701268
+- Bytes read: 8701399
 - Broken relative targets: 0
 - Excluded: archives, reference clones, local `audit-output/`, generated audit reports, dependency/build/cache directories and local run worktrees.
 - Per-file SHA-256 values: V1-MARKDOWN-INVENTORY.csv
@@ -25,7 +25,7 @@ semantic correctness, implementation, integration or release qualification.
 | AGENTS.md | 137 | fd0e6cda071b | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | ARCHITECTURE.md | 824 | 45248d5f5a1a | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | CONTRIBUTING.md | 86 | fa3269ba41ee | agent/composer;browser/computer;rendering;workflow/recovery;trust/security |
-| CURRENT-RUN.md | 1478 | babca5aadadc | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| CURRENT-RUN.md | 1478 | ce18f4e318b6 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | GLOSSARY.md | 292 | bd9ffa34cb5e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | README.md | 93 | 3727827fd285 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | apps/litecowork-ui/README.md | 77 | c47d822925a4 | browser/computer;shell/settings/motion;workflow/recovery |
