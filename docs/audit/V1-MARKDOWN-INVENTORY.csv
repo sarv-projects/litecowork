@@ -9,7 +9,7 @@ file,lines,bytes,sha256,categories,has_heading
 AGENTS.md,137,12314,fd0e6cda071be8ff5f1714b99d85b94f2ab746aa5c2a2c6a30bae0e069caba2a,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 ARCHITECTURE.md,824,58190,45248d5f5a1a6ca74014ddfc370548a1d1ab067b0c9013169f1d004b5f225026,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 CONTRIBUTING.md,86,6517,fa3269ba41eef101439e5189ef170a3b9d993a5a02c98b8dbaabc93118fdb256,agent/composer;browser/computer;rendering;workflow/recovery;trust/security,True
-CURRENT-RUN.md,1477,419582,993e5f2c994f95c40f26a1121d808709a8abf612c8172318e2e954a5df4548f5,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+CURRENT-RUN.md,1478,419882,babca5aadadcabc9e7b38a6d781f421ef36c6d10ad05b5d940e3f3632815598f,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 GLOSSARY.md,292,12637,bd9ffa34cb5ee0a0877784f2e047fe8380fd29cfc37961c83d0a57e81a106713,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 README.md,93,8289,3727827fd285fbe4a46c47c59e9f562b6d21a6617a070e43b75b83b5f28b3296,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 apps/litecowork-ui/README.md,77,4351,c47d822925a4b15bcd033695b22b3a59ce293efacbf211418a9b7b5a0b2c5b57,browser/computer;shell/settings/motion;workflow/recovery,True
@@ -332,7 +332,7 @@ specs/017-data-portability-backup-restore/PLAN.md,88,8286,659a7e97c5751ea1b287ce
 specs/017-data-portability-backup-restore/README.md,32,4080,c654eeaa9b05ff3cd5d093cf88354689f2f643ce5cb6ec07a33664d307a71881,shell/settings/motion;workflow/recovery;trust/security,True
 specs/017-data-portability-backup-restore/RESEARCH.md,85,13942,67f89deb514047f929d6439ae4c976974bbe4aaccc9b46e1b6fec732fa801af7,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 specs/017-data-portability-backup-restore/SPEC.md,350,45617,7c74990762fd892cf34d8ff4c269aa8696e7a9040a8f577c03f806dae0315a4d,shell/settings/motion;workflow/recovery;trust/security,True
-specs/017-data-portability-backup-restore/TASKS.md,388,52315,36c1643003b9c5cd16954327ccfaf49fa1a876d1b221696a1e09ec981def6624,shell/settings/motion;rendering;workflow/recovery;trust/security,True
+specs/017-data-portability-backup-restore/TASKS.md,388,52324,6ac9a44e97fc52fdf8d5380e2d184a55359aa734fa99867a406dca948a85a77c,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 specs/017-data-portability-backup-restore/contracts/README.md,12,891,3b10fe62d11a1b5681925166f36f56fd35bb8842212f76c4d5595e5457f40722,shell/settings/motion;workflow/recovery,True
 specs/017-data-portability-backup-restore/contracts/api-events.md,46,5252,16a61ff82377536c7102629dd9fabddbc16bef349d7135762a36db5eb502574b,workflow/recovery;trust/security,True
 specs/017-data-portability-backup-restore/contracts/errors-recovery.md,46,4665,d0aee4add6772ae39bc57b6910127ed597327a3239f24d6d5cc6f72180259c6b,workflow/recovery;trust/security,True

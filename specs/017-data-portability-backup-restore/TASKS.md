@@ -385,4 +385,4 @@ For each task append a row when it closes: task, code revision (SHA), exact comm
 
 | Task | Revision | Command | Result | OS/build | Harness/version | Class | Reviewer |
 |---|---|---|---|---|---|---|---|
-| T03 | working-tree diff atop `f977ab0` (pre-commit) | `cargo test -p storage-sqlite --locked backup -- --nocapture` | PASS — 15 passed, 0 failed; 614 filtered out; 81.48s | Windows 11 Home Single Language x64, 10.0.26300, build 26300 | N/A | CODE | Codex; diff review and commit/push details follow in CURRENT-RUN.md |
+| T03 | `98929d0` (`fix(backup): scope snapshots to one workspace`) | `cargo test -p storage-sqlite --locked backup -- --nocapture` | PASS — 15 passed, 0 failed; 614 filtered out; 81.48s | Windows 11 Home Single Language x64, 10.0.26300, build 26300 | N/A | CODE | Codex; pushed to `origin/main`; no served or qualified journey |

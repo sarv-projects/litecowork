@@ -5,8 +5,8 @@ hashes their bytes and checks literal relative Markdown links. It does not estab
 semantic correctness, implementation, integration or release qualification.
 
 - Files read: 369
-- Lines read: 80426
-- Bytes read: 8700959
+- Lines read: 80427
+- Bytes read: 8701268
 - Broken relative targets: 0
 - Excluded: archives, reference clones, local `audit-output/`, generated audit reports, dependency/build/cache directories and local run worktrees.
 - Per-file SHA-256 values: V1-MARKDOWN-INVENTORY.csv
@@ -25,7 +25,7 @@ semantic correctness, implementation, integration or release qualification.
 | AGENTS.md | 137 | fd0e6cda071b | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | ARCHITECTURE.md | 824 | 45248d5f5a1a | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | CONTRIBUTING.md | 86 | fa3269ba41ee | agent/composer;browser/computer;rendering;workflow/recovery;trust/security |
-| CURRENT-RUN.md | 1477 | 993e5f2c994f | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| CURRENT-RUN.md | 1478 | babca5aadadc | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | GLOSSARY.md | 292 | bd9ffa34cb5e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | README.md | 93 | 3727827fd285 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | apps/litecowork-ui/README.md | 77 | c47d822925a4 | browser/computer;shell/settings/motion;workflow/recovery |
@@ -348,7 +348,7 @@ semantic correctness, implementation, integration or release qualification.
 | specs/017-data-portability-backup-restore/README.md | 32 | c654eeaa9b05 | shell/settings/motion;workflow/recovery;trust/security |
 | specs/017-data-portability-backup-restore/RESEARCH.md | 85 | 67f89deb5140 | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | specs/017-data-portability-backup-restore/SPEC.md | 350 | 7c74990762fd | shell/settings/motion;workflow/recovery;trust/security |
-| specs/017-data-portability-backup-restore/TASKS.md | 388 | 36c1643003b9 | shell/settings/motion;rendering;workflow/recovery;trust/security |
+| specs/017-data-portability-backup-restore/TASKS.md | 388 | 6ac9a44e97fc | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | specs/017-data-portability-backup-restore/contracts/README.md | 12 | 3b10fe62d11a | shell/settings/motion;workflow/recovery |
 | specs/017-data-portability-backup-restore/contracts/api-events.md | 46 | 16a61ff82377 | workflow/recovery;trust/security |
 | specs/017-data-portability-backup-restore/contracts/errors-recovery.md | 46 | d0aee4add677 | workflow/recovery;trust/security |
