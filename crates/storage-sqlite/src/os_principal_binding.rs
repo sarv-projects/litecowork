@@ -5,6 +5,7 @@
 //! observed principal. Unix Runtime data directories must already be private, real
 //! directories owned by the same UID.
 
+use hmac::{Hmac, Mac};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use keyring::Entry;
 use sha2::{Digest, Sha256};
@@ -98,6 +99,25 @@ impl RuntimeOsPrincipalIdentity {
         message.push(0);
         message.extend_from_slice(material);
         hex::encode(hmac_sha256(&self.pseudonym_key, &message))
+    }
+
+    /// Returns a domain-separated HMAC for multiple length-prefixed parts without
+    /// concatenating them into a second buffer. Callers may use this for secret
+    /// material that already lives in zeroizing memory.
+    pub fn keyed_pseudonym_parts(&self, namespace: &str, parts: &[&[u8]]) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.pseudonym_key[..])
+            .expect("HMAC accepts a fixed-size Runtime key");
+        mac.update(b"litecow-runtime-keyed-pseudonym-v1\0");
+        mac.update(namespace.as_bytes());
+        mac.update(&[0]);
+        for part in parts {
+            mac.update(&(part.len() as u64).to_be_bytes());
+            mac.update(part);
+        }
+        let mut digest = mac.finalize().into_bytes();
+        let encoded = hex::encode(digest);
+        digest.zeroize();
+        format!("hmac-sha256:{encoded}")
     }
 
     /// Constructs a synthetic OS identity for tests that need to exercise local routes.

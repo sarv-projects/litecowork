@@ -2,11 +2,8 @@
 //!
 //! The router is responsible for local Operator authentication and obtaining the
 //! current descriptor from the trusted AgentModule. This module validates the
-//! descriptor binding and slot, then sends secret bytes directly to SecretStore.
-#![allow(
-    dead_code,
-    reason = "write-only credential boundary is exercised by its tests but has no wired route yet; remove this file-scope allow when the submission route lands"
-)]
+//! write-only request and projects its bounded secret into zeroizing memory. Durable
+//! replay and SecretStore writes are coordinated by the route and receipt owner.
 
 use crate::agents::control_descriptor::{
     AgentControlDescriptor, AgentSecretKind, CredentialStorageOwner as DescriptorStorageOwner,
@@ -14,8 +11,8 @@ use crate::agents::control_descriptor::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::time::SystemTime;
-use storage_core::{SecretKind, SecretPlacement, SecretRef, SecretStore, StoreError};
-use zeroize::{Zeroize, Zeroizing};
+use storage_core::{SecretKind, SecretRef, StoreError};
+use zeroize::Zeroizing;
 
 const MAX_ENCODED_SECRET_BYTES: usize = 65_536;
 const MAX_DECODED_SECRET_BYTES: usize = 48 * 1024;
@@ -109,6 +106,38 @@ impl AgentCredentialDescriptorSnapshot {
             credential_slots,
         })
     }
+
+    /// Returns the SecretKind for exactly one fresh slot owned by LiteCowork.
+    /// Native-agent slots are never converted into a LiteCowork SecretRef.
+    pub(crate) fn secret_kind_for_slot(
+        &self,
+        requested_agent_profile_id: &str,
+        requested_descriptor_digest: &str,
+        requested_slot_id: &str,
+        now: SystemTime,
+    ) -> Result<SecretKind, CredentialSubmissionError> {
+        if self.agent_profile_id != requested_agent_profile_id
+            || self.digest != requested_descriptor_digest
+            || self.expires_at <= now
+        {
+            return Err(CredentialSubmissionError::DescriptorUnavailable);
+        }
+        let mut matching_slots = self
+            .credential_slots
+            .iter()
+            .filter(|slot| slot.credential_slot_id == requested_slot_id);
+        let slot = matching_slots
+            .next()
+            .ok_or(CredentialSubmissionError::SlotUnavailable)?;
+        if matching_slots.next().is_some()
+            || slot.credential_slot_id.is_empty()
+            || slot.credential_slot_id.len() > MAX_SLOT_ID_BYTES
+            || slot.storage_owner != CredentialStorageOwner::LiteCoworkSecretStore
+        {
+            return Err(CredentialSubmissionError::SlotUnavailable);
+        }
+        Ok(slot.secret_kind)
+    }
 }
 
 pub(crate) struct AgentCredentialSlot {
@@ -149,12 +178,15 @@ impl From<StoreError> for CredentialSubmissionError {
 /// Validates the bounded write-only request without consulting a descriptor or
 /// touching SecretStore. The route uses this before reporting an unavailable
 /// module, so malformed payloads do not get masked by a dependency error.
-pub(crate) fn validate_agent_credential_request(
+/// Validates and decodes once into zeroizing memory. Callers must not copy the
+/// returned bytes into ordinary buffers; the route fingerprints them in place,
+/// then lends this same allocation to the idempotent SecretStore operation.
+pub(crate) fn decode_agent_credential_request(
     workspace_id: &str,
     requested_agent_profile_id: &str,
     requested_slot_id: &str,
     request: &AgentCredentialSecretSubmission,
-) -> Result<(), CredentialSubmissionError> {
+) -> Result<Zeroizing<Vec<u8>>, CredentialSubmissionError> {
     let encoded_secret = &request.secret_base64;
     if request.descriptor_digest.len() != 71
         || !request.descriptor_digest.starts_with("sha256:")
@@ -179,340 +211,57 @@ pub(crate) fn validate_agent_credential_request(
     if decoded.is_empty() || decoded.len() > MAX_DECODED_SECRET_BYTES {
         return Err(CredentialSubmissionError::InvalidRequest);
     }
-    Ok(())
-}
-
-pub(crate) fn submit_agent_credential(
-    workspace_id: &str,
-    requested_agent_profile_id: &str,
-    requested_slot_id: &str,
-    request: AgentCredentialSecretSubmission,
-    descriptor: Option<&AgentCredentialDescriptorSnapshot>,
-    secret_store: &dyn SecretStore,
-    now: SystemTime,
-) -> Result<AgentCredentialBindingResponse, CredentialSubmissionError> {
-    // Own the incoming JSON string in zeroizing memory immediately. No error path
-    // formats or returns it, and the response type has no field for secret input.
-    validate_agent_credential_request(
-        workspace_id,
-        requested_agent_profile_id,
-        requested_slot_id,
-        &request,
-    )?;
-    let encoded_secret = request.secret_base64;
-    let request_digest = request.descriptor_digest;
-
-    let descriptor = descriptor.ok_or(CredentialSubmissionError::DescriptorUnavailable)?;
-    if descriptor.agent_profile_id != requested_agent_profile_id
-        || descriptor.digest != request_digest
-        || descriptor.expires_at <= now
-    {
-        return Err(CredentialSubmissionError::DescriptorUnavailable);
-    }
-
-    let mut matching_slots = descriptor
-        .credential_slots
-        .iter()
-        .filter(|slot| slot.credential_slot_id == requested_slot_id);
-    let slot = matching_slots
-        .next()
-        .ok_or(CredentialSubmissionError::SlotUnavailable)?;
-    if matching_slots.next().is_some()
-        || slot.credential_slot_id.is_empty()
-        || slot.credential_slot_id.len() > MAX_SLOT_ID_BYTES
-        || slot.storage_owner != CredentialStorageOwner::LiteCoworkSecretStore
-    {
-        return Err(CredentialSubmissionError::SlotUnavailable);
-    }
-
-    // Decode only after request/descriptor/slot checks. The decoded allocation is
-    // zeroizing from its first owned value and is handed directly to SecretStore.
-    let mut decoded = Zeroizing::new(Vec::with_capacity(encoded_secret.len() * 3 / 4));
-    STANDARD
-        .decode_vec(encoded_secret.as_bytes(), &mut decoded)
-        .map_err(|_| CredentialSubmissionError::InvalidRequest)?;
-    let mut secret_bytes = decoded;
-    let mut secret_ref = secret_store
-        .write(workspace_id, slot.secret_kind, secret_bytes.as_mut_slice())
-        .map_err(CredentialSubmissionError::from)?;
-    // SecretStore returns opaque, non-secret metadata. Still reject malformed
-    // implementations so invalid data cannot leak into a public Operator response.
-    if secret_ref.secret_ref_id.is_empty()
-        || secret_ref.secret_ref_id.len() > 512
-        || secret_ref.provider_ref.is_empty()
-        || secret_ref.provider_ref.len() > 512
-        || secret_ref.placement != SecretPlacement::LocalOnly
-    {
-        secret_ref.secret_ref_id.zeroize();
-        secret_ref.provider_ref.zeroize();
-        return Err(CredentialSubmissionError::SecretStoreUnavailable);
-    }
-
-    Ok(AgentCredentialBindingResponse {
-        credential_slot_id: requested_slot_id.to_owned(),
-        secret_ref,
-    })
+    Ok(decoded)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
-
-    /// Every write recorded through the test store: workspace, kind, secret bytes.
-    type RecordedWrites = Arc<Mutex<Vec<(String, SecretKind, Vec<u8>)>>>;
-
-    #[derive(Clone, Default)]
-    struct RecordingSecretStore {
-        writes: RecordedWrites,
-    }
-
-    impl SecretStore for RecordingSecretStore {
-        fn write(
-            &self,
-            workspace_id: &str,
-            secret_kind: SecretKind,
-            secret_bytes: &mut [u8],
-        ) -> Result<SecretRef, StoreError> {
-            self.writes.lock().expect("recording store lock").push((
-                workspace_id.to_owned(),
-                secret_kind,
-                secret_bytes.to_vec(),
-            ));
-            secret_bytes.fill(0);
-            Ok(SecretRef {
-                secret_ref_id: "secret_ref_test_1".to_owned(),
-                provider_ref: "os-keyring:v1:test".to_owned(),
-                placement: SecretPlacement::LocalOnly,
-            })
-        }
-
-        fn write_idempotent(
-            &self,
-            _workspace_id: &str,
-            _secret_kind: SecretKind,
-            _secret_ref_id: &str,
-            secret_bytes: &mut [u8],
-        ) -> Result<SecretRef, StoreError> {
-            secret_bytes.fill(0);
-            Err(StoreError::Busy)
-        }
-    }
-
-    struct FailingSecretStore;
-
-    impl SecretStore for FailingSecretStore {
-        fn write(
-            &self,
-            _workspace_id: &str,
-            _secret_kind: SecretKind,
-            secret_bytes: &mut [u8],
-        ) -> Result<SecretRef, StoreError> {
-            secret_bytes.fill(0);
-            Err(StoreError::Busy)
-        }
-
-        fn write_idempotent(
-            &self,
-            _workspace_id: &str,
-            _secret_kind: SecretKind,
-            _secret_ref_id: &str,
-            secret_bytes: &mut [u8],
-        ) -> Result<SecretRef, StoreError> {
-            secret_bytes.fill(0);
-            Err(StoreError::Busy)
-        }
-    }
-
-    const PROFILE: &str = "agent-profile-test";
-    const SLOT: &str = "api-key";
     const WORKSPACE: &str = "workspace-test";
-    const DIGEST: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-    fn descriptor(owner: CredentialStorageOwner) -> AgentCredentialDescriptorSnapshot {
-        AgentCredentialDescriptorSnapshot {
-            agent_profile_id: PROFILE.to_owned(),
-            digest: DIGEST.to_owned(),
-            expires_at: SystemTime::now() + std::time::Duration::from_secs(60),
-            credential_slots: vec![AgentCredentialSlot {
-                credential_slot_id: SLOT.to_owned(),
-                secret_kind: SecretKind::ApiKey,
-                storage_owner: owner,
-            }],
-        }
-    }
 
     fn request(secret: &[u8]) -> AgentCredentialSecretSubmission {
         AgentCredentialSecretSubmission {
-            descriptor_digest: DIGEST.to_owned(),
+            descriptor_digest:
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
             secret_base64: Zeroizing::new(STANDARD.encode(secret)),
         }
     }
 
     #[test]
-    fn valid_secret_is_written_and_response_contains_only_slot_and_reference() {
-        let store = RecordingSecretStore::default();
-        let result = submit_agent_credential(
+    fn decoded_secret_is_zeroizing_and_matches_the_write_only_payload() {
+        let secret = decode_agent_credential_request(
             WORKSPACE,
-            PROFILE,
-            SLOT,
-            request(b"private-api-key"),
-            Some(&descriptor(CredentialStorageOwner::LiteCoworkSecretStore)),
-            &store,
-            SystemTime::now(),
+            "agent-profile-test",
+            "api-key",
+            &request(b"private-api-key"),
         )
-        .expect("declared secure credential slot accepts a local write");
-
-        assert_eq!(
-            store
-                .writes
-                .lock()
-                .expect("recording store lock")
-                .as_slice(),
-            &[(
-                WORKSPACE.to_owned(),
-                SecretKind::ApiKey,
-                b"private-api-key".to_vec()
-            )]
-        );
-        let response = serde_json::to_string(&result).expect("safe response serializes");
-        assert!(response.contains(SLOT));
-        assert!(response.contains("secret_ref_test_1"));
-        assert!(!response.contains("private-api-key"));
+        .expect("valid write-only credential decodes");
+        assert_eq!(secret.as_slice(), b"private-api-key");
     }
 
     #[test]
-    fn stale_or_mismatched_descriptor_and_native_owned_slots_never_write() {
-        let store = RecordingSecretStore::default();
-        let mut stale = descriptor(CredentialStorageOwner::LiteCoworkSecretStore);
-        stale.expires_at = SystemTime::now() - std::time::Duration::from_secs(1);
-        assert_eq!(
-            submit_agent_credential(
-                WORKSPACE,
-                PROFILE,
-                SLOT,
-                request(b"private-api-key"),
-                Some(&stale),
-                &store,
-                SystemTime::now(),
-            )
-            .unwrap_err(),
-            CredentialSubmissionError::DescriptorUnavailable
-        );
-
-        let mut mismatched = descriptor(CredentialStorageOwner::LiteCoworkSecretStore);
-        mismatched.digest = format!("{}0", mismatched.digest);
-        assert_eq!(
-            submit_agent_credential(
-                WORKSPACE,
-                PROFILE,
-                SLOT,
-                request(b"private-api-key"),
-                Some(&mismatched),
-                &store,
-                SystemTime::now(),
-            )
-            .unwrap_err(),
-            CredentialSubmissionError::DescriptorUnavailable
-        );
-
-        assert_eq!(
-            submit_agent_credential(
-                WORKSPACE,
-                PROFILE,
-                SLOT,
-                request(b"private-api-key"),
-                Some(&descriptor(CredentialStorageOwner::NativeAgent)),
-                &store,
-                SystemTime::now(),
-            )
-            .unwrap_err(),
-            CredentialSubmissionError::SlotUnavailable
-        );
-        assert!(
-            store
-                .writes
-                .lock()
-                .expect("recording store lock")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn unknown_duplicate_slots_and_invalid_base64_fail_closed() {
-        let store = RecordingSecretStore::default();
-        assert_eq!(
-            submit_agent_credential(
-                WORKSPACE,
-                PROFILE,
-                "missing-slot",
-                request(b"private-api-key"),
-                Some(&descriptor(CredentialStorageOwner::LiteCoworkSecretStore)),
-                &store,
-                SystemTime::now(),
-            )
-            .unwrap_err(),
-            CredentialSubmissionError::SlotUnavailable
-        );
-
-        let mut duplicated = descriptor(CredentialStorageOwner::LiteCoworkSecretStore);
-        duplicated.credential_slots.push(AgentCredentialSlot {
-            credential_slot_id: SLOT.to_owned(),
-            secret_kind: SecretKind::Token,
-            storage_owner: CredentialStorageOwner::LiteCoworkSecretStore,
-        });
-        assert_eq!(
-            submit_agent_credential(
-                WORKSPACE,
-                PROFILE,
-                SLOT,
-                request(b"private-api-key"),
-                Some(&duplicated),
-                &store,
-                SystemTime::now(),
-            )
-            .unwrap_err(),
-            CredentialSubmissionError::SlotUnavailable
-        );
-
+    fn malformed_or_unbounded_secret_request_is_rejected() {
         let mut malformed = request(b"private-api-key");
         malformed.secret_base64 = Zeroizing::new("not base64".to_owned());
         assert_eq!(
-            submit_agent_credential(
+            decode_agent_credential_request(
                 WORKSPACE,
-                PROFILE,
-                SLOT,
-                malformed,
-                Some(&descriptor(CredentialStorageOwner::LiteCoworkSecretStore)),
-                &store,
-                SystemTime::now(),
+                "agent-profile-test",
+                "api-key",
+                &malformed,
             )
             .unwrap_err(),
             CredentialSubmissionError::InvalidRequest
         );
-        assert!(
-            store
-                .writes
-                .lock()
-                .expect("recording store lock")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn secret_store_failures_are_mapped_without_exposing_provider_errors() {
-        let result = submit_agent_credential(
-            WORKSPACE,
-            PROFILE,
-            SLOT,
-            request(b"private-api-key"),
-            Some(&descriptor(CredentialStorageOwner::LiteCoworkSecretStore)),
-            &FailingSecretStore,
-            SystemTime::now(),
-        );
         assert_eq!(
-            result.unwrap_err(),
-            CredentialSubmissionError::SecretStoreUnavailable
+            decode_agent_credential_request(
+                WORKSPACE,
+                "agent-profile-test",
+                "api-key",
+                &request(&vec![b'x'; 48 * 1024 + 1]),
+            )
+            .unwrap_err(),
+            CredentialSubmissionError::InvalidRequest
         );
     }
 }

@@ -76,6 +76,16 @@ pub struct AgentCredentialSubmissionReceipt {
     pub committed_at: Option<String>,
 }
 
+/// Result of an atomic reservation. `created` is decided under the same IMMEDIATE
+/// transaction as the unique-key check, so concurrent exact requests get stable
+/// 201 (creator) versus 200 (replay) semantics.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCredentialSubmissionReservationOutcome {
+    pub receipt: AgentCredentialSubmissionReceipt,
+    pub created: bool,
+}
+
 /// Runtime-local transaction owner for credential submission replay and settlement.
 pub trait AgentCredentialSubmissionStore: Send + Sync {
     /// Returns a receipt only when the selected Workspace still belongs to the
@@ -92,7 +102,7 @@ pub trait AgentCredentialSubmissionStore: Send + Sync {
     fn reserve_agent_credential_submission(
         &self,
         reservation: AgentCredentialSubmissionReservation,
-    ) -> Result<AgentCredentialSubmissionReceipt, StoreError>;
+    ) -> Result<AgentCredentialSubmissionReservationOutcome, StoreError>;
 
     /// Settles the exact reserved ref and writes the metadata-only audit row in the
     /// same transaction. This reconciles an already-authorized operation and is safe

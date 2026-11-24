@@ -837,11 +837,15 @@ function resume_pending(receipt, secret_bytes):
 The ordinary Operator JSON API MUST NOT echo the secret. Desktop IPC should use a
 no-log/no-cache privileged command body with strict size limits. Credential submission
 requires the shared `Idempotency-Key` header (1–200 printable ASCII bytes). The
-credential write route remains unavailable until it can durably replay the original
-SecretRef after a lost response or daemon restart, reject the same key with a changed
-request, and do so without retaining secret bytes or an offline verifier. Exact replay
-must return before re-reading mutable descriptor/profile state; new requests must validate
-the current descriptor and Workspace owner before touching SecretStore.
+credential write route now has CODE/SERVED durable receipt lookup, keyed request
+fingerprinting, reservation, idempotent SecretStore mutation and settlement. Focused tests
+cover exact replay, changed-request conflict and retry from a seeded PENDING receipt; the
+seeded retry does not prove recovery across an actual daemon restart or native keyring.
+The route is not a provider sign-in journey: current OpenCode and Claude Code descriptors
+declare no LiteCowork-owned slot, so no credential UI is enabled. Before exposing a provider
+path, qualify daemon restart and OS keyring recovery for a supported declared slot. Exact
+replay returns before re-reading mutable descriptor/profile state; new requests validate the
+current descriptor and Workspace owner before touching SecretStore.
 
 **A-67 USER-DELEGATED implementation direction, 2026-11-23:** implement this with a Runtime-local `agent_credential_submission_receipts` table (SQLite v36). The receipt key is `(workspace_id, principal_id, agent_profile_id, credential_slot_id, SHA-256(Idempotency-Key))`; request equality uses only an installation-keyed HMAC of the descriptor digest and decoded secret, never an unkeyed secret digest. New operations verify active Workspace ownership and a unique fresh descriptor slot before reserving a `PENDING` row with a preallocated `secret_<64 lowercase hex>` ID. The public `SecretStore` interface remains write-only; its idempotent write accepts the reserved ID. The private OS-keyring adapter checks whether that exact account already contains the same encoded bytes, returns the same `SecretRef` if so, refuses different content without overwriting it, and does not delete after an ambiguous set error. Keyring I/O happens outside SQLite. A second short transaction commits the provider reference and one metadata-only audit row. The initial reservation is the authorization linearization point; later completion reconciles that accepted operation even if Workspace state changes in between. Exact committed replay requires the authenticated principal to remain the Workspace owner and bypasses mutable profile/descriptor state; PENDING replay may finish the same accepted write. No automatic receipt TTL is allowed. The table is excluded from Workspace backups and events. If the Runtime HMAC key or OS keyring is unavailable, the operation fails closed. Current OpenCode and Claude Code descriptors have no LiteCowork-owned credential slot; no UI control or provider sign-in is implied. This direction is user-delegated engineering authority, not Security/Storage owner ratification or native OS qualification.
 

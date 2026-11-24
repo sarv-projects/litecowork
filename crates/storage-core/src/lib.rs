@@ -31,8 +31,9 @@ pub use agent_credential_submissions::{
     AGENT_CREDENTIAL_RECEIPT_SLOT_MAX_BYTES, AGENT_CREDENTIAL_REQUEST_FINGERPRINT_PREFIX,
     AGENT_CREDENTIAL_SECRET_REF_PREFIX, AgentCredentialSubmissionKey,
     AgentCredentialSubmissionReceipt, AgentCredentialSubmissionReservation,
-    AgentCredentialSubmissionState, AgentCredentialSubmissionStore,
-    validate_agent_credential_submission_key, validate_agent_credential_submission_reservation,
+    AgentCredentialSubmissionReservationOutcome, AgentCredentialSubmissionState,
+    AgentCredentialSubmissionStore, validate_agent_credential_submission_key,
+    validate_agent_credential_submission_reservation,
     validate_agent_credential_submission_settlement, validate_secret_ref_id,
 };
 

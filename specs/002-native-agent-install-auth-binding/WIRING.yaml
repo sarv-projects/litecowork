@@ -181,11 +181,13 @@ recovery:
 # - Auth-begin/native-config routes and ID-only bridges exist, but the production launcher/opener fail closed;
 #   OpenCode declares no method/target. T07 now owns the exact-scope persistent observation path, while provider
 #   login, module-reported completion/re-probe and packaged qualification remain unavailable (002-T07/T10).
-# - CODE includes the v36 receipt store/migration and private idempotent keyring primitive. The
-#   `agent_credentials_routes.rs::submit_credential` handler still returns 503 after descriptor lookup
-#   and has no receipt-store, fingerprint, keyring-write or settlement caller. The edges above are
-#   TARGET only until route integration and restart/recovery tests are complete. OpenCode/Claude Code
-#   declare no LiteCowork slot, so this is not a provider sign-in or visible UI journey (002-T08).
+# - CODE/SERVED includes the authenticated `agent_credentials_routes.rs::submit_credential` sequence:
+#   owner-scoped receipt lookup and Runtime-keyed fingerprint first; fresh profile/descriptor/slot
+#   validation for new operations; short PENDING reservation; idempotent SecretStore write outside
+#   SQLite; then receipt and metadata-audit settlement. Exact replay/conflict and seeded-PENDING
+#   recovery have route tests. The seeded retry is not a daemon restart test. Current OpenCode/Claude
+#   descriptors declare no LiteCowork slot, so no provider sign-in or visible UI journey exists;
+#   native OS-keyring restart qualification remains open (002-T08).
 # - The ACP client and Matchmaker are code-level components but are not wired to a qualified provider flow
 #   (002-T17/T18). Install/update remain target-only; model-option and harness-capability projections are served,
 #   but the Tauri picker bridge and Conversation admission consumer remain absent.

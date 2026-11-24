@@ -7,9 +7,9 @@ use serde_json::json;
 use std::sync::mpsc;
 use storage_core::{
     AgentCredentialSubmissionKey, AgentCredentialSubmissionReceipt,
-    AgentCredentialSubmissionReservation, AgentCredentialSubmissionState,
-    AgentCredentialSubmissionStore, SecretKind, validate_agent_credential_submission_key,
-    validate_agent_credential_submission_reservation,
+    AgentCredentialSubmissionReservation, AgentCredentialSubmissionReservationOutcome,
+    AgentCredentialSubmissionState, AgentCredentialSubmissionStore, SecretKind,
+    validate_agent_credential_submission_key, validate_agent_credential_submission_reservation,
     validate_agent_credential_submission_settlement,
 };
 
@@ -28,7 +28,7 @@ impl AgentCredentialSubmissionStore for SqliteWorkspaceStore {
     fn reserve_agent_credential_submission(
         &self,
         mut reservation: AgentCredentialSubmissionReservation,
-    ) -> Result<AgentCredentialSubmissionReceipt, StoreError> {
+    ) -> Result<AgentCredentialSubmissionReservationOutcome, StoreError> {
         validate_agent_credential_submission_reservation(&reservation)?;
         reservation.created_at = canonicalize_utc_timestamp(&reservation.created_at)?;
         self.run_credential_submission_operation(move |connection| {
@@ -53,7 +53,10 @@ impl AgentCredentialSubmissionStore for SqliteWorkspaceStore {
                     ));
                 }
                 transaction.commit().map_err(map_database_error)?;
-                return Ok(existing);
+                return Ok(AgentCredentialSubmissionReservationOutcome {
+                    receipt: existing,
+                    created: false,
+                });
             }
 
             transaction
@@ -79,7 +82,10 @@ impl AgentCredentialSubmissionStore for SqliteWorkspaceStore {
             let receipt = read_receipt(&transaction, &reservation.key)?
                 .ok_or_else(|| StoreError::CorruptSchema("credential receipt insert disappeared".to_owned()))?;
             transaction.commit().map_err(map_database_error)?;
-            Ok(receipt)
+            Ok(AgentCredentialSubmissionReservationOutcome {
+                receipt,
+                created: true,
+            })
         })
     }
 
@@ -448,9 +454,11 @@ mod tests {
     fn exact_retry_and_commit_replay_reuse_one_ref_and_one_audit_row() {
         let (directory, store) = fixture();
         let reservation = reservation('b', 'c');
-        let pending = store
+        let first_reservation = store
             .reserve_agent_credential_submission(reservation.clone())
             .expect("reserve before keyring mutation");
+        assert!(first_reservation.created);
+        let pending = first_reservation.receipt;
         assert_eq!(pending.state, AgentCredentialSubmissionState::Pending);
 
         let committed = store
@@ -472,7 +480,8 @@ mod tests {
         let exact_retry = store
             .reserve_agent_credential_submission(duplicate_reservation)
             .expect("same request returns its existing committed receipt");
-        assert_eq!(exact_retry, committed);
+        assert!(!exact_retry.created);
+        assert_eq!(exact_retry.receipt, committed);
         let committed_retry = store
             .commit_agent_credential_submission(
                 reservation.key.clone(),
@@ -502,6 +511,7 @@ mod tests {
         let first = store
             .reserve_agent_credential_submission(original.clone())
             .expect("initial request reserves");
+        assert!(first.created);
         let changed = reservation('e', 'f');
         assert_eq!(
             store.reserve_agent_credential_submission(changed),
@@ -513,7 +523,7 @@ mod tests {
                 .expect("read original receipt")
                 .expect("original receipt remains")
                 .secret_ref_id,
-            first.secret_ref_id
+            first.receipt.secret_ref_id
         );
     }
 }

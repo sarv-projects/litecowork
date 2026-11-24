@@ -434,9 +434,12 @@ Native-agent-owned sign-in/API keys do not use this route; LiteCowork launches/s
 adapter-declared native flow instead.
 
 The Windows named-pipe transport is source-implemented with the current-logon-SID/SYSTEM
-DACL and remote-client rejection. The confidential credential-submission operation remains
-unavailable there until packaged peer-authentication and one-shot secret-buffer behavior are
-qualified, and until the AgentControlDescriptor/SecretStore owner path itself is enabled.
+DACL and remote-client rejection. The authenticated credential-submission route now has
+CODE/SERVED receipt and idempotent-SecretStore behavior, but there is no Tauri credential
+command and current V1 modules declare no LiteCowork-owned slot. This operation remains
+unavailable over the Windows named pipe until packaged peer-authentication and one-shot
+secret-buffer behavior are qualified. Route tests do not establish provider sign-in or
+native credential-store qualification.
 
 
 ## Non-normative desktop IPC comparison - 2026-10-31

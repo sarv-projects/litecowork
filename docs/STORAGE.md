@@ -1241,9 +1241,11 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   stores the Workspace/principal/profile/slot scope, digest of the idempotency key, request
   fingerprint field, SecretKind, preallocated SecretRef ID, PENDING/COMMITTED state, opaque provider
   reference and timestamps. It contains no secret bytes and is explicitly excluded from Workspace
-  backups and domain events. CODE currently includes the store/migration and private idempotent
-  keyring primitive; the daemon route still returns 503 and does not call them. Do not treat the
-  target reserve/write/settle protocol as served or integrated behavior.
+  backups and domain events. The authenticated daemon route now uses Runtime-keyed request
+  fingerprinting, owner-scoped replay lookup, PENDING reservation, idempotent keyring mutation and
+  settlement (CODE/SERVED). Current OpenCode and Claude Code modules declare no LiteCowork-owned
+  slot, so this does not enable a provider sign-in journey. A seeded PENDING retry is not restart
+  evidence; actual daemon-process recovery and OS credential-store qualification remain open.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
   the schema-object fingerprint at that migration boundary. Reopening verifies every
   recorded migration name/source checksum and compares the active schema version's

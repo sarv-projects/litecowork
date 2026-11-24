@@ -23,7 +23,7 @@
 
 - Discover's `connect-or-install` returns `503 DEPENDENCY_UNAVAILABLE` because LiteSPM package service/contract is not qualified. The `test` route returns UNKNOWN without contacting any provider.
 - Connection list/get/disconnect are target-only; no account Connection device-auth begin/poll/cancel/refresh route or Connection UI exists.
-- The SecretStore primitive exists, but the mounted AgentProfile credential-slot route (Feature 002) currently returns 503 before the write pending durable replay protection. It is not an account Connection lifecycle.
+- The mounted AgentProfile credential-slot route (Feature 002) now has CODE/SERVED v36 durable replay and idempotent SecretStore behavior. Current Feature 002 V1 modules declare no LiteCowork-owned slot, so they remain unavailable for credential submission; actual daemon-restart/native-keyring qualification is open. This is not an account Connection lifecycle.
 - Approval list/get/resolve works and is exact-digest-bound, but approval is not connected to provider Invocation dispatch.
 - CapabilityInvocation Operator is read-only. SQLite refuses DISPATCHED admission; Trust is compiled but not wired; no combined Trust/Effect/ApprovalUse transaction or live provider reconciler exists.
 - The served grant endpoint is a narrow Task-planning Resource-read grant, not connector authority.
