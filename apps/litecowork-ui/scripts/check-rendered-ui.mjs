@@ -8,9 +8,17 @@ import { fileURLToPath } from "node:url";
 import net from "node:net";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const chrome = process.env.LITECOWORK_CHROME
-  ?? ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"]
-    .find(candidate => existsSync(candidate));
+const chromeCandidates = [
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/chromium",
+  process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe"),
+  process.env["PROGRAMFILES(X86)"] && join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe"),
+  process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe"),
+  process.env["PROGRAMFILES(X86)"] && join(process.env["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
+  process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, "Microsoft", "Edge", "Application", "msedge.exe"),
+].filter(Boolean);
+const chrome = process.env.LITECOWORK_CHROME ?? chromeCandidates.find(candidate => existsSync(candidate));
 
 if (!chrome) throw new Error("Set LITECOWORK_CHROME to a local Chrome/Chromium executable.");
 
@@ -39,6 +47,20 @@ async function waitFor(check, label, timeoutMs = 12_000) {
     await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
   }
   throw new Error(`${label} did not become ready${lastError ? `: ${lastError.message}` : ""}`);
+}
+
+async function waitForNavigationDrawerVisible(label) {
+  await waitFor(() => evaluate(`(() => {
+    const drawer = document.querySelector("#main-navigation");
+    const more = drawer?.querySelector(".sidebar-more-summary");
+    return Boolean(drawer?.classList.contains("is-open") && getComputedStyle(drawer).visibility === "visible" && drawer.getClientRects().length > 0 && more && getComputedStyle(more).visibility === "visible" && more.getClientRects().length > 0);
+  })()`), label);
+}
+
+async function openNavigationByPointer() {
+  const containerSelector = await evaluate("document.querySelector('.conversation-navigation-toggle') ? '.conversation-top-breadcrumbs' : '.topbar'");
+  await evaluate(`document.querySelector(${JSON.stringify(containerSelector)} + " .mobile-navigation-toggle")?.scrollIntoView({ block: "nearest" })`);
+  await clickButtonContainingByPointer(["open main navigation"], containerSelector);
 }
 
 function processIsRunning(child) {
@@ -81,15 +103,40 @@ async function stopProcess(child) {
 const previewPort = await freePort();
 const debugPort = await freePort();
 const userData = await mkdtemp(join(tmpdir(), "litecowork-rendered-ui-chrome-"));
+const renderedOutput = join(userData, "rendered-output");
+const chromeProfile = join(userData, "chrome-profile");
 const viteCli = resolve(packageRoot, "node_modules/vite/bin/vite.js");
+const browserViteConfig = resolve(packageRoot, "vite.browser.config.ts");
 let vite;
 let browser;
 let socket;
 let failure;
 let interruptedSignal;
+let openedTarget;
+let navigationResult;
 let nextCommandId = 0;
 const pendingCommands = new Map();
 const browserDiagnostics = [];
+const browserRequestUrls = new Map();
+const viteOutput = [];
+const chromeOutput = [];
+
+function captureOutput(target, stream) {
+  stream?.on("data", chunk => {
+    target.push(...chunk.toString().split(/\r?\n/).filter(Boolean));
+    if (target.length > 80) target.splice(0, target.length - 80);
+  });
+}
+
+function requireSuccessfulExit(child, label) {
+  return new Promise((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolveExit();
+      else rejectExit(new Error(`${label} exited with ${signal ?? `code ${code}`}.`));
+    });
+  });
+}
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => { interruptedSignal = signal; });
@@ -161,6 +208,26 @@ async function clickButtonContaining(allTerms, scopeSelector = null) {
   assert.equal(await evaluate(expression, `click button containing ${allTerms.join(" + ")}`), true, `button containing ${JSON.stringify(allTerms.join(" + "))} is rendered`);
 }
 
+async function clickButtonContainingByPointer(allTerms, scopeSelector = null) {
+  const root = scopeSelector === null ? "document" : `document.querySelector(${JSON.stringify(scopeSelector)})`;
+  const position = await evaluate(`(() => {
+    const root = ${root};
+    if (!root) return null;
+    const terms = ${JSON.stringify(allTerms.map(term => term.toLowerCase()))};
+    const button = [...root.querySelectorAll("button")].find(candidate => {
+      const name = (candidate.getAttribute("aria-label") ?? candidate.textContent).trim().toLowerCase();
+      return terms.every(term => name.includes(term));
+    });
+    if (!button || button.disabled) return null;
+    const rect = button.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  assert.ok(position, `button containing ${JSON.stringify(allTerms.join(" + "))} is available for pointer input`);
+  await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: position.x, y: position.y });
+  await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: position.x, y: position.y, button: "left", clickCount: 1 });
+  await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: position.x, y: position.y, button: "left", clickCount: 1 });
+}
+
 async function clickHarness(method, ...args) {
   const serialized = JSON.stringify(args);
   assert.equal(
@@ -170,15 +237,17 @@ async function clickHarness(method, ...args) {
   );
 }
 
-async function pressKey(key, modifiers = 0) {
+async function pressKey(key, modifiers = 0, emitCharacter = false) {
   const codes = { Tab: 9, Escape: 27, Enter: 13, Space: 32, "Control+a": 65 };
   const base = key.startsWith("Control+") ? key.slice("Control+".length) : key;
   const code = codes[key] ?? codes[base] ?? 0;
+  const event = { key: key === "Space" ? " " : base, code: key === "Space" ? "Space" : base, modifiers, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code };
   await cdp("Input.dispatchKeyEvent", {
-    type: "keyDown", key: key === "Space" ? " " : base, code: key === "Space" ? "Space" : base, modifiers, windowsVirtualKeyCode: code,
+    type: "keyDown", ...event,
   });
+  if (key === "Enter" && emitCharacter) await cdp("Input.dispatchKeyEvent", { type: "char", ...event, text: "\r", unmodifiedText: "\r" });
   await cdp("Input.dispatchKeyEvent", {
-    type: "keyUp", key: key === "Space" ? " " : base, code: key === "Space" ? "Space" : base, modifiers, windowsVirtualKeyCode: code,
+    type: "keyUp", ...event,
   });
 }
 
@@ -508,11 +577,12 @@ async function currentCalls() {
 
 async function enterConversationPage({ workspaceId = "workspace-a", richMode = "success", availability = "AVAILABLE", messageId = "message-a" } = {}) {
   await clickHarness("clearCalls");
+  await clickHarness("configureConversationList", "single");
   await clickHarness("configureConversation", workspaceId, richMode, availability, true, messageId);
-  await waitFor(() => evaluate(`document.querySelector('.conversation-reader-heading h2')?.textContent === ${JSON.stringify(workspaceId === "workspace-a" ? "Conversation A" : "Workspace B conversation")}`), `Conversation page for ${workspaceId}`);
-  await waitFor(() => evaluate("document.querySelector('.conversation-message') !== null"), "conversation message");
-  await waitFor(() => evaluate("Boolean(document.querySelector('.conversation-list-heading button') && !document.querySelector('.conversation-list-heading button').disabled)"), "Conversation list ready");
-  await evaluate("document.querySelector('.conversation-message')?.scrollIntoView({ block: 'center' })");
+  await clickHarness("mountProductionApp", "first-use-conversation");
+  await waitFor(() => evaluate(`document.querySelector('.conversation-top-breadcrumbs .crumb-title')?.textContent === ${JSON.stringify(workspaceId === "workspace-a" ? "Conversation A" : "Workspace B conversation")}`), `Conversation page for ${workspaceId}`);
+  await waitFor(() => evaluate("document.querySelector('.message-row.agent .conversation-message-body') !== null"), "conversation message");
+  await evaluate("document.querySelector('.message-row.agent')?.scrollIntoView({ block: 'center' })");
 }
 
 async function waitForRichRequest(count, label = "RichPresentation request") {
@@ -701,7 +771,7 @@ async function runContextDocumentDeletionChecks() {
   await pressKey("Escape");
   await waitFor(() => evaluate("!document.querySelector('.resource-discard-dialog[role=alertdialog]')"), "deletion confirmation cancelled with Escape");
   assert.equal(await evaluate("document.activeElement.textContent.trim()"), "Delete local content…", "cancelling restores focus to the deletion trigger");
-  let calls = await currentCalls();
+  calls = await currentCalls();
   assert.equal(calls.some(call => call.command === "begin_context_document_deletion" || call.command === "get_context_document_deletion_status"), false, "cancellation sends no deletion mutation or status request");
   checks.push("E02-S03 cancel: accessible alertdialog, initial focus, Tab/Shift+Tab trap, Escape cancellation, focus restoration, and no mutation verified");
 
@@ -806,98 +876,158 @@ async function runContextDocumentDeletionChecks() {
 async function runConversationChecks() {
   const checks = [];
 
-  await clickHarness("configureConversationList", "defer");
   await clickHarness("configureConversation", "workspace-a", "success", "UNAVAILABLE");
-  await waitFor(() => evaluate("window.litecoworkHarness.conversationListPendingCount() === 1"), "deferred first Conversation list response");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use') === null"), true, "first-use guidance stays hidden until the saved Conversation list succeeds");
-  assert.equal(await evaluate("document.querySelector('.conversation-reader [role=status]')?.textContent"), "Loading saved conversations…");
-  await clickHarness("resolveConversationList");
-  await waitFor(() => evaluate("document.querySelector('.conversation-first-use') !== null"), "empty first-use state after list success");
-
-  await clickHarness("configureConversationList", "reject");
-  await clickHarness("configureConversation", "workspace-a", "success", "UNAVAILABLE");
-  await waitFor(() => evaluate("document.querySelector('.conversation-list-error')?.textContent.toLowerCase().includes('could not load') === true"), "failed Conversation list state");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use') === null"), true, "a failed list read cannot be presented as a first-use Workspace");
-  await clickHarness("configureConversationList", "empty");
-  await clickButton("Retry loading conversations");
-  await waitFor(() => evaluate("document.querySelector('.conversation-first-use') !== null"), "first-use state after explicit list retry");
-
-  await clickHarness("configureConversationList", "empty");
-  await clickHarness("configureConversation", "workspace-a", "success", "UNAVAILABLE");
-  await waitFor(() => evaluate("document.querySelector('.conversation-first-use') !== null"), "first-use conversation composer");
-  assert.equal(await evaluate("document.querySelector('#conversation-create-details')?.open"), false, "blank record creation is secondary to the first-use question path");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use h2')?.textContent"), "Conversation sending isn't available yet");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use button') === null"), true, "the unavailable send path does not offer agent setup as a false repair action");
-  await typeInputValue("#conversation-first-use-draft", "Summarize the budget in this project");
-  assert.equal(await evaluate("document.querySelector('#conversation-first-use-draft')?.value"), "Summarize the budget in this project");
-  assert.equal(await evaluate("document.querySelector('#conversation-first-use-draft')?.getAttribute('aria-label')"), "Question draft", "the question field has a programmatic accessible name that labels it as unsent");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use [role=status]')?.textContent.includes('has not been sent')"), true, "the setup state must be explicit that the draft has not been sent");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use-status')?.textContent.includes('Opening Settings will not send it')"), true, "draft copy does not imply setup will trigger a send");
-  assert.equal((await currentCalls()).some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "first-use setup must not create a Conversation or send a turn");
-  checks.push("first-use Conversation waits for a successful list, labels an unsent draft, does not offer an ineffective setup action, and never claims or creates a sent message");
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "current empty Conversation presentation");
+  assert.equal(await evaluate("document.querySelector('.conversation-empty-state')?.textContent.includes('native agent you select')"), true, "the empty state explains that the connected native agent owns model behavior");
+  assert.equal(await evaluate("document.querySelector('.conversation-empty-state')?.textContent.includes('does not create a Task')"), true, "ordinary Conversation remains distinct from Task creation");
+  assert.equal(await evaluate("document.querySelector('.composer-textarea')?.getAttribute('aria-label')"), "Message draft", "the current message composer has an accessible name");
+  await typeInputValue(".composer-textarea", "Summarize the budget in this project");
+  assert.equal(await evaluate("document.querySelector('.composer-textarea')?.value"), "Summarize the budget in this project", "the current composer retains an unsent draft");
+  assert.equal((await currentCalls()).some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "typing does not persist a Conversation or send a turn");
+  checks.push("current empty Conversation identifies native-agent ownership, keeps Task separate, and holds a draft without creating or sending");
 
   await clickHarness("configureConversation", "workspace-a", "success", "UNAVAILABLE", false);
-  await waitFor(() => evaluate("document.querySelector('.conversation-unavailable h2')?.textContent === 'Reconnect to saved conversations'"), "Runtime-unavailable Conversation state");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use') === null"), true, "Runtime unavailability cannot look like a confirmed empty first-use Workspace");
-  assert.equal(await evaluate("document.body.innerText.includes('local Runtime is unavailable')"), true, "Runtime failure explains that saved history could not be checked");
-  assert.equal(await evaluate("[...document.querySelectorAll('.conversation-unavailable button')].some(button => button.textContent.trim() === 'Open Runtime settings')"), true, "Runtime recovery names the Settings area that contains Runtime controls");
-  await clickButton("Open Runtime settings");
-  assert.equal(await evaluate("window.litecoworkHarness.agentSettingsOpenCount()"), 1, "Runtime recovery opens the existing Settings route");
-
-  await clickHarness("configureConversation", "", "success", "UNAVAILABLE", false);
-  await waitFor(() => evaluate("document.querySelector('.conversation-unavailable h2')?.textContent === 'Choose a Workspace to load conversations'"), "Workspace-unavailable Conversation state");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use') === null"), true, "missing Workspace cannot look like a confirmed empty first-use Workspace");
-  assert.equal(await evaluate("document.body.innerText.includes('can’t check whether any conversations are saved')"), true, "no selected Workspace explains why history is unknown");
-  assert.equal(await evaluate("[...document.querySelectorAll('.conversation-unavailable button')].some(button => button.textContent.trim() === 'Choose a Workspace in Settings')"), true, "Workspace recovery names where a Workspace can be selected");
-  await clickButton("Choose a Workspace in Settings");
-  assert.equal(await evaluate("window.litecoworkHarness.agentSettingsOpenCount()"), 2, "Workspace recovery opens the existing Settings route");
-
-  await clickHarness("configureConversationList", "single");
-  await clickHarness("configureConversation", "workspace-a", "success", "UNAVAILABLE");
-  await waitFor(() => evaluate("document.querySelector('.conversation-list-item')?.textContent.includes('Conversation A') && document.querySelector('.conversation-message-body')?.textContent.includes('Semantic answer remains available.')"), "saved Conversation list and message before Runtime disconnect");
-  await clickHarness("setConversationOperatorReady", false);
-  await waitFor(() => evaluate("document.querySelector('.conversation-offline-notice')?.textContent.includes('Read-only until the Runtime reconnects')"), "offline saved Conversation state");
-  assert.equal(await evaluate("document.querySelector('.conversation-list-item')?.textContent.includes('Conversation A')"), true, "offline reconnect keeps the previously loaded saved Conversation list");
-  assert.equal(await evaluate("document.querySelector('.conversation-message-body')?.textContent.includes('Semantic answer remains available.')"), true, "offline reconnect keeps already-loaded saved messages readable");
-  assert.equal(await evaluate("document.querySelector('.conversation-list-heading button')?.disabled"), true, "offline saved history cannot issue a refresh request");
-  await clickHarness("configureConversationList", "defer");
-  await clickHarness("setConversationOperatorReady", true);
-  await waitFor(() => evaluate("window.litecoworkHarness.conversationListPendingCount() === 1"), "saved Conversation list refresh after Runtime reconnect");
-  await waitFor(() => evaluate("document.querySelector('.conversation-refresh-notice')?.textContent.includes('Showing the last loaded conversations')"), "stale saved history label while reconnect refresh is pending");
-  assert.equal(await evaluate("document.querySelector('.conversation-message-body')?.textContent.includes('Semantic answer remains available.')"), true, "the last loaded message remains readable during reconnect refresh");
-  await clickHarness("resolveConversationList", true);
-  await waitFor(() => evaluate("document.querySelector('.conversation-list-item')?.textContent.includes('Reconnected conversation') && document.querySelector('.conversation-refresh-notice') === null"), "fresh saved history replaces the stale reconnect snapshot");
-  checks.push("Conversation Runtime disconnect retains loaded history as read-only, labels it stale during reconnect, then replaces it with refreshed records");
+  await waitFor(() => evaluate("document.querySelector('.composer-notice[role=status]')?.textContent.includes('Fresh sends and retries are paused')"), "Runtime-unready Conversation state");
+  assert.equal(await evaluate("document.querySelector('.composer-submit-btn')?.disabled"), true, "a fresh send is disabled while the current Runtime is not ready");
+  checks.push("Runtime-unready Conversation keeps fresh send visibly paused");
 
   await clickHarness("configureConversationList", "single");
   await clickHarness("configureConversation", "workspace-a", "success", "UNAVAILABLE", true, "message-a", true);
-  await waitFor(() => evaluate("document.querySelector('.conversation-empty h2')?.textContent === 'This conversation is ready' && window.litecoworkHarness.hasActiveConversationStream()"), "empty Conversation presentation stream subscription");
-  assert.equal(await evaluate("document.querySelector('.conversation-status')?.textContent.includes('Connecting saved-history updates')"), true, "a new presentation stream has an accessible connecting state");
+  await clickHarness("mountProductionApp", "first-use-conversation");
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null && window.litecoworkHarness.hasActiveConversationStream()"), "empty Conversation presentation stream subscription");
+  assert.equal(await evaluate("[...document.querySelectorAll('.conversation-header-badge')].some(node => node.textContent.includes('Connecting saved-history updates'))"), true, "a new presentation stream has a visible connecting state");
   await clickHarness("emitReady");
   await clickHarness("emitEmptyConversationSnapshot", 2);
-  await waitFor(() => evaluate("document.querySelector('.conversation-status')?.textContent.includes('Saved history updates live') && document.querySelector('.conversation-empty h2')?.textContent === 'This conversation is ready'"), "empty durable conversation snapshot with a live stream");
+  await waitFor(() => evaluate("[...document.querySelectorAll('.conversation-header-badge')].some(node => node.textContent.includes('Saved history updates live')) && document.querySelector('.conversation-empty-state') !== null"), "empty durable conversation snapshot with a live stream");
   await clickHarness("emitTurnDelta", "turn-rendered", 1, "Temporary answer <img src=x onerror=alert(1)>.");
-  await waitFor(() => evaluate("document.querySelector('.conversation-transient-turn[aria-label=\"Assistant response in progress\"] .conversation-transient-text')?.textContent.includes('Temporary answer <img')"), "temporary response rendered as semantic text");
-  assert.equal(await evaluate("document.querySelector('.conversation-transient-turn .conversation-message-author')?.getAttribute('aria-live')"), "polite", "turn state changes are announced without making every text delta a live announcement");
-  assert.equal(await evaluate("document.querySelector('.conversation-transient-turn img') === null"), true, "untrusted streamed text is rendered as escaped React text, never interpreted markup");
-  assert.equal(await evaluate("document.querySelector('.conversation-empty') === null"), true, "a streamed response replaces the saved-empty placeholder without claiming it is durable");
+  await waitFor(() => evaluate("document.querySelector('.message-row.agent.transient .message-assistant-body')?.textContent.includes('Temporary answer <img')"), "temporary response rendered as semantic text");
+  assert.equal(await evaluate("document.querySelector('.message-row.agent.transient img') === null"), true, "untrusted streamed text is rendered as escaped React text, never interpreted markup");
+  assert.equal(await evaluate("document.querySelector('.conversation-empty-state') === null"), true, "a streamed response replaces the saved-empty placeholder without claiming it is durable");
   await clickHarness("emitTurnSettled", "turn-rendered", 0);
-  await waitFor(() => evaluate("document.querySelector('.conversation-transient-turn[aria-label=\"Incomplete assistant response\"] [role=note]') !== null"), "an uncommitted settled turn is labeled incomplete rather than saved");
+  await waitFor(() => evaluate("document.querySelector('.message-row.agent.transient .message-assistant-body')?.textContent.includes('Temporary answer <img')"), "an uncommitted settled turn remains transient rather than saved");
+  assert.equal(await evaluate("[...document.querySelectorAll('.message-row.agent:not(.transient)')].some(node => node.textContent.includes('Temporary answer <img'))"), false, "an uncommitted response is not presented as a durable assistant message");
   await clickHarness("emitConversationResync");
-  await waitFor(() => evaluate("document.querySelector('.conversation-status')?.textContent.includes('Refreshing saved conversation updates')"), "presentation cursor resynchronization state");
-  assert.equal(await evaluate("document.querySelector('.conversation-transient-turn') === null"), true, "resynchronization clears stale transient text");
+  await waitFor(() => evaluate("[...document.querySelectorAll('.conversation-header-badge')].some(node => node.textContent.includes('Refreshing saved conversation updates'))"), "presentation cursor resynchronization state");
+  assert.equal(await evaluate("document.querySelector('.message-row.agent.transient') === null"), true, "resynchronization clears stale transient text");
   await clickHarness("emitSnapshot", "UNAVAILABLE", 3);
   await waitFor(() => evaluate("document.querySelector('.conversation-message-body')?.textContent.includes('Semantic answer remains available.')"), "durable semantic snapshot after stream resynchronization");
   await clickHarness("failConversationStream");
-  await waitFor(() => evaluate("document.querySelector('.conversation-status')?.textContent.includes('Reconnecting saved-history updates')"), "stream error reconnect state");
+  await waitFor(() => evaluate("[...document.querySelectorAll('.conversation-header-badge')].some(node => node.textContent.includes('Reconnecting saved-history updates'))"), "stream error reconnect state");
   assert.equal(await evaluate("document.body.innerText.includes('private transport details stay hidden')"), false, "native stream errors do not leak transport details into the UI");
-  checks.push("Conversation presentation renders bounded transient turns as escaped semantic text, labels incomplete/reconnect states, hides transport error details, and restores durable history after resync");
+  checks.push("Conversation presentation renders escaped transient text, keeps uncommitted replies out of durable history, and hides transport details during recovery");
 
+  await clickHarness("configureConversationList", "single");
+  await clickHarness("mountProductionApp", "first-use-conversation");
+  await waitFor(() => evaluate("document.querySelector('.conversation-top-breadcrumbs .crumb-title')?.textContent === 'Conversation A'"), "production App saved Conversation");
+  const directDestinations = await evaluate(`(() => {
+    const sidebar = document.querySelector('#main-navigation');
+    return {
+      newChat: Boolean(sidebar?.querySelector('.sidebar-new-chat-pill')),
+      recentChats: Boolean(sidebar?.querySelector('.sidebar-recent-chats-wrap')),
+      projects: [...(sidebar?.querySelectorAll('button') ?? [])].some(button => button.textContent.includes('Projects')),
+      needsYou: [...(sidebar?.querySelectorAll('button') ?? [])].some(button => button.textContent.includes('Needs You')),
+      settings: Boolean(sidebar?.querySelector('.sidebar-settings-btn')),
+      more: Boolean(sidebar?.querySelector('.sidebar-more summary')),
+      inventedCount: Boolean(sidebar?.querySelector('.sidebar-section-count')),
+    };
+  })()`);
+  assert.deepEqual(directDestinations, { newChat: true, recentChats: true, projects: true, needsYou: true, settings: true, more: true, inventedCount: false }, "the compact shell exposes core destinations without invented counts");
+  await clickButtonContaining(["projects"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Projects'"), "Workspace-backed Projects page");
+  assert.equal(await evaluate("document.querySelector('.workspace-project-card h2')?.textContent"), "Workspace A", "Projects reflects the existing Workspace projection");
+  await clickButton("Open current Workspace");
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "fresh blank chat after opening the current Workspace");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "explicit New Chat remains blank instead of reselecting saved history");
+  let calls = await currentCalls();
+  assert.equal(calls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "Projects, opening a Workspace and New Chat do not create or send a Conversation");
+  checks.push("A-123 Projects lists an existing Workspace, opens a fresh blank Conversation, and New Chat does not silently reselect history or persist anything");
+
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  await evaluate("(() => { const summary = document.querySelector('.sidebar-more summary'); summary?.scrollIntoView({ block: 'nearest' }); summary?.focus(); return document.activeElement === summary; })()");
+  await pressKey("Enter", 0, true);
+  await waitFor(() => evaluate("document.querySelector('.sidebar-more')?.open === true"), "keyboard-open More disclosure");
+  assert.equal(await evaluate("document.querySelector('.sidebar-more summary')?.matches(':focus-visible')"), true, "More remains visibly focused when opened from the keyboard");
+  await clickButtonContaining(["new task"]);
+  await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'New task'"), "New Task route through More");
+  assert.equal(await evaluate("document.querySelector('.sidebar-more summary')?.textContent.includes('New task')"), true, "More identifies its active secondary destination");
+  assert.equal(await evaluate("document.querySelector('.sidebar-more button[aria-current=page]')?.textContent.includes('New task')"), true, "the active secondary route is marked for assistive technology");
+  checks.push("A-123 More opens by keyboard and identifies the active secondary route");
+
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 800, height: 900, deviceScaleFactor: 1, mobile: false });
+  await waitFor(() => evaluate("window.innerWidth <= 900 && Boolean(document.querySelector('.mobile-navigation-toggle'))"), "narrow shell navigation controls");
+  await evaluate("document.querySelector('.mobile-navigation-toggle')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "keyboard-open narrow navigation");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('sidebar-close') === true"), "focus moves into the narrow navigation dialog");
+  await pressKey("Escape");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "Escape closes narrow navigation");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('mobile-navigation-toggle') === true"), "focus returns to the narrow navigation trigger");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "reopen narrow navigation by keyboard");
+  await clickButtonContaining(["projects"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Projects' && document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "narrow navigation reaches Projects and closes");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('mobile-navigation-toggle') === true"), "focus returns to narrow navigation trigger after selection");
+  checks.push("A-123 narrow navigation opens and closes by keyboard, restores focus, and returns focus after route selection");
+
+  await clickHarness("clearCalls");
+  await evaluate("document.querySelector('.mobile-navigation-toggle')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open navigation before Library");
+  await clickButtonContaining(["library"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Library'"), "Library from compact More navigation");
+  await clickButton("History & edit");
+  await waitFor(() => evaluate("document.querySelector('#resource-revision-title')?.textContent === 'A.txt'"), "Library Resource editor");
+  await clickButton("Edit small text file");
+  await typeTextareaDraft("Draft from Resource A");
+
+  await evaluate("document.querySelector('.mobile-navigation-toggle')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open navigation to retest New Chat guard");
+  await waitForNavigationDrawerVisible("visible navigation before reopening Library");
+  if (!(await evaluate("document.querySelector('.sidebar-more')?.open === true"))) await clickButtonContaining(["more"]);
+  await clickButtonContaining(["library"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Library'"), "return to Library for New Chat guard");
+  await clickButton("History & edit");
+  await waitFor(() => evaluate("document.querySelector('#resource-revision-title')?.textContent === 'A.txt'"), "Library Resource editor after Workspace selection");
+  if (!(await evaluate("Boolean(document.querySelector('#resource-revision-text'))"))) await clickButton("Edit small text file");
+  await typeTextareaDraft("Draft retained for New Chat", "Draft from Resource A");
+  await evaluate("document.querySelector('.mobile-navigation-toggle')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open navigation while Library draft is dirty");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog[role=alertdialog] h3')?.textContent === 'Leave the Library?'"), "guard New Chat while Library draft is dirty");
+  assert.equal(await evaluate("document.querySelector('.page-content h1')?.textContent"), "Library", "the dirty Library remains the current route until the user chooses");
+  assert.equal(await evaluate("document.querySelector('#resource-revision-text')?.value"), "Draft retained for New Chat", "the guarded New Chat preserves the local Resource draft");
+  await pressKey("Escape");
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog') === null"), "Stay in Library after Escape");
+  assert.equal(await evaluate("document.activeElement?.classList.contains('mobile-navigation-toggle') === true"), true, "choosing Stay restores focus to the narrow-menu trigger");
+  assert.equal(await evaluate("document.querySelector('#resource-revision-text')?.value"), "Draft retained for New Chat", "choosing Stay preserves the dirty draft");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "reopen navigation after staying in Library");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog[role=alertdialog] h3')?.textContent === 'Leave the Library?'"), "second guarded New Chat request");
+  await clickButton("Discard draft and leave Library");
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "New Chat after explicit draft discard");
+  assert.equal(await evaluate("document.querySelector('#resource-revision-text') === null"), true, "explicit discard leaves the Library editor");
+  calls = await currentCalls();
+  assert.equal(calls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "navigation through the dirty-draft guard does not persist or send a Conversation");
+  checks.push("A-123 New Chat preserves the dirty Library guard, stays without losing the draft, restores focus, and navigates only after explicit discard");
+
+  const firstUseAppCalls = await currentCalls();
+  assert.equal(firstUseAppCalls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "navigation performs no Conversation create or send");
+  checks.push("production App navigation does not turn page changes into Conversation creates or sends");
+
+  // Keep the pre-existing Home keyboard-focus and unsent Conversation draft checks
+  // alongside the new compact-shell journey; the A-123 coverage must not replace them.
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await clickHarness("configureConversationList", "empty");
   await clickHarness("mountProductionApp", "first-use-conversation");
-  await waitFor(() => evaluate("Boolean(document.querySelector('.workspace-switcher'))"), "production App shell for first-use Conversation");
-  await evaluate("document.querySelector('.brand')?.click()");
-  await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'New task'"), "production Home route after explicit navigation");
+  await waitFor(() => evaluate("Boolean(document.querySelector('.sidebar-workspace-switcher'))"), "production App shell for empty Conversation");
+  await evaluate("document.querySelector('.sidebar-more summary')?.click()");
+  await waitFor(() => evaluate("document.querySelector('.sidebar-more')?.open === true"), "More before opening the Home Task composer");
+  await clickButtonContaining(["new task"]);
+  await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'New task'"), "production Home route through More");
   await waitFor(() => evaluate("Boolean(document.querySelector('#task-draft'))"), "production Home Task composer");
   await evaluate("document.querySelector('#task-draft').focus()");
   await pressKey("Tab");
@@ -915,19 +1045,19 @@ async function runConversationChecks() {
   assert.equal(homeComposerFocus.focused, true, "keyboard navigation returns focus to the Home Task composer");
   assert.equal(homeComposerFocus.focusVisible, true, "the Home Task composer identifies keyboard focus");
   assert.notEqual(homeComposerFocus.outlineStyle, "none", "the Home Task composer shows a visible keyboard focus indicator");
-  assert.equal(homeComposerFocus.outlineWidth, "2px", "the Home Task composer uses the semantic 2px focus ring");
+  assert.ok(Number.parseFloat(homeComposerFocus.outlineWidth) >= 2, "the Home Task composer uses a visible focus ring at least 2px wide");
   checks.push("Home Task composer retains a visible semantic focus ring when reached by keyboard");
-  await clickButtonContaining(["recent chats"]);
-  await waitFor(() => evaluate("document.querySelector('.conversation-first-use') !== null"), "production App first-use Conversation");
-  await typeInputValue("#conversation-first-use-draft", "Explain the project plan in plain language");
-  assert.equal(await evaluate("document.querySelector('.conversation-first-use button') === null"), true, "the ready empty state cannot route a user into irrelevant setup");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "production App empty Conversation");
+  await typeInputValue(".composer-textarea", "Explain the project plan in plain language");
+  assert.equal(await evaluate("document.querySelector('.conversation-empty-state button') === null"), true, "the ready empty state does not route a user into an unrelated setup action");
   await clickButtonContaining(["settings"]);
   await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'Settings'"), "normal navigation opens Settings");
-  assert.equal(await evaluate("document.querySelector('#conversation-first-use-draft') === null"), true, "the composer unmounts while Settings is open");
-  await clickButtonContaining(["recent chats"]);
-  await waitFor(() => evaluate("document.querySelector('#conversation-first-use-draft')?.value === 'Explain the project plan in plain language'"), "draft restored after Settings navigation");
-  const firstUseAppCalls = await currentCalls();
-  assert.equal(firstUseAppCalls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "opening and returning from setup performs no Conversation mutation");
+  assert.equal(await evaluate("document.querySelector('.composer-textarea') === null"), true, "the composer unmounts while Settings is open");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.composer-textarea')?.value === 'Explain the project plan in plain language'"), "draft restored after Settings navigation");
+  const preservedDraftCalls = await currentCalls();
+  assert.equal(preservedDraftCalls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "opening and returning from setup performs no Conversation mutation");
   checks.push("production App keeps an unsent question in memory across ordinary Settings navigation and restores it without IPC persistence");
 
   await clickHarness("configureConversationList", "single");
@@ -938,7 +1068,7 @@ async function runConversationChecks() {
   await clickHarness("emitReady");
   await emitProjection("AVAILABLE", 2);
   await new Promise(resolveDelay => setTimeout(resolveDelay, 150));
-  let calls = await currentCalls();
+  calls = await currentCalls();
   assert.equal(calls.filter(call => call.command === "get_rich_presentation").length, 1, "equivalent live snapshot must not start a duplicate fetch");
   await clickHarness("resolveRich");
   await waitFor(() => evaluate("Boolean(document.querySelector('[data-testid=rich-answer]'))"), "RichPresentation after live snapshot");
@@ -999,141 +1129,177 @@ async function runConversationChecks() {
   await waitFor(() => evaluate("Boolean(document.querySelector('[data-testid=rich-answer]'))"), "retried RichPresentation");
   checks.push("A03 failed fetch exposes an accessible Retry action and retry transitions from FAILED through LOADING to READY");
 
-  await enterConversationPage({ richMode: "success", availability: "UNAVAILABLE" });
-  await clickHarness("setCreateMode", "defer");
-  await typeInputValue("#conversation-title", "A delayed title");
-  await clickButton("Create blank conversation");
-  await waitFor(async () => (await currentCalls()).some(call => call.command === "create_conversation"), "deferred Conversation creation");
-  const deferredCreateRequest = (await currentCalls()).find(call => call.command === "create_conversation");
-  assert.ok(deferredCreateRequest, "the Workspace A create request is recorded before switching");
-  const titleBeforeSwitch = await evaluate("document.querySelector('#conversation-title')?.value");
-  await clickHarness("switchConversationWorkspaceB");
-  await waitFor(() => evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent === 'Workspace B conversation'"), "Workspace B history after switch");
-  await typeInputValue("#conversation-title", "Workspace B draft");
-  await clickHarness("resolveCreate");
-  await new Promise(resolveDelay => setTimeout(resolveDelay, 150));
-  assert.equal(titleBeforeSwitch, "A delayed title");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 1, "the late A response leaves its retry journal intact");
-  assert.equal(await evaluate("document.querySelector('#conversation-title')?.value"), "Workspace B draft", "late Workspace A create response must not clear the title entered for Workspace B");
-  assert.equal(await evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent"), "Workspace B conversation");
-  assert.equal(await evaluate("[...document.querySelectorAll('.conversation-list-item')].some(item => item.textContent.includes('A delayed title'))"), false);
-  assert.equal(await evaluate("Boolean(document.querySelector('[aria-label=\"Pending Conversation creations\"] li')?.textContent.includes('A delayed title'))"), false, "Workspace A pending state is not rendered in Workspace B");
-  assert.equal(await evaluate("document.querySelector('.conversation-intro')?.textContent.includes('Workspace B')"), true);
-  checks.push("A04 delayed Workspace A create response cannot replace Workspace B selection, list, title, or reader");
+  await clickHarness("configureConversationList", "single");
+  await clickHarness("mountProductionApp", "first-use-conversation");
+  await waitFor(() => evaluate("document.querySelector('.sidebar-recent-chats-wrap')?.textContent.includes('Conversation A')"), "saved Conversation in Recent Chats");
+  assert.equal(await evaluate("document.querySelector('.sidebar-chat-item-row[aria-current=true]')?.textContent.includes('Conversation A')"), true, "the selected saved Conversation is marked in the compact sidebar");
+  checks.push("the compact sidebar projects and marks the selected saved Conversation");
+  return checks;
+}
 
-  await enterConversationPage({ richMode: "success", availability: "UNAVAILABLE" });
-  await waitFor(() => evaluate("document.querySelector('[aria-label=\"Pending Conversation creations\"] li')?.textContent.includes('A delayed title')"), "pending A create after returning to Workspace A");
-  await clickButton("Retry pending create", ".conversation-create-recovery");
-  await waitFor(() => evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent === 'A delayed title'"), "retry of the late A create");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 0, "retry acknowledges the A create and clears its journal row");
+async function runShellReachabilityChecks() {
+  const checks = [];
+  await clickHarness("configureConversationList", "single");
+  await clickHarness("mountProductionApp", "first-use-conversation");
+  await waitFor(() => evaluate("Boolean(document.querySelector('#main-navigation .sidebar-new-chat-pill') && document.querySelector('.sidebar-workspace-select'))"), "production compact shell");
+  await waitFor(() => evaluate("document.querySelector('.sidebar-recent-chat-list')?.textContent.includes('Conversation A') === true"), "Recent Chats source projection");
+  await evaluate(`(() => {
+    window.__lcFocusTrace = [];
+    document.addEventListener("focusin", event => window.__lcFocusTrace.push({ type: "focusin", target: event.target?.outerHTML?.slice(0, 240) ?? null }));
+    document.addEventListener("keydown", event => window.__lcFocusTrace.push({ type: "keydown", key: event.key, trusted: event.isTrusted, target: event.target?.outerHTML?.slice(0, 160) ?? null, moreOpen: document.querySelector(".sidebar-more")?.open ?? null }));
+    document.addEventListener("toggle", event => window.__lcFocusTrace.push({ type: "toggle", trusted: event.isTrusted, open: event.target?.open ?? null }), true);
+    const nativeFocus = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (...args) {
+      const entry = { type: "focus-call", target: this.outerHTML?.slice(0, 240) ?? null, disabled: this.disabled ?? false, inert: this.closest("[inert]") !== null, display: getComputedStyle(this).display, visibility: getComputedStyle(this).visibility, rects: this.getClientRects().length, before: document.activeElement?.outerHTML?.slice(0, 120) ?? null };
+      window.__lcFocusTrace.push(entry);
+      const result = nativeFocus.apply(this, args);
+      entry.after = document.activeElement?.outerHTML?.slice(0, 120) ?? null;
+      return result;
+    };
+    return true;
+  })()`);
 
-  await enterConversationPage({ richMode: "success", availability: "UNAVAILABLE" });
-  const commitsBeforeDelayedAck = await evaluate("window.litecoworkHarness.createCommitCount()");
-  await clickHarness("setCreateMode", "success");
-  await clickHarness("setAcknowledgeMode", "defer");
-  await typeInputValue("#conversation-title", "A delayed acknowledgement title");
-  await clickButton("Create blank conversation");
-  await waitFor(() => evaluate("window.litecoworkHarness.acknowledgePendingCount() === 1"), "deferred acknowledgement after Conversation create response");
-  const createBeforeWorkspaceSwitch = (await currentCalls()).find(call => call.command === "create_conversation");
-  const acknowledgeBeforeWorkspaceSwitch = (await currentCalls()).find(call => call.command === "acknowledge_conversation_create");
-  assert.ok(createBeforeWorkspaceSwitch && acknowledgeBeforeWorkspaceSwitch, "create response must be received before its acknowledgement is deferred");
-  assert.equal(acknowledgeBeforeWorkspaceSwitch.args.workspaceId, "workspace-a");
-  assert.equal(acknowledgeBeforeWorkspaceSwitch.args.requestId, createBeforeWorkspaceSwitch.args.requestId);
-  assert.equal(await evaluate("window.litecoworkHarness.createCommitCount()"), commitsBeforeDelayedAck + 1, "the A create is committed before acknowledgement resolves");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 1, "the pending journal entry remains until acknowledgement");
-  const titleBeforeDelayedAckSwitch = await evaluate("document.querySelector('#conversation-title')?.value");
-  await clickHarness("switchConversationWorkspaceB");
-  await waitFor(() => evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent === 'Workspace B conversation'"), "Workspace B history after switch");
-  await typeInputValue("#conversation-title", "Workspace B draft");
-  await clickHarness("resolveAcknowledge");
-  await new Promise(resolveDelay => setTimeout(resolveDelay, 150));
-  assert.equal(titleBeforeDelayedAckSwitch, "A delayed acknowledgement title");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 0, "the deferred A acknowledgement clears only its durable journal entry");
-  assert.equal(await evaluate("document.querySelector('#conversation-title')?.value"), "Workspace B draft", "late Workspace A response must not clear the title entered for Workspace B");
-  assert.equal(await evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent"), "Workspace B conversation");
-  assert.equal(await evaluate("[...document.querySelectorAll('.conversation-list-item')].some(item => item.textContent.includes('A delayed acknowledgement title'))"), false);
-  assert.equal(await evaluate("Boolean(document.querySelector('[aria-label=\"Pending Conversation creations\"] li')?.textContent.includes('A delayed acknowledgement title'))"), false, "A state cannot appear in Workspace B's pending retry list");
-  assert.equal(await evaluate("document.querySelector('.conversation-intro')?.textContent.includes('Workspace B')"), true);
-  checks.push("A04 delayed Workspace A acknowledgement after create response cannot replace Workspace B selection, list, title, or reader");
+  const destinations = await evaluate(`(() => {
+    const sidebar = document.querySelector('#main-navigation');
+    return {
+      newChat: Boolean(sidebar?.querySelector('.sidebar-new-chat-pill')),
+      recentChats: Boolean(sidebar?.querySelector('.sidebar-recent-chats-wrap')),
+      projects: [...(sidebar?.querySelectorAll('button') ?? [])].some(button => button.textContent.includes('Projects')),
+      needsYou: [...(sidebar?.querySelectorAll('button') ?? [])].some(button => button.textContent.includes('Needs You')),
+      settings: Boolean(sidebar?.querySelector('.sidebar-settings-btn')),
+      more: Boolean(sidebar?.querySelector('.sidebar-more summary')),
+      inventedCount: Boolean(sidebar?.querySelector('.sidebar-section-count')),
+    };
+  })()`);
+  assert.deepEqual(destinations, { newChat: true, recentChats: true, projects: true, needsYou: true, settings: true, more: true, inventedCount: false }, "the compact shell exposes core destinations without invented counts");
 
-  await enterConversationPage({ richMode: "success", availability: "UNAVAILABLE" });
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 800, height: 900, deviceScaleFactor: 1, mobile: false });
+  const narrowMenuState = await evaluate("(() => { const control = document.querySelector('.conversation-navigation-toggle'); return { innerWidth: window.innerWidth, mediaMatches: matchMedia('(max-width: 900px)').matches, found: Boolean(control), display: control ? getComputedStyle(control).display : null, rects: control?.getClientRects().length ?? 0 }; })()");
+  assert.ok(narrowMenuState.innerWidth <= 900 && narrowMenuState.mediaMatches && narrowMenuState.found && narrowMenuState.display !== "none" && narrowMenuState.rects > 0, `narrow Conversation navigation control is visible: ${JSON.stringify(narrowMenuState)}`);
   await clickHarness("clearCalls");
-  const commitsBeforeAckFailure = await evaluate("window.litecoworkHarness.createCommitCount()");
-  await clickHarness("setAcknowledgeMode", "reject");
-  await typeInputValue("#conversation-title", "A durable acknowledgement failure");
-  await clickButton("Create blank conversation");
-  await waitFor(() => evaluate("document.querySelector('.conversation-error')?.textContent.includes('retry receipt could not be cleared')"), "failed durable Conversation acknowledgement");
-  let ackFailureCalls = (await currentCalls()).filter(call => call.command === "create_conversation");
-  assert.equal(ackFailureCalls.length, 1);
-  const ackFailureRequestId = ackFailureCalls[0].args.requestId;
-  assert.equal(ackFailureCalls[0].args.workspaceId, "workspace-a");
-  const failedAcknowledgement = (await currentCalls()).find(call => call.command === "acknowledge_conversation_create");
-  assert.ok(failedAcknowledgement, "the create response is followed by a durable acknowledgement attempt");
-  assert.equal(failedAcknowledgement.args.workspaceId, "workspace-a");
-  assert.equal(failedAcknowledgement.args.requestId, ackFailureRequestId);
-  assert.equal(await evaluate("window.litecoworkHarness.createCommitCount()"), commitsBeforeAckFailure + 1, "server create commits once before acknowledgement failure");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 1, "failed acknowledgement leaves Workspace A's exact durable retry identity pending");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-b')"), 0);
-  await clickHarness("switchConversationWorkspaceB");
-  await waitFor(() => evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent === 'Workspace B conversation'"), "Workspace B after durable acknowledgement failure");
-  assert.equal(await evaluate("Boolean(document.querySelector('[aria-label=\"Pending Conversation creations\"] li')?.textContent.includes('A durable acknowledgement failure'))"), false, "Workspace A's failed acknowledgement is never shown in Workspace B");
-  await typeInputValue("#conversation-title", "Workspace B remains editable");
-  assert.equal(await evaluate("document.querySelector('#conversation-title')?.value"), "Workspace B remains editable", "Workspace B input is unaffected by Workspace A acknowledgement failure");
-  await clickHarness("switchConversationWorkspaceA");
-  await waitFor(() => evaluate("document.querySelector('[aria-label=\"Pending Conversation creations\"] li')?.textContent.includes('A durable acknowledgement failure')"), "Workspace A retry after keyed remount");
-  await clickHarness("setAcknowledgeMode", "success");
-  await clickButton("Retry pending create", ".conversation-create-recovery");
-  await waitFor(() => evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent === 'A durable acknowledgement failure'"), "replay after failed durable acknowledgement");
-  ackFailureCalls = (await currentCalls()).filter(call => call.command === "create_conversation");
-  assert.equal(ackFailureCalls.length, 2);
-  assert.equal(ackFailureCalls[1].args.workspaceId, "workspace-a");
-  assert.equal(ackFailureCalls[1].args.requestId, ackFailureRequestId, "retry after acknowledgement failure must reuse the exact Workspace A request identity");
-  assert.equal(await evaluate("window.litecoworkHarness.createCommitCount()"), commitsBeforeAckFailure + 1, "same-key replay does not duplicate the committed Conversation");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 0, "successful retry acknowledgement clears the exact Workspace A row");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-b')"), 0, "Workspace B journal remains untouched");
-  checks.push("A05 failed durable acknowledgement survives Workspace remount and retries the exact Workspace A identity without changing Workspace B");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open narrow navigation from Conversation");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('sidebar-close') === true"), "Conversation navigation focus moves into the drawer");
+  await clickButtonContaining(["projects"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Projects'"), "Workspace-backed Projects page");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "close navigation after opening Projects");
+  assert.equal(await evaluate("document.querySelector('.workspace-project-card h2')?.textContent"), "Workspace A", "Projects reflects the existing Workspace projection");
+  await clickButton("Open current Workspace");
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "fresh blank chat after opening the current Workspace");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open narrow navigation from the fresh Conversation");
+  await waitForNavigationDrawerVisible("visible narrow navigation from the fresh Conversation");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "explicit New Chat remains blank instead of reselecting saved history");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "New Chat closes narrow navigation");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('conversation-navigation-toggle') === true"), "New Chat returns focus to the Conversation menu");
+  assert.equal(await evaluate("window.litecoworkHarness.activeWorkspace()"), "workspace-a", "opening the current Workspace preserves its existing identity");
+  let calls = await currentCalls();
+  assert.equal(calls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn" || call.command === "create_task" || call.command === "start_runtime"), false, "Projects, opening a Workspace and New Chat do not create or start durable work");
+  checks.push("A-123 Projects lists the existing Workspace, opens a fresh blank Conversation, and New Chat causes no Conversation, Task or Runtime creation");
 
-  const commitsBeforeRetry = await evaluate("window.litecoworkHarness.createCommitCount()");
-  await enterConversationPage({ richMode: "success", availability: "UNAVAILABLE" });
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "reopen narrow navigation for More");
+  await waitForNavigationDrawerVisible("visible navigation before focusing More");
+  await evaluate("(() => { const summary = document.querySelector('.sidebar-more summary'); summary?.scrollIntoView({ block: 'nearest' }); summary?.focus(); return document.activeElement === summary; })()");
+  assert.equal(await evaluate("document.activeElement === document.querySelector('.sidebar-more summary')"), true, "More summary receives keyboard focus while the drawer is open");
+  assert.equal(await evaluate("document.querySelector('.sidebar-more')?.open"), false, "More starts collapsed before keyboard activation");
+  await pressKey("Enter", 0, true);
+  await waitFor(() => evaluate("document.querySelector('.sidebar-more')?.open === true"), "keyboard-open More disclosure after Enter");
+  assert.equal(await evaluate("document.querySelector('.sidebar-more summary')?.matches(':focus-visible')"), true, "More remains visibly focused when opened from the keyboard");
+  await clickButtonContaining(["new task"]);
+  await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'New task'"), "New Task route through More");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "close narrow navigation after secondary route selection");
+  assert.equal(await evaluate("document.querySelector('.sidebar-more summary')?.textContent.includes('New task')"), true, "More identifies its active secondary destination");
+  assert.equal(await evaluate("document.querySelector('.sidebar-more button[aria-current=page]')?.textContent.includes('New task')"), true, "the active secondary route is marked for assistive technology");
+  checks.push("More opens by keyboard and exposes the active secondary route");
+
+  await waitFor(() => evaluate("window.innerWidth <= 900 && Boolean(document.querySelector('.mobile-navigation-toggle'))"), "narrow shell navigation controls");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open narrow navigation from the page menu control");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('sidebar-close') === true"), "focus moves into the narrow navigation dialog");
+  await pressKey("Escape");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "Escape closes narrow navigation");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('mobile-navigation-toggle') === true"), "focus returns to the narrow navigation trigger");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "reopen narrow navigation");
+  await waitForNavigationDrawerVisible("visible navigation before Projects selection");
+  await clickButtonContaining(["projects"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Projects' && document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "narrow navigation reaches Projects and closes");
+  await waitFor(() => evaluate("document.activeElement?.classList.contains('mobile-navigation-toggle') === true"), "focus returns after narrow route selection");
+  checks.push("narrow navigation opens from its visible menu control, closes by keyboard Escape, restores focus, and returns focus after route selection");
+
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open navigation before Library");
+  await waitForNavigationDrawerVisible("visible navigation before Library selection");
+  await clickButtonContaining(["library"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Library'"), "Library from compact More navigation");
+  await clickButton("History & edit");
+  await waitFor(() => evaluate("document.querySelector('#resource-revision-title')?.textContent === 'A.txt'"), "Library Resource editor");
+  await clickButton("Edit small text file");
+  await typeTextareaDraft("Draft from Resource A");
   await clickHarness("clearCalls");
-  await clickHarness("setCreateMode", "lose-response");
-  await typeInputValue("#conversation-title", "Lost acknowledgement title");
-  await clickButton("Create blank conversation");
-  await waitFor(() => evaluate("document.querySelector('.conversation-error')?.textContent.includes('test lost response')"), "ambiguous Conversation create failure");
-  let retryCalls = (await currentCalls()).filter(call => call.command === "create_conversation");
-  assert.equal(retryCalls.length, 1);
-  const originalRequestId = retryCalls[0].args.requestId;
-  await clickHarness("switchConversationWorkspaceB");
-  await waitFor(() => evaluate("document.querySelector('.conversation-intro')?.textContent.includes('Workspace B')"), "Workspace B after ambiguous create");
-  await clickHarness("switchConversationWorkspaceA");
-  await waitFor(() => evaluate("document.querySelector('.conversation-intro')?.textContent.includes('Workspace A')"), "Workspace A after remount");
-  await clickHarness("setCreateMode", "success");
-  await waitFor(() => evaluate("document.querySelector('[aria-label=\"Pending Conversation creations\"] li')?.textContent.includes('Lost acknowledgement title')"), "pending Conversation create restored from local Runtime journal after keyed remount");
-  const journalCalls = (await currentCalls()).filter(call => call.command === "list_pending_conversation_creates");
-  assert.ok(journalCalls.length >= 1, "the keyed Workspace remount must reread the pending create journal");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 1, "the ambiguous A create remains durably pending until replay acknowledgement");
-  await clickButton("Retry pending create", ".conversation-create-recovery");
-  await waitFor(() => evaluate("document.querySelector('.conversation-reader-heading h2')?.textContent === 'Lost acknowledgement title'"), "replayed Conversation create receipt");
-  retryCalls = (await currentCalls()).filter(call => call.command === "create_conversation");
-  assert.equal(retryCalls.length, 2);
-  assert.equal(retryCalls[1].args.requestId, originalRequestId, "retry after Workspace remount must reuse the ambiguous RequestId");
-  assert.equal(await evaluate("window.litecoworkHarness.createCommitCount()"), commitsBeforeRetry + 1, "same-key retry creates one durable record");
-  assert.equal(await evaluate("window.litecoworkHarness.pendingConversationCreateCount('workspace-a')"), 0, "successful replay acknowledgement removes the pending journal row");
-  checks.push("A05 lost-response retry is restored from the pending journal after Workspace unmount/remount, reuses the same RequestId, and commits once");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open navigation before guarded Projects selection");
+  await waitForNavigationDrawerVisible("visible navigation before guarded Projects selection");
+  await clickButtonContaining(["projects"]);
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog[role=alertdialog] h3')?.textContent === 'Leave the Library?'"), "guard Projects while Library draft is dirty");
+  assert.equal(await evaluate("document.querySelector('.page-content h1')?.textContent"), "Library", "guarded Projects leaves the dirty Library current");
+  assert.equal(await evaluate("document.querySelector('#resource-revision-text')?.value"), "Draft from Resource A", "guarded Projects preserves the local Resource draft");
+  await pressKey("Escape");
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog') === null"), "Stay in Library after guarded Projects request");
+  assert.equal(await evaluate("document.activeElement?.classList.contains('mobile-navigation-toggle') === true"), true, "choosing Stay restores focus before Projects selection");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "reopen navigation after staying before Projects");
+  await waitForNavigationDrawerVisible("visible navigation after staying before Projects");
+  await clickButtonContaining(["projects"]);
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog[role=alertdialog] h3')?.textContent === 'Leave the Library?'"), "second guarded Projects request");
+  await clickButton("Discard draft and leave Library");
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Projects'"), "Projects after explicit Library draft discard");
+  await clickButton("Open current Workspace");
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "fresh blank Conversation after guarded Workspace selection");
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === false"), "close navigation after guarded Workspace selection");
+  const guardedWorkspaceCalls = await currentCalls();
+  assert.deepEqual(
+    guardedWorkspaceCalls.filter(call => /^(create_|start_|send_|submit_|approve_|grant_|invoke_|connect_)/.test(call.command)),
+    [],
+    "the guarded Workspace selection performs no durable write, Runtime/provider start, grant, approval or invocation",
+  );
 
-  await enterConversationPage({ richMode: "success", availability: "UNAVAILABLE" });
-  await clickHarness("configureConversationList", "51");
-  await clickHarness("clearCalls");
-  await clickButton("Refresh", ".conversation-list-heading");
-  await waitFor(async () => (await currentCalls()).some(call => call.command === "list_conversations"), "Conversation refresh invocation");
-  await waitFor(() => evaluate("document.querySelectorAll('.conversation-list-item').length === 50"), "first 50 Conversations");
-  await clickButton("Load more conversations");
-  await waitFor(() => evaluate("[...document.querySelectorAll('.conversation-list-item')].some(item => item.textContent.includes('Conversation 51'))"), "Conversation 51");
-  const listCalls = (await currentCalls()).filter(call => call.command === "list_conversations");
-  assert.equal(listCalls.length, 2);
-  assert.equal(listCalls[1].args.cursor, "older-page", "Tauri bridge receives the opaque next cursor");
-  checks.push("A06 mounted Conversation list follows the next cursor and renders item 51");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open navigation to retest New Chat guard");
+  await waitForNavigationDrawerVisible("visible navigation before reopening Library");
+  if (!(await evaluate("document.querySelector('.sidebar-more')?.open === true"))) await clickButtonContaining(["more"]);
+  await clickButtonContaining(["library"]);
+  await waitFor(() => evaluate("document.querySelector('.page-content h1')?.textContent === 'Library'"), "return to Library for New Chat guard");
+  await clickButton("History & edit");
+  await waitFor(() => evaluate("document.querySelector('#resource-revision-title')?.textContent === 'A.txt'"), "Library Resource editor after Workspace selection");
+  await clickButton("Edit small text file");
+  await typeTextareaDraft("Draft retained for New Chat");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "open navigation while Library draft is dirty");
+  await waitForNavigationDrawerVisible("visible navigation while Library draft is dirty");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog[role=alertdialog] h3')?.textContent === 'Leave the Library?'"), "guard New Chat while Library draft is dirty");
+  assert.equal(await evaluate("document.querySelector('.page-content h1')?.textContent"), "Library", "the dirty Library remains current until the user chooses");
+  assert.equal(await evaluate("document.querySelector('#resource-revision-text')?.value"), "Draft retained for New Chat", "the guarded New Chat preserves the local Resource draft");
+  await pressKey("Escape");
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog') === null"), "Stay in Library after Escape");
+  assert.equal(await evaluate("document.activeElement?.classList.contains('mobile-navigation-toggle') === true"), true, "choosing Stay restores focus to the narrow-menu trigger");
+  assert.equal(await evaluate("document.querySelector('#resource-revision-text')?.value"), "Draft retained for New Chat", "choosing Stay preserves the dirty draft");
+  await openNavigationByPointer();
+  await waitFor(() => evaluate("document.querySelector('.sidebar')?.classList.contains('is-open') === true"), "reopen navigation after staying in Library");
+  await waitForNavigationDrawerVisible("visible navigation after staying in Library");
+  await clickButtonContaining(["new chat"]);
+  await waitFor(() => evaluate("document.querySelector('.resource-discard-dialog[role=alertdialog] h3')?.textContent === 'Leave the Library?'"), "second guarded New Chat request");
+  await clickButton("Discard draft and leave Library");
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty-state') !== null"), "New Chat after explicit draft discard");
+  assert.equal(await evaluate("document.querySelector('#resource-revision-text') === null"), true, "explicit discard leaves the Library editor");
+  calls = await currentCalls();
+  assert.equal(calls.some(call => call.command === "create_conversation" || call.command === "create_conversation_turn"), false, "navigation through the dirty-draft guard does not persist or send a Conversation");
+  checks.push("Projects-to-Workspace and New Chat respect the dirty Library guard, preserve drafts on Stay, restore focus, and navigate after explicit discard");
 
+  await cdp("Emulation.clearDeviceMetricsOverride");
   return checks;
 }
 
@@ -1838,11 +2004,21 @@ async function runResourceUploadRecoveryChecks() {
 }
 
 try {
-  vite = spawn(process.execPath, [viteCli, "--host", "127.0.0.1", "--port", String(previewPort), "--strictPort"], {
+  vite = spawn(process.execPath, [viteCli, "build", "--config", browserViteConfig, "--outDir", renderedOutput, "--emptyOutDir"], {
     cwd: packageRoot,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
   });
+  captureOutput(viteOutput, vite.stdout);
+  captureOutput(viteOutput, vite.stderr);
+  await requireSuccessfulExit(vite, "Rendered UI harness build");
+  vite = spawn(process.execPath, [viteCli, "preview", "--config", browserViteConfig, "--outDir", renderedOutput, "--host", "127.0.0.1", "--port", String(previewPort), "--strictPort"], {
+    cwd: packageRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  });
+  captureOutput(viteOutput, vite.stdout);
+  captureOutput(viteOutput, vite.stderr);
   await waitFor(async () => {
     const response = await fetch(`http://127.0.0.1:${previewPort}/tests/browser/harness.html`);
     return response.ok;
@@ -1850,20 +2026,35 @@ try {
 
   browser = spawn(chrome, [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-    "--disable-extensions", "--disable-background-networking", `--user-data-dir=${userData}`,
+    "--disable-extensions", "--disable-background-networking", `--user-data-dir=${chromeProfile}`,
     `--remote-debugging-port=${debugPort}`, "--remote-allow-origins=*", "about:blank",
-  ], { stdio: "ignore", detached: process.platform !== "win32" });
+  ], { stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+  captureOutput(chromeOutput, browser.stdout);
+  captureOutput(chromeOutput, browser.stderr);
   await waitFor(async () => (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).ok, "Chrome DevTools Protocol");
   const browserVersion = await (await fetch(`http://127.0.0.1:${debugPort}/json/version`)).json();
-  const target = await (await fetch(`http://127.0.0.1:${debugPort}/json/new?about:blank`, { method: "PUT" })).json();
-  socket = new WebSocket(target.webSocketDebuggerUrl);
+  openedTarget = await (await fetch(`http://127.0.0.1:${debugPort}/json/new?about:blank`, { method: "PUT" })).json();
+  socket = new WebSocket(openedTarget.webSocketDebuggerUrl);
   socket.addEventListener("message", event => {
     const message = JSON.parse(event.data);
     if (message.id) pendingCommands.get(message.id)?.(message);
     else if (message.method === "Runtime.exceptionThrown") {
       browserDiagnostics.push({ type: "exception", details: message.params.exceptionDetails?.exception?.description ?? message.params.exceptionDetails?.text });
+    } else if (message.method === "Network.requestWillBeSent") {
+      browserRequestUrls.set(message.params.requestId, message.params.request.url);
+    } else if (message.method === "Network.loadingFailed") {
+      browserDiagnostics.push({ type: "request-failed", url: browserRequestUrls.get(message.params.requestId) ?? message.params.requestId, error: message.params.errorText, canceled: message.params.canceled });
+      browserRequestUrls.delete(message.params.requestId);
+    } else if (message.method === "Network.loadingFinished") {
+      browserRequestUrls.delete(message.params.requestId);
+    } else if (message.method === "Network.responseReceived" && message.params.response.status >= 400) {
+      browserDiagnostics.push({ type: "http-error", url: message.params.response.url, status: message.params.response.status });
     } else if (message.method === "Runtime.consoleAPICalled") {
       browserDiagnostics.push({ type: message.params.type, text: message.params.args?.map(argument => argument.value ?? argument.description).join(" ") });
+    } else if (message.method === "Page.domContentEventFired" || message.method === "Page.loadEventFired") {
+      browserDiagnostics.push({ type: message.method });
+    } else if (message.method === "Inspector.targetCrashed" || message.method === "Runtime.executionContextCreated") {
+      browserDiagnostics.push({ type: message.method });
     }
   });
   await new Promise((resolveOpen, rejectOpen) => {
@@ -1873,16 +2064,19 @@ try {
 
   await cdp("Page.enable");
   await cdp("Runtime.enable");
+  await cdp("Network.enable");
   await cdp("Log.enable");
   await cdp("DOM.enable");
   await cdp("Accessibility.enable");
-  await cdp("Page.navigate", { url: `http://127.0.0.1:${previewPort}/tests/browser/harness.html` });
-  await waitFor(() => evaluate("Boolean(document.querySelector('.harness-ready'))"), "rendered React harness", 30_000);
+  await cdp("Page.bringToFront");
+  navigationResult = await cdp("Page.navigate", { url: `http://127.0.0.1:${previewPort}/tests/browser/harness.html` });
+  await waitFor(() => evaluate("Boolean(document.querySelector('.harness-ready'))"), "rendered React harness", 60_000);
 
   const checkGroups = new Map([
     ["resource", runResourceChecks],
     ["context-document-deletion", runContextDocumentDeletionChecks],
     ["conversation", runConversationChecks],
+    ["shell-reachability", runShellReachabilityChecks],
     ["library-navigation", runLibraryNavigationChecks],
     ["workspace-first-run", runWorkspaceFirstRunChecks],
     ["workspace-app", runWorkspaceAppChecks],
@@ -1899,11 +2093,17 @@ try {
   console.log(JSON.stringify({ browser: browserVersion.Browser, checks }, null, 2));
 } catch (error) {
   let pageText = "";
+  let pageSnapshot = null;
+  let chromeTargets = null;
   try {
-    const snapshot = await cdp("Runtime.evaluate", { expression: "document.body.innerText", returnByValue: true });
-    pageText = snapshot.result?.value ?? "";
+    const snapshot = await cdp("Runtime.evaluate", { expression: `(() => { const close = document.querySelector("#main-navigation .sidebar-close"); const active = document.activeElement; return { readyState: document.readyState, hasFocus: document.hasFocus(), url: location.href, title: document.title, body: document.body?.innerText?.slice(-1600) ?? null, root: document.querySelector("#root")?.innerHTML?.slice(0, 1200) ?? null, active: active ? { tag: active.tagName, className: active.className, label: active.getAttribute("aria-label"), html: active.outerHTML.slice(0, 300) } : null, close: close ? { tag: close.tagName, className: close.className, inert: close.closest("[inert]") !== null, display: getComputedStyle(close).display, visibility: getComputedStyle(close).visibility, rects: close.getClientRects().length, disabled: close.disabled, html: close.outerHTML } : null, more: [...document.querySelectorAll(".sidebar-more")].map(item => ({ open: item.open, visibility: getComputedStyle(item.querySelector("summary")).visibility, className: item.className })), focusTrace: (window.__lcFocusTrace ?? []).slice(-20), scripts: [...document.scripts].map(script => ({ src: script.src, type: script.type, ready: script.readyState ?? null })), resources: performance.getEntriesByType("resource").map(entry => ({ name: entry.name, type: entry.initiatorType, duration: Math.round(entry.duration), bytes: entry.transferSize })).slice(-50) }; })()`, returnByValue: true });
+    pageSnapshot = snapshot.result?.value ?? snapshot;
+    pageText = JSON.stringify(pageSnapshot);
   } catch {}
-  failure = new Error(`${error.message}${pageText ? `\nRendered page text: ${JSON.stringify(pageText.slice(-1600))}` : ""}${browserDiagnostics.length ? `\nBrowser diagnostics: ${JSON.stringify(browserDiagnostics.slice(-40))}` : ""}`, { cause: error });
+  try { chromeTargets = await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json(); } catch {}
+  if (chromeTargets) error.message += `\nChrome targets: ${JSON.stringify(chromeTargets.map(({ id, type, url, title }) => ({ id, type, url, title })))}`;
+  const recentFocusKeyTrace = pageSnapshot?.focusTrace?.slice(-12) ?? [];
+  failure = new Error(`${error.message}${pageText ? `\nRendered page snapshot: ${pageText.slice(0, 6000)}` : ""}${recentFocusKeyTrace.length ? `\nRecent focus/key events: ${JSON.stringify(recentFocusKeyTrace)}` : ""}${browserRequestUrls.size ? `\nPending browser requests: ${JSON.stringify([...browserRequestUrls.values()])}` : ""}${browserDiagnostics.length ? `\nBrowser diagnostics: ${JSON.stringify(browserDiagnostics.slice(-60))}` : ""}${viteOutput.length ? `\nVite output: ${JSON.stringify(viteOutput.slice(-40))}` : ""}${chromeOutput.length ? `\nChrome output: ${JSON.stringify(chromeOutput.slice(-40))}` : ""}`, { cause: error });
 } finally {
   socket?.close();
   await Promise.allSettled([stopProcess(browser), stopProcess(vite)]);

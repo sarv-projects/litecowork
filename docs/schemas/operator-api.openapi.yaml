@@ -2125,7 +2125,7 @@ paths:
             Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Error'}
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /agent-profiles/{agentProfileId}/native-config/{targetId}/open:
     post:

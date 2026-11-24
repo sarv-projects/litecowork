@@ -5,9 +5,16 @@
 **Design package:** `litecowork_complete_superset_design_package.md` and
 `litecowork-design-package-2026-11-23.zip`
 
+**Source fingerprints:** standalone Markdown SHA-256
+`D83A670B5AAA5F856C36A9988632AF64CEE34FB030F54CAC67D6C0D72327202C`; ZIP SHA-256
+`C1ACACCF89FDBD78FA5A4C1AAA473008361091DD2DAF3A0F652C421702B8D797`. The standalone file is
+byte-identical to the main Markdown member in the ZIP. The ZIP has 15 directory/file entries and
+contains the main package, three audit/index files and all nine Track 1–9 files.
+
 **Package source baseline:** commit `54b69d1` / SQLite v35 (as stated in the package)
 
-**Checkout independently reviewed:** `bb2c53acc7459d62eac57ae097dec43fe8d37522` on `main`
+**Initial source audit:** `bb2c53acc7459d62eac57ae097dec43fe8d37522` on `main`
+**Latest checkout recheck:** `6145c2a77144053f5fac3316d82efa5f6718b66d` on `main`, equal to `origin/main` before this documentation/UI slice
 **Disposition:** design review and USER-DELEGATED product direction; not formal domain-owner acceptance,
 INTEGRATED evidence, native-platform qualification, or release approval.
 
@@ -331,3 +338,65 @@ event, schema, task paths, acceptance and migration behavior are defined.
 
 External references support the stated protocol and source-specific observations only. They do
 not establish LiteCowork integration or qualification.
+
+## 7. Latest source and contract recheck — 2026-11-23 client date
+
+The earlier claim table and implementation evidence above remain anchored to their explicitly
+named historical checkouts. The design package, Track 1–9 files, owner contracts, current shell,
+provider adapters, Workbench source and migration allocator were rechecked against
+`6145c2a77144053f5fac3316d82efa5f6718b66d`. The current schema is v36 with 144 application
+tables; v37–v47 remain reserved or provisional. The full UI suite's latest result is 658 passed,
+9 failed and 5 skipped, exit 1; do not repeat the earlier 638/9/5 number as current. See
+`CURRENT-RUN.md` for the exact run environment and failure evidence. The current Task count is
+the owner ledger count, not a completion percentage; no task is VERIFIED and no release journey
+is QUALIFIED.
+
+### Track-by-track corrections from the current checkout
+
+| Track | Keep | Correct before implementation |
+|---|---|---|
+| 1 — Chat-first shell | Fewer permanent destinations, unified-workspace intent, one contextual object pane, object registry owned by Workbench, and reauthorization on reopen. | Feature 011 already has T19–T23 and Feature 008 owns object tabs/chooser/Canvas/terminal semantics in T26. `Projects` maps to existing Workspace records for navigation only; no Project entity or second boundary. Recent Chats remains Conversation-only until cross-owner ordering/pagination/partial freshness/recovery exist. A composite Needs You count must not merge persisted items with Runtime-local permission prompts without exact dedupe/snapshot behavior. The generic session route in the package does not exist; use each owner's exact read path. |
+| 2 — Workbench and local computer | Real Browser/Computer/Terminal providers; separate local observation, agent disclosure and mediated input; idle terminal; Take over fences new agent input while Stop run cancels the owning run. | Feature 008 tasks T22–T27 already own review, promotion, observation, input/takeover, object tabs and qualification. T22's Browser import boundary is non-secret; history/extensions require an explicit owner amendment. DOM scrubbing or automatic reload is not a privacy boundary; pause capture before sensitive entry and require a fresh authorized frame. Computer Task/Attempt input grants do not yet resolve ordinary Conversation input authority. A shortcut/tray design is not a qualified out-of-app escape; keep input unavailable until it works on the exact OS/provider row. v42 remains reserved; no supplied schema fields are adopted. |
+| 3 — Native plus ACP adapters | Capability-specific native and ACP paths with exact version, transport, OS, auth, event and recovery conformance. | `AgentHostSupervisor<T>` owns retained process handles; the existing `AgentAdapter` is the provider boundary. Do not trait-objectify the process supervisor as proposed. Keep OpenCode v2.0.32. Codex App Server is probe-only; ACP v1 and Claude launch entries are foundations with no qualified Conversation dispatch. Claude T12 and same-incarnation recovery remain gated. No fixed resume retry or loopback MCP relay is adopted without a reproduced provider need and token/process lifecycle contract. ACP does not promise component trees, subagent feeds or permissions. |
+| 4 — Trust, credentials, egress and execution | Provenance, least authority, bounded Effects and explicit takeover are sound principles. | Keep mediation and outcome evidence as separate axes. Artifact/Delegation actions stay with their owners; a generic Gateway must not absorb them. Model-classifier `AUTO_REVIEW`/automatic approval conflicts with deterministic default-deny Trust and is rejected. Custom rules need Trust-owned revisions and may narrow only existing grants. Windows AppContainer remains blocked by B-35; a proposal is not containment. ZIP recursion and KDF maximum findings are fixed in source at the current checkout; slowest-row performance and native Linux extraction qualification remain open. |
+| 5 — RichPresentation | Semantic answer first; one canonical typed schema; bounded registered renderers; deterministic calculations; safe text fallback and explicit provenance. | Current schema kinds exceed parts of the Rust/TypeScript/render pipeline. Do not add a competing v2 schema or tool contract. A-85 and 016-T20 remain blocked pending provider correlation/replay evidence. `DIAGRAM`/`MEDIA` proposed labels conflict with the canonical `DIAGRAM_BLOCK`/`MEDIA_CARD`; KaTeX/Mermaid require grammar, sanitization, complexity, accessibility and license review. SVG is not inherently safe; render only host-validated values. No arbitrary HTML, JavaScript, or hidden second model pass. |
+| 6 — Saved Views and input memory | Explicit Saved View in Library with immutable provenance, source fallback, reopen/update/archive; transient calculator input under B-40. | Keep Saved Views in V1 as user-directed but not yet cross-owner accepted. Existing Feature 007 T11–T13 and Feature 016 T22–T25 already own adjacent work; supplied IDs collide. Reject the proposed input snapshot field and keep B-46 Remember/Forget separate until its own scoped retention, deletion, backup and recovery contract is resolved. No Saved View route is served. |
+| 7 — Professional file authoring/export | Per-format capability and fidelity disclosure, immutable versions, source lineage and recoverable export are required. | Accepted Feature 007 v1 starts with Markdown and leaves DOCX/XLSX/PPTX/PDF read-only or unsupported until owner amendment. The proposal's `/versions/{v}/exports` conflicts with `/artifacts/{artifact_id}/exports`. A-81 still blocks choosing receipt-before-write versus write-before-receipt; use operation identity, pinned source digest, UNKNOWN after ambiguity and explicit reconciliation. `openpyxl` does not calculate formulas and may lose unsupported parts; `python-docx` support has limitations; HyperFormula licensing needs review. Subprocess isolation alone is not a security boundary. Do not add redundant format/fidelity columns or reuse 007 task IDs/migration v38. |
+| 8 — Voice, annotations and Teach-by-Demo | The product owner keeps full Voice and visual authoring capabilities on the V1 roadmap; local/transient capture, exact visual anchors and reviewed proposals are appropriate. | Features 021 and 022 do not exist yet; author complete SDDs before implementation. Voice should create an editable local draft for normal Conversation Send rather than a new durable utterance endpoint; audio is transient by default and voice cannot approve. Annotations bind to immutable ArtifactVersion/render digest and become stale on target change. Teach-by-Demo should produce a reviewed RoutineRevision under Feature 010; do not invent a Skill ownership path or persist raw recordings by default. No v49/v50 migration allocation is valid. |
+| 9 — Remote Runtime and mobile | Remote/mobile continuity can be a future extension. | Keep it in V2 per `V1-PRODUCT-RELEASE-CONTRACT.md` and `RUNTIME-MESH.md`. Local Operator IPC is not a remote authenticated API; mobile approval must not queue offline and replay authority later. Do not add V1 schema/routes or claim target flows as served. |
+
+### Implementation decision and immediate slice
+
+The product owner explicitly delegates internal implementation choices in A-121. A-123 records
+the compact-navigation mapping: New Chat, Recent Chats, Projects, Needs You, More and footer
+Settings; Projects is a directory over the existing Workspace list; secondary domains remain
+reachable; no composite Needs You count is shown without exact source/deduplication semantics.
+Feature 011 T19 is the owner task and its allowed UI paths cover this work. The implementation
+plan now places this shell slice before the next dependency-ready release task. The change adds
+no route, domain entity, event, schema or migration. The currently accepted four-destination
+V1 contract and Feature 011 package lifecycle remain formally unchanged; the user-directed
+implementation does not establish owner acceptance, provider integration or qualification.
+
+**T19 source update:** the compact rail, Workspace-backed Projects component, Recent Chats state
+component, local guarded `ConversationNavigationIntent`, and New Chat auto-selection fence are
+present in the working tree. Focused shell component/source tests pass 19/19, TypeScript passes,
+and the rendered browser group passed all four checks in Chrome 158.0.8127.38 against the
+production-built harness. The separate Conversation rendered group passed 15 checks, including
+blank-chat draft entry and preservation without issuing a create/send request. The rendered-test
+launcher now discovers common Windows Chrome/Edge locations when no explicit executable is set.
+The broader focused shell/Conversation/navigation/source suite passes 56/56. These are CODE/UI-render results only; T19
+remains PARTIAL, with packaged Tauri, provider integration, formal package acceptance and
+qualification still open. No UI action was converted into an API, entity, grant or provider dispatch.
+See CURRENT-RUN.md for exact attempts.
+
+The follow-up API check also exposed an unrelated Feature 002-T08 OpenAPI defect: its credential
+conflict response referenced nonexistent `components/schemas/Error` instead of the canonical
+`ApiError`. The reference is corrected and the generated Operator types now declare exact replay
+(`200`), committed write (`201`) and idempotency conflict (`409`). This does not change route
+behavior: credential submission still fails closed with `503`, and T08 remains IN PROGRESS.
+
+All other tracks stay in their owning dependency order. In particular, saved answers, Computer
+capture/input, additional adapters, browser import, Office authoring, voice and annotations are
+not implemented merely by adding this disposition. Their owners must complete any required
+contract revision, API/schema/event promotion, UI trace, recovery design and focused evidence
+before their implementation tasks begin.

@@ -12,6 +12,24 @@
 5. Stop/update gate after Feature 001 Stop/quiescence and Feature 005 Effect/lease settlement.
 6. Failure/recovery, cross-layer traces, packaged qualification on Windows x64 then Linux x64, documentation sync, VERIFIED transition.
 
+### User-delegated shell continuation (A-123; 011-T19)
+
+Continue the existing shell task with New Chat, Recent Chats, Projects, Needs You, More and
+footer Settings. Projects is a read-only directory over existing Workspace records; it must
+not add a Project identity, membership schema, owner route or authorization boundary. Move
+less-frequent domains under More, preserve every mounted route, the existing dirty-Library
+guard and keyboard/focus behavior. Recent Chats remains Conversation-only until cross-owner
+ordering, pagination, partial-source freshness and recovery are contracted. A Needs You count
+is omitted unless an owner projection provides an exact, non-duplicated count. The active
+four-destination V1 contract remains formally unchanged; the task is authorized by the
+product owner's implementation delegation, not by a new package acceptance. No migration is
+required.
+
+At widths up to 900px the sidebar is a modal drawer. Since the Conversation route does not
+render the standard page topbar, its header must expose a Menu trigger wired to the same drawer
+state. The shared trigger ref moves across routes so closing the drawer returns focus to the
+currently mounted screen; an off-canvas sidebar is not a reachable navigation path by itself.
+
 The ordered task list is [TASKS.md](TASKS.md).
 
 ## Dependency DAG

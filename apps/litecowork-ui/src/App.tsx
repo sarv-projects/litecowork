@@ -56,6 +56,8 @@ import {
 import { LibraryPage } from "./library/LibraryPage";
 import { formatBytes } from "./library/library-format";
 import { OperatorUnavailablePanel } from "./shell/OperatorUnavailablePanel";
+import { RecentChatsSidebar, type ConversationListDisplayStatus } from "./shell/RecentChatsSidebar";
+import { WorkspaceProjectsPage } from "./projects/WorkspaceProjectsPage";
 import { WorkspaceDashboard, type WidgetSource } from "./dashboard/WorkspaceDashboard";
 import { summarizeByStatus, summarizeTotal } from "./dashboard/dashboard-state.ts";
 import { LibraryNavigationDialog, libraryNavigationMainIsInert, useLibraryNavigation } from "./resources/library-navigation";
@@ -123,7 +125,11 @@ import {
   type PendingRename,
 } from "./settings/workspace-rename.ts";
 
-type Page = "Home" | "Conversations" | "Work" | "Library" | "Discover" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Notifications" | "Routines" | "Automations" | "Dashboard" | "Settings";
+type Page = "Home" | "Conversations" | "Projects" | "Work" | "Library" | "Discover" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Notifications" | "Routines" | "Automations" | "Dashboard" | "Settings";
+type ConversationNavigationIntent =
+  | { kind: "NEW_CHAT" }
+  | { kind: "OPEN_CONVERSATION"; conversationId: string }
+  | { kind: "OPEN_WORKSPACE"; workspaceId: string };
 export type RuntimeStatus = {
   state: string;
   runtimeId: string | null;
@@ -438,9 +444,10 @@ export function SidebarNavIcon({ page }: { page: Page }) {
 
 export const navigation: { label: Page; displayLabel?: string; group?: string }[] = [
   { label: "Conversations", displayLabel: "Recent chats", group: "WORKSPACE" },
-  { label: "Work", displayLabel: "Tasks & Work" },
-  { label: "Needs You", displayLabel: "Needs Decision" },
+  { label: "Projects", displayLabel: "Projects", group: "WORKSPACE" },
+  { label: "Needs You", displayLabel: "Needs You" },
   { label: "Home", displayLabel: "New task" },
+  { label: "Work", displayLabel: "Tasks & Work" },
   { label: "Library", displayLabel: "Library & Files", group: "RESOURCES" },
   { label: "Coworkers", displayLabel: "Coworkers" },
   { label: "Discover", displayLabel: "Discover Skills" },
@@ -453,8 +460,8 @@ export const navigation: { label: Page; displayLabel?: string; group?: string }[
   { label: "Settings", displayLabel: "Settings", group: "SYSTEM" },
 ];
 
-/** Pages that have no dedicated primary button; the sidebar renders them from `navigation`. */
-const SIDEBAR_MORE_PAGES: Page[] = ["Home", "Discover", "Dashboard", "Goals", "Notifications", "Ideas"];
+/** Less-frequent destinations remain reachable without taking permanent sidebar space. */
+const SIDEBAR_MORE_PAGES: Page[] = ["Home", "Work", "Library", "Coworkers", "Discover", "Automations", "Routines", "Dashboard", "Goals", "Notifications", "Ideas"];
 
 const UPLOAD_RESUME_KEY = "litecowork.resourceUploadResume.v1";
 const TASK_STATUSES: TaskStatus[] = [
@@ -547,6 +554,7 @@ function App() {
     draftCommitted: onLibraryDraftCommitted,
   } = libraryNavigation;
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [sidebarMoreOpen, setSidebarMoreOpen] = useState(false);
   const navigationTriggerRef = useRef<HTMLButtonElement>(null);
   const navigationDrawerRef = useRef<HTMLElement>(null);
   const workbenchTriggerRef = useRef<HTMLButtonElement>(null);
@@ -626,6 +634,8 @@ function App() {
     setWorkbenchOpen(false);
     if (restoreFocus) window.requestAnimationFrame(() => workbenchTriggerRef.current?.focus());
   }, []);
+  const navigationGuardFocusTarget = () =>
+    navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null;
   useEffect(() => {
     if (!navigationOpen) return;
     const focusableElements = () => Array.from(
@@ -633,7 +643,18 @@ function App() {
         'a[href], button:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
       ) ?? [],
     );
-    navigationDrawerRef.current?.querySelector<HTMLElement>(".sidebar-close")?.focus();
+    let focusFrame = 0;
+    let focusWaitFrames = 0;
+    const focusDrawerCloseWhenVisible = () => {
+      const close = navigationDrawerRef.current?.querySelector<HTMLElement>(".sidebar-close");
+      if (!close) return;
+      if (getComputedStyle(close).visibility !== "visible" || close.getClientRects().length === 0) {
+        if (focusWaitFrames++ < 30) focusFrame = window.requestAnimationFrame(focusDrawerCloseWhenVisible);
+        return;
+      }
+      close.focus();
+    };
+    focusFrame = window.requestAnimationFrame(focusDrawerCloseWhenVisible);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -665,10 +686,14 @@ function App() {
     document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", closeOnDesktopResize);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", closeOnDesktopResize);
     };
   }, [navigationOpen, closeNavigation]);
+  useEffect(() => {
+    if (SIDEBAR_MORE_PAGES.includes(page)) setSidebarMoreOpen(true);
+  }, [page]);
   useEffect(() => {
     if (!workbenchNarrow || !workbenchOpen) return;
     const focusableElements = () => Array.from(
@@ -717,11 +742,23 @@ function App() {
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [newChatRequestId, setNewChatRequestId] = useState(0);
   const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
+  const [conversationListStatusByWorkspace, setConversationListStatusByWorkspace] = useState<Record<string, ConversationListDisplayStatus>>({});
   const [conversationPaginationByWorkspace, setConversationPaginationByWorkspace] = useState<Record<string, { hasMore: boolean; loading: boolean }>>({});
   const loadMoreConversationChatsRef = useRef<(() => void) | null>(null);
+  const refreshConversationListRef = useRef<(() => void) | null>(null);
   const registerLoadMoreConversationChats = useCallback((handler: (() => void) | null) => {
     loadMoreConversationChatsRef.current = handler;
+  }, []);
+  const registerRefreshConversationList = useCallback((handler: (() => void) | null) => {
+    refreshConversationListRef.current = handler;
+  }, []);
+  const updateConversationListStatus = useCallback((workspaceId: string, status: ConversationListDisplayStatus) => {
+    if (!workspaceId) return;
+    setConversationListStatusByWorkspace(current => current[workspaceId] === status
+      ? current
+      : { ...current, [workspaceId]: status });
   }, []);
   const updateConversationListPagination = useCallback((workspaceId: string, hasMore: boolean, loading: boolean) => {
     setConversationPaginationByWorkspace(current => {
@@ -814,6 +851,7 @@ function App() {
     catch { return ""; }
   });
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
+  const [pendingConversationNavigationIntent, setPendingConversationNavigationIntent] = useState<ConversationNavigationIntent | null>(null);
   const [automationTemplateFlow, setAutomationTemplateFlow] = useState<AutomationTemplateFlow | null>(null);
   const artifactApi = useMemo(() => desktopArtifactApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const discoverApi = useMemo(() => selectedWorkspaceId ? desktopDiscoverApi(selectedWorkspaceId) : null, [selectedWorkspaceId]);
@@ -866,6 +904,27 @@ function App() {
     selectedWorkspaceIdRef.current = workspaceId;
     setSelectedWorkspaceId(workspaceId);
   }, []);
+  const applyConversationNavigationIntent = useCallback((intent: ConversationNavigationIntent) => {
+    if (intent.kind === "OPEN_WORKSPACE") selectWorkspace(intent.workspaceId);
+    if (intent.kind !== "OPEN_CONVERSATION") setNewChatRequestId(current => current + 1);
+    setSelectedConversationId(intent.kind === "OPEN_CONVERSATION" ? intent.conversationId : null);
+  }, [selectWorkspace]);
+  const requestConversationNavigation = useCallback((intent: ConversationNavigationIntent, blockedFocusTarget?: HTMLElement | null) => {
+    const navigated = requestPageNavigation("Conversations", blockedFocusTarget);
+    if (navigated) applyConversationNavigationIntent(intent);
+    else setPendingConversationNavigationIntent(intent);
+    return navigated;
+  }, [applyConversationNavigationIntent, requestPageNavigation]);
+  useEffect(() => {
+    if (!pendingConversationNavigationIntent) return;
+    if (page === "Conversations") {
+      applyConversationNavigationIntent(pendingConversationNavigationIntent);
+      setPendingConversationNavigationIntent(null);
+    } else if (page === "Library" && pendingLibraryNavigation === null) {
+      // The user chose to stay in Library; discard the deferred selection intent with the route.
+      setPendingConversationNavigationIntent(null);
+    }
+  }, [applyConversationNavigationIntent, page, pendingConversationNavigationIntent, pendingLibraryNavigation]);
   useEffect(() => {
     rootStatusRequestKeys.current.clear();
   }, [selectedWorkspaceId]);
@@ -2404,11 +2463,11 @@ function App() {
           <button
             className="sidebar-new-chat-pill"
             type="button"
+            aria-current={page === "Conversations" ? "page" : undefined}
             disabled={taskSaving}
             onClick={() => {
-              setSelectedConversationId(null);
               const focusTarget = navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null;
-              const navigated = requestPageNavigation("Conversations", focusTarget);
+              const navigated = requestConversationNavigation({ kind: "NEW_CHAT" }, focusTarget);
               if (navigationOpen) closeNavigation(navigated);
             }}
           >
@@ -2418,133 +2477,66 @@ function App() {
           </button>
         </div>
 
-        {/* 3. Recent Chats list with timestamps/active highlights */}
-        <div className="sidebar-recent-chats-wrap">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-label">Recent Chats</span>
-            <span className="sidebar-section-count">
-              {(conversationsByWorkspace[selectedWorkspaceId] ?? []).length}
-            </span>
-          </div>
-
-          <div className="sidebar-recent-chat-list">
-            {(conversationsByWorkspace[selectedWorkspaceId] ?? []).length === 0 ? (
-              <div className="sidebar-chat-item-empty">No saved chats yet</div>
-            ) : (
-              (conversationsByWorkspace[selectedWorkspaceId] ?? []).map((conv, idx) => {
-                const isSelected = selectedConversationId === conv.conversation_id && page === "Conversations";
-                return (
-                  <button
-                    key={conv.conversation_id}
-                    className={`sidebar-chat-item-row ${isSelected ? "selected" : ""}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedConversationId(conv.conversation_id);
-                      if (page !== "Conversations") requestPageNavigation("Conversations");
-                      if (navigationOpen) closeNavigation(true);
-                    }}
-                  >
-                    <span className="chat-row-title" title={conv.title || "Untitled"}>
-                      {conv.title || "Untitled"}
-                    </span>
-                    {isSelected ? (
-                      <span className="chat-row-now">now</span>
-                    ) : (
-                      <span className={`chat-row-dot ${idx === 0 ? "active" : ""}`} />
-                    )}
-                  </button>
-                );
-              })
-            )}
-          </div>
-          {page === "Conversations" && conversationPaginationByWorkspace[selectedWorkspaceId]?.hasMore && (
-            <button
-              className="sidebar-chat-load-more"
-              type="button"
-              disabled={conversationPaginationByWorkspace[selectedWorkspaceId]?.loading}
-              onClick={() => loadMoreConversationChatsRef.current?.()}
-            >
-              {conversationPaginationByWorkspace[selectedWorkspaceId]?.loading ? "Loading chats…" : "Load more chats"}
-            </button>
-          )}
-        </div>
+        {/* 3. Recent Chats: source-backed loading, unavailable and failure states; no invented count. */}
+        <RecentChatsSidebar
+          items={conversationsByWorkspace[selectedWorkspaceId] ?? []}
+          status={!selectedWorkspaceId || runtime?.operatorReady !== true
+            ? "UNAVAILABLE"
+            : conversationListStatusByWorkspace[selectedWorkspaceId] ?? (page === "Conversations" ? "LOADING" : "IDLE")}
+          runtimeReady={runtime?.operatorReady === true}
+          selectedConversationId={page === "Conversations" ? selectedConversationId : null}
+          showPagination={page === "Conversations"}
+          hasMore={conversationPaginationByWorkspace[selectedWorkspaceId]?.hasMore ?? false}
+          loadingMore={conversationPaginationByWorkspace[selectedWorkspaceId]?.loading ?? false}
+          workspaceSelected={Boolean(selectedWorkspaceId)}
+          onOpenConversation={(conversationId) => {
+            const navigated = requestConversationNavigation({ kind: "OPEN_CONVERSATION", conversationId }, navigationGuardFocusTarget());
+            if (navigationOpen) closeNavigation(navigated);
+          }}
+          onRetry={() => {
+            if (page === "Conversations" && refreshConversationListRef.current) {
+              refreshConversationListRef.current();
+              return;
+            }
+            const navigated = requestPageNavigation("Conversations", navigationGuardFocusTarget());
+            if (navigationOpen) closeNavigation(navigated);
+          }}
+          onLoadMore={() => loadMoreConversationChatsRef.current?.()}
+        />
 
         {/* 4. Core Objects Nav (Clean & Uncluttered) */}
         <nav className="sidebar-nav-list" aria-label="Workspace Navigation">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-label">Workspace</span>
-          </div>
+          <button
+            className={`sidebar-nav-btn ${page === "Projects" ? "selected" : ""}`}
+            type="button"
+            aria-current={page === "Projects" ? "page" : undefined}
+            onClick={() => {
+              const navigated = requestPageNavigation("Projects", navigationGuardFocusTarget());
+              if (navigationOpen) closeNavigation(navigated);
+            }}
+          >
+            <span className="sidebar-nav-icon" aria-hidden="true">▦</span>
+            <span className="sidebar-nav-text">Projects</span>
+          </button>
 
           {/* Needs You: Decision inbox for pending user approvals, credential prompts, blockers */}
           <button
             className={`sidebar-nav-btn ${page === "Needs You" ? "selected" : ""}`}
             type="button"
+            aria-current={page === "Needs You" ? "page" : undefined}
             onClick={() => {
-              requestPageNavigation("Needs You");
-              if (navigationOpen) closeNavigation(true);
+              const navigated = requestPageNavigation("Needs You", navigationGuardFocusTarget());
+              if (navigationOpen) closeNavigation(navigated);
             }}
           >
             <span className="sidebar-nav-icon">◇</span>
             <span className="sidebar-nav-text">Needs You</span>
           </button>
 
-          {/* Work: Durable task runs, attempts, and deliverables */}
-          <button
-            className={`sidebar-nav-btn ${page === "Work" ? "selected" : ""}`}
-            type="button"
-            onClick={() => {
-              setOpenedTask(null);
-              requestPageNavigation("Work");
-              if (navigationOpen) closeNavigation(true);
-            }}
-          >
-            <span className="sidebar-nav-icon">▤</span>
-            <span className="sidebar-nav-text">Work</span>
-          </button>
-
-          {/* Coworkers: Persistent coworker profiles and assignments */}
-          <button
-            className={`sidebar-nav-btn ${page === "Coworkers" ? "selected" : ""}`}
-            type="button"
-            onClick={() => {
-              requestPageNavigation("Coworkers");
-              if (navigationOpen) closeNavigation(true);
-            }}
-          >
-            <span className="sidebar-nav-icon">◉</span>
-            <span className="sidebar-nav-text">Coworkers</span>
-          </button>
-
-          {/* Automations & Routines: Scheduled procedures */}
-          <button
-            className={`sidebar-nav-btn ${page === "Automations" || page === "Routines" ? "selected" : ""}`}
-            type="button"
-            onClick={() => {
-              requestPageNavigation("Automations");
-              if (navigationOpen) closeNavigation(true);
-            }}
-          >
-            <span className="sidebar-nav-icon">🕒</span>
-            <span className="sidebar-nav-text">Automations</span>
-          </button>
-
-          {/* Library: Workspace files and knowledge artifacts */}
-          <button
-            className={`sidebar-nav-btn ${page === "Library" ? "selected" : ""}`}
-            type="button"
-            onClick={() => {
-              requestPageNavigation("Library");
-              if (navigationOpen) closeNavigation(true);
-            }}
-          >
-            <span className="sidebar-nav-icon">▧</span>
-            <span className="sidebar-nav-text">Library</span>
-          </button>
-
           <details
             className="sidebar-more"
-            key={SIDEBAR_MORE_PAGES.includes(page) ? page : "primary"}
-            open={SIDEBAR_MORE_PAGES.includes(page) || undefined}
+            open={sidebarMoreOpen}
+            onToggle={event => setSidebarMoreOpen(event.currentTarget.open)}
           >
             <summary className="sidebar-more-summary">
               More{SIDEBAR_MORE_PAGES.includes(page) ? ` · ${navigation.find(item => item.label === page)?.displayLabel ?? page}` : ""}
@@ -2556,8 +2548,12 @@ function App() {
               type="button"
               aria-current={page === item.label ? "page" : undefined}
               onClick={() => {
-                requestPageNavigation(item.label);
-                if (navigationOpen) closeNavigation(true);
+                const navigated = requestPageNavigation(item.label, navigationGuardFocusTarget());
+                if (navigated) {
+                  if (item.label === "Home" || item.label === "Work") setOpenedTask(null);
+                  setSidebarMoreOpen(true);
+                }
+                if (navigationOpen) closeNavigation(navigated);
               }}
             >
               <span className="sidebar-nav-icon" aria-hidden="true">•</span>
@@ -2573,8 +2569,8 @@ function App() {
             className={`sidebar-settings-btn ${page === "Settings" ? "selected" : ""}`}
             type="button"
             onClick={() => {
-              requestPageNavigation("Settings");
-              if (navigationOpen) closeNavigation(true);
+              const navigated = requestPageNavigation("Settings", navigationGuardFocusTarget());
+              if (navigationOpen) closeNavigation(navigated);
             }}
           >
             <span className="sidebar-nav-icon">⚙</span>
@@ -2637,6 +2633,21 @@ function App() {
           <div className="workspace-route-content" inert={routeContentInert} aria-hidden={routeContentInert || undefined}>
         {page === "Home" ? (
           <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} onWorkspaceNameChange={setWorkspaceName} workspaceCreateBusy={workspaceCreateBusy} pendingWorkspaceRequest={pendingWorkspaceRequest} createWorkspace={createWorkspace} workspacesCount={workspaces.length} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => requestPageNavigation("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => requestPageNavigation("Settings")} onOpenCoworkers={() => requestPageNavigation("Coworkers")} onWorkspaceUpdated={(updated) => updateWorkspaceProjection(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
+        ) : page === "Projects" ? (
+          <WorkspaceProjectsPage
+            workspaces={workspaces}
+            selectedWorkspaceId={selectedWorkspaceId}
+            listState={workspaceListState}
+            error={workspaceError}
+            runtimeReady={runtime?.operatorReady === true}
+            busy={taskSaving}
+            onRetry={() => void refreshWorkspaces()}
+            onOpenSettings={() => requestPageNavigation("Settings")}
+            onOpenWorkspace={(workspaceId) => {
+              const navigated = requestConversationNavigation({ kind: "OPEN_WORKSPACE", workspaceId });
+              if (navigationOpen) closeNavigation(navigated);
+            }}
+          />
         ) : page === "Conversations" ? (
           <ConversationsPage
             key={selectedWorkspaceId}
@@ -2660,6 +2671,7 @@ function App() {
             onDraftChange={value => setConversationDrafts(current => ({ ...current, [selectedWorkspaceId]: value }))}
             onOpenAgentSettings={() => requestPageNavigation("Settings")}
             selectedConversationId={selectedConversationId}
+            newChatRequestId={newChatRequestId}
             onSelectConversation={setSelectedConversationId}
             onTaskCreated={(taskId) => {
               setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
@@ -2668,8 +2680,13 @@ function App() {
             onConversationsLoaded={(loaded) => {
               setConversationsByWorkspace(current => ({ ...current, [selectedWorkspaceId]: loaded }));
             }}
+            onConversationListStatusChange={updateConversationListStatus}
+            onRegisterRefreshConversationList={registerRefreshConversationList}
             onRegisterLoadMoreConversations={registerLoadMoreConversationChats}
             onConversationListPaginationChange={updateConversationListPagination}
+            onOpenNavigation={() => { setWorkbenchOpen(false); setNavigationOpen(true); }}
+            navigationTriggerRef={navigationTriggerRef}
+            navigationOpen={navigationOpen}
             workbenchOpen={workbenchShown}
             onToggleWorkbench={() => {
               if (workbenchNarrow) {
@@ -3609,6 +3626,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
   const content: Record<Page, { title: string; description: string }> = {
     Home: { title: "Home", description: "Your workspace overview." },
     Conversations: { title: "Conversations", description: "Saved local conversation history." },
+    Projects: { title: "Projects", description: "Browse the existing Workspaces on this device." },
     Work: { title: "Work", description: "Durable Tasks and their real progress will appear here after Task execution and the Operator API are integrated." },
     Library: { title: "Library", description: "Saved files and committed Artifacts for this Workspace." },
     Discover: { title: "Discover", description: "Browse workspace skills and observed capability hosts. Catalog entries are not installation, authentication, or authorization." },

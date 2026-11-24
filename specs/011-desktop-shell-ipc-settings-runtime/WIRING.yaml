@@ -1,6 +1,12 @@
 feature_id: "011"
 status: "ACCEPTED/LOCKED"
 nodes:
+  - id: "workspace-shell-ui"
+    owner: App navigation, recent chat list and Workspace-backed Projects directory
+    kind: component
+  - id: "conversation-ui"
+    owner: Feature 001 Conversation page and local selection projection
+    kind: component
   - id: "settings-ui"
     owner: SettingsView and category panels
     kind: component
@@ -32,6 +38,22 @@ nodes:
     owner: daemon-held OS power assertion provider (target)
     kind: external
 edges:
+  - id: "e-workspace-shell-list"
+    from: "workspace-shell-ui"
+    to: "ipc"
+    kind: existing-authenticated-list-workspaces-projection-read
+  - id: "e-workspace-selection"
+    from: "workspace-shell-ui"
+    to: "local-preferences"
+    kind: active-workspace-view-selection-only-no-project-authority
+  - id: "e-shell-conversation-navigation"
+    from: "workspace-shell-ui"
+    to: "conversation-ui"
+    kind: library-guarded-local-selection-new-chat-epoch-no-create-or-send-until-composer-submit
+  - id: "e-conversation-navigation-drawer"
+    from: "conversation-ui"
+    to: "workspace-shell-ui"
+    kind: shared-narrow-drawer-aria-state-focus-trap-and-trigger-ref; accepted-route-closes-and-restores-focus; library-guard-closes-without-focus-steal-and-stay-restores-current-menu-trigger
   - id: "e-settings-ipc"
     from: "settings-ui"
     to: "ipc"

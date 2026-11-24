@@ -68,9 +68,11 @@ test("the empty Conversation canvas advertises no capability this build cannot p
 test("the Send control is gated on a dispatch-eligible binding, not merely a non-empty draft", () => {
   // The current UI's dispatch-eligibility gate includes the binding predicate; this does not prove
   // provider authentication, native-session readiness, or the accepted disabled-until-qualified gate.
+  const sendButton = source.match(/className="composer-submit-btn"\s+type="button"\s+disabled=\{([^}]+)\}/);
+  assert.ok(sendButton, "the Send control must have an explicit disabled predicate");
   assert.match(
-    source,
-    /disabled=\{!sendEligible\}/,
+    sendButton[1],
+    /!sendEligible/,
     "Send button must be disabled unless sendEligible (includes a dispatch-eligible binding) is true",
   );
   assert.match(
@@ -94,12 +96,16 @@ test("composer controls without an owner route are disabled and named unavailabl
   }
 });
 
-test("the attachment control has an owner route and stays fenced to a selected Conversation (001-T14)", () => {
+test("the attachment control supports a guarded blank-chat first turn (001-T14)", () => {
   const at = source.indexOf('aria-label="Add context or file"');
   assert.notEqual(at, -1, "the attach control exists");
-  assert.match(source.slice(at, at + 200), /disabled=\{!operatorReady \|\| !selectedId \|\| isTurnRunning\}/);
+  const control = source.slice(at, at + 300);
+  assert.match(control, /disabled=\{!operatorReady \|\| !workspaceId \|\| isTurnRunning \|\| pendingSendForSelection !== null \|\| sendJournalStatus !== "READY"\}/);
+  assert.equal(control.includes("!selectedId"), false, "a new chat may attach same-Workspace text Resources before its first send");
   assert.match(source, /invoke<\{ items: AttachmentCandidate\[\]; nextCursor: string \| null \}>\("list_resources"/);
-  assert.match(source, /resourceRefs: toResourceRefs\(chips, workspaceId\)/);
+  assert.match(source, /resourceRefs: toResourceRefs\(chips, workspaceId\)\.map\(reference =>/);
+  assert.match(source, /resourceRefs: request\.resourceRefs/);
+  assert.match(source, /onDraftChange\(event\.target\.value\)/, "the unselected New Chat composer must retain the workspace-level draft");
 });
 
 test("Stop and Retry send the projected turn version, never a hard-coded one (AC-024, AC-025)", () => {

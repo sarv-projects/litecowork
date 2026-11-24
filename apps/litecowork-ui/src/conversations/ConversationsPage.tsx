@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
@@ -24,8 +24,10 @@ import {
 } from "./conversation-turn-state";
 import { addAttachment, attachmentChipLabel, attachmentRefusalNotice, classifyAttachmentCursor, mergeAttachmentCandidates, removeAttachment, toResourceRefs, type AttachmentCandidate, type AttachmentChip } from "./conversation-attachments";
 import { TurnActivityView } from "./TurnActivityView";
+import { shouldAutoSelectFirstConversation } from "./conversation-selection";
 import { mergeActivity, parseActivityPage, type ActivityEntry } from "./turn-activity";
 import { NativePermissionCard } from "../needs-you/NativePermissionCard";
+import type { ConversationListDisplayStatus } from "../shell/RecentChatsSidebar";
 import { ConversationTaskPromotionCache, findTaskPromotionSource, isKnownNoWriteTaskError, taskPromotionKey, taskPromotionLeads, type PinnedConversationResourceRef, type TaskPromotionDraft, type TaskPromotionRequest, type TaskPromotionSource } from "./task-promotion";
 import {
   applyNativePermissionReceipt,
@@ -378,12 +380,18 @@ export function ConversationsPage({
   onOpenAgentSettings: _onOpenAgentSettings,
   workspaceDefaultAgentBindingId = null,
   selectedConversationId: externalSelectedId = null,
+  newChatRequestId,
   onSelectConversation,
   onTaskCreated,
   onConversationsLoaded,
+  onConversationListStatusChange,
   onRegisterLoadMoreConversations,
+  onRegisterRefreshConversationList,
   onConversationListPaginationChange,
   onToggleWorkbench,
+  onOpenNavigation,
+  navigationTriggerRef,
+  navigationOpen = false,
   workbenchOpen = false,
 }: {
   workspaceId: string;
@@ -397,12 +405,18 @@ export function ConversationsPage({
   onOpenAgentSettings: () => void;
   workspaceDefaultAgentBindingId?: string | null;
   selectedConversationId?: string | null;
+  newChatRequestId: number;
   onSelectConversation?: (id: string | null) => void;
   onTaskCreated?: (taskId: string) => void;
   onConversationsLoaded?: (items: ConversationSummary[]) => void;
+  onConversationListStatusChange?: (workspaceId: string, status: ConversationListDisplayStatus) => void;
   onRegisterLoadMoreConversations?: (handler: (() => void) | null) => void;
+  onRegisterRefreshConversationList?: (handler: (() => void) | null) => void;
   onConversationListPaginationChange?: (workspaceId: string, hasMore: boolean, loading: boolean) => void;
   onToggleWorkbench?: () => void;
+  onOpenNavigation?: () => void;
+  navigationTriggerRef?: Ref<HTMLButtonElement>;
+  navigationOpen?: boolean;
   workbenchOpen?: boolean;
 }) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
@@ -411,6 +425,8 @@ export function ConversationsPage({
   
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedConversationId = useRef<string | null>(selectedId);
+  const lastNewChatRequestId = useRef(0);
+  const suppressAutoSelectFirstConversation = useRef(false);
   const [newChatAgentBindingId, setNewChatAgentBindingId] = useState<string | null>(null);
   const newChatWorkspace = useRef(workspaceId);
   const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
@@ -425,7 +441,8 @@ export function ConversationsPage({
   const [taskPromotionSource, setTaskPromotionSource] = useState<TaskPromotionSource | null>(null);
   const [richPresentationEpochs, setRichPresentationEpochs] = useState<Map<string, number>>(() => new Map());
   const [busy, setBusy] = useState(false);
-  const [_listStatus, setListStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
+  const [, setListStatus] = useState<ConversationListDisplayStatus>("LOADING");
+  const listStatusRef = useRef<ConversationListDisplayStatus>("LOADING");
   const [createJournalStatus, setCreateJournalStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
   const [createJournalAttempt, setCreateJournalAttempt] = useState(0);
   const [pendingCreateRequests, setPendingCreateRequests] = useState<PendingConversationCreate[]>([]);
@@ -459,6 +476,21 @@ export function ConversationsPage({
   latestDraft.current = draft;
   activeWorkspace.current = workspaceId;
   selectedConversationId.current = selectedId;
+
+  useLayoutEffect(() => {
+    if (lastNewChatRequestId.current === newChatRequestId) return;
+    lastNewChatRequestId.current = newChatRequestId;
+    suppressAutoSelectFirstConversation.current = true;
+    setSelectedId(null);
+    setSnapshot(null);
+    setSnapshotLoadedKey(null);
+  }, [newChatRequestId]);
+
+  const reportListStatus = useCallback((status: ConversationListDisplayStatus) => {
+    listStatusRef.current = status;
+    setListStatus(status);
+    onConversationListStatusChange?.(workspaceId, status);
+  }, [onConversationListStatusChange, workspaceId]);
 
   const streamBottomRef = useRef<HTMLDivElement>(null);
   const streamContainerRef = useRef<HTMLDivElement>(null);
@@ -514,7 +546,10 @@ export function ConversationsPage({
 
   useEffect(() => {
     if (externalSelectedId !== undefined && externalSelectedId !== null && externalSelectedId !== selectedId) {
+      suppressAutoSelectFirstConversation.current = false;
       setSelectedId(externalSelectedId);
+    } else if (externalSelectedId !== undefined && externalSelectedId !== null) {
+      suppressAutoSelectFirstConversation.current = false;
     }
   }, [externalSelectedId, selectedId]);
 
@@ -611,7 +646,9 @@ export function ConversationsPage({
         setSnapshot(null);
         setSnapshotLoadedKey(null);
         setSelectedId(null);
-        setListStatus("READY");
+        reportListStatus("READY");
+      } else {
+        reportListStatus("UNAVAILABLE");
       }
       return;
     }
@@ -621,7 +658,7 @@ export function ConversationsPage({
       setSnapshotLoadedKey(null);
       setSelectedId(null);
     }
-    setListStatus("LOADING");
+    reportListStatus("LOADING");
     setBusy(true); setError(null);
     try {
       const response = await invoke<unknown>("list_conversations", { workspaceId, cursor: null });
@@ -631,17 +668,17 @@ export function ConversationsPage({
       onConversationsLoaded?.(page.items);
       setListCursor(page.next_cursor);
       setLoadingMoreConversations(false);
-      if (!externalSelectedId) {
+      if (shouldAutoSelectFirstConversation(externalSelectedId, suppressAutoSelectFirstConversation.current)) {
         setSelectedId(page.items[0]?.conversation_id ?? null);
       }
-      setListStatus("READY");
+      reportListStatus("READY");
     } catch (cause) {
       if (activeWorkspace.current === workspaceId && requests.current.isCurrentList(current)) {
-        setListStatus("FAILED");
+        reportListStatus("FAILED");
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     } finally { if (activeWorkspace.current === workspaceId && requests.current.isCurrentList(current)) setBusy(false); }
-  }, [operatorReady, workspaceId]);
+  }, [operatorReady, reportListStatus, workspaceId]);
 
   const loadMoreConversations = useCallback(async () => {
     const cursor = listCursor;
@@ -677,6 +714,17 @@ export function ConversationsPage({
     onRegisterLoadMoreConversations?.(loadMoreConversations);
     return () => onRegisterLoadMoreConversations?.(null);
   }, [loadMoreConversations, onRegisterLoadMoreConversations]);
+
+  useEffect(() => {
+    onRegisterRefreshConversationList?.(() => { void refresh(); });
+    return () => {
+      onRegisterRefreshConversationList?.(null);
+      if (listStatusRef.current === "LOADING") {
+        listStatusRef.current = "IDLE";
+        onConversationListStatusChange?.(workspaceId, "IDLE");
+      }
+    };
+  }, [onConversationListStatusChange, onRegisterRefreshConversationList, refresh, workspaceId]);
 
   useEffect(() => {
     onConversationListPaginationChange?.(workspaceId, listCursor !== null, loadingMoreConversations);
@@ -1635,6 +1683,19 @@ export function ConversationsPage({
     <div className="conversations-page-modern">
       {/* Top Breadcrumbs & Window Actions Bar */}
       <header className="conversation-top-breadcrumbs">
+        <button
+          ref={navigationTriggerRef}
+          className="icon-button mobile-navigation-toggle conversation-navigation-toggle"
+          type="button"
+          aria-label="Open main navigation"
+          aria-controls="main-navigation"
+          aria-haspopup="dialog"
+          aria-expanded={navigationOpen}
+          onClick={onOpenNavigation}
+        >
+          <span aria-hidden="true">☰</span>
+          <span>Menu</span>
+        </button>
         <span className="crumb-workspace">{workspaceName}</span>
         <span className="crumb-sep">/</span>
         <strong className="crumb-title">{conversationTitle(selected?.title)}</strong>
@@ -1926,8 +1987,11 @@ export function ConversationsPage({
           value={composerDraft}
           disabled={isTurnRunning || pendingSendForSelection !== null || sendJournalStatus !== "READY"}
           onChange={event => {
-            if (!composerDraftKey) return;
-            setConversationDrafts(current => ({ ...current, [composerDraftKey]: event.target.value }));
+            if (composerDraftKey) {
+              setConversationDrafts(current => ({ ...current, [composerDraftKey]: event.target.value }));
+              return;
+            }
+            onDraftChange(event.target.value);
           }}
           onKeyDown={event => {
             if (event.key === "Enter" && !event.shiftKey) {

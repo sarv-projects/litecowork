@@ -23,6 +23,8 @@ The sequence below is dependency-aware, not a claim that work is absent or alrea
 - Select the exact GA OS/build and first native agent/version/auth route.
 - Reconcile the 2026-11-23 superset design package against current owners and code using [the dated disposition](audit/SUPERSET-DESIGN-DISPOSITION-2026-11-23.md); do not carry forward its stale baseline, duplicate task IDs, unverified provider claims or migration numbers.
 
+**Current evidence:** the 2026-11-24 serial UI run is still red at 658 passed / 9 failed / 5 skipped (672 total). A focused Needs You browser test reproduced intermittent Chrome DevTools command timeouts while a separate Settings browser test passed; this does not identify a product defect or clear the test harness. Exact environment and limits are recorded in CURRENT-RUN.md and IMPLEMENTATION-STATUS.md.
+
 **Exit:** reproducible green baseline and explicit release matrix. The current baseline is not green; see IMPLEMENTATION-STATUS.md.
 
 ### P1 — Durable native Conversation
@@ -230,6 +232,38 @@ Do not assign the supplied task IDs or SQLite v49/v50 slots. Existing 007/008/01
 already use many of those IDs, and the migration allocator is v36 wired with v37–v47 reserved
 or provisional. Each extension must add owner-specific tasks, allowed paths, cross-layer traces,
 acceptance and migration changes in the owning SDD before implementation.
+
+**First authorized implementation slice (2026-11-23; 011-T19, A-123):** complete the compact
+shell navigation using the already loaded `list_workspaces` projection for a Workspace-backed
+Projects directory. Keep New Chat, Recent Chats, Projects and Needs You directly visible; move
+Work, Coworkers, Library, Automations, Routines, Discover, Dashboard, Goals, Notifications,
+Ideas and explicit New Task into More; keep Settings in the footer. Projects selection follows
+the dirty-Library guard, changes active Workspace context, clears the selected Conversation and
+opens a fresh blank Conversation; it must never create a Project record, query another
+Workspace's contents or imply a new grant. Add LOADING, READY-empty, READY and ERROR states,
+distinct Recent Chats idle/loading/empty/failure/unavailable states, keyboard/current-route
+behavior and focus restoration. No backend route,
+schema, event, migration, unified Recents aggregation or composite Needs You count is in this
+slice. The existing accepted navigation contract remains formally unchanged; this slice is
+authorized by user direction and does not establish package acceptance or qualification. Add
+failing component/reachability tests first, implement only within 011-T19's allowed UI paths,
+then run focused UI tests, type/API checks, the feature-package validator and Markdown/design
+consistency checks. Record exact results in CURRENT-RUN and IMPLEMENTATION-STATUS before
+choosing the next dependency-ready owner task.
+
+**Checkpoint:** focused shell, Conversation and source/component tests pass **56/56**; `pnpm exec
+tsc --noEmit`, `pnpm run api:check` and rendered-script syntax check pass. The rendered-test launcher
+discovers common Windows Chrome/Edge paths when `LITECOWORK_CHROME` is unset. In Chrome
+**158.0.8127.38**, the shell-reachability group passes **4/4** and the Conversation group passes
+**15/15** against the production-built harness. The shell journey covers Workspace-backed Projects,
+More, narrow-drawer keyboard/focus and dirty-Library Stay/Discard; Conversation covers blank/draft
+truthfulness, Runtime-unready Send, transient stream recovery, integrated shell navigation and
+RichPresentation invalidation/retry. Keep 011-T19 PARTIAL: this is rendered browser CODE, not a
+packaged Tauri journey, formal package acceptance, INTEGRATED or QUALIFIED evidence. Feature 010/014
+dependencies and native platform qualification remain open. The full UI suite remains red at its
+latest **658/9/5** result and was not rerun for this slice. The separate Feature 002-T08 canonical
+`ApiError` correction and regenerated API types do not wire credential submission into the daemon
+route.
 
 ## 6. Current implementation and immediate work
 

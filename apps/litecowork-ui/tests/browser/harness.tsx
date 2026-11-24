@@ -296,11 +296,17 @@ const conversationCommands = new Set([
   "get_conversation_presentation",
   "get_rich_presentation",
   "list_pending_conversation_creates",
+  "list_pending_conversation_sends",
   "create_conversation",
   "acknowledge_conversation_create",
   "subscribe_conversation_stream",
   "acknowledge_conversation_stream_frame",
   "unsubscribe_conversation_stream",
+]);
+const resourceRevisionReadCommands = new Set([
+  "get_resource_detail",
+  "list_resource_revisions",
+  "preview_resource_text",
 ]);
 const state = {
   calls: [] as Call[],
@@ -770,7 +776,11 @@ function handleWorkspaceAppInvoke(command: string, args: InvokeArgs): unknown {
   if (command === "list_agent_profiles" || command === "list_agent_bindings") return { items: [], nextCursor: null };
   if (command === "list_workspace_runtime_bindings" || command === "list_workspace_instructions") return [];
   if (command === "list_resources") return {
-    items: !state.f90OmitCommittedResourceFromList && state.f90CommittedResource?.workspaceId === args.workspaceId ? [state.f90CommittedResource] : [],
+    items: !state.f90OmitCommittedResourceFromList && state.f90CommittedResource?.workspaceId === args.workspaceId
+      ? [state.f90CommittedResource]
+      : state.appScenario === "first-use-conversation" && args.workspaceId === "workspace-a"
+        ? [resourceA]
+        : [],
     nextCursor: null,
   };
   if (command === "list_workspace_roots") return {
@@ -807,7 +817,7 @@ function handleWorkspaceAppInvoke(command: string, args: InvokeArgs): unknown {
 mockIPC((rawCommand, rawArgs) => {
   const args = record(rawCommand, rawArgs);
   const command = rawCommand;
-  if (state.appScenario !== null && !conversationCommands.has(command)) return handleWorkspaceAppInvoke(command, args);
+  if (state.appScenario !== null && !conversationCommands.has(command) && !resourceRevisionReadCommands.has(command)) return handleWorkspaceAppInvoke(command, args);
   if (command === "get_resource_detail") {
     const workspaceId = String(args.workspaceId);
     const resourceId = String(args.resourceId);
@@ -990,6 +1000,9 @@ mockIPC((rawCommand, rawArgs) => {
   }
   if (command === "list_pending_conversation_creates") {
     return structuredClone([...state.pendingConversationCreates.values()]);
+  }
+  if (command === "list_pending_conversation_sends") {
+    return [];
   }
   if (command === "create_conversation") {
     recordPendingConversationCreate(args);

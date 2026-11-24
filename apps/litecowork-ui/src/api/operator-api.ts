@@ -4015,7 +4015,7 @@ export type components = {
         };
         AgentCredentialSecretSubmission: {
             descriptor_digest: string;
-            /** @description Confidential local-Operator-only secret payload. Must never be logged, echoed, persisted outside SecretStore, or copied into domain events. */
+            /** @description Confidential local-Operator-only secret payload. It is decoded into zeroizing memory, fingerprinted only with the Runtime installation HMAC key, never logged or echoed, and persisted only in the OS SecretStore; credential bytes and an unkeyed verifier never enter SQLite, events, backups or projections. */
             secret_base64: string;
         };
         AgentAuthChallenge: {
@@ -10971,7 +10971,17 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Secret written directly to local SecretStore for an adapter-declared secure slot; response contains only the SecretRef binding. */
+            /** @description Exact replay of a previously committed credential submission. The original SecretRef binding is returned without re-reading mutable AgentProfile or descriptor state. */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCredentialBinding"];
+                };
+            };
+            /** @description Secret written directly to local SecretStore for a fresh adapter-declared LITECOWORK_SECRET_STORE slot; response contains only the SecretRef binding after the durable replay receipt commits. */
             201: {
                 headers: {
                     "Cache-Control": "no-store";
@@ -10979,6 +10989,16 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentCredentialBinding"];
+                };
+            };
+            /** @description The same authenticated Workspace/profile/slot and Idempotency-Key were used with a different request body; no new SecretStore write occurs. */
+            409: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];

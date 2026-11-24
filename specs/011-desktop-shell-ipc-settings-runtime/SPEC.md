@@ -247,7 +247,7 @@ Gap coverage (revision 1.0):
 - **AC-020:** WHEN a Settings control has no served owner operation or applied local effect, THE SYSTEM SHALL not render it as an interactive control; the Notifications entry SHALL link to Feature 010's quiet-hours contract and SHALL NOT render its own quiet-hours controls. Verify: inert-control audit test.
 
 Owner-approved additions (2026-11-09):
-- **AC-021:** WHEN the shell renders (task P-05), THE SYSTEM SHALL give every mounted page a navigation path or remove it from V1 with a recorded owner decision, SHALL make Back/Forward either work against real history or be absent, SHALL render a null API as unavailable rather than empty, SHALL give Recent Chats distinct loading and error states, and SHALL show a real Needs You count; a test SHALL fail if a mounted page has no navigation path or a null API renders as empty. Verify: shell reachability guard test.
+- **AC-021:** WHEN the shell renders (task P-05), THE SYSTEM SHALL give every mounted page a navigation path or remove it from V1 with a recorded owner decision, SHALL make Back/Forward either work against real history or be absent, SHALL render a null API as unavailable rather than empty, and SHALL give Recent Chats distinct loading, ready-empty and error states. A Needs You count SHALL appear only when it is derived from an exact owner projection with a defined scope and no duplicate persisted/Runtime-local items; otherwise the shell SHALL show no numeric count. Verify: shell reachability, Projects-state and Recent Chats state tests. **USER-DELEGATED implementation clarification A-123; not formal Feature 011 acceptance.**
 - **AC-022:** WHEN App.tsx and the Rust god files are decomposed (tasks P-07 and P-19), THE SYSTEM SHALL preserve behavior exactly - one shared Operator-unavailable panel, one module per page, and owned modules behind the existing boundaries - with no new authority, route or record, and existing UI and cargo tests SHALL pass unchanged. Verify: unchanged-behavior test suite.
 - **AC-023:** WHEN Settings renders (task P-08), THE SYSTEM SHALL present one Settings authority with the former SettingsPage features merged in, SHALL delete SettingsPage and the unused navigation array, and SHALL show a precedence note on each setting that has a Coworker or Automation override (register A-35). Verify: merged-settings and precedence-note test.
 - **AC-024:** WHEN the Workspace Dashboard renders (task P-16), THE SYSTEM SHALL show pinnable Task-status, automation-status, Coworker-activity and recent-artifacts widgets from served owner projections, SHALL render an unavailable source as unavailable with its reason rather than a fabricated value, and SHALL persist pin state across restart per Workspace. Verify: dashboard render and persistence test.
@@ -287,6 +287,8 @@ Read from LOCAL-OPERATOR-IPC and RUNTIME-LIFECYCLE.
 
 
 ## 19. Requirement traceability
+
+The 2026-11-23 A-123 implementation direction maps **Projects** to the existing authenticated Workspace list. It creates no Project record or membership relation; Workspace remains the security/resource boundary. The selected Workspace is a local UI context and each owner operation continues to reauthorize. This direction authorizes 011-T19 implementation only and does not amend the accepted four-destination release contract or package lifecycle status.
 
 | Requirement | Canonical contract | Task | Acceptance | Verification method |
 |---|---|---|---|---|
