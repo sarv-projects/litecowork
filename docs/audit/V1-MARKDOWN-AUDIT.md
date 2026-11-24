@@ -6,7 +6,7 @@ semantic correctness, implementation, integration or release qualification.
 
 - Files read: 369
 - Lines read: 81078
-- Bytes read: 8864718
+- Bytes read: 8865092
 - Broken relative targets: 0
 - Excluded: archives, reference clones, local `audit-output/`, generated audit reports, dependency/build/cache directories and local run worktrees.
 - Per-file SHA-256 values: V1-MARKDOWN-INVENTORY.csv
@@ -25,7 +25,7 @@ semantic correctness, implementation, integration or release qualification.
 | AGENTS.md | 137 | fd0e6cda071b | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | ARCHITECTURE.md | 824 | 45248d5f5a1a | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | CONTRIBUTING.md | 86 | fa3269ba41ee | agent/composer;browser/computer;rendering;workflow/recovery;trust/security |
-| CURRENT-RUN.md | 1563 | 45a2ef3999d9 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| CURRENT-RUN.md | 1563 | 7d6de3c692d1 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | GLOSSARY.md | 292 | bd9ffa34cb5e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | README.md | 93 | 3727827fd285 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | apps/litecowork-ui/README.md | 77 | c47d822925a4 | browser/computer;shell/settings/motion;workflow/recovery |
@@ -76,7 +76,7 @@ semantic correctness, implementation, integration or release qualification.
 | docs/HANDOFF-NEXT-AGENT-2026-11.md | 841 | 4d18924863b3 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/HOST-GUIDANCE.md | 138 | c2a6b6814665 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/IMPLEMENTATION-MASTER-PLAN.md | 271 | d63af973b67d | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| docs/IMPLEMENTATION-STATUS.md | 570 | e71cb4188b02 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/IMPLEMENTATION-STATUS.md | 570 | 9700e2f8890b | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/IMPLEMENTATION.md | 232 | c9dbf532b894 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md | 73 | d0b5d00b65bd | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery |
 | docs/INTERACTIVE-ARTIFACT-RUNTIME.md | 135 | 6d5d6bd44fb9 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
