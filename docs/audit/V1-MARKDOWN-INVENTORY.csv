@@ -9,7 +9,7 @@ file,lines,bytes,sha256,categories,has_heading
 AGENTS.md,137,12314,fd0e6cda071be8ff5f1714b99d85b94f2ab746aa5c2a2c6a30bae0e069caba2a,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 ARCHITECTURE.md,824,58190,45248d5f5a1a6ca74014ddfc370548a1d1ab067b0c9013169f1d004b5f225026,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 CONTRIBUTING.md,86,6517,fa3269ba41eef101439e5189ef170a3b9d993a5a02c98b8dbaabc93118fdb256,agent/composer;browser/computer;rendering;workflow/recovery;trust/security,True
-CURRENT-RUN.md,1573,456165,2c5dbf763428332862a15da1ec5fe4a21a22d1256966961ed5d74aa68a8a7b60,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+CURRENT-RUN.md,1583,459909,e0e15f0c29b45c895f414098bf092827da32a7e9a652b6f85840d9b6f178c048,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 GLOSSARY.md,292,12637,bd9ffa34cb5ee0a0877784f2e047fe8380fd29cfc37961c83d0a57e81a106713,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 README.md,93,8289,3727827fd285fbe4a46c47c59e9f562b6d21a6617a070e43b75b83b5f28b3296,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 apps/litecowork-ui/README.md,77,4351,c47d822925a4b15bcd033695b22b3a59ce293efacbf211418a9b7b5a0b2c5b57,browser/computer;shell/settings/motion;workflow/recovery,True
@@ -38,7 +38,7 @@ docs/COMPUTER-OBSERVATION-AND-CONTROL-LLD.md,139,28419,bd5d583d49a3bd6e63e30aad6
 docs/CONNECTOR-FACTORY-DESIGN.md,139,10873,6212797fb13b160f0903abc4de79e18ea31f1ac2b2288db909191fcbe9459de5,shell/settings/motion;workflow/recovery;trust/security,True
 docs/CONNECTORS-WORKFLOWS.md,1020,50069,61c9453212502f757169fc1b9c7d9da0984ce9449cdd58c3260f5007eec1d026,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/CONTEXT.md,274,20112,deae265133353676b56fbe6fe25ff4bac7e1028437f4e1fe2d6d951ec73dc86c,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md,232,161466,3465bca0c5f8a8788d1ba2b7fe9d166814f4a6e89bc210dad6248c50c7549c18,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+docs/CONTRADICTION-AND-ALIGNMENT-REGISTER.md,232,161803,e9a096592ad3e0abdc18b9f173006cd2d21b5854b26be6ab8ef941ac83f27348,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/COVERAGE-MATRIX.md,174,26327,e242542f2787f50025839aed882a312d7f80e1ec7b6d46b50b0f1c8ff87f6040,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/COWORKER-FLOWS.md,166,20076,309015aa4fe4a14ae444fffbecb62e36ec2b18b9f0fc0d539ed90bb5d13671fc,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/COWORKERS-TARGET.md,458,58359,21a5bfa6d79156e6c29eedbdbce37cf3c683bf1a842d281259ffb6b688d75a03,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
@@ -59,8 +59,8 @@ docs/FEATURE-AND-UI-CONTRACT-COVERAGE.md,137,22478,330d23486c6c8b483cc5f821db369
 docs/FLOWS.md,4514,319578,152ec91b456dd96d8fb70a39838f51fd4c8fc44db303d1d75ac2a6de68ae44dd,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/HANDOFF-NEXT-AGENT-2026-11.md,841,191950,4d18924863b3c0b5c29c2e9a52e43ac229c048a4af078ddc89ff5d07a4481cbb,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/HOST-GUIDANCE.md,138,5902,c2a6b681466516353350603ae0ecb739c5bb9dc28738b29ee16af27a7729be8d,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-docs/IMPLEMENTATION-MASTER-PLAN.md,272,33766,7fd1cf8fb531ec38a100bef4307779e54b61d8c300127571c46cbdbaf877dac0,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-docs/IMPLEMENTATION-STATUS.md,578,178266,6ecace6d58e1d569f0618f5cbfdd5271f3b1ca51db0cff47d1f7f2558f0c08a3,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+docs/IMPLEMENTATION-MASTER-PLAN.md,272,33745,25751293f185db16f6d0c8f8d3b7638fb5a699972fbce9ae25b8400f09574669,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+docs/IMPLEMENTATION-STATUS.md,588,181228,0c4961c54aab3e5a6241013112b3a0563934fc942a8f527350dcf6546b8edfc2,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/IMPLEMENTATION.md,232,9336,c9dbf532b8948bbcb49db799497251f119631185b8bd499c74dce4b417b1cd60,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 docs/INTELLIGENT-UI-AND-IMAGE-CONTENT.md,73,13145,d0b5d00b65bdc6486ce5f305f33a38102c8d464c3eff1320e573e85e1854b593,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery,True
 docs/INTERACTIVE-ARTIFACT-RUNTIME.md,135,20237,6d5d6bd44fb9dd820d26aa67813d877feae2c370c5ec2214aefb461d4e4bac96,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
@@ -98,7 +98,7 @@ docs/RUNTIME-MESH.md,744,36915,5df0580b7369d59d123e830b6bd164123c4346e78c9c0ae78
 docs/SCHEMAS.md,1715,79511,c6840bcf68d8fbfbd193cd387684ac0bc9c74d4cedacf9dc401989de5341a276,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/SECURITY.md,299,17184,77bdfeb2b19ebbfa680240dca7176875e787ffef5d860c0fbf8ae4606ed91915,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/SEMANTIC-SERVED-UI-MAP.md,187,33869,b60042178cca7834a77267545d84d10989a8ad3f37d6cb932da1108d104fe567,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-docs/SERVICES.md,1617,105108,9bd8a183c8c292092831feaf7adda0d06761815d466ec80464a6c31f69f5268f,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+docs/SERVICES.md,1619,105778,6c68084c1e72125bda250738fcff51245b6e47612e861b19469ca373edd5ac82,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/SETTINGS-AND-SHELL-SURFACE-AUDIT.md,113,19333,e2c76efcd7a6a4bcee5e2a81d31d5055ae2218c7d42161d8d067a67fa301029b,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/SOURCE-RECONCILIATION.md,179,16220,5567fad3a3b603eaafbc6c54b62ffb36046e326127f0a1d605a9139440f9e100,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 docs/SPEC-TASK-TRACEABILITY.md,123,15324,79f79856b37837cee0c9bd17643bf89bc8728ace317485414ceced6c7f7ff31c,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
@@ -169,8 +169,8 @@ specs/001-conversation-session-supervisor/DATA-MODEL.md,101,19400,80427c60aef6f8
 specs/001-conversation-session-supervisor/PLAN.md,121,12115,7268b204d26b618b3a1dae2fca98335ef67dca936004ef982d76b3b4ce39ebcb,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 specs/001-conversation-session-supervisor/README.md,42,13222,e9e7fd643759d546fc4eaa22884704c970397f443fb8b0b5bbe65cd21a18f681,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 specs/001-conversation-session-supervisor/RESEARCH.md,290,61623,8545e69d9fcfc39c13eb231644a77a6ca3f545d670e69c4d7d2e4473caf5778e,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
-specs/001-conversation-session-supervisor/SPEC.md,434,79858,cb785e390ae2f1eb0670d5fc75f0651496746e9e1820d56cc3529bf49906dbb4,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-specs/001-conversation-session-supervisor/TASKS.md,719,170662,05258f0d7ac039be208c05324921b73973bbfb494f170684c64ad65ec85cf7f0,agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+specs/001-conversation-session-supervisor/SPEC.md,434,79969,f65bc53c6c9375301d1803d2be5efb67218108aa9b2cd9af7770b1941f1a1eac,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+specs/001-conversation-session-supervisor/TASKS.md,723,172200,1d51f6d47b5e568ce34bfb6bae6367484985891c93f5a9dec57ce77ecbe382a4,agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 specs/001-conversation-session-supervisor/contracts/README.md,13,1019,7f57261a13d1032ec4202b3b85acb644f477c328ae09f3bf252dde86ee74c0bb,agent/composer;workflow/recovery;trust/security,True
 specs/001-conversation-session-supervisor/contracts/api-events.md,113,21455,75567dfac6a6aac34a4072361129dd43c7419c26828fa8a998aebf4677d9cc53,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 specs/001-conversation-session-supervisor/contracts/errors-recovery.md,96,15710,67be882fadeafc86a3fb03893c7fff30d8f75480e697d56d01cfe6d7dcdfb00d,agent/composer;workflow/recovery;trust/security,True

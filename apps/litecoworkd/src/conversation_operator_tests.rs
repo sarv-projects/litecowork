@@ -26,6 +26,7 @@ const RUNTIME: &str = "a06-pagination-runtime";
 const WORKSPACE_A: &str = "a06-pagination-workspace-a";
 const WORKSPACE_B: &str = "a06-pagination-workspace-b";
 const DISPATCHER_INCARNATION: &str = "turn-command-dispatcher-incarnation";
+const TURN_COMMAND_DAEMON_INCARNATION: &str = "turn-command-daemon-incarnation";
 
 #[derive(Clone)]
 struct PaginationTestKeys;
@@ -2269,13 +2270,13 @@ fn turn_command_fixture(suffix: &str) -> TurnCommandFixture {
     local_runtime_tx
         .execute(
             "INSERT INTO runtimes(runtime_id,device_identity_json,runtime_version,platform,architecture,roles_json,trust_zone,availability,startup_policy,current_incarnation_id,resource_capacity_json,last_seen,version) VALUES(?1,'{}','0.1.0','linux','x86_64','[]','LOCAL','ONLINE','MANUAL',?2,'{}','2026-10-15T12:00:00.000000000Z',1)",
-            rusqlite::params![RUNTIME, "turn-command-binding-incarnation"],
+            rusqlite::params![RUNTIME, TURN_COMMAND_DAEMON_INCARNATION],
         )
         .expect("seed online daemon Runtime");
     local_runtime_tx
         .execute(
             "INSERT INTO runtime_incarnations(runtime_incarnation_id,runtime_id,process_started_at,litecowork_version,recovered_from_unclean_shutdown,recovery_state,ready_at,stopped_at,version) VALUES(?1,?2,'2026-10-15T12:00:00.000000000Z','0.1.0',0,'READY','2026-10-15T12:00:00.000000000Z',NULL,1)",
-            rusqlite::params!["turn-command-binding-incarnation", RUNTIME],
+            rusqlite::params![TURN_COMMAND_DAEMON_INCARNATION, RUNTIME],
         )
         .expect("seed ready daemon Runtime incarnation");
     local_runtime_tx
@@ -2291,7 +2292,7 @@ fn turn_command_fixture(suffix: &str) -> TurnCommandFixture {
         store.clone(),
         OWNER.to_owned(),
         RUNTIME.to_owned(),
-        "turn-command-binding-incarnation".to_owned(),
+        TURN_COMMAND_DAEMON_INCARNATION.to_owned(),
         Arc::clone(&supervisor),
     );
     TurnCommandFixture {
@@ -2375,7 +2376,7 @@ async fn admitted_turn_for_dispatch_fixture(
             workspace_id: WORKSPACE_A.to_owned(),
             runtime_fence: RuntimeExecutionFence {
                 runtime_id: RUNTIME.to_owned(),
-                runtime_incarnation_id: "turn-command-binding-incarnation".to_owned(),
+                runtime_incarnation_id: TURN_COMMAND_DAEMON_INCARNATION.to_owned(),
             },
             message,
             turn,
@@ -2526,7 +2527,7 @@ async fn conversation_dispatch_host_resolution_error_settles_the_admitted_attemp
         workspace_id: WORKSPACE_A.to_owned(),
         runtime_fence: RuntimeExecutionFence {
             runtime_id: RUNTIME.to_owned(),
-            runtime_incarnation_id: "turn-command-binding-incarnation".to_owned(),
+            runtime_incarnation_id: TURN_COMMAND_DAEMON_INCARNATION.to_owned(),
         },
         message,
         turn,
@@ -3466,6 +3467,30 @@ impl TurnCommandFixture {
             .expect("seed dispatch intent");
     }
 
+    fn seed_busy_host_binding(&self, turn_id: &str) -> (String, String) {
+        let session_id = format!("{turn_id}-session");
+        let host_id = format!("{turn_id}-host");
+        let connection = self.connection();
+        let transaction = connection
+            .unchecked_transaction()
+            .expect("begin host binding fixture transaction");
+        let inserted = transaction
+            .execute(
+                "INSERT INTO agent_host_instances(host_instance_id,runtime_id,runtime_incarnation_id,agent_profile_id,endpoint_id,hosting_mode,state,ownership,started_at,last_used_at) SELECT ?1,s.runtime_id,s.runtime_incarnation_id,b.agent_profile_id,s.endpoint_id,'LOCAL_PER_SESSION','BUSY','LITECOWORK','2026-10-15T12:00:02Z','2026-10-15T12:00:02Z' FROM agent_sessions s JOIN agent_bindings b ON b.agent_binding_id=s.agent_binding_id WHERE s.agent_session_id=?2",
+                rusqlite::params![host_id, session_id],
+            )
+            .expect("seed busy LiteCowork-owned host");
+        assert_eq!(inserted, 1, "the active session has one pinned binding");
+        transaction
+            .execute(
+                "INSERT INTO agent_session_host_bindings(agent_session_id,host_instance_id,native_session_ref,bound_at) VALUES(?1,?2,'native-session-private','2026-10-15T12:00:02Z')",
+                rusqlite::params![session_id, host_id],
+            )
+            .expect("bind the active AgentSession to its host");
+        transaction.commit().expect("commit host binding fixture");
+        (session_id, host_id)
+    }
+
     async fn command(&self, turn_id: &str, action: &str, key: &str, if_match: u64) -> Response {
         let mut request = Request::post(format!(
             "/v1/conversations/{}/turns/{turn_id}/{action}",
@@ -4114,6 +4139,135 @@ async fn conversation_cancel_commits_only_the_request_and_never_fabricates_cance
         fixture.intents("turn-running"),
         vec![(0, "CLAIMED".to_owned())]
     );
+}
+
+#[tokio::test]
+async fn recovered_stop_settles_the_exact_turn_and_session_once() {
+    let fixture = turn_command_fixture("turn-recovered-stop-settles-once");
+    let turn_id = "turn-recovered-stop";
+    fixture.seed_turn(turn_id, "RUNNING", 2, 0);
+    let (session_id, host_id) = fixture.seed_busy_host_binding(turn_id);
+
+    let request = fixture
+        .command(turn_id, "cancel", "recovered-stop-cancel", 2)
+        .await;
+    assert_eq!(request.status(), StatusCode::ACCEPTED);
+    assert_eq!(fixture.turn_row(turn_id).0, "CANCEL_REQUESTED");
+
+    let scope = crate::agents::supervisor::TurnSettlementScope {
+        store: &fixture.store,
+        runtime_id: RUNTIME,
+        principal_id: OWNER,
+        workspace_id: WORKSPACE_A,
+        conversation_id: fixture.conversation_id,
+        turn_id,
+        session_id: &session_id,
+        correlation_id: "recovered-stop-correlation",
+    };
+    let disposition = crate::agents::supervisor::apply_observed_turn(
+        scope,
+        Ok(crate::agents::adapter::TurnObservation::Stopped),
+        None,
+    )
+    .expect("a validated recovered stop settles through the supervisor path");
+    assert!(matches!(
+        disposition,
+        crate::agents::supervisor::ObservedTurnDisposition::Cancelled
+    ));
+
+    let (status, _, version, active_session) = fixture.turn_row(turn_id);
+    assert_eq!((status.as_str(), version), ("CANCELLED", 4));
+    assert_eq!(active_session.as_deref(), Some(session_id.as_str()));
+    let rows = fixture.connection();
+    let session_status: String = rows
+        .query_row(
+            "SELECT status FROM agent_sessions WHERE agent_session_id=?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .expect("read settled session");
+    let (binding_count, host_status, settled_event_count): (i64, String, i64) = rows
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM agent_session_host_bindings WHERE agent_session_id=?1), (SELECT state FROM agent_host_instances WHERE host_instance_id=?2), (SELECT COUNT(*) FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?3 AND type='conversation.turn.settled.v1')",
+            rusqlite::params![session_id, host_id, turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read atomic session binding and settlement");
+    assert_eq!(session_status, "CLOSED");
+    assert_eq!(binding_count, 0, "terminal settlement releases the binding");
+    assert_eq!(
+        host_status, "READY",
+        "terminal settlement releases host use"
+    );
+    assert_eq!(settled_event_count, 1);
+
+    let replay = crate::agents::supervisor::apply_observed_turn(
+        scope,
+        Ok(crate::agents::adapter::TurnObservation::Stopped),
+        None,
+    );
+    assert!(
+        replay.is_err(),
+        "a duplicate observation cannot settle twice"
+    );
+    let repeated_events: i64 = fixture
+        .connection()
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?1 AND type='conversation.turn.settled.v1'",
+            [turn_id],
+            |row| row.get(0),
+        )
+        .expect("count settlement events after duplicate observation");
+    assert_eq!(repeated_events, 1);
+}
+
+#[tokio::test]
+async fn unresolved_recovery_keeps_cancel_request_session_binding_and_busy_host() {
+    let fixture = turn_command_fixture("turn-recovered-stop-unresolved");
+    let turn_id = "turn-unresolved-stop";
+    fixture.seed_turn(turn_id, "RUNNING", 2, 0);
+    let (session_id, host_id) = fixture.seed_busy_host_binding(turn_id);
+
+    let request = fixture
+        .command(turn_id, "cancel", "unresolved-stop-cancel", 2)
+        .await;
+    assert_eq!(request.status(), StatusCode::ACCEPTED);
+
+    let scope = crate::agents::supervisor::TurnSettlementScope {
+        store: &fixture.store,
+        runtime_id: RUNTIME,
+        principal_id: OWNER,
+        workspace_id: WORKSPACE_A,
+        conversation_id: fixture.conversation_id,
+        turn_id,
+        session_id: &session_id,
+        correlation_id: "unresolved-stop-correlation",
+    };
+    let disposition = crate::agents::supervisor::apply_observed_turn(
+        scope,
+        Ok(crate::agents::adapter::TurnObservation::StopUnconfirmed),
+        None,
+    )
+    .expect("unresolved evidence remains a nonterminal disposition");
+    assert!(matches!(
+        disposition,
+        crate::agents::supervisor::ObservedTurnDisposition::Unconfirmed
+    ));
+
+    assert_eq!(fixture.turn_row(turn_id).0, "CANCEL_REQUESTED");
+    let rows = fixture.connection();
+    let (session_status, binding_count, host_status, settled_event_count):
+        (String, i64, String, i64) = rows
+        .query_row(
+            "SELECT (SELECT status FROM agent_sessions WHERE agent_session_id=?1), (SELECT COUNT(*) FROM agent_session_host_bindings WHERE agent_session_id=?1), (SELECT state FROM agent_host_instances WHERE host_instance_id=?2), (SELECT COUNT(*) FROM domain_events WHERE entity_type='ConversationTurn' AND entity_id=?3 AND type='conversation.turn.settled.v1')",
+            rusqlite::params![session_id, host_id, turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read unresolved session and host ownership");
+    assert_eq!(session_status, "ACTIVE");
+    assert_eq!(binding_count, 1, "the AgentSession remains bound");
+    assert_eq!(host_status, "BUSY", "the host remains reserved");
+    assert_eq!(settled_event_count, 0, "unknown is not a terminal outcome");
 }
 
 #[test]

@@ -33,8 +33,8 @@ use storage_core::{
 use storage_sqlite::{SqliteConversationStore, SqliteWorkspaceStore};
 
 use super::adapter::{
-    AgentAdapter, CancelSignal, ObserverSet, OpenCodeAdapter, StreamBudget, TurnObservation,
-    TurnObserver, UsageCollector,
+    AgentAdapter, CancelSignal, ObserverSet, OpenCodeAdapter, StreamBudget, TurnFailure,
+    TurnObservation, TurnObserver, UsageCollector,
 };
 use super::host_supervisor::{AgentHostSupervisor, HostStartError, start_host_process};
 use super::native_provider::NativeProviderKey;
@@ -1850,6 +1850,74 @@ enum TurnOutcome {
     StopUnconfirmed,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct TurnSettlementScope<'a> {
+    pub(crate) store: &'a SqliteWorkspaceStore,
+    pub(crate) runtime_id: &'a str,
+    pub(crate) principal_id: &'a str,
+    pub(crate) workspace_id: &'a str,
+    pub(crate) conversation_id: &'a str,
+    pub(crate) turn_id: &'a str,
+    pub(crate) session_id: &'a str,
+    pub(crate) correlation_id: &'a str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ObservedTurnDisposition {
+    Response(String),
+    Cancelled,
+    Unconfirmed,
+    Failed {
+        reason_code: &'static str,
+        settlement_succeeded: bool,
+    },
+}
+
+pub(crate) fn apply_observed_turn(
+    scope: TurnSettlementScope<'_>,
+    observation: Result<TurnObservation, TurnFailure>,
+    usage: Option<ConversationTurnUsage>,
+) -> Result<ObservedTurnDisposition, String> {
+    match observation {
+        Ok(TurnObservation::Completed { answer_text }) => {
+            Ok(ObservedTurnDisposition::Response(answer_text))
+        }
+        Ok(TurnObservation::Stopped) => {
+            settle_attempt_cancelled(
+                scope.store,
+                scope.runtime_id,
+                scope.principal_id,
+                scope.workspace_id,
+                scope.conversation_id,
+                scope.turn_id,
+                scope.session_id,
+                scope.correlation_id,
+                usage,
+            )?;
+            Ok(ObservedTurnDisposition::Cancelled)
+        }
+        Ok(TurnObservation::StopUnconfirmed) => Ok(ObservedTurnDisposition::Unconfirmed),
+        Ok(TurnObservation::Failed { reason_code }) | Err(reason_code) => {
+            let failure_settlement = settle_attempt_failed(
+                scope.store,
+                scope.runtime_id,
+                scope.principal_id,
+                scope.workspace_id,
+                scope.conversation_id,
+                scope.turn_id,
+                Some(scope.session_id),
+                reason_code.reason_code(),
+                scope.correlation_id,
+                usage,
+            );
+            Ok(ObservedTurnDisposition::Failed {
+                reason_code: reason_code.reason_code(),
+                settlement_succeeded: failure_settlement.is_ok(),
+            })
+        }
+    }
+}
+
 /// Keeps the Runtime-local host row from claiming READY after the per-turn
 /// process has been dropped on an early return. The guard is declared before
 /// the adapter so the adapter's process owner drops first.
@@ -2644,22 +2712,24 @@ fn execute_agent_turn(
                 observation => observation,
             };
 
-            let accumulated_text = match observation {
-                Ok(TurnObservation::Completed { answer_text }) => answer_text,
-                Ok(TurnObservation::Stopped) => {
-                    // Observed quiescence after a requested Stop: only now is
-                    // CANCELLED committed, together with the session CLOSED.
-                    settle_attempt_cancelled(
-                        store,
-                        runtime_id,
-                        principal_id,
-                        workspace_id,
-                        conversation_id,
-                        turn_id,
-                        session_id,
-                        correlation_id,
-                        turn_usage(usage_collector.snapshot(), prompt_bytes, 0),
-                    )?;
+            let disposition = apply_observed_turn(
+                TurnSettlementScope {
+                    store,
+                    runtime_id,
+                    principal_id,
+                    workspace_id,
+                    conversation_id,
+                    turn_id,
+                    session_id,
+                    correlation_id,
+                },
+                observation,
+                turn_usage(usage_collector.snapshot(), prompt_bytes, 0),
+            )?;
+
+            let accumulated_text = match disposition {
+                ObservedTurnDisposition::Response(answer_text) => answer_text,
+                ObservedTurnDisposition::Cancelled => {
                     // The close transaction atomically returns the host row to
                     // READY. Stop the per-session process only after that durable
                     // settlement, then publish STOPPED only after exit is observed.
@@ -2667,7 +2737,7 @@ fn execute_agent_turn(
                     finish_per_session_host(&mut adapter, &mut host_state_guard)?;
                     return Ok(TurnOutcome::Cancelled);
                 }
-                Ok(TurnObservation::StopUnconfirmed) => {
+                ObservedTurnDisposition::Unconfirmed => {
                     // The interrupt was sent but quiescence was not observed in time.
                     // The turn stays CANCEL_REQUESTED; CANCELLED is never fabricated.
                     // Keep the durable AgentSessionHostBinding live and transfer the
@@ -2690,31 +2760,19 @@ fn execute_agent_turn(
                     }
                     return Ok(TurnOutcome::StopUnconfirmed);
                 }
-                Ok(TurnObservation::Failed { reason_code }) | Err(reason_code) => {
+                ObservedTurnDisposition::Failed {
+                    reason_code,
+                    settlement_succeeded,
+                } => {
                     // Settle FAILED here so whatever usage was observed is recorded;
                     // the dispatcher's later settle of an already-settled turn is a no-op.
-                    let failure_settlement = settle_attempt_failed(
-                        store,
-                        runtime_id,
-                        principal_id,
-                        workspace_id,
-                        conversation_id,
-                        turn_id,
-                        Some(session_id),
-                        reason_code.reason_code(),
-                        correlation_id,
-                        turn_usage(usage_collector.snapshot(), prompt_bytes, 0),
-                    );
-                    if failure_settlement.is_ok() {
+                    if settlement_succeeded {
                         // LOST has released the AgentSession reference. Mark this
                         // per-turn host degraded, then stop it through STOPPING.
                         host_state_guard.mark_degraded_after_session_loss()?;
                         finish_per_session_host(&mut adapter, &mut host_state_guard)?;
                     }
-                    return Err(format!(
-                        "OpenCode turn failed closed: {}",
-                        reason_code.reason_code()
-                    ));
+                    return Err(format!("OpenCode turn failed closed: {reason_code}"));
                 }
             };
 

@@ -1042,11 +1042,13 @@ now transfers the exact OpenCode process handle and AgentSession identity into t
 Runtime-local AgentHostSupervisor registry while the durable AgentSessionHostBinding
 remains live and the host stays BUSY. The per-turn adapter no longer stops/drops the
 server on this path. It does not retain or resume the volatile event stream.
-A-124 now reopens the exact pinned OpenCode durable session log before handle transfer and may reconcile a validated terminal observation in CODE; recovered-outcome storage settlement, binding release after unresolved recovery, and typed UI recovery detail remain unproved; the
+A-124 now reopens the exact pinned OpenCode durable session log before handle transfer and may reconcile a validated terminal observation in CODE; a focused supervisor-to-SQLite regression now covers the settlement seam, while one live provider-to-storage journey and retained-handle retirement remain unproved. Unresolved recovery intentionally keeps the binding live; typed UI recovery detail remains unimplemented. The
 retained process remains available to recovery and is otherwise cleaned up when
 the Runtime owner is dropped. Unix child cleanup uses a process
 group, not the accepted cgroup contract. The T03/T04 ownership clarification above is
-TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed process-handle retention and same-incarnation OpenCode durable-log reconciliation now have focused CODE coverage under A-124. Storage settlement, handle retirement, daemon-restart host reconciliation and provider integration remain open; no qualification is inferred.
+TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed process-handle retention, same-incarnation OpenCode durable-log reconciliation and a focused SQLite settlement seam now have CODE coverage under A-124. The provider-to-storage journey, handle retirement, daemon-restart host reconciliation and provider integration remain open; no qualification is inferred.
+
+**A-124 settlement seam update (2026-11-24):** the recovered terminal observation now enters the production `apply_observed_turn` outcome router, and a focused supervisor-to-SQLite test proves exact once-only cancellation settlement plus the no-write unresolved case. This covers the storage settlement seam, not a live OpenCode transport/reducer/storage journey. Provider-authenticated observation, retained-process retirement, daemon restart and packaged qualification remain open.
 
 **Dispatch-claim acknowledgement recovery (rechecked 2026-11-23):** the supervisor now
 reconciles a false/error claim acknowledgement by reading only the exact durable
