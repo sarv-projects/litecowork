@@ -1041,12 +1041,12 @@ AgentHostSupervisor or complete retained host-use lease lifecycle exists. StopUn
 now transfers the exact OpenCode process handle and AgentSession identity into the
 Runtime-local AgentHostSupervisor registry while the durable AgentSessionHostBinding
 remains live and the host stays BUSY. The per-turn adapter no longer stops/drops the
-server on this path. It does not retain or resume the volatile event stream, reconcile
-same-incarnation quiescence, release the binding, or expose typed recovery detail; the
-retained process is available to future reconciliation and is otherwise cleaned up when
+server on this path. It does not retain or resume the volatile event stream.
+A-124 now reopens the exact pinned OpenCode durable session log before handle transfer and may reconcile a validated terminal observation in CODE; recovered-outcome storage settlement, binding release after unresolved recovery, and typed UI recovery detail remain unproved; the
+retained process remains available to recovery and is otherwise cleaned up when
 the Runtime owner is dropped. Unix child cleanup uses a process
 group, not the accepted cgroup contract. The T03/T04 ownership clarification above is
-TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed process-handle retention now has focused CODE coverage, but same-incarnation session reconciliation and daemon-restart host reconciliation remain open; no integration or qualification is inferred.
+TARGET; the per-session implementation is CODE only, not integration or qualification. A-101 orderly-stop ordering and the canonical SQLite transition graph are now corrected under USER-DELEGATED direction and covered by focused native-Windows CODE tests. StopUnconfirmed process-handle retention and same-incarnation OpenCode durable-log reconciliation now have focused CODE coverage under A-124. Storage settlement, handle retirement, daemon-restart host reconciliation and provider integration remain open; no qualification is inferred.
 
 **Dispatch-claim acknowledgement recovery (rechecked 2026-11-23):** the supervisor now
 reconciles a false/error claim acknowledgement by reading only the exact durable

@@ -2634,7 +2634,15 @@ fn execute_agent_turn(
             // the old hard 60 s cap). Every event is correlated to the native
             // session; uncorrelated, foreign-session, oversized and unknown frames
             // are dropped and counted, never projected (AC-008).
-            let observation = adapter.drive_turn(&native_session, StreamBudget::default());
+            let observation = match adapter.drive_turn(&native_session, StreamBudget::default()) {
+                Ok(TurnObservation::StopUnconfirmed) => adapter
+                    .reconcile_stop(&native_session, &native_msg_id, Duration::from_secs(5))
+                    .ok()
+                    .flatten()
+                    .map(Ok)
+                    .unwrap_or(Ok(TurnObservation::StopUnconfirmed)),
+                observation => observation,
+            };
 
             let accumulated_text = match observation {
                 Ok(TurnObservation::Completed { answer_text }) => answer_text,

@@ -40,6 +40,7 @@ const MAX_HEADER_BYTES: usize = 32 * 1024;
 const MAX_SSE_LINE_BYTES: usize = 64 * 1024;
 const MAX_SSE_EVENT_BYTES: usize = 256 * 1024;
 const MAX_SESSION_ID_BYTES: usize = 128;
+const MAX_SESSION_LOG_RECOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpenCodeError {
@@ -637,7 +638,20 @@ impl OpenCodeServer {
         let path = format!("/api/session/{session_id}/prompt");
         let response = self.request("POST", &path, Some(body), "application/json")?;
         let value = response_json(response)?;
-        if value.get("data").and_then(Value::as_object).is_some() {
+        let receipt = value.get("data").and_then(Value::as_object);
+        if receipt
+            .and_then(|data| data.get("id"))
+            .and_then(Value::as_str)
+            == Some(message_id)
+            && receipt
+                .and_then(|data| data.get("sessionID"))
+                .and_then(Value::as_str)
+                == Some(session_id)
+            && receipt
+                .and_then(|data| data.get("type"))
+                .and_then(Value::as_str)
+                == Some("user")
+        {
             Ok(())
         } else {
             Err(OpenCodeError::InvalidResponse)
@@ -759,47 +773,85 @@ impl OpenCodeServer {
     /// to this server's instance; callers must still
     /// correlate session IDs and treat payloads as untrusted observations.
     pub(crate) fn subscribe_events(&mut self) -> Result<OpenCodeEventStream, OpenCodeError> {
-        let deadline = Instant::now() + self.request_timeout;
-        let stream = connect(self.address, self.request_timeout)?;
-        write_request(
+        self.subscribe_event_stream("/api/event", self.request_timeout)
+    }
+
+    /// Reopens the durable log for one exact session after volatile turn-stream
+    /// loss. Only the pinned v2.0.32 experimental route supports this contract.
+    /// The caller supplies the remaining stop-recovery budget, capped at five
+    /// seconds; the stream must be consumed under that same overall deadline.
+    pub(crate) fn subscribe_session_log(
+        &mut self,
+        session_id: &str,
+        timeout: Duration,
+    ) -> Result<OpenCodeEventStream, OpenCodeError> {
+        validate_session_id(session_id)?;
+        if self.protocol != OpenCodeServerProtocol::V2_0_32
+            || timeout.is_zero()
+            || timeout > MAX_SESSION_LOG_RECOVERY_TIMEOUT
+        {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        let path = format!("/api/experimental/session/{session_id}/log?after=0&follow=true");
+        self.subscribe_event_stream(&path, timeout)
+    }
+
+    fn subscribe_event_stream(
+        &mut self,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<OpenCodeEventStream, OpenCodeError> {
+        if timeout.is_zero() {
+            return Err(OpenCodeError::InvalidConfiguration);
+        }
+        match self.process_state()? {
+            OpenCodeProcessState::Running => {}
+            OpenCodeProcessState::Exited => return Err(OpenCodeError::ProcessExited),
+            OpenCodeProcessState::ObservationFailed => {
+                return Err(OpenCodeError::ProcessObservationFailed);
+            }
+        }
+        let timeout = timeout.min(self.request_timeout);
+        let deadline = Instant::now() + timeout;
+        let stream = connect(self.address, timeout)?;
+        let authorization = self.authorization();
+        let response = write_request(
             stream,
             RequestOptions {
                 address: self.address,
                 method: "GET",
-                path: "/api/event",
-                authorization: &self.authorization(),
+                path,
+                authorization: &authorization,
                 body: None,
                 accept: "text/event-stream",
                 stream_body: true,
                 max_response_bytes: MAX_RESPONSE_BYTES,
                 deadline,
             },
-        )
-        .and_then(|response| {
-            if response.status == 401 || response.status == 403 {
-                return Err(OpenCodeError::Unauthorized);
-            }
-            if response.status != 200 {
-                return Err(OpenCodeError::HttpStatus(response.status));
-            }
-            let content_type = response
-                .headers
-                .get("content-type")
-                .map(String::as_str)
-                .unwrap_or("");
-            if !content_type
-                .to_ascii_lowercase()
-                .starts_with("text/event-stream")
-            {
-                return Err(OpenCodeError::InvalidResponse);
-            }
-            Ok(OpenCodeEventStream {
-                body: response.body_stream,
-                line: Vec::new(),
-                event_data: Vec::new(),
-                event_type: None,
-                event_id: None,
-            })
+        )?;
+        if response.status == 401 || response.status == 403 {
+            return Err(OpenCodeError::Unauthorized);
+        }
+        if response.status != 200 {
+            return Err(OpenCodeError::HttpStatus(response.status));
+        }
+        let content_type = response
+            .headers
+            .get("content-type")
+            .map(String::as_str)
+            .unwrap_or("");
+        if !content_type
+            .to_ascii_lowercase()
+            .starts_with("text/event-stream")
+        {
+            return Err(OpenCodeError::InvalidResponse);
+        }
+        Ok(OpenCodeEventStream {
+            body: response.body_stream,
+            line: Vec::new(),
+            event_data: Vec::new(),
+            event_type: None,
+            event_id: None,
         })
     }
 
@@ -1584,7 +1636,7 @@ mod tests {
                     .set_nonblocking(false)
                     .expect("make accepted fake-server socket blocking");
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .set_read_timeout(Some(Duration::from_secs(15)))
                     .expect("set request timeout");
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 4096];
@@ -1669,7 +1721,7 @@ mod tests {
             process_identity_ref: String::new(),
             address,
             password: b"test-password".to_vec(),
-            request_timeout: Duration::from_secs(3),
+            request_timeout: Duration::from_secs(15),
             stopped: false,
             protocol: OpenCodeServerProtocol::V2_0_32,
             working_directory: std::env::temp_dir(),
@@ -1831,9 +1883,36 @@ mod tests {
                 stream
                     .set_read_timeout(Some(Duration::from_secs(10)))
                     .expect("set bounded request read");
-                let mut request = [0_u8; 4096];
-                let count = stream.read(&mut request).expect("read permission reply");
-                assert!(count > 0, "request reached the provider");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                let (header_end, content_length) = loop {
+                    if let Some(header_end) = request
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|index| index + 4)
+                    {
+                        let headers = String::from_utf8(request[..header_end].to_vec())
+                            .expect("permission request headers are UTF-8");
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .expect("permission request content length");
+                        if request.len() >= header_end + content_length {
+                            break (header_end, content_length);
+                        }
+                    }
+                    let count = stream
+                        .read(&mut buffer)
+                        .expect("read complete permission request");
+                    assert_ne!(count, 0, "provider request was closed early");
+                    request.extend_from_slice(&buffer[..count]);
+                };
+                assert!(header_end > 0 && content_length > 0);
                 let reason = match status {
                     401 => "Unauthorized",
                     403 => "Forbidden",
@@ -2041,7 +2120,7 @@ mod tests {
         let captured = std::thread::spawn(move || {
             let mut locations = Vec::new();
             for session_id in ["session-first", "session-second"] {
-                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                let deadline = std::time::Instant::now() + Duration::from_secs(15);
                 let (mut stream, _) = loop {
                     match listener.accept() {
                         Ok(accepted) => break accepted,
@@ -2055,7 +2134,10 @@ mod tests {
                     }
                 };
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .set_nonblocking(false)
+                    .expect("make fake-server socket blocking");
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(15)))
                     .expect("set request timeout");
                 let mut request = Vec::new();
                 let (header_end, content_length) = loop {
@@ -2182,7 +2264,7 @@ mod tests {
         let captured = std::thread::spawn(move || {
             let mut request_lines = Vec::new();
             for index in 0..2 {
-                let deadline = Instant::now() + Duration::from_secs(3);
+                let deadline = Instant::now() + Duration::from_secs(15);
                 let (mut stream, _) = loop {
                     match listener.accept() {
                         Ok(accepted) => break accepted,
@@ -2199,7 +2281,7 @@ mod tests {
                     .set_nonblocking(false)
                     .expect("make fake-server socket blocking");
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .set_read_timeout(Some(Duration::from_secs(15)))
                     .expect("set request read timeout");
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 4096];
@@ -2244,7 +2326,7 @@ mod tests {
                         .set_nonblocking(false)
                         .expect("make prompt socket blocking");
                     prompt
-                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .set_read_timeout(Some(Duration::from_secs(15)))
                         .expect("set prompt read timeout");
                     let mut prompt_request = Vec::new();
                     let (header_end, content_length) = loop {
@@ -2293,7 +2375,7 @@ mod tests {
                             .contains("Please summarize.")
                     );
                     prompt
-                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":{}}")
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 68\r\nConnection: close\r\n\r\n{\"data\":{\"id\":\"msg_test_one\",\"sessionID\":\"session-a\",\"type\":\"user\"}}")
                         .expect("acknowledge prompt");
                     drop(prompt);
                     drop(stream);
@@ -2326,7 +2408,7 @@ mod tests {
             process_identity_ref: String::new(),
             address,
             password: b"test-password".to_vec(),
-            request_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(15),
             stopped: false,
             protocol: OpenCodeServerProtocol::V2_0_32,
             working_directory: std::env::temp_dir(),
@@ -2366,6 +2448,218 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     #[test]
+    fn session_log_recovery_uses_pinned_v2_route_and_five_second_cap() {
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        listener
+            .set_nonblocking(true)
+            .expect("make fake server accept bounded");
+        let address = listener.local_addr().expect("fake server address");
+        let captured = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept session log request before deadline: {error}"),
+                }
+            };
+            stream
+                .set_nonblocking(false)
+                .expect("use blocking request read after accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .expect("bound request read");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            let header_end = loop {
+                if let Some(end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|offset| offset + 4)
+                {
+                    break end;
+                }
+                let count = stream.read(&mut buffer).expect("read session log request");
+                assert_ne!(count, 0, "client closed before session log request");
+                request.extend_from_slice(&buffer[..count]);
+            };
+            let headers = String::from_utf8(request[..header_end].to_vec())
+                .expect("session log headers are UTF-8");
+            let request_line = headers.lines().next().unwrap_or_default().to_owned();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n",
+                )
+                .expect("accept pinned session log stream");
+            request_line
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            process_identity_ref: String::new(),
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(15),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+
+        let stream = server
+            .subscribe_session_log("session-a", Duration::from_secs(5))
+            .expect("open v2.0.32 recovery log");
+        drop(stream);
+        assert_eq!(
+            captured.join().expect("capture recovery request"),
+            "GET /api/experimental/session/session-a/log?after=0&follow=true HTTP/1.1"
+        );
+        assert!(matches!(
+            server.subscribe_session_log("session-a", Duration::from_secs(6)),
+            Err(OpenCodeError::InvalidConfiguration)
+        ));
+        server.protocol = OpenCodeServerProtocol::V2_0_28;
+        assert!(matches!(
+            server.subscribe_session_log("session-a", Duration::from_secs(1)),
+            Err(OpenCodeError::InvalidConfiguration)
+        ));
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn prompt_receipt_with_foreign_message_identity_is_rejected() {
+        use std::{
+            io::{Read, Write},
+            net::{Ipv4Addr, SocketAddrV4, TcpListener},
+            process::{Command, Stdio},
+        };
+
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("bind local fake OpenCode server");
+        let address = listener.local_addr().expect("fake server address");
+        let response_body = br#"{"data":{"id":"msg_other","sessionID":"session-a","type":"user"}}"#;
+        let response_content_length = response_body.len();
+        let captured = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept one prompt");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .expect("bound request read");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let header_end = loop {
+                if let Some(header_end) = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|index| index + 4)
+                {
+                    let headers = String::from_utf8(request[..header_end].to_vec())
+                        .expect("prompt headers are UTF-8");
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .expect("prompt content length");
+                    if request.len() >= header_end + content_length {
+                        break header_end;
+                    }
+                }
+                let count = stream
+                    .read(&mut buffer)
+                    .expect("read complete prompt request");
+                assert_ne!(count, 0, "prompt request was closed early");
+                request.extend_from_slice(&buffer[..count]);
+            };
+            let request_line = String::from_utf8(request[..header_end].to_vec())
+                .expect("prompt request headers")
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {response_content_length}\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write mismatched prompt receipt headers");
+            stream
+                .write_all(response_body)
+                .expect("write mismatched prompt receipt");
+            request_line
+        });
+
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "ping 127.0.0.1 -n 30 >NUL"]);
+            command
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn disposable child");
+        child.resume().expect("resume disposable child");
+        let mut server = OpenCodeServer {
+            child,
+            process_identity_ref: String::new(),
+            address,
+            password: b"test-password".to_vec(),
+            request_timeout: Duration::from_secs(15),
+            stopped: false,
+            protocol: OpenCodeServerProtocol::V2_0_32,
+            working_directory: std::env::temp_dir(),
+        };
+
+        let result = server.send_message_async("session-a", "msg_expected", "hello", None);
+        assert_eq!(
+            captured.join().expect("capture prompt request"),
+            "POST /api/session/session-a/prompt HTTP/1.1"
+        );
+        assert_eq!(result, Err(OpenCodeError::InvalidResponse));
+        assert_eq!(server.stop(), OpenCodeProcessState::Exited);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
     fn conversation_turn_does_not_dispatch_when_event_subscription_fails() {
         use serde_json::json;
         use std::{
@@ -2382,7 +2676,7 @@ mod tests {
             .expect("make fake server accept bounded");
         let address = listener.local_addr().expect("fake server address");
         let captured = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(3);
+            let deadline = Instant::now() + Duration::from_secs(15);
             let (mut stream, _) = loop {
                 match listener.accept() {
                     Ok(accepted) => break accepted,
@@ -2399,7 +2693,7 @@ mod tests {
                 .set_nonblocking(false)
                 .expect("make fake-server socket blocking");
             stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
+                .set_read_timeout(Some(Duration::from_secs(15)))
                 .expect("set subscription request timeout");
             let mut request = Vec::new();
             let mut buffer = [0_u8; 4096];
@@ -2483,7 +2777,7 @@ mod tests {
             process_identity_ref: String::new(),
             address,
             password: b"test-password".to_vec(),
-            request_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(15),
             stopped: false,
             protocol: OpenCodeServerProtocol::V2_0_32,
             working_directory: std::env::temp_dir(),
@@ -2547,7 +2841,7 @@ mod tests {
         let captured = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept request");
             stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
+                .set_read_timeout(Some(Duration::from_secs(15)))
                 .expect("set request timeout");
 
             let mut request = Vec::new();
@@ -2583,7 +2877,7 @@ mod tests {
             let body =
                 serde_json::from_slice::<Value>(&request[header_end..header_end + content_length])
                     .expect("JSON prompt body");
-            let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"data\":{}}";
+            let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 61\r\nConnection: close\r\n\r\n{\"data\":{\"id\":\"msg_b\",\"sessionID\":\"session-b\",\"type\":\"user\"}}";
             stream.write_all(response).expect("write response");
             (headers, body)
         });
@@ -2600,7 +2894,7 @@ mod tests {
             child,
             address,
             password: b"test-password".to_vec(),
-            request_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(15),
             stopped: false,
             protocol: OpenCodeServerProtocol::V2_0_32,
             working_directory: PathBuf::from("/tmp/workspace"),

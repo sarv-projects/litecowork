@@ -295,6 +295,18 @@ pub(crate) trait AgentAdapter {
         budget: StreamBudget,
     ) -> Result<TurnObservation, TurnFailure>;
 
+    /// Reconcile a StopUnconfirmed observation using the same owned provider
+    /// process, exact native session, and exact submitted message identity.
+    /// Providers without a pinned durable replay contract remain unresolved.
+    fn reconcile_stop(
+        &mut self,
+        _native_session_id: &str,
+        _native_message_id: &str,
+        _timeout: Duration,
+    ) -> Result<Option<TurnObservation>, TurnFailure> {
+        Ok(None)
+    }
+
     /// Phase 5a: request a native interrupt. Returns true only when the native
     /// API acknowledged the request; acknowledgment is not quiescence.
     fn interrupt(&mut self, native_session_id: &str) -> Result<bool, TurnFailure>;
@@ -689,6 +701,41 @@ impl AgentAdapter for OpenCodeAdapter {
         }
         self.last_counters = normalizer.counters();
         observation
+    }
+
+    fn reconcile_stop(
+        &mut self,
+        native_session_id: &str,
+        native_message_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<TurnObservation>, TurnFailure> {
+        const MAX_RECOVERY_TIME: Duration = Duration::from_secs(5);
+        const RECOVERY_POLL: Duration = Duration::from_millis(200);
+        if timeout.is_zero() || timeout > MAX_RECOVERY_TIME {
+            return Ok(None);
+        }
+        let deadline = Instant::now() + timeout;
+        let mut stream = self
+            .server
+            .subscribe_session_log(native_session_id, timeout)
+            .map_err(Self::map_transport_error)?;
+        let mut recovery =
+            super::opencode_recovery::SessionLogRecovery::new(native_session_id, native_message_id);
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match stream.next_event(remaining.min(RECOVERY_POLL)) {
+                Ok(Some(event)) => match recovery.observe(&event.data) {
+                    Ok(Some(observation)) => return Ok(Some(observation)),
+                    Ok(None) => {}
+                    // Invalid, foreign or over-budget evidence is not a new
+                    // outcome. Keep the caller's original StopUnconfirmed.
+                    Err(_) => return Ok(None),
+                },
+                Ok(None) => {}
+                Err(error) => return Err(Self::map_transport_error(error)),
+            }
+        }
+        Ok(None)
     }
 
     fn interrupt(&mut self, native_session_id: &str) -> Result<bool, TurnFailure> {

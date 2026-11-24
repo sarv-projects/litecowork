@@ -400,3 +400,39 @@ capture/input, additional adapters, browser import, Office authoring, voice and 
 not implemented merely by adding this disposition. Their owners must complete any required
 contract revision, API/schema/event promotion, UI trace, recovery design and focused evidence
 before their implementation tasks begin.
+
+## 8. Live checkout correction and next implementation slice (2026-11-24)
+
+This section supersedes historical statements above that still say Feature 002-T08 credential
+submission returns `503`: current source at the live checkout has a mounted authenticated route
+backed by Runtime-local v36 receipt reservation/settlement and idempotent SecretStore mutation
+(CODE/SERVED). It still does not provide a provider sign-in journey because the current native
+module descriptors declare no LiteCowork-owned credential slot; daemon-process restart,
+platform keyring and provider bind/send evidence remain open. The current main checkout is
+`a2f366c` at the start of the follow-up implementation, and the working tree was clean before
+this A-124 documentation update. Recheck HEAD and worktree before further edits.
+
+The Conversation plan's earlier “claim ambiguity” next-step text is stale: A-116 exact
+same-incarnation dispatch-claim reconciliation is CODE in T20. The next authorized gap is the
+volatile-feed loss after `StopUnconfirmed`. Pinned OpenCode v2.0.32 protocol sources define a
+durable session log and replay-to-live watermark; its execution source also confirms that
+`shutdown` interruption deliberately retains the native claim. A-124 records the bounded
+same-incarnation recovery contract in the Feature 001 SPEC, Recovery contract, RESEARCH, PLAN,
+TASKS and WIRING, and the alignment register. It requires exact prompt receipt identity and
+forbids prompt replay. This can improve same-process Stop recovery, but cannot replace a live
+provider capture, packaged Stop/restart journey, or T09/T23 Windows/Linux qualification.
+The next-gap statement in this section was superseded when the A-124 implementation began;
+Section 9 records the resulting CODE evidence and remaining integration gates.
+
+The full superset roadmap remains intact: compact chat-first shell and contextual object pane,
+Computer preview/takeover, idle Terminal, capability-specific native/ACP adapter families, safe
+RichPresentation, V1 Saved Views, professional Artifacts, Voice and Visual Annotation/Teach by
+Demo remain in their owner packages; remote Runtime and mobile remain V2. No broad track is
+claimed implemented by the selected Conversation slice. The latest full UI suite remains red at
+658 passed / 9 failed / 5 skipped; provider/package/platform/release qualification remains open.
+
+## 9. A-124 live code update (2026-11-24)
+
+This update follows the bounded T03/T04 implementation recorded in the current checkout. The OpenCode adapter now validates the prompt receipt's exact user message/session identity and, only after `StopUnconfirmed`, reads the pinned v2.0.32 same-incarnation durable session log for at most five seconds. A bounded reducer checks replay watermark, event identity/order, exact inbox delivery/execution lineage and one terminal event before mapping to the existing outcome path. It excludes deltas, reasoning, tool data and provider error text, never resends, and leaves ambiguous evidence unresolved. No LiteCowork schema, event, route or migration was added.
+
+Focused native-Windows CODE verification passed: `cargo test -j 1 -p litecoworkd --locked agents::opencode_ -- --nocapture` reported 35 passed, 0 failed and 1 intentionally ignored. This is code-level implementation only. The reducer and fake-loopback tests do not prove an authenticated provider event stream, SQLite settlement of the recovered outcome, retained-host retirement, restart/reconnect, packaged desktop behavior or Windows/Linux USER qualification. T03/T04 remain PARTIAL; T09/T23 retain packaged provider qualification. The completed work closes the documentation/design gap for A-124 but does not implement the remaining superset tracks or claim a release-ready product.

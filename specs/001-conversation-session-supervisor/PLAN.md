@@ -2,8 +2,8 @@
 
 **Feature:** 001 | **Spec:** revision 1.1 ACCEPTED/LOCKED; revision 1.2 IN_REVIEW (T30 user-delegated direction)
 **Status:** ACCEPTED/LOCKED - owner-accepted 2026-11-09; authorizes implementation; not a claim of implementation or qualification.
-**Updated:** 2026-11-23 (T30 CODE/SERVED completion and explicit T09 dependency on T29-T30)
-**Rule:** Implementation evidence is recorded separately from qualification. The authoritative work list is [TASKS.md](TASKS.md) (T01 to T30, with T29/T30 user-delegated and not external owner ratification); the phase table below is the summary view.
+**Updated:** 2026-11-24 (A-124 same-incarnation StopUnconfirmed recovery sequence added to T03/T04; implementation evidence is recorded in CURRENT-RUN)
+**Rule:** Implementation evidence is recorded separately from qualification. The authoritative work list is [TASKS.md](TASKS.md) (T01 to T32; T29-T32 include user-delegated implementation directions, not external owner ratification); A-124 is a T03/T04 implementation slice, not a new task or public contract. The phase table below is the summary view.
 
 ## 1. Delivery strategy
 
@@ -21,7 +21,7 @@ flowchart TD
   T3 --> T4[Qualify adapter readiness/input/events]
   T4 --> T5[Context/resource dispatch]
   T5 --> T6
-  T3 --> T7[Stop/retry/provider input/stream]
+  T3 --> T7[Stop/retry/provider input/stream; A-124 exact-session-log recovery]
   T6 --> T7
   T3 --> T8[Daemon restart and orphan recovery]
   T4 --> T8
@@ -49,7 +49,7 @@ flowchart TD
 | A - contract lock and promotion | T01 | B-01 to B-10 owner-accepted 2026-11-09 (done); accepted interfaces promoted into owner docs and docs/schemas | Promotion reviewed; validator/link/schema pass |
 | B - durable completion boundary | T02, T06 design | Typed result commit, message+turn transaction and event/receipt semantics frozen | Storage review; transaction/rollback/idempotency tests specified |
 | C - lifecycle supervisor | T03 | Bounded supervisor/host/session lifecycle, STARTING -> activation -> quiescence/close/recovery | State transition and crash-window matrix passes |
-| D - one adapter | T04 | Version-pinned adapter handshake, prompt transport, normalized terminal/delta/error/stop observations | Provider conformance fixtures and exact readiness proof |
+| D - one adapter | T04 | Version-pinned adapter handshake, exact prompt receipt identity, bounded event stream and same-incarnation durable-log recovery after StopUnconfirmed | Provider conformance fixtures, exact readiness proof, reducer/fake-transport regressions; live qualification remains T09/T23 |
 | E - context dispatch | T05 | Same-Workspace bounded transcript, supported resource preparation and explicit oversize behavior | Context/resource boundary and prompt delivery tests |
 | F - durable result | T06 | Atomic AGENT message + terminal turn + event/snapshot/receipt | Failure injection at every transaction boundary passes |
 | G - user lifecycle and recovery | T07, T08, T10-T18, T20, T29-T30 | Stop/Retry, durable dispatch intent, single-flight, UserRequest, stream/reconnect, attachments, usage, composer, atomic first New Chat send, existing-Conversation exact-send recovery and admitted-failure settlement | UI/daemon/DB integration, race and restart tests |
@@ -94,6 +94,7 @@ Do not edit a candidate path just because it is listed. Only files needed for th
 | Daemon crash between reservation and activation | STARTING recovery sweep and LOST settlement; no turn falsely RUNNING |
 | Daemon crash after activation | Settle the prior-incarnation turn FAILED and AgentSession LOST with `RUNTIME_RESTARTED`; never restore its handle or replay the prompt. Reconcile owned host processes by verified process identity/provider observation before replacement work; PID-only references are insufficient (A-104) |
 | Stop/final race | Observe adapter quiescence; persist whichever terminal observation wins |
+| StopUnconfirmed after volatile-feed loss | Reconcile only through the same owned pinned OpenCode process and exact session/message IDs; validate durable log lineage and sync watermark under bounded time/bytes/count; otherwise retain CANCEL_REQUESTED and handle, never resend |
 | Resource oversize or unsupported attachment | Explicit typed rejection; no silent omission |
 | UI transient gap | Drop transient content and resync durable projection |
 | Native direct Effect misrepresented | Clearly label assurance boundary; don't claim Core mediation |

@@ -26,6 +26,7 @@ pub(crate) mod native_provider;
 pub(crate) mod normalizer;
 mod opencode;
 mod opencode_profile_probe;
+mod opencode_recovery;
 mod opencode_server;
 mod planning;
 pub(crate) mod process_identity;
