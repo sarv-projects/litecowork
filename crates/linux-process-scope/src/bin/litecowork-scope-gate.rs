@@ -99,6 +99,39 @@ fn attempt_runner(
             .map(|()| 126)
             .unwrap_or(126);
     }
+    let Some(workspace_limit_arg) = arguments.next() else {
+        return write_terminal_rejection(CandidateRejection::ReadFailure)
+            .map(|()| 126)
+            .unwrap_or(126);
+    };
+    let Some(workspace_limit_text) = workspace_limit_arg.to_str() else {
+        return write_terminal_rejection(CandidateRejection::ReadFailure)
+            .map(|()| 126)
+            .unwrap_or(126);
+    };
+    if workspace_limit_text.is_empty()
+        || !workspace_limit_text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return write_terminal_rejection(CandidateRejection::ReadFailure)
+            .map(|()| 126)
+            .unwrap_or(126);
+    }
+    let Ok(workspace_limit_bytes) = workspace_limit_text.parse::<u64>() else {
+        return write_terminal_rejection(CandidateRejection::ReadFailure)
+            .map(|()| 126)
+            .unwrap_or(126);
+    };
+    if workspace_limit_bytes == 0
+        || workspace_limit_bytes > linux_process_scope::MAX_SCRATCH_BYTES
+        || linux_process_scope::environment_probe::verify_workspace_tmpfs(workspace_limit_bytes)
+            .is_err()
+    {
+        return write_terminal_rejection(CandidateRejection::ReadFailure)
+            .map(|()| 126)
+            .unwrap_or(126);
+    }
     if arguments.next().as_deref() != Some(OsStr::new("--")) {
         return write_terminal_rejection(CandidateRejection::ReadFailure)
             .map(|()| 126)

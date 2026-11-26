@@ -194,7 +194,23 @@ directory is used only as a trusted launcher working directory and is never bind
 into the worker. A positive cap that cannot be applied or observed fails closed. Any
 candidate intended to become a durable proposal must enter through the managed Resource
 revision lifecycle; the transient scratch tree is not itself a committed Artifact or
-Effect payload. For Feature 005, the current revision 1.1 implementation proposal starts a
+Effect payload.
+
+**Feature 005 Linux quota observation refinement (USER-DELEGATED, 2026-11-25; package
+revision 1.1 remains IN_REVIEW):** the configured `storage_bytes` is a maximum. The
+Bubblewrap command builder rounds that value down to the kernel page size before mounting and fails closed
+when the effective capacity would be zero. Its trusted inner runner receives the exact
+effective value, checks `/workspace` filesystem type and capacity with `fstatfs`, verifies
+that output/home/tmp aliases share the same tmpfs device, checks writable locations with
+small removable canaries, and requires root and staged-input create attempts to fail with
+`EROFS` before held readiness. The provider does not fill a production-sized tmpfs to force
+`ENOSPC`, because tmpfs allocations consume memory and can trigger the Attempt's memory
+limit. `ENOSPC` is tested in a separate disposable small-cap scope; same-scope live
+readback remains required for provider attestation. This is a private provider detail and
+adds no public Operator/wire API, event, Environment state or authority. The scope-gate
+probe is CODE only and has no production Task Runtime caller yet.
+
+For Feature 005, the current revision 1.1 implementation proposal starts a
 trusted inner runner as the Bubblewrap command. The native harness writes one candidate to
 the fixed `/workspace/outputs/proposal` path on the same bounded tmpfs. The runner becomes
 a child subreaper, prevents the untrusted child from reading the runner's own `/proc`
@@ -235,18 +251,27 @@ evidence are complete. The 2026-11-19 T01 cross-check found that this capture he
 attest before Attempt admission because it launches the candidate-producing harness. Source
 now has a CODE-level `--held-attempt-runner` protocol that announces readiness inside the
 requested Bubblewrap namespace and blocks before native harness creation until a one-shot
-signal; its builder, protocol and no-retry helper tests pass. It does not yet run same-scope
-enforcement probes, resolve a SQLite admission receipt or have a Task Runtime caller. A
-separate `RuntimeLocalPreparationJournal` now has CODE for private durable intent/phase/receipt
+signal; its builder, protocol and no-retry helper tests pass. The runner now checks the
+same-scope tmpfs type/capacity, writable aliases, root/input `EROFS` behavior and small
+write canaries before readiness. A Linux process-scope identity capture/recheck primitive
+observes host launcher boot/start identity, exact cgroup membership/directory, executable
+inode, UID and resource limits. A daemon-private adapter now persists the captured unit,
+PID, start ticks and digest in the journal's existing `HeldProviderScopeIdentity` shape,
+then reloads the `ScopeHeld` record and rechecks that exact identity before admission. Three
+fake-scope tests cover the adapter's persistence, pre-admission phase gate and changed-identity
+refusal; they do not exercise a live managed scope or close a race with an admission
+transaction. The adapter is still not called by Task preparation.
+
+A separate `RuntimeLocalPreparationJournal` has CODE for private durable intent/phase/receipt
 records and fail-closed recovery classification. Reads are capped at 16 KiB, use no-follow
 regular-file opens, validate Unix owner/private mode and canonical Attempt-key filenames, and
-phase updates serialize across processes. The native-Windows journal filter passes 6/6,
-including oversized-entry and cross-process lock regressions; a Unix-only symlink denial test
-is present but was not run on this Windows host. This primitive is not wired before provider
-creation or into startup recovery. The revised target still requires the trusted idle
-supervisor, same-scope probes, exact receipt lookup, attestation, admission and restart
-reconciliation; the contract remains IN_REVIEW, and no current attestation or qualification
-claim is made.
+phase updates serialize across processes. The native-Windows journal filter passes 6/6; the
+WSL Ubuntu 24.04 filter passes 7/7, including oversized-entry, cross-process lock and Unix
+symlink denial regressions. The journal and provider adapter are not wired before provider
+creation or into startup recovery. Bubblewrap namespace/mount/network probes, exact SQLite
+receipt resolution, full attestation, Attempt admission and restart reconciliation remain
+absent; the contract remains IN_REVIEW, and no current attestation or qualification claim is
+made.
 Import limits apply before extraction or copying; an unsupported format is rejected or
 exposed as opaque bytes, never silently treated as parsed content.
 

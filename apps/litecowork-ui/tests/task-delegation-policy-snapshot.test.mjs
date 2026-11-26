@@ -3,21 +3,33 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { createServer, createServerModuleRunnerTransport } from "vite";
+import { ModuleRunner } from "vite/module-runner";
 
 const vite = await createServer({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
+  // Static SSR needs TSX conversion, not React Refresh/Babel work.
+  plugins: [],
   optimizeDeps: { noDiscovery: true },
   server: { middlewareMode: true, hmr: false, ws: false },
   appType: "custom",
 });
-const { TaskDelegationPolicySnapshot } = await vite.ssrLoadModule(
+const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+transport.timeout = 120_000;
+const runner = new ModuleRunner({
+  transport,
+  hmr: false,
+  root: vite.config.root,
+  sourcemapInterceptor: false,
+});
+after(async () => {
+  await runner.close();
+  await vite.close();
+});
+const { TaskDelegationPolicySnapshot } = await runner.import(
   "/src/tasks/TaskDelegationPolicySnapshot.tsx",
 );
-after(async () => vite.close());
 
 test("Task detail exposes the exact policy pin and clarifies it is not execution evidence", () => {
   const html = renderToStaticMarkup(createElement(TaskDelegationPolicySnapshot, {

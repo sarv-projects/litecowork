@@ -14,7 +14,7 @@ contains the main package, three audit/index files and all nine Track 1–9 file
 **Package source baseline:** commit `54b69d1` / SQLite v35 (as stated in the package)
 
 **Initial source audit:** `bb2c53acc7459d62eac57ae097dec43fe8d37522` on `main`
-**Latest checkout recheck:** `6145c2a77144053f5fac3316d82efa5f6718b66d` on `main`, equal to `origin/main` before this documentation/UI slice
+**Latest checkout recheck:** source baseline `8af299d8b2e305b8411a704ff4e9f0152801b09f` on `main`, equal to `origin/main` at the start of the 2026-11-24 continuation. T07 source/UI and T08 daemon/storage/UI-contract rechecks were completed against the uncommitted worktree; the dated implementation notes below record exact scope and evidence. The broad pre-existing worktree and all unrelated user changes were preserved.
 **Disposition:** design review and USER-DELEGATED product direction; not formal domain-owner acceptance,
 INTEGRATED evidence, native-platform qualification, or release approval.
 
@@ -130,12 +130,18 @@ platform, provider-account or release evidence.
     second-model pass, unrestricted MCP app or untrusted action execution. The current schema,
     Rust/TypeScript validators, accepted component profile and actual renderer must be reconciled
     together. A schema kind is not implemented merely because it appears in JSON Schema.
-11. **Saved Views are in V1, changed inputs are separate.** Keep the user-selected Saved View
-    direction in Library, backed by an immutable Artifact version and explicit save/update/open
-    behavior. Preserve B-40: values changed only in a view are transient. Do not silently save
-    those values. B-46 remembered inputs/input sharing require explicit, separate consent,
-    identity, retention, deletion, backup and recovery contracts; current input-snapshot fields
-    must be closed enums/bounded declared values, never arbitrary strings or secrets.
+11. **Saved Views are in V1; explicit snapshots are separate from the component.** Keep the
+    user-selected Saved View direction in Library, backed by an immutable ArtifactVersion and
+    explicit save/open/update/archive behavior. Preserve B-40: the component itself remains
+    transient and non-submitting. Under A-84 USER-DELEGATED direction, a separate unchecked-by-
+    default Save choice may store up to eight numeric values that match declared input IDs and
+    declaration digests and pass finite/range/step checks. Values are content in the immutable
+    ArtifactVersion only, never events, receipts, agent input or another store. A new-answer
+    update clears old values unless compatible declarations are explicitly reviewed and saved
+    again. Device-local Remember/Forget and ordinary-turn input sharing remain separate B-46
+    operations with their own identity, retention, deletion, backup and recovery contracts.
+    Feature 007/016 cross-owner review and API promotion remain open; implementation direction
+    does not equal package acceptance or qualification.
 12. **Artifacts expand by qualified format capability.** V1 must provide a genuine Markdown
     author/publish path, exact provenance, reopen/compare and a durable export receipt. DOCX,
     XLSX, PPTX and PDF editing/export are a full product target, but each format needs a separate
@@ -217,27 +223,37 @@ authority.
 static accessible chart with table fallback, strict formula evaluation, explicit citations and
 provenance, and robust per-block Markdown degradation.
 
-**Correct:** the contract is not yet internally executable as one profile: the checked-in schema
-contains kinds the active Rust/TypeScript validator/render path does not support. Keep the schema
-as TARGET until Feature 016 T01/T02 decide and promote one profile; update the schema, shared Rust
-validator, TypeScript parity corpus, renderer and UI contract in one change. Resolve A-85 before
-model-visible presentation proposal input. KaTeX and Mermaid are candidates only after strict
-input grammar, renderer security, bundle/license, complexity bounds and output sanitization are
-specified; they may not render arbitrary HTML/SVG from provider content. Keep Interactive Artifact
-Runtime PREVIEW_ONLY and inert.
+**Correct:** the supplied mismatch between schema, validators and renderer has partially closed in
+the current working tree: T02 has promoted one v1/v2 schema family, T03/T04 provide matching
+Rust/TypeScript validation over a shared corpus, T06/T07 add desktop CODE/UI for source-bound
+METRIC, CHART and SAFE_CALCULATOR, and T08 now publishes exact semantic TABLE and UTF-8-bound
+TEXT_SLICE blocks after Conversation settlement with deterministic identity and replay checks.
+This is not provider-structured publication or a packaged end-to-end journey: provider intent
+ingress, CHART/SAFE_CALCULATOR publication and release qualification remain open. The initial raw-cell AC-023 mismatch was resolved in the owning Feature 016 contract,
+canonical schema, Rust/TypeScript validators, shared corpus and METRIC/CHART UI: unit/scale/interval/
+aggregation context is closed, source-grounded and displayed without changing source values. This
+does not fact-check semantic claims or complete derived metric behavior in T20/T24. Resolve A-85
+before model-visible presentation proposal input. KaTeX and Mermaid remain
+candidates only after strict input grammar, renderer security, bundle/license, complexity bounds
+and output sanitization are specified; they may not render arbitrary HTML/SVG from provider content.
+Keep Interactive Artifact Runtime PREVIEW_ONLY and inert.
+
+**Implementation cross-check (2026-11-24, updated):** T03 provides a pure Rust `domain-presentation` validator for renderer-v1/v2; T04 provides TypeScript parity and the shared corpus; T05 provides the bounded CalcAst evaluator. T06 renders source-bound METRIC/CHART in desktop CODE/UI: the chart is host SVG with an exact keyboard-toggle table, while the metric shows its unchanged bound number and source-derived measure with closed unit/scale/interval/aggregation context grounded in the exact semantic answer. T07 now renders validated SAFE_CALCULATOR in CODE/UI with bounded labelled number inputs, inert formula text, local pure evaluation, visible semantic fallback, reset and polite result announcement. Focused T07 tests passed 38/38; TypeScript passed; rendered Chrome interaction, zero-host-call and axe serious/critical checks passed. The metric-context guard does not fact-check semantic claims or complete T20/T24 derived analytics. This closes the calculator component path, not the product journey. No production publication/provider ingress exists. Actual native-agent answer corpus, Canvas, media, A-85 ingress and packaged qualification remain open. A-84 directs scoped implementation of the full proposal; formal T01 acceptance and cross-owner ratification remain separate.
 
 ### Track 6 — Saved Views and local state
 
 **Adopt:** Save an eligible committed presentation explicitly as a non-executable Library
 Artifact version; reopen the exact version and preserve the source/fallback. A new response
 creates a new version/source lineage rather than mutating the old answer. Keep view-local changes
-transient by default.
+transient by default; allow a separate explicit opt-in to save compatible declared numeric values
+inside immutable ArtifactVersion content only.
 
 **Hold separately:** B-46's Remember/Forget and explicit input-sharing flow. It requires its own
 closed storage contract, scoped identity, encryption, quotas, backup policy, delete/reset and
 crash recovery. Do not add arbitrary input strings to Saved View JSON or implicitly snapshot live
-session values. The product direction for Saved Views does not equal Feature 007/016 package
-acceptance; existing T25/T01/T02 sequencing remains to be reconciled with this user direction.
+session values. The user direction for Saved Views and their explicit numeric snapshot does not
+equal Feature 007/016 package acceptance; A-84 allows scoped implementation while cross-owner
+review, formal T01 acceptance and release evidence remain open.
 
 ### Track 7 — Professional Artifacts
 
@@ -359,8 +375,8 @@ is QUALIFIED.
 | 2 — Workbench and local computer | Real Browser/Computer/Terminal providers; separate local observation, agent disclosure and mediated input; idle terminal; Take over fences new agent input while Stop run cancels the owning run. | Feature 008 tasks T22–T27 already own review, promotion, observation, input/takeover, object tabs and qualification. T22's Browser import boundary is non-secret; history/extensions require an explicit owner amendment. DOM scrubbing or automatic reload is not a privacy boundary; pause capture before sensitive entry and require a fresh authorized frame. Computer Task/Attempt input grants do not yet resolve ordinary Conversation input authority. A shortcut/tray design is not a qualified out-of-app escape; keep input unavailable until it works on the exact OS/provider row. v42 remains reserved; no supplied schema fields are adopted. |
 | 3 — Native plus ACP adapters | Capability-specific native and ACP paths with exact version, transport, OS, auth, event and recovery conformance. | `AgentHostSupervisor<T>` owns retained process handles; the existing `AgentAdapter` is the provider boundary. Do not trait-objectify the process supervisor as proposed. Keep OpenCode v2.0.32. Codex App Server is probe-only; ACP v1 and Claude launch entries are foundations with no qualified Conversation dispatch. Claude T12 and same-incarnation recovery remain gated. No fixed resume retry or loopback MCP relay is adopted without a reproduced provider need and token/process lifecycle contract. ACP does not promise component trees, subagent feeds or permissions. |
 | 4 — Trust, credentials, egress and execution | Provenance, least authority, bounded Effects and explicit takeover are sound principles. | Keep mediation and outcome evidence as separate axes. Artifact/Delegation actions stay with their owners; a generic Gateway must not absorb them. Model-classifier `AUTO_REVIEW`/automatic approval conflicts with deterministic default-deny Trust and is rejected. Custom rules need Trust-owned revisions and may narrow only existing grants. Windows AppContainer remains blocked by B-35; a proposal is not containment. ZIP recursion and KDF maximum findings are fixed in source at the current checkout; slowest-row performance and native Linux extraction qualification remain open. |
-| 5 — RichPresentation | Semantic answer first; one canonical typed schema; bounded registered renderers; deterministic calculations; safe text fallback and explicit provenance. | Current schema kinds exceed parts of the Rust/TypeScript/render pipeline. Do not add a competing v2 schema or tool contract. A-85 and 016-T20 remain blocked pending provider correlation/replay evidence. `DIAGRAM`/`MEDIA` proposed labels conflict with the canonical `DIAGRAM_BLOCK`/`MEDIA_CARD`; KaTeX/Mermaid require grammar, sanitization, complexity, accessibility and license review. SVG is not inherently safe; render only host-validated values. No arbitrary HTML, JavaScript, or hidden second model pass. |
-| 6 — Saved Views and input memory | Explicit Saved View in Library with immutable provenance, source fallback, reopen/update/archive; transient calculator input under B-40. | Keep Saved Views in V1 as user-directed but not yet cross-owner accepted. Existing Feature 007 T11–T13 and Feature 016 T22–T25 already own adjacent work; supplied IDs collide. Reject the proposed input snapshot field and keep B-46 Remember/Forget separate until its own scoped retention, deletion, backup and recovery contract is resolved. No Saved View route is served. |
+| 5 — RichPresentation | Semantic answer first; one canonical typed schema; bounded registered renderers; deterministic calculations; safe text fallback and explicit provenance. | T03/T04 validate the canonical v1/v2 family; T06 has chart/metric CODE/UI. Metric context is now closed and grounded to source labels; the host preserves raw values and does not fact-check semantic claims. T20/T24 derived analytics remain open. Do not add a competing schema or proposal tool. A-85 and 016-T20 remain evidence-gated. `DIAGRAM`/`MEDIA` labels, KaTeX/Mermaid security and licensing still need review. SVG is data-driven host rendering only. No arbitrary HTML/JS or hidden second model pass. |
+| 6 — Saved Views and input memory | Explicit Saved View in Library with immutable provenance, source fallback, reopen/update/archive; transient calculator input under B-40. | Keep Saved Views in V1 as user-directed but not yet cross-owner accepted. A-84 allows the optional explicit numeric snapshot inside immutable ArtifactVersion content; B-46 device-local Remember/Forget remains a separate consent, retention, deletion, backup and recovery contract. Existing Feature 007/016 task IDs already own adjacent work; supplied IDs collide. No Saved View route is served. |
 | 7 — Professional file authoring/export | Per-format capability and fidelity disclosure, immutable versions, source lineage and recoverable export are required. | Accepted Feature 007 v1 starts with Markdown and leaves DOCX/XLSX/PPTX/PDF read-only or unsupported until owner amendment. The proposal's `/versions/{v}/exports` conflicts with `/artifacts/{artifact_id}/exports`. A-81 still blocks choosing receipt-before-write versus write-before-receipt; use operation identity, pinned source digest, UNKNOWN after ambiguity and explicit reconciliation. `openpyxl` does not calculate formulas and may lose unsupported parts; `python-docx` support has limitations; HyperFormula licensing needs review. Subprocess isolation alone is not a security boundary. Do not add redundant format/fidelity columns or reuse 007 task IDs/migration v38. |
 | 8 — Voice, annotations and Teach-by-Demo | The product owner keeps full Voice and visual authoring capabilities on the V1 roadmap; local/transient capture, exact visual anchors and reviewed proposals are appropriate. | Features 021 and 022 do not exist yet; author complete SDDs before implementation. Voice should create an editable local draft for normal Conversation Send rather than a new durable utterance endpoint; audio is transient by default and voice cannot approve. Annotations bind to immutable ArtifactVersion/render digest and become stale on target change. Teach-by-Demo should produce a reviewed RoutineRevision under Feature 010; do not invent a Skill ownership path or persist raw recordings by default. No v49/v50 migration allocation is valid. |
 | 9 — Remote Runtime and mobile | Remote/mobile continuity can be a future extension. | Keep it in V2 per `V1-PRODUCT-RELEASE-CONTRACT.md` and `RUNTIME-MESH.md`. Local Operator IPC is not a remote authenticated API; mobile approval must not queue offline and replay authority later. Do not add V1 schema/routes or claim target flows as served. |
@@ -444,3 +460,36 @@ The next code slice is based on `64c3b4abeb48f6f5fcf32a370fd21260af636c37` (`mai
 Native-Windows CODE verification: `cargo test -j 1 -p litecoworkd --locked reco -- --nocapture` passed **50/50**. The recovered Stop regression confirms the exact admitted turn settles once to CANCELLED, its AgentSession is CLOSED, its host binding is removed, its host returns READY and only one settlement event exists; duplicate settlement is rejected. The paired unresolved case preserves `CANCEL_REQUESTED`, ACTIVE session, binding and BUSY host with no settlement event. The existing `conversation_cancel_commits_only_the_request_and_never_fabricates_cancelled` test passed **1/1**.
 
 This closes the focused supervisor-to-SQLite seam only. The reducer and SQLite tests do not yet run one authenticated OpenCode process through durable-log transport, recovery reduction, database settlement and retained-host retirement. Restart/reconnect, packaged UI, provider sign-in/send, T09/T23, platform USER evidence, and release qualification remain open. T03/T04 remain PARTIAL; the earlier claims above that no SQLite settlement regression existed are superseded by this section, while the end-to-end integration and qualification gates remain unchanged.
+
+## 11. Current source recheck and T04 implementation disposition (client date 2026-11-24)
+
+This section supersedes older source claims above when the live checkout has moved. It does not replace owner contracts or promote TARGET into acceptance. Rechecked against `main` HEAD `8af299d8b2e305b8411a704ff4e9f0152801b09f`; the worktree was already broadly dirty and remains uncommitted.
+
+### Corrected external-audit findings
+
+- **F-001 zip recursion:** current `capabilities/zip_intake/supervisor.py` catches `RecursionError` during JSON decode and returns the bounded failure path. This refutes the supplied audit's current-source “unhandled” claim. A host-compatible Linux execution of the deeply nested case was not available here; Windows ran the supervisor test file with platform-gated cases skipped (34 skipped, 1 passed), so native Linux evidence remains unearned.
+- **SEC-001 backup KDF ceiling:** current source defines a minimum of 600,000 and maximum of 1,000,000 iterations and validates the header before PBKDF2. The older unbounded-ceiling claim is stale. This code check does not replace the backup test/latency or release gates.
+- **F-004 Python contracts:** `tests/test_operator_stream_contract.py` passed 6/6 and `tests/test_release_schemas.py` passed 9/9 in the latest recorded verification; the audit's two current HEAD failures are stale after the matching T31/T24 fixture updates.
+- **Credential submission:** Feature 002's v36 credential-submission operation now has an authenticated mounted route and Runtime-local receipt/SecretStore CODE/SERVED behavior. This does not create a provider sign-in journey: current agent descriptors still have no LiteCowork-owned credential slot, and restart/keyring/provider bind/send evidence remains open. The old 503 assertion is stale.
+- **macOS IPC:** source contains macOS peer-identity support; “unimplemented” was too broad. macOS is not a declared V1 qualification row, so no native macOS qualification is implied.
+- **Schema baseline:** v35/143-table references in the audit package are stale against the current wired v36 migration. The current reservation map in `docs/LITECOWORK-BUILD-TASKS.md` remains authoritative; do not adopt the submitted v37–v50 proposals as allocations.
+
+### Findings that remain valid, with scope clarified
+
+- **Single-harness Conversation dispatch:** `AgentTurnSupervisor` remains concretely wired to `AgentHostSupervisor<OpenCodeServer>`. ACP still has no production dispatch caller and Codex App Server remains probe-only. A hybrid adapter stack is an architectural option, not evidence that 12+ providers are qualified or interchangeable.
+- **Task execution dispatch:** planning readiness still reports `dispatch_available: false`. Capability dispatch types and grant-preparation helpers exist, so the broad statement that “no related code exists” is inaccurate; the missing product path is their admitted, authorized, production dispatch integration and its receipt/recovery journey. Task execution remains a central V1 blocker.
+- **Notifications and Automations:** notification rows/routes do not yet provide a qualified delivery sender; Automation can create READY Tasks without a Task execution worker. Source confirms that enabled Automations are not fenced again when a Coworker is paused; an already-enabled Automation can still materialize a READY Task. The pause fence and owner-approved semantics remain incomplete.
+- **Rich Presentation:** Rust T03 validates v1/v2 and initial calculator-result bindings; T04 has matching TypeScript validation and a shared golden corpus. T06 renders source-bound METRIC/CHART; T07 renders bounded SAFE_CALCULATOR with local-only input state and fallback. T08 now has a post-settlement table-only production publisher and exact storage replay/conflict coverage. The metric context is closed and grounded, with raw-value preservation. Provider intent ingress, chart/calculator publication from validated intent, Conversation-plus-publisher failure integration and packaged journey remain open.
+- **UI test suite:** a fresh full `pnpm test` attempt encountered the same class of Vite `fetchModule` transport timeout, here in unrelated `agent-binding-disable.test.mjs`, and was interrupted. The latest completed suite remains 658 passed / 9 failed / 5 skipped. Build success and focused RichPresentation tests do not make the full suite green.
+
+### Product and roadmap disposition
+
+T04 was authorized by its dependency on completed T03 and its listed file scope. It is now DONE at CODE level: 12 Rust tests pass; 27 focused TypeScript tests pass; and `pnpm build` passes API generation, TypeScript and Vite. The build still reports a >500 KiB main chunk warning. The shared vectors cover v1/v2 acceptance and rejection, exact/over byte and block limits, depth, semantic-hostile text, source/result mismatch, non-finite values, acceptance of the exact maximum safe integer, rejection of the next integer and an unsafe exponent-form integer, and v2 renderer fallback. TypeScript uses a bounded data-descriptor snapshot. Browser JavaScript cannot detect every transparent Proxy; reflection exceptions fail closed, getters are not invoked, and later checks never access the caller's mutable graph.
+
+No supplied migration number, provider compatibility claim, relay workaround, cloud/mobile scope or browser-import permission was implemented by analogy. OpenBot remains research only; no code was copied. The remote Runtime/mobile direction stays V2. Feature 016 remains IN_REVIEW, formal whole-scope acceptance T01 and Saved View cross-owner review T25 remain distinct, and renderer-v2 remains unavailable to provider answers until production publication and integration gates are completed. T05 has CODE for the reusable restricted reducer; T06/T07 have component CODE/UI under the one canonical schema.
+
+## 12. Current checkout addendum — 2026-11-25 — local rich-answer preference
+
+The rendered Conversation group passes **17 checks** on Chrome 158.0.8127.38. The production App harness reopened a saved Conversation after formatted answers were disabled, verified its complete semantic answer remained visible, observed zero `get_rich_presentation` calls, and confirmed the preference remained off after navigating back to Settings. Keyboard operation, same-storage reload, and simulated localStorage write failure with session-only disclosure also passed. Focused preference/policy tests passed 12/12 and TypeScript passed.
+
+This supplies rendered CODE/UI evidence for saved-history semantic fallback and read suppression. Packaged restart, in-flight recovery across process restart, native-provider integration, E2E-11, and exact Windows/Linux USER qualification remain open. The user-directed rich-answer capability remains in V1 scope. No RichPresentation schema, provider request, event, API, migration, Task state or domain authority changed in this slice. This audit disposition is a derived research record; owner task contracts and implementation-status evidence remain authoritative.

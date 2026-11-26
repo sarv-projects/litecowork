@@ -108,7 +108,7 @@ Gaps: B-28 native-row qualification, inert-control removal, applied local prefer
 
 ## 011-T06 - Remove inert Settings controls and gate by owner class (B-29/B-33)
 
-- **Status:** PARTIAL (CODE): `settings-control-map.ts` maps all 19 controls rendered directly by `SettingsView.tsx` (each carries `data-control-id`); `tests/settings-inert-control-audit.test.mjs` (5 tests) fails on an unmapped control, a Target-class control or a missing unavailable entry; shortcut card removed; Usage, Storage and About render as unavailable text with prerequisite. NOT done: the 32 controls inside `AgentCatalogSettings` are outside the map (T09 owns them), the per-category module split with typed context, and the 16-category IA (not a V1 claim, B-33)
+- **Status:** PARTIAL (CODE): `settings-control-map.ts` maps all 20 controls rendered directly by `SettingsView.tsx` (each carries `data-control-id`); `tests/settings-inert-control-audit.test.mjs` (6 tests) fails on an unmapped control, a Target-class control or a missing unavailable entry; shortcut card removed; Usage, Storage and About render as unavailable text with prerequisite. NOT done: the 32 controls inside `AgentCatalogSettings` are outside the map (T09 owns them), the per-category module split with typed context, and the 16-category IA (not a V1 claim, B-33)
 - **Depends on:** T01
 - **Cross-package prerequisites:** NONE
 - **Owner:** Desktop UI, Product
@@ -119,24 +119,25 @@ Gaps: B-28 native-row qualification, inert-control removal, applied local prefer
   - [x] Audit test fails if any SettingsView-rendered input/button lacks a control-map entry with a served operation or applied local effect (AC-020).
   - [x] Target-only entries render as text with a reason and send no mutation (AC-003).
   - [x] Category navigation (keyboard-operable buttons and a labelled list; no new screen-reader run) and unavailable reasons are keyboard and screen-reader accessible (AC-011).
-  - [ ] Rich presentation disabled still shows semantic Conversation text (AC-007).
+  - [x] Rich presentation disabled still shows complete semantic Conversation text in the rendered saved-Conversation journey; screen-reader and packaged restart checks remain separate (AC-007; CODE/UI).
 - **Command:** `pnpm --dir apps/litecowork-ui test` and `pnpm --dir apps/litecowork-ui run build`
-- **Evidence:** audit test output; UI ledger diff.
+- **Evidence:** `node --experimental-transform-types --test tests/settings-inert-control-audit.test.mjs` passed **6/6** after the 2026-11-25 map correction; UI ledger diff. This focused run does not close the remaining T06 category/module work.
 - **Stop:** stop if a control would be enabled without a ledger entry.
 
 ## 011-T07 - Applied and persisted local display preferences
 
-- **Status:** DONE (CODE): `src/settings/local-preferences.ts` validates, persists (webview localStorage under `litecowork.local-preferences.v1`) and applies theme, density, text scale and reduced motion at the document root from `App.tsx`; `tests/local-preferences.test.mjs` (7 tests). Restart survival is proven by reloading from the same storage, not in a packaged app
+- **Status:** DONE (CODE/UI): `src/settings/local-preferences.ts` validates, persists (webview localStorage under `litecowork.local-preferences.v1`) and applies theme, density, text scale, reduced motion and the render-only RichPresentation preference. The Settings control is `pref-rich-presentation`; App passes it to Conversation projection loading/rendering. Legacy snapshots default it to true. Tests prove same-storage reload behavior, not packaged restart. If storage is unavailable, the setting is session-only and must be disclosed by the UI.
 - **Depends on:** T06
 - **Cross-package prerequisites:** NONE
 - **Owner:** Desktop UI
-- **Allowed paths:** `apps/litecowork-ui/src/settings/local-preferences.ts` (new), `apps/litecowork-ui/src/settings/categories/` , `apps/litecowork-ui/src/App.tsx` (apply at root only), `apps/litecowork-ui/tests/local-preferences.test.ts` (new)
+- **Allowed paths:** `apps/litecowork-ui/src/settings/local-preferences.ts`, `apps/litecowork-ui/src/settings/SettingsView.tsx`, `apps/litecowork-ui/src/App.tsx` (apply preferences at the root and pass render-only preferences to Conversation), `apps/litecowork-ui/src/conversations/ConversationsPage.tsx` (projection-read/render gate only), `apps/litecowork-ui/src/presentation/RichResponseView.tsx`, `apps/litecowork-ui/src/presentation/rich-presentation.ts`, `apps/litecowork-ui/tests/local-preferences.test.mjs`, `apps/litecowork-ui/tests/rich-response-view-policy.test.ts`, `apps/litecowork-ui/scripts/check-rendered-ui.mjs`, `scripts/audit_v1_contracts.py` (served-control consistency assertion), and directly affected owner/UI status ledgers.
 - **Contract:** SPEC §7.2 `LocalPreferenceStore`; DATA-MODEL; AC-004
-- **Change intent:** Persist theme, density, text scale and reduced motion in a desktop-local store and apply them at the document root (CSS variables and `prefers-reduced-motion` override). Corrupt or unknown stored values fall back to defaults. No preference touches grants, bindings or Operator state.
+- **Change intent:** Persist theme, density, text scale and reduced motion in a desktop-local store and apply them at the document root (CSS variables and `prefers-reduced-motion` override). The RichPresentation switch is also local-only: it selects semantic text and suppresses future optional projection reads, without changing Conversation send/provider behavior. Corrupt or unknown stored values fall back to defaults; old snapshots keep formatted answers enabled. No preference touches grants, bindings or Operator state.
 - **Acceptance:**
-  - [x] Changing a value applies immediately and survives app restart (AC-004).
+  - [x] Changing a value applies immediately and survives reload from the same available browser storage (AC-004); packaged restart qualification remains an E2E gate.
   - [x] Corrupt stored JSON resets to defaults without crashing.
   - [x] Test proves no Operator call is made by a preference change (AC-004).
+  - [x] Turning formatted answers off keeps the full semantic response selected and blocks automatic/manual projection reads; keyboard toggle and local persistence are covered by rendered UI CODE checks.
 - **Command:** `pnpm --dir apps/litecowork-ui test`
 - **Evidence:** test names; ledger rows switch to LOCAL_PREF served.
 - **Stop:** stop if a preference would be synced or replicated.
@@ -165,7 +166,7 @@ Gaps: B-28 native-row qualification, inert-control removal, applied local prefer
 - **Depends on:** T06
 - **Cross-package prerequisites:** Feature 002 OpenCode binding probe fix and AgentControlDescriptor producer tasks.
 - **Owner:** Desktop UI (screen), Feature 002 owners (operations)
-- **Allowed paths:** `apps/litecowork-ui/src/settings/categories/`, `apps/litecowork-ui/src/agents/AgentCatalogSettings.tsx`, `apps/litecowork-ui/src/settings/settings-control-map.ts`, `apps/litecowork-ui/tests/agent-catalog-settings.test.mjs`
+- **Allowed paths:** `apps/litecowork-ui/src/settings/categories/`, `apps/litecowork-ui/src/agents/AgentCatalogSettings.tsx`, `apps/litecowork-ui/src/settings/settings-control-map.ts`, `apps/litecowork-ui/tests/agent-catalog-settings.test.mjs`, `apps/litecowork-ui/tests/agent-catalog-action-states.test.mjs`, `apps/litecowork-ui/tests/agent-binding-disable.test.mjs`, `apps/litecowork-ui/tests/agent-quota-observation.test.mjs`, and `apps/litecowork-ui/tests/delegation-profile-history-render.test.mjs` for the same Settings -> Agents controls, usage/history disclosure, disable gating and pending/receipt/error rendering contract.
 - **Contract:** SPEC §5 A-35, Agents tab; Feature 002 SPEC (operations); AC-019
 - **Change intent:** Map every Agents control to its Feature 002 operation and served state. Unserved operations (descriptor, sign-in, install/update) render unavailable with the reason; the screen layout and categories stay owned here and Feature 002 links to it. Remove the heading text that lists agents with no probe.
 - **Acceptance:**
@@ -174,6 +175,12 @@ Gaps: B-28 native-row qualification, inert-control removal, applied local prefer
   - [x] Heading names only harnesses with active probes.
 - **Command:** `pnpm --dir apps/litecowork-ui test`
 - **Evidence:** test names; ledger rows.
+- **2026-11-26 test-harness follow-up:** the Agent Catalog static SSR test uses Vite's built-in TSX transform without the React refresh plugin and registers server cleanup before module loading. The original Node 24.21.0 invocation reproduced the 60-second Vite fetchModule timeout and remained alive for 191,014 ms after failure; the scoped test now passes **8/8** under pinned Node 24.21.0 in 67,880 ms. This is test-harness CODE evidence only. The complete UI suite remains red; see CURRENT-RUN.md for the distinction between focused passes and full-suite concurrency evidence.
+- **Agent binding disable harness follow-up:** the focused disable test reproduced the same Vite `fetchModule` timeout on `delegation-profile-history.css` after 60 seconds, before any assertions ran. It now uses the exported server module-runner transport with a local 120-second timeout, omits unused React Refresh work, and registers cleanup before imports. The seven control-state assertions are unchanged; the focused Node 24.21.0 result is recorded in CURRENT-RUN.md.
+- **Quota observation isolation check:** `tests/agent-quota-observation.test.mjs` passed 12/12 under Node 24.21.0 in 71,693 ms with its existing React plugin and SSR loader. No source or harness change was made. Because the file timed out in the prior full-suite run, only an updated full suite can determine whether concurrency still causes the timeout.
+- **Agent Catalog disclosure harness scope:** quota usage and delegation-profile history/performance disclosures are already rendered from this Settings -> Agents surface and tested by dedicated adjacent files. Their assertions remain owned by Feature 002/015/018 contracts as applicable; the added paths permit only static UI regression harness corrections, not changes to quota or delegation semantics.
+- **Quota/history harness results:** after the initial quota test passed in isolation with its old loader, both `agent-quota-observation.test.mjs` and `delegation-profile-history-render.test.mjs` were moved to the exported module-runner transport with a local 120-second timeout and early cleanup. They passed **12/12 in 68,612 ms** and **3/3 in 64,129 ms**, respectively, on pinned Node 24.21.0. Their UI contract assertions are unchanged; full-suite concurrency remains to be checked.
+- **Action-state harness follow-up:** `tests/agent-catalog-action-states.test.mjs` now uses the built-in TSX transform and registers cleanup before module loading; its pinned Node 24.21.0 test run passed **3/3** in 73,499 ms. It asserts only existing pending, receipt and error UI states.
 - **Stop:** stop if this screen would restate Feature 002 operation semantics instead of linking.
 
 ## 011-T10 - Notifications entry linking Feature 010 quiet hours

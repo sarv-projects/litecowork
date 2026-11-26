@@ -35,6 +35,7 @@ mod local_filesystem;
 mod operator;
 #[cfg_attr(not(test), allow(dead_code))]
 mod power_assertion;
+mod presentation_binder;
 mod runtime;
 mod runtime_stop_operator;
 mod transient_frames;
@@ -46,7 +47,7 @@ mod trust;
 
 use std::{path::PathBuf, process::ExitCode};
 
-const HELP: &str = "litecoworkd — LiteCowork local Runtime\n\nUSAGE:\n    litecoworkd [--help | --version]\n    litecoworkd run --data-dir <private-directory>\n    litecoworkd status --data-dir <private-directory>\n    litecoworkd backup <create|verify|restore|upgrade-check> [options]\n\n`run` starts the local daemon, acquires the single-instance lock, opens durable storage,\nand serves the local Operator API over OS-authenticated local IPC on supported platforms.\nWorkspace creation is idempotent per local Principal and request key. A configured native Conversation adapter may dispatch a normal Conversation turn; this is separate from managed Task execution. Runtime READY reports startup and recovery health only. Task planning, Attempt admission, mediated Effect execution and completion verification are not available in this build, so a READY Runtime does not imply that Tasks can execute. The Runtime is DEGRADED only when a startup or recovery blocker is present. SIGINT/SIGTERM are process-supervisor shutdown signals; there is no authenticated Operator stop command yet.\n\n`backup` is the local recovery surface. Run `litecoworkd backup --help` for its options. A backup\ncontainer is encrypted with an operator supplied passphrase; the passphrase is never written to the\narchive, to the archive name, or to a log line.\n";
+const HELP: &str = "litecoworkd — LiteCowork local Runtime\n\nUSAGE:\n    litecoworkd [--help | --version]\n    litecoworkd run --data-dir <private-directory>\n    litecoworkd status --data-dir <private-directory>\n    litecoworkd self-test-state-directory\n    litecoworkd backup <create|verify|restore|upgrade-check> [options]\n\n`run` starts the local daemon, acquires the single-instance lock, opens durable storage,\nand serves the local Operator API over OS-authenticated local IPC on supported platforms.\nWorkspace creation is idempotent per local Principal and request key. A configured native Conversation adapter may dispatch a normal Conversation turn; this is separate from managed Task execution. Runtime READY reports startup and recovery health only. Task planning, Attempt admission, mediated Effect execution and completion verification are not available in this build, so a READY Runtime does not imply that Tasks can execute. The Runtime is DEGRADED only when a startup or recovery blocker is present. SIGINT/SIGTERM are process-supervisor shutdown signals; there is no authenticated Operator stop command yet.\n\n`self-test-state-directory` creates a temporary directory and file, checks their local privacy controls, removes them, and prints only boolean results. It never reads or changes the configured Runtime data directory.\n\n`backup` is the local recovery surface. Run `litecoworkd backup --help` for its options. A backup\ncontainer is encrypted with an operator supplied passphrase; the passphrase is never written to the\narchive, to the archive name, or to a log line.\n";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -61,6 +62,22 @@ fn main() -> ExitCode {
     }
 
     match args.as_slice() {
+        [command] if command == "self-test-state-directory" => {
+            let (directory_private, state_file_private) =
+                runtime::self_test_state_directory_security().unwrap_or((false, false));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "state_directory_private": directory_private,
+                    "state_file_private": state_file_private,
+                })
+            );
+            if directory_private && state_file_private {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
         [command, rest @ ..] if command == "backup" => backup_operator::run(rest),
         [command, option, value]
             if (command == "run" || command == "status") && option == "--data-dir" =>
@@ -98,5 +115,7 @@ mod help_contract_tests {
         assert!(HELP.contains("A configured native Conversation adapter may dispatch"));
         assert!(!HELP.contains("does not launch agents"));
         assert!(!HELP.contains("Runtime remains DEGRADED until Task recovery"));
+        assert!(HELP.contains("self-test-state-directory"));
+        assert!(HELP.contains("never reads or changes the configured Runtime data directory"));
     }
 }

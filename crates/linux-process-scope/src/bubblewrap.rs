@@ -6,7 +6,10 @@
 //! home, and temporary files share one bounded sandbox-private tmpfs; no host output
 //! directory is exposed to the worker.
 
-use crate::{AgentEnvironment, LaunchSpec, ManagedScope, ScopeError, SystemdCommands, spawn};
+use crate::{
+    AgentEnvironment, LaunchSpec, ManagedScope, ProcessScopeIdentity, ScopeError, SystemdCommands,
+    spawn,
+};
 use std::{
     ffi::OsString,
     fs,
@@ -109,6 +112,21 @@ fn write_admission_signal(
 impl HeldEnvironmentScope {
     pub fn unit_name(&self) -> &str {
         self.scope.unit_name()
+    }
+
+    /// Capture the exact held process and cgroup configuration for the private Runtime
+    /// preparation journal. This is operational identity evidence, not attestation.
+    pub fn capture_process_scope_identity(&self) -> Result<ProcessScopeIdentity, ScopeError> {
+        self.scope.capture_process_scope_identity()
+    }
+
+    /// Recheck process-start identity, cgroup membership and configured limits immediately
+    /// before the admission transaction. Any mismatch leaves the held scope unavailable.
+    pub fn recheck_process_scope_identity(
+        &self,
+        expected: &ProcessScopeIdentity,
+    ) -> Result<(), ScopeError> {
+        self.scope.recheck_process_scope_identity(expected)
     }
 
     /// Send the exact one-shot signal after the owning Runtime has resolved and verified
@@ -287,6 +305,7 @@ fn prepare_bubblewrap_command_inner(
             "sandbox scratch budget is zero or exceeds the supported bound",
         ));
     }
+    let effective_scratch_limit = effective_workspace_scratch_limit(spec.scratch_limit_bytes)?;
     let bubblewrap = trusted_bubblewrap(&spec.bubblewrap)?;
     let input_root = private_directory(&spec.input_root, "input root")?;
     let output_root = private_directory(&spec.output_root, "output root")?;
@@ -401,7 +420,7 @@ fn prepare_bubblewrap_command_inner(
         // and temporary files. `/tmp` below points into the same private tmpfs,
         // so a worker cannot multiply its writable budget by using another path.
         arg("--size"),
-        arg(spec.scratch_limit_bytes.to_string()),
+        arg(effective_scratch_limit.to_string()),
         arg("--tmpfs"),
         arg(WORKSPACE_TARGET),
         arg("--dir"),
@@ -450,6 +469,7 @@ fn prepare_bubblewrap_command_inner(
                 "--attempt-runner"
             }),
             arg(capture.max_bytes.to_string()),
+            arg(effective_scratch_limit.to_string()),
             arg("--"),
             guest_executable.into_os_string(),
         ]);
@@ -465,6 +485,27 @@ fn prepare_bubblewrap_command_inner(
         spec.process.limits,
         spec.process.attempt_id,
     ))
+}
+
+/// tmpfs accounts capacity in kernel pages. Round an Environment's byte ceiling down so
+/// the effective mount can never grant even a partial page more writable space than the
+/// configured maximum. The trusted runner later checks this exact effective capacity with
+/// `fstatfs` before reporting held readiness.
+fn effective_workspace_scratch_limit(requested_bytes: u64) -> Result<u64, ScopeError> {
+    let page_size = u64::try_from(rustix::param::page_size())
+        .map_err(|_| ScopeError::InvalidInput("kernel page size is not representable"))?;
+    if page_size == 0 || !page_size.is_power_of_two() {
+        return Err(ScopeError::Unsupported(
+            "kernel page size is unavailable or unsupported".into(),
+        ));
+    }
+    let effective = requested_bytes / page_size * page_size;
+    if effective == 0 {
+        return Err(ScopeError::InvalidInput(
+            "sandbox scratch budget is smaller than one kernel page",
+        ));
+    }
+    Ok(effective)
 }
 
 fn guest_runner_path(
@@ -798,6 +839,55 @@ mod tests {
     }
 
     #[test]
+    fn workspace_scratch_limit_never_rounds_above_the_requested_budget() {
+        let page_size = rustix::param::page_size() as u64;
+        assert_eq!(
+            effective_workspace_scratch_limit(page_size + 1).unwrap(),
+            page_size
+        );
+        assert_eq!(
+            effective_workspace_scratch_limit(page_size).unwrap(),
+            page_size
+        );
+        assert!(effective_workspace_scratch_limit(page_size - 1).is_err());
+    }
+
+    #[test]
+    fn builder_passes_the_page_bounded_capacity_to_mount_and_runner() {
+        let temp = tempdir().unwrap();
+        let mut spec = test_spec(temp.path());
+        let page_size = rustix::param::page_size() as u64;
+        spec.scratch_limit_bytes = 64 * 1024 * 1024 + page_size - 1;
+        spec.candidate_capture = Some(CandidateCaptureSpec {
+            max_bytes: 4096,
+            start_after_admission: true,
+        });
+        let (_, args, _, _, _) =
+            prepare_bubblewrap_capture_command(&spec, Path::new("/usr/bin/dash")).unwrap();
+        let args = args
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>();
+        let mount = args
+            .windows(4)
+            .position(|window| {
+                window[0] == "--size" && window[2] == "--tmpfs" && window[3] == WORKSPACE_TARGET
+            })
+            .unwrap();
+        assert_eq!(args[mount + 1], (64 * 1024 * 1024).to_string());
+        let runner = args
+            .windows(6)
+            .position(|window| {
+                window[1] == "--held-attempt-runner"
+                    && window[2] == "4096"
+                    && window[3] == (64 * 1024 * 1024).to_string()
+                    && window[4] == "--"
+            })
+            .unwrap();
+        assert!(runner > mount);
+    }
+
+    #[test]
     fn candidate_capture_uses_the_packaged_runner_as_pid_one() {
         let temp = tempdir().unwrap();
         let mut spec = test_spec(temp.path());
@@ -814,13 +904,14 @@ mod tests {
 
         assert!(args.iter().any(|arg| arg == "--as-pid-1"));
         let command = args
-            .windows(5)
+            .windows(6)
             .position(|window| {
                 window[0] == "/usr/bin/dash"
                     && window[1] == "--attempt-runner"
                     && window[2] == "4096"
-                    && window[3] == "--"
-                    && window[4] == "/usr/bin/dash"
+                    && window[3] == (64 * 1024 * 1024).to_string()
+                    && window[4] == "--"
+                    && window[5] == "/usr/bin/dash"
             })
             .unwrap();
         assert!(command > args.iter().position(|arg| arg == "--as-pid-1").unwrap());

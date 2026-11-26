@@ -10,7 +10,8 @@ Canonical codes: [error-codes.schema.json](../../../docs/schemas/error-codes.sch
 | Oversize/non-canonical document, digest mismatch or unknown key | Refuse the rich document; retain the complete semantic answer. |
 | Unsupported block, excessive depth/count or malformed binding | Apply only the accepted per-block fallback; otherwise show semantic answer. Never render raw HTML or interpret source as code. |
 | Missing/contradictory metric semantics or unknown aggregation | Do not show the metric/chart. Show the source table or ask for clarification. |
-| Non-finite number, unknown calculation variable/kernel or AST over bound | Refuse the computed view and retain declared semantic explanation/fallback. No IPC or provider call. |
+| SAFE_CALCULATOR initial AST result is non-finite, divides by zero, or differs from its exact bound semantic result cell | Refuse the entire rich document and preserve the complete committed semantic answer; do not publish a calculator with a contradictory initial value. |
+| Interactive calculator input causes division by zero or a non-finite intermediate/result, unknown variable/kernel or AST is over bound | Show "Cannot calculate with these values" and the declared semantic fallback; do not perform IPC or a provider call. |
 | Unsupported/replayed/wrong-session provider intent | Reject the candidate by host correlation and scope; settle or preserve Conversation according to Feature 001. Never invent a new answer. |
 | Unsupported media type, mismatched magic bytes, oversize media | Do not create an Artifact; leave semantic answer unchanged. Feature 007 owns any Artifact failure receipt. |
 
@@ -40,7 +41,7 @@ Exact machine reason names and error codes must be promoted in the canonical own
 1. Presentation failure never changes a settled Conversation turn.
 2. Unknown is not success: no Saved, Forgotten, Published or Updated label before the owning durable receipt resolves.
 3. RichPresentation and ArtifactVersion are immutable; update creates a new version and conversational modification creates a new message.
-4. Remembered answer state, Saved View content and executable Artifact runtime data have distinct owners, namespaces, consent and deletion rules. Saved View content preserves declared defaults only; it does not persist session-modified calculator state under B-40.
+4. Remembered answer state, Saved View content and executable Artifact runtime data have distinct owners, namespaces, consent and deletion rules. Saved View content preserves declared defaults by default; a separate explicit opt-in may save validated numeric values inside immutable ArtifactVersion content under A-84. The component itself remains transient/non-submitting under B-40. Values may reach an agent only as visible ordinary Conversation message text after explicit user selection, exact preview and ordinary Send; no event, receipt, log or hidden provider field carries them.
 5. No recovery operation retries a provider action, Artifact write or state mutation without its exact existing identity/idempotency contract.
 6. No event/log contains answer content, input values, credentials, native session handles, private transcripts or arbitrary provider payloads.
 

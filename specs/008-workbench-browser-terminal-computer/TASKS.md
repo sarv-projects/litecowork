@@ -370,7 +370,7 @@ Historical revision 1.0 browser-only scope below; revision 1.1 adds actual lapto
   - [x] A guard test in the workbench-truthfulness suite fails if that attribute pair reappears (AC-018).
   - [ ] The Browser preview still renders an allowed URL or shows its honest unavailable notice; no model markup executes.
 - **Command:** `node --test tests/workbench-truthfulness.test.mjs` from `apps/litecowork-ui` (focused result); `pnpm --dir apps/litecowork-ui test` (full package gate still required).
-- **Evidence:** 2026-11-19 focused guard output: 12 passed, 0 failed. Full package and packaged desktop preview behavior remain unverified.
+- **Evidence:** 2026-11-19 focused guard output: 12 passed, 0 failed. On 2026-11-26, `node --experimental-transform-types --test --test-concurrency=1 tests/workbench-truthfulness.test.mjs` on Node 24.21.0 passed **12/12** in 64,128 ms after the static SSR test moved to Vite's exported module-runner transport with a test-local 120-second timeout and early cleanup. This is UI test harness CODE only. Full package and packaged desktop preview behavior remain unverified.
 - **Stop:** removing the attribute breaks the only working preview; remove the preview instead and record the decision.
 
 ## 008-T20 - Git worktree view, VCS diff and user-invoked GitHub PR ops (P-13)

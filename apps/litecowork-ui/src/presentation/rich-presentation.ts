@@ -1,7 +1,10 @@
+import { evaluateCalc } from "./calc-reducer.ts";
+import { buildChartModel, buildMetricModel, validateMetricSemantics, type ChartModel, type ChartModelInput, type MetricModel } from "./chart-model.ts";
+
 /**
- * Narrow desktop renderer contract for immutable RichPresentation v1 documents.
- * This intentionally accepts only display-only block types currently rendered by the
- * desktop. Unsupported/host-bound blocks degrade to the semantic message.
+ * Narrow desktop renderer contract for immutable RichPresentation v1/v2 documents.
+ * This intentionally accepts only closed display-only block types currently rendered
+ * by the desktop. Unsupported/host-bound blocks degrade to the semantic message.
  */
 
 const VALIDATED = Symbol("validated-rich-presentation");
@@ -12,14 +15,36 @@ const MAX_BLOCKS = 200;
 const MAX_DEPTH = 8;
 const MAX_JSON_VALUES = 30_000;
 const MAX_JSON_DEPTH = 32;
+const MAX_JSON_ESTIMATED_BYTES = MAX_DOCUMENT_BYTES * 2;
 
 export type WidthClass = "READABLE" | "WIDE" | "FULL_AVAILABLE";
+export type SafeCalculatorInput = {
+  readonly id: string;
+  readonly label: string;
+  readonly initialValue: number;
+  readonly minValue: number;
+  readonly maxValue: number;
+  readonly step: number;
+};
+export type SafeCalculatorOutputFormat =
+  | { readonly style: "NUMBER" | "INTEGER" | "PERCENTAGE" }
+  | { readonly style: "CURRENCY"; readonly currencyCode: string };
+export type SafeCalculatorModel = {
+  readonly kind: "SAFE_CALCULATOR";
+  readonly inputs: readonly SafeCalculatorInput[];
+  readonly formulaAst: unknown;
+  readonly outputFormat: SafeCalculatorOutputFormat;
+  readonly fallbackText: string;
+};
 export type RichBlock =
   | { kind: "TEXT_SLICE"; text: string; width?: WidthClass }
   | { kind: "LAYOUT"; layout: "STACK" | "ROW" | "GRID"; width?: WidthClass; children: RichBlock[] }
   | { kind: "CARD"; title: string; children: RichBlock[] }
   | { kind: "CALLOUT"; tone: "NEUTRAL" | "INFO" | "WARNING"; text: string; accessibleSummary: string }
-  | { kind: "TABLE"; headers: string[]; rows: Array<Array<string | number | boolean | null>>; accessibleSummary?: string };
+  | { kind: "TABLE"; headers: string[]; rows: Array<Array<string | number | boolean | null>>; accessibleSummary?: string }
+  | ({ kind: "METRIC" } & MetricModel)
+  | ({ kind: "CHART" } & ChartModel)
+  | SafeCalculatorModel;
 
 export type ValidatedRichPresentation = {
   readonly presentationId: string;
@@ -58,65 +83,72 @@ function isWellFormedUnicode(value: string): boolean {
   return true;
 }
 
+const INVALID_JSON_TREE = Symbol("invalid-json-tree");
+
 /**
- * Bound and validate the input tree before JSON.stringify. This avoids walking or
- * materializing arbitrarily large/deep objects and rejects getters/proxies' ordinary
- * object substitutes rather than executing attacker-provided serialization hooks.
+ * Copy a small JSON-compatible data tree using own data descriptors only. Browser JS
+ * cannot identify a transparent Proxy, so reflective traps may run during this pass;
+ * any exception fails closed. No getter or later property read on the supplied graph
+ * is allowed, and all validation/serialization runs against this detached snapshot.
  */
-function isBoundedJsonValue(root: unknown): boolean {
+function snapshotBoundedJsonValue(root: unknown): unknown | typeof INVALID_JSON_TREE {
   const encoder = new TextEncoder();
   const visited = new WeakSet<object>();
-  const pending: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
   let values = 0;
   let estimatedBytes = 0;
-  try {
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      if (++values > MAX_JSON_VALUES || current.depth > MAX_JSON_DEPTH) return false;
-      const value = current.value;
-      if (value === null || typeof value === "boolean") { estimatedBytes += 5; continue; }
-      if (typeof value === "number") {
-        if (!Number.isFinite(value)) return false;
-        estimatedBytes += 24;
-        continue;
-      }
-      if (typeof value === "string") {
-        if (!isWellFormedUnicode(value) || value.length > MAX_DOCUMENT_BYTES) return false;
-        estimatedBytes += encoder.encode(value).byteLength + 2;
-        if (estimatedBytes > MAX_DOCUMENT_BYTES) return false;
-        continue;
-      }
-      if (typeof value !== "object" || value === null || visited.has(value)) return false;
-      visited.add(value);
-      if (Array.isArray(value)) {
-        const ownKeys = Reflect.ownKeys(value);
-        if (ownKeys.length !== value.length + 1 || value.length > MAX_JSON_VALUES) return false;
-        estimatedBytes += 2 + value.length;
-        for (let index = 0; index < value.length; index += 1) {
-          const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
-          if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return false;
-          pending.push({ value: descriptor.value, depth: current.depth + 1 });
-        }
-      } else {
-        const prototype = Object.getPrototypeOf(value);
-        if (prototype !== Object.prototype && prototype !== null) return false;
-        const keys = Reflect.ownKeys(value);
-        if (keys.length > MAX_JSON_VALUES) return false;
-        estimatedBytes += 2 + keys.length;
-        for (const key of keys) {
-          if (typeof key !== "string") return false;
-          const descriptor = Object.getOwnPropertyDescriptor(value, key);
-          if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return false;
-          if (!isWellFormedUnicode(key)) return false;
-          estimatedBytes += encoder.encode(key).byteLength + 3;
-          pending.push({ value: descriptor.value, depth: current.depth + 1 });
-        }
-      }
-      if (estimatedBytes > MAX_DOCUMENT_BYTES) return false;
+  const snapshot = (value: unknown, depth: number): unknown | typeof INVALID_JSON_TREE => {
+    if (++values > MAX_JSON_VALUES || depth > MAX_JSON_DEPTH) return INVALID_JSON_TREE;
+    if (value === null || typeof value === "boolean") { estimatedBytes += 5; return value; }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) return INVALID_JSON_TREE;
+      estimatedBytes += 24;
+      return value;
     }
-    return estimatedBytes <= MAX_DOCUMENT_BYTES;
+    if (typeof value === "string") {
+      if (!isWellFormedUnicode(value) || value.length > MAX_DOCUMENT_BYTES) return INVALID_JSON_TREE;
+      estimatedBytes += encoder.encode(value).byteLength + 2;
+      return estimatedBytes <= MAX_JSON_ESTIMATED_BYTES ? value : INVALID_JSON_TREE;
+    }
+    if (typeof value !== "object" || value === null || visited.has(value)) return INVALID_JSON_TREE;
+    visited.add(value);
+    if (Array.isArray(value)) {
+      const keys = Reflect.ownKeys(value);
+      if (keys.length !== value.length + 1 || value.length > MAX_JSON_VALUES
+        || keys.some((key) => typeof key !== "string" || key !== "length" && !/^(0|[1-9]\d*)$/.test(key)
+          || key !== "length" && Number(key) >= value.length)) return INVALID_JSON_TREE;
+      estimatedBytes += 2 + value.length;
+      const result: unknown[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return INVALID_JSON_TREE;
+        const child = snapshot(descriptor.value, depth + 1);
+        if (child === INVALID_JSON_TREE) return INVALID_JSON_TREE;
+        result.push(child);
+      }
+      return result;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return INVALID_JSON_TREE;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length > MAX_JSON_VALUES) return INVALID_JSON_TREE;
+    estimatedBytes += 2 + keys.length;
+    const result: RecordValue = Object.create(null) as RecordValue;
+    for (const key of keys) {
+      if (typeof key !== "string" || !isWellFormedUnicode(key)) return INVALID_JSON_TREE;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) return INVALID_JSON_TREE;
+      estimatedBytes += encoder.encode(key).byteLength + 3;
+      const child = snapshot(descriptor.value, depth + 1);
+      if (child === INVALID_JSON_TREE) return INVALID_JSON_TREE;
+      result[key] = child;
+    }
+    return estimatedBytes <= MAX_JSON_ESTIMATED_BYTES ? result : INVALID_JSON_TREE;
+  };
+  try {
+    const result = snapshot(root, 0);
+    return estimatedBytes <= MAX_JSON_ESTIMATED_BYTES ? result : INVALID_JSON_TREE;
   } catch {
-    return false;
+    return INVALID_JSON_TREE;
   }
 }
 
@@ -227,9 +259,207 @@ async function readSlice(value: unknown, ctx: ParseContext): Promise<string | nu
   return actual === value.slice_digest ? text : null;
 }
 
-async function parseBlock(value: unknown, path: string, ctx: ParseContext, depth: number): Promise<RichBlock | null> {
+type ValidatedContractBlock = RichBlock;
+
+type SemanticTable = { headers: string[]; rows: string[][] };
+
+function parseExactSemanticTable(value: string): SemanticTable | null {
+  const lines = value.split(/\r\n|\r|\n/);
+  while (lines.at(-1) === "") lines.pop();
+  if (lines.length < 3) return null;
+  const headers = markdownPipeRow(lines[0]!);
+  const separator = markdownPipeRow(lines[1]!);
+  if (!headers || !separator || headers.length < 1 || headers.length > 20
+    || separator.length !== headers.length || !separator.every((cell) => /^:?-{3,}:?$/.test(cell))) return null;
+  const rows: string[][] = [];
+  for (const line of lines.slice(2)) {
+    const row = markdownPipeRow(line);
+    if (!row) return null;
+    if (row.length !== headers.length || rows.length >= 500) return null;
+    rows.push(row);
+  }
+  return rows.length > 0 ? { headers, rows } : null;
+}
+
+function finiteSemanticNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?$/.test(trimmed)) return null;
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : null;
+}
+
+function validIndex(value: unknown, length: number): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) < length;
+}
+
+async function boundTable(
+  value: unknown,
+  sliceKey: "table_slice" | "semantic_table_slice",
+  ctx: ParseContext,
+  withCell: boolean,
+): Promise<{ text: string; table: SemanticTable; rowIndex?: number; columnIndex?: number } | null> {
+  const keys = withCell ? ["source", sliceKey, "row_index", "column_index"] : ["source", sliceKey];
+  if (!isRecord(value) || !hasOnlyKeys(value, keys) || value.source !== "SEMANTIC_TABLE") return null;
+  if (withCell && (!Number.isSafeInteger(value.row_index) || !Number.isSafeInteger(value.column_index))) return null;
+  const text = await readSlice(value[sliceKey], ctx);
+  if (text === null) return null;
+  const table = parseExactSemanticTable(text);
+  if (!table) return null;
+  if (!withCell) return { text, table };
+  if (!validIndex(value.row_index, table.rows.length) || !validIndex(value.column_index, table.headers.length)) return null;
+  return { text, table, rowIndex: value.row_index, columnIndex: value.column_index };
+}
+
+async function validateMetricBlock(value: RecordValue, ctx: ParseContext): Promise<boolean> {
+  if (!hasOnlyKeys(value, ["kind", "binding", "semantics", "accessible_summary"]) || !isRecord(value.binding)
+    || !boundedString(value.accessible_summary, 2_000, true)
+    || !semanticLineMatches(ctx.semanticText, value.accessible_summary)
+    || !hasOnlyKeys(value.binding, ["source", "table_slice", "row_index", "column_index"])) return false;
+  const bound = await boundTable(value.binding, "table_slice", ctx, true);
+  if (!bound || finiteSemanticNumber(bound.table.rows[bound.rowIndex!]![bound.columnIndex!]!) === null) return false;
+  const header = bound.table.headers[bound.columnIndex!]!.trim();
+  const sourceLabels = bound.table.headers.length === 1
+    ? [header]
+    : [header, bound.table.rows[bound.rowIndex!]![0]!.trim()];
+  return validateMetricSemantics(value.semantics, value.accessible_summary, sourceLabels) !== null;
+}
+
+async function validateChartBlock(value: RecordValue, ctx: ParseContext): Promise<boolean> {
+  if (!hasOnlyKeys(value, ["kind", "chart_kind", "binding", "category_column_index", "series_column_indexes", "accessible_summary", "semantics"])
+    || !["LINE", "BAR", "AREA"].includes(String(value.chart_kind))
+    || !boundedString(value.accessible_summary, 2_000)
+    || !semanticLineMatches(ctx.semanticText, value.accessible_summary as string)
+    || !isRecord(value.binding)) return false;
+  const bound = await boundTable(value.binding, "semantic_table_slice", ctx, false);
+  if (!bound || bound.table.rows.length < 2 || bound.table.rows.length > 60) return false;
+  if (!validIndex(value.category_column_index, bound.table.headers.length)
+    || !Array.isArray(value.series_column_indexes) || value.series_column_indexes.length < 1 || value.series_column_indexes.length > 6) return false;
+  const seriesColumns = value.series_column_indexes as unknown[];
+  const columns = new Set<number>([value.category_column_index]);
+  for (const candidate of seriesColumns) {
+    if (!validIndex(candidate, bound.table.headers.length) || columns.has(candidate)) return false;
+    columns.add(candidate);
+  }
+  if (!bound.table.rows.every((row) => row[value.category_column_index as number]!.trim().length > 0
+    && seriesColumns.every((column: unknown) => finiteSemanticNumber(row[column as number]!) !== null))) return false;
+  const sourceLabels = [bound.table.headers[value.category_column_index as number]!.trim(),
+    ...seriesColumns.map((column) => bound.table.headers[column as number]!.trim())];
+  return validateMetricSemantics(value.semantics, value.accessible_summary as string, sourceLabels) !== null;
+}
+
+function validCalcIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 64 && /^[A-Za-z][A-Za-z0-9_-]*$/.test(value);
+}
+
+function stepAligned(value: number, minimum: number, step: number): boolean {
+  const quotient = (value - minimum) / step;
+  if (!Number.isFinite(quotient)) return false;
+  const nearest = Math.floor(quotient + 0.5);
+  return Math.abs(quotient - nearest) <= 1e-9 * Math.max(Math.abs(quotient), 1);
+}
+
+function sourceLabelMatches(semanticText: string, label: string): boolean {
+  return semanticLineMatches(semanticText, label) || semanticText.split(/\r\n|\r|\n/).some((line) => markdownPipeRow(line)?.includes(label));
+}
+
+function freezeJsonTree<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) freezeJsonTree(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+async function validateCalculatorBlock(value: RecordValue, ctx: ParseContext): Promise<SafeCalculatorModel | null> {
+  if (!hasOnlyKeys(value, ["kind", "inputs", "formula_ast", "result_binding", "output_format", "fallback_text"])
+    || !Array.isArray(value.inputs) || value.inputs.length < 1 || value.inputs.length > 8
+    || !isRecord(value.output_format) || !boundedString(value.fallback_text, 2_000)
+    || !semanticLineMatches(ctx.semanticText, value.fallback_text as string)) return null;
+  const initialValues = new Map<string, number>();
+  const inputs: SafeCalculatorInput[] = [];
+  for (const candidate of value.inputs) {
+    if (!isRecord(candidate) || !hasOnlyKeys(candidate, ["id", "label", "binding", "min_value", "max_value", "step"])
+      || !validCalcIdentifier(candidate.id) || initialValues.has(candidate.id)
+      || !boundedString(candidate.label, 200) || !sourceLabelMatches(ctx.semanticText, candidate.label as string)
+      || typeof candidate.min_value !== "number" || !Number.isFinite(candidate.min_value)
+      || typeof candidate.max_value !== "number" || !Number.isFinite(candidate.max_value)
+      || typeof candidate.step !== "number" || !Number.isFinite(candidate.step) || candidate.step <= 0) return null;
+    const binding = await boundTable(candidate.binding, "table_slice", ctx, true);
+    if (!binding) return null;
+    const initial = finiteSemanticNumber(binding.table.rows[binding.rowIndex!]![binding.columnIndex!]!);
+    if (initial === null || candidate.min_value > candidate.max_value || initial < candidate.min_value || initial > candidate.max_value
+      || !stepAligned(initial, candidate.min_value, candidate.step)) return null;
+    initialValues.set(candidate.id, initial);
+    inputs.push({
+      id: candidate.id,
+      label: candidate.label as string,
+      initialValue: initial,
+      minValue: candidate.min_value,
+      maxValue: candidate.max_value,
+      step: candidate.step,
+    });
+  }
+  const format = value.output_format;
+  let outputFormat: SafeCalculatorOutputFormat;
+  if (format.style === "NUMBER" || format.style === "INTEGER") {
+    if (!hasOnlyKeys(format, ["style"])) return null;
+    outputFormat = { style: format.style };
+  } else if (format.style === "PERCENTAGE") {
+    if (!hasOnlyKeys(format, ["style"]) || !/%|percent/i.test(ctx.semanticText)) return null;
+    outputFormat = { style: "PERCENTAGE" };
+  } else if (format.style === "CURRENCY") {
+    if (!hasOnlyKeys(format, ["style", "currency_code"]) || typeof format.currency_code !== "string"
+      || !/^[A-Z]{3}$/.test(format.currency_code) || !ctx.semanticText.includes(format.currency_code)) return null;
+    outputFormat = { style: "CURRENCY", currencyCode: format.currency_code };
+  } else return null;
+
+  const calculated = evaluateCalc(value.formula_ast, initialValues);
+  const result = await boundTable(value.result_binding, "table_slice", ctx, true);
+  if (!calculated.ok || !result) return null;
+  const expected = finiteSemanticNumber(result.table.rows[result.rowIndex!]![result.columnIndex!]!);
+  if (expected === null || Math.abs(calculated.value - expected) > 1e-9 * Math.max(1, Math.abs(calculated.value), Math.abs(expected))) return null;
+  return Object.freeze({
+    kind: "SAFE_CALCULATOR",
+    inputs: Object.freeze(inputs.map(input => Object.freeze(input))),
+    formulaAst: freezeJsonTree(value.formula_ast),
+    outputFormat: Object.freeze(outputFormat),
+    fallbackText: value.fallback_text as string,
+  });
+}
+
+function semanticTableBlock(table: SemanticTable): RichBlock {
+  return { kind: "TABLE", headers: [...table.headers], rows: table.rows.map(row => [...row]) };
+}
+
+async function parseBlock(value: unknown, path: string, ctx: ParseContext, depth: number, rendererVersion: number): Promise<ValidatedContractBlock | null> {
   if (!isRecord(value) || depth > MAX_DEPTH || ++ctx.count > MAX_BLOCKS || typeof value.kind !== "string") return null;
   ctx.paths.push(path);
+
+  if (value.kind === "METRIC" || value.kind === "CHART" || value.kind === "SAFE_CALCULATOR") {
+    if (rendererVersion !== 2) return null;
+    if (value.kind === "METRIC") {
+      if (!await validateMetricBlock(value, ctx)) return null;
+      const bound = await boundTable(value.binding, "table_slice", ctx, true);
+      if (!bound) return null;
+      const model = buildMetricModel(bound.table, bound.rowIndex!, bound.columnIndex!, value.semantics, value.accessible_summary as string);
+      return model ? { kind: "METRIC", ...model } : semanticTableBlock(bound.table);
+    }
+    if (value.kind === "CHART") {
+      if (!await validateChartBlock(value, ctx)) return null;
+      const bound = await boundTable(value.binding, "semantic_table_slice", ctx, false);
+      if (!bound) return null;
+      const input: ChartModelInput = {
+        chartKind: value.chart_kind as "BAR" | "LINE" | "AREA",
+        categoryColumnIndex: value.category_column_index as number,
+        seriesColumnIndexes: value.series_column_indexes as number[],
+        accessibleSummary: value.accessible_summary as string,
+        semantics: value.semantics,
+      };
+      const model = buildChartModel(bound.table, input);
+      return model ? { kind: "CHART", ...model } : semanticTableBlock(bound.table);
+    }
+    return validateCalculatorBlock(value, ctx);
+  }
 
   if (value.kind === "TEXT_SLICE") {
     if (!hasOnlyKeys(value, ["kind", "source", "width"]) || !optionalWidth(value.width)) return null;
@@ -245,7 +475,7 @@ async function parseBlock(value: unknown, path: string, ctx: ParseContext, depth
     if (!isLayout && (!boundedString(value.title, 300, true) || !semanticLineMatches(ctx.semanticText, value.title))) return null;
     const children: RichBlock[] = [];
     for (let index = 0; index < value.children.length; index += 1) {
-      const child = await parseBlock(value.children[index], `${path}/children/${index}`, ctx, depth + 1);
+      const child = await parseBlock(value.children[index], `${path}/children/${index}`, ctx, depth + 1, rendererVersion);
       if (!child) return null;
       children.push(child);
     }
@@ -312,32 +542,35 @@ function validateProvenance(value: unknown, paths: readonly string[]): boolean {
   return seen.size === expected.size;
 }
 
-/**
- * Validate a bounded presentation before it reaches React. `expectedSemanticContentDigest`
- * must come from the authenticated message snapshot; each displayed slice is also hashed
- * here against its exact UTF-8 byte range. Unsupported/host-bound blocks return null.
- */
-export async function parseRichPresentationDocument(
+type DocumentValidation = {
+  rendererContractVersion: 1 | 2;
+  renderable: ValidatedRichPresentation | null;
+};
+
+/** Contract validation is broader than the currently enabled desktop renderer. */
+async function validateDocumentInternal(
   value: unknown,
   semanticText: string,
   expectedMessageId: string,
   expectedSemanticContentDigest: string,
-): Promise<ValidatedRichPresentation | null> {
+): Promise<DocumentValidation | null> {
   if (!boundedString(semanticText, MAX_SEMANTIC_BYTES) || !boundedString(expectedMessageId, 256, true)
     || !DIGEST.test(expectedSemanticContentDigest)) return null;
   const encoder = new TextEncoder();
   const bytes = encoder.encode(semanticText);
   if (bytes.byteLength > MAX_SEMANTIC_BYTES) return null;
-  if (!isBoundedJsonValue(value)) return null;
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (snapshot === INVALID_JSON_TREE) return null;
   let encoded: string;
   try {
-    encoded = JSON.stringify(value);
+    encoded = JSON.stringify(snapshot);
   } catch { return null; }
   if (typeof encoded !== "string" || encoder.encode(encoded).byteLength > MAX_DOCUMENT_BYTES) return null;
 
-  const document = isRecord(value) ? value : null;
+  const document = isRecord(snapshot) ? snapshot : null;
+  const rendererVersion = document?.renderer_contract_version;
   if (!document || !hasOnlyKeys(document, ["schema_version", "renderer_contract_version", "presentation_id", "message_id", "semantic_content_digest", "root_blocks", "citations", "actions", "accessibility_summary", "block_provenance"])
-    || document.schema_version !== 1 || document.renderer_contract_version !== 1
+    || document.schema_version !== 1 || !(rendererVersion === 1 || rendererVersion === 2)
     || !boundedString(document.presentation_id, 256, true) || document.message_id !== expectedMessageId
     || document.semantic_content_digest !== expectedSemanticContentDigest || !Array.isArray(document.root_blocks)
     || document.root_blocks.length > MAX_BLOCKS
@@ -350,21 +583,50 @@ export async function parseRichPresentationDocument(
   // Artifact refs, citations, media URLs, or host state from this document.
   if (citations.length !== 0 || actions.length !== 0) return null;
   const ctx: ParseContext = { bytes, semanticText, paths: [], count: 0 };
-  const rootBlocks: RichBlock[] = [];
+  const rootBlocks: ValidatedContractBlock[] = [];
   for (let index = 0; index < document.root_blocks.length; index += 1) {
-    const block = await parseBlock(document.root_blocks[index], `/${index}`, ctx, 0);
+    const block = await parseBlock(document.root_blocks[index], `/${index}`, ctx, 0, rendererVersion);
     if (!block) return null;
     rootBlocks.push(block);
   }
   if (!validateProvenance(document.block_provenance, ctx.paths)) return null;
   return {
-    presentationId: document.presentation_id as string,
-    messageId: expectedMessageId,
-    semanticContentDigest: expectedSemanticContentDigest,
-    rootBlocks,
-    ...(typeof document.accessibility_summary === "string" ? { accessibilitySummary: document.accessibility_summary } : {}),
-    [VALIDATED]: true,
+    rendererContractVersion: rendererVersion,
+    renderable: {
+      presentationId: document.presentation_id as string,
+      messageId: expectedMessageId,
+      semanticContentDigest: expectedSemanticContentDigest,
+      rootBlocks: rootBlocks as RichBlock[],
+      ...(typeof document.accessibility_summary === "string" ? { accessibilitySummary: document.accessibility_summary } : {}),
+      [VALIDATED]: true,
+    },
   };
+}
+
+/**
+ * Validate a bounded immutable document against the canonical renderer profiles. The
+ * result is parser-branded only when every block in its renderer version is supported
+ * by the current desktop; valid contract-only blocks remain semantic fallback.
+ */
+export async function validateRichPresentationDocument(
+  value: unknown,
+  semanticText: string,
+  expectedMessageId: string,
+  expectedSemanticContentDigest: string,
+): Promise<1 | 2 | null> {
+  const result = await validateDocumentInternal(value, semanticText, expectedMessageId, expectedSemanticContentDigest);
+  return result?.rendererContractVersion ?? null;
+}
+
+/** Validate and return content only when every block has a native desktop renderer. */
+export async function parseRichPresentationDocument(
+  value: unknown,
+  semanticText: string,
+  expectedMessageId: string,
+  expectedSemanticContentDigest: string,
+): Promise<ValidatedRichPresentation | null> {
+  const result = await validateDocumentInternal(value, semanticText, expectedMessageId, expectedSemanticContentDigest);
+  return result?.renderable ?? null;
 }
 
 export type RichPresentationResponseBinding = {
@@ -389,52 +651,53 @@ export async function parseRichPresentationResponse(
   expected: RichPresentationResponseBinding,
   semanticText: string,
 ): Promise<ValidatedRichPresentation | null> {
-  if (!isBoundedJsonValue(value) || !isRecord(value)
-    || !hasOnlyKeys(value, [
+  const snapshot = snapshotBoundedJsonValue(value);
+  const expectedSnapshot = snapshotBoundedJsonValue(expected);
+  if (snapshot === INVALID_JSON_TREE || !isRecord(snapshot) || expectedSnapshot === INVALID_JSON_TREE || !isRecord(expectedSnapshot)) return null;
+  const response = snapshot;
+  const binding = expectedSnapshot as unknown as RichPresentationResponseBinding;
+  if (!hasOnlyKeys(response, [
       "workspace_id", "conversation_id", "message_id", "presentation_id",
       "schema_version", "renderer_contract_version", "semantic_content_digest",
       "document_digest", "document_size_bytes", "document",
     ])
-    || !boundedString(expected.workspaceId, 256, true)
-    || !boundedString(expected.conversationId, 256, true)
-    || !boundedString(expected.messageId, 256, true)
-    || !boundedString(expected.presentationId, 256, true)
-    || expected.schemaVersion !== 1
-    || !Number.isSafeInteger(expected.rendererContractVersion)
-    || expected.rendererContractVersion < 1
-    || !DIGEST.test(expected.semanticContentDigest)
-    || !DIGEST.test(expected.documentDigest)
-    || !Number.isSafeInteger(expected.documentSizeBytes)
-    || expected.documentSizeBytes < 1
-    || expected.documentSizeBytes > MAX_DOCUMENT_BYTES
-    || value.workspace_id !== expected.workspaceId
-    || value.conversation_id !== expected.conversationId
-    || value.message_id !== expected.messageId
-    || value.presentation_id !== expected.presentationId
-    || value.schema_version !== expected.schemaVersion
-    || !Number.isSafeInteger(value.renderer_contract_version)
-    || value.renderer_contract_version !== expected.rendererContractVersion
-    || value.semantic_content_digest !== expected.semanticContentDigest
-    || value.document_digest !== expected.documentDigest
-    || value.document_size_bytes !== expected.documentSizeBytes
-    || !isRecord(value.document)
-    || !isBoundedJsonValue(value.document)) return null;
+    || !boundedString(binding.workspaceId, 256, true)
+    || !boundedString(binding.conversationId, 256, true)
+    || !boundedString(binding.messageId, 256, true)
+    || !boundedString(binding.presentationId, 256, true)
+    || binding.schemaVersion !== 1
+    || !(binding.rendererContractVersion === 1 || binding.rendererContractVersion === 2)
+    || !DIGEST.test(binding.semanticContentDigest)
+    || !DIGEST.test(binding.documentDigest)
+    || !Number.isSafeInteger(binding.documentSizeBytes)
+    || binding.documentSizeBytes < 1
+    || binding.documentSizeBytes > MAX_DOCUMENT_BYTES
+    || response.workspace_id !== binding.workspaceId
+    || response.conversation_id !== binding.conversationId
+    || response.message_id !== binding.messageId
+    || response.presentation_id !== binding.presentationId
+    || response.schema_version !== binding.schemaVersion
+    || response.renderer_contract_version !== binding.rendererContractVersion
+    || response.semantic_content_digest !== binding.semanticContentDigest
+    || response.document_digest !== binding.documentDigest
+    || response.document_size_bytes !== binding.documentSizeBytes
+    || !isRecord(response.document)) return null;
 
-  const canonical = canonicalJson(value.document);
+  const canonical = canonicalJson(response.document);
   if (canonical === null) return null;
   const bytes = new TextEncoder().encode(canonical);
-  if (bytes.byteLength !== value.document_size_bytes
-    || await sha256(bytes) !== value.document_digest) return null;
+  if (bytes.byteLength !== response.document_size_bytes
+    || await sha256(bytes) !== response.document_digest) return null;
 
-  if (value.document.presentation_id !== value.presentation_id
-    || value.document.schema_version !== value.schema_version
-    || value.document.renderer_contract_version !== value.renderer_contract_version) return null;
+  if (response.document.presentation_id !== response.presentation_id
+    || response.document.schema_version !== response.schema_version
+    || response.document.renderer_contract_version !== response.renderer_contract_version) return null;
 
   return parseRichPresentationDocument(
-    value.document,
+    response.document,
     semanticText,
-    expected.messageId,
-    expected.semanticContentDigest,
+    binding.messageId,
+    binding.semanticContentDigest,
   );
 }
 
@@ -442,11 +705,11 @@ export function isValidatedRichPresentation(value: unknown): value is ValidatedR
   return isRecord(value) && (value as Partial<ValidatedRichPresentation>)[VALIDATED] === true;
 }
 
-export function resolveRichResponseContent(semanticText: string, presentation?: unknown): {
+export function resolveRichResponseContent(semanticText: string, presentation?: unknown, enabled = true): {
   semanticText: string;
   presentation: ValidatedRichPresentation | null;
   primary: "RICH" | "SEMANTIC";
 } {
-  const validated = isValidatedRichPresentation(presentation) ? presentation : null;
+  const validated = enabled && isValidatedRichPresentation(presentation) ? presentation : null;
   return { semanticText, presentation: validated, primary: validated ? "RICH" : "SEMANTIC" };
 }

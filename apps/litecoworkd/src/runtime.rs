@@ -62,6 +62,67 @@ const STATE_FILE: &str = "runtime-state.json";
 const LOCK_FILE: &str = "runtime.lock";
 const STATE_SCHEMA_VERSION: u32 = 1;
 
+/// Exercises the same private-directory and private-file setup used by Runtime
+/// against a fresh temporary root. This is a local release-check surface; it never
+/// inspects or changes the user's configured Runtime data directory.
+pub(crate) fn self_test_state_directory_security() -> Result<(bool, bool), String> {
+    let temporary = tempfile::tempdir()
+        .map_err(|_| "could not create temporary Runtime security-check state".to_owned())?;
+    let state_directory = temporary.path().join("state");
+    ensure_private_state_directory(&state_directory)?;
+
+    let probe_path = state_directory.join("state-security-probe");
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let probe_file = options
+        .open(&probe_path)
+        .map_err(|_| "could not create temporary Runtime security-check file".to_owned())?;
+    restrict_file_permissions(&probe_path, &probe_file)?;
+
+    #[cfg(unix)]
+    let state_directory_private = {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(&state_directory)
+            .map(|metadata| {
+                metadata.uid() == rustix::process::geteuid().as_raw()
+                    && metadata.mode() & 0o077 == 0
+            })
+            .unwrap_or(false)
+    };
+    #[cfg(windows)]
+    let state_directory_private =
+        windows_local_security::open_directory_path_without_reparse(&state_directory)
+            .and_then(|directory| directory.has_protected_system_owner_dacl())
+            .unwrap_or(false);
+    #[cfg(not(any(unix, windows)))]
+    let state_directory_private = false;
+
+    #[cfg(unix)]
+    let state_file_private = {
+        use std::os::unix::fs::MetadataExt;
+        probe_file
+            .metadata()
+            .map(|metadata| {
+                metadata.is_file()
+                    && metadata.uid() == rustix::process::geteuid().as_raw()
+                    && metadata.mode() & 0o077 == 0
+            })
+            .unwrap_or(false)
+    };
+    #[cfg(windows)]
+    let state_file_private =
+        windows_local_security::file_has_protected_system_owner_dacl(&probe_file).unwrap_or(false);
+    #[cfg(not(any(unix, windows)))]
+    let state_file_private = false;
+
+    Ok((state_directory_private, state_file_private))
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum RuntimeState {

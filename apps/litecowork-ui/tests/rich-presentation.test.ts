@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as richPresentation from "../src/presentation/rich-presentation.ts";
 import { ConversationCreateRequestCache } from "../src/conversations/conversation-view.ts";
-const { isValidatedRichPresentation, parseRichPresentationDocument, resolveRichResponseContent } = richPresentation;
+import { parseMarkdownDocument } from "../src/artifacts/markdown-document.ts";
+const { isValidatedRichPresentation, parseRichPresentationDocument, resolveRichResponseContent, validateRichPresentationDocument } = richPresentation;
 const parseResponseCandidate = (richPresentation as unknown as Record<string, unknown>).parseRichPresentationResponse;
 
 const semantic = "Answer: café.\nMore detail.";
@@ -167,6 +168,109 @@ test("accepts a bounded semantic slice and binds it to the expected Message", as
   assert.equal(isValidatedRichPresentation({ presentationId: "forged", rootBlocks: [{ kind: "HOST_PROJECTION" }] }), false);
 });
 
+test("renders v2 METRIC only from its verified semantic table cell and host-derived label", async () => {
+  const semanticText = "Revenue for South is reported in INR at unit scale for monthly interval with sum aggregation.\n\n| Region | Revenue |\n| --- | --- |\n| North | 1200 |\n| South | 2400 |";
+  const table = "| Region | Revenue |\n| --- | --- |\n| North | 1200 |\n| South | 2400 |";
+  const bytes = new TextEncoder().encode(semanticText);
+  const start = new TextEncoder().encode("Revenue for South is reported in INR at unit scale for monthly interval with sum aggregation.\n\n").byteLength;
+  const end = start + new TextEncoder().encode(table).byteLength;
+  const metric = {
+    kind: "METRIC",
+    binding: {
+      source: "SEMANTIC_TABLE",
+      table_slice: { start_utf8_byte: start, end_utf8_byte_exclusive: end, slice_digest: await digest(bytes.subarray(start, end)) },
+      row_index: 1,
+      column_index: 1,
+    },
+    semantics: { unit: "INR", scale: "UNIT", time_interval: "monthly", aggregation: "SUM" },
+    accessible_summary: "Revenue for South is reported in INR at unit scale for monthly interval with sum aggregation.",
+  };
+  const document = await documentFor([metric], semanticText);
+  document.renderer_contract_version = 2;
+  const parsed = await parse(document, semanticText);
+  assert.ok(parsed);
+  assert.equal(parsed.rootBlocks[0]?.kind, "METRIC");
+  if (parsed.rootBlocks[0]?.kind === "METRIC") {
+    assert.equal(parsed.rootBlocks[0].label, "Revenue — South");
+    assert.equal(parsed.rootBlocks[0].sourceValue, "2400");
+    assert.equal(parsed.rootBlocks[0].valueText, "2,400");
+    assert.equal(parsed.rootBlocks[0].semantics.unit, "INR");
+    assert.equal(parsed.rootBlocks[0].semantics.scale, "UNIT");
+  }
+});
+
+test("renders v2 CHART from the exact source slice and uses full semantic fallback on binding failure", async () => {
+  const semanticText = "Revenue by Month is reported in INR at unit scale for monthly interval with sum aggregation.\n\n| Month | Revenue |\n| --- | --- |\n| Jan | 12 |\n| Feb | 18 |";
+  const table = "| Month | Revenue |\n| --- | --- |\n| Jan | 12 |\n| Feb | 18 |";
+  const bytes = new TextEncoder().encode(semanticText);
+  const start = new TextEncoder().encode("Revenue by Month is reported in INR at unit scale for monthly interval with sum aggregation.\n\n").byteLength;
+  const end = start + new TextEncoder().encode(table).byteLength;
+  const chart = {
+    kind: "CHART",
+    chart_kind: "LINE",
+    binding: { source: "SEMANTIC_TABLE", semantic_table_slice: { start_utf8_byte: start, end_utf8_byte_exclusive: end, slice_digest: await digest(bytes.subarray(start, end)) } },
+    category_column_index: 0,
+    series_column_indexes: [1],
+    accessible_summary: "Revenue by Month is reported in INR at unit scale for monthly interval with sum aggregation.",
+    semantics: { unit: "INR", scale: "UNIT", time_interval: "monthly", aggregation: "SUM" },
+  };
+  const document = await documentFor([chart], semanticText);
+  document.renderer_contract_version = 2;
+  const parsed = await parse(document, semanticText);
+  assert.ok(parsed);
+  assert.equal(parsed.rootBlocks[0]?.kind, "CHART");
+  if (parsed.rootBlocks[0]?.kind === "CHART") {
+    assert.deepEqual(parsed.rootBlocks[0].categories, ["Jan", "Feb"]);
+    assert.deepEqual(parsed.rootBlocks[0].series[0]?.sourceValues, ["12", "18"]);
+    assert.equal(parsed.rootBlocks[0].semantics.unit, "INR");
+    assert.equal(parsed.rootBlocks[0].semantics.timeInterval, "monthly");
+  }
+
+  const changed = structuredClone(document) as { root_blocks: Array<{ binding: { semantic_table_slice: { slice_digest: string } } }> };
+  changed.root_blocks[0]!.binding.semantic_table_slice.slice_digest = `sha256:${"0".repeat(64)}`;
+  assert.equal(await parse(changed, semanticText), null);
+  const fallback = resolveRichResponseContent(semanticText, await parse(changed, semanticText));
+  assert.equal(fallback.primary, "SEMANTIC");
+  assert.equal(fallback.semanticText, semanticText);
+});
+
+test("maps a contract-valid v2 calculator to a bounded immutable renderer model", async () => {
+  const semanticText = "Amount\n| Input | Value |\n| --- | --- |\n| Amount | 12 |\n| Estimated amount | 24 |\nThe estimated amount is shown below.";
+  const inputTable = "| Input | Value |\n| --- | --- |\n| Amount | 12 |";
+  const resultTable = "| Input | Value |\n| --- | --- |\n| Amount | 12 |\n| Estimated amount | 24 |";
+  const bytes = new TextEncoder().encode(semanticText);
+  const source = (table: string) => {
+    const start = new TextEncoder().encode(semanticText.slice(0, semanticText.indexOf(table))).byteLength;
+    const end = start + new TextEncoder().encode(table).byteLength;
+    return { source: "SEMANTIC_TABLE", table_slice: { start_utf8_byte: start, end_utf8_byte_exclusive: end, slice_digest: "" } };
+  };
+  const input = source(inputTable);
+  const result = source(resultTable);
+  input.table_slice.slice_digest = await digest(bytes.subarray(input.table_slice.start_utf8_byte, input.table_slice.end_utf8_byte_exclusive));
+  result.table_slice.slice_digest = await digest(bytes.subarray(result.table_slice.start_utf8_byte, result.table_slice.end_utf8_byte_exclusive));
+  const calculator = {
+    kind: "SAFE_CALCULATOR",
+    inputs: [{ id: "amount", label: "Amount", binding: { ...input, row_index: 0, column_index: 1 }, min_value: 0, max_value: 100, step: 1 }],
+    formula_ast: { kind: "BINARY_OP", operator: "*", left: { kind: "VARIABLE", input_id: "amount" }, right: { kind: "LITERAL", value: 2 } },
+    result_binding: { ...result, row_index: 1, column_index: 1 },
+    output_format: { style: "NUMBER" },
+    fallback_text: "The estimated amount is shown below.",
+  };
+  const document = await documentFor([calculator], semanticText);
+  document.renderer_contract_version = 2;
+  assert.equal(await validateRichPresentationDocument(document, semanticText, messageId, semanticDigest), 2);
+  const parsed = await parse(document, semanticText);
+  assert.equal(parsed?.rootBlocks[0]?.kind, "SAFE_CALCULATOR");
+  if (parsed?.rootBlocks[0]?.kind === "SAFE_CALCULATOR") {
+    assert.deepEqual(parsed.rootBlocks[0].inputs, [{ id: "amount", label: "Amount", initialValue: 12, minValue: 0, maxValue: 100, step: 1 }]);
+    assert.deepEqual(parsed.rootBlocks[0].outputFormat, { style: "NUMBER" });
+    assert.equal(parsed.rootBlocks[0].fallbackText, "The estimated amount is shown below.");
+    assert.equal(Object.isFrozen(parsed.rootBlocks[0]), true);
+    assert.equal(Object.isFrozen(parsed.rootBlocks[0].inputs[0]), true);
+    assert.equal(Object.isFrozen(parsed.rootBlocks[0].formulaAst), true);
+  }
+});
+
 test("rejects wrong Message or semantic content digest", async () => {
   const document = await documentFor([await textSlice()]);
   assert.equal(await parse(document, semantic, "other-message"), null);
@@ -302,7 +406,7 @@ test("bounds document bytes, block count, nesting, and malformed top-level shape
 test("bounds the JSON tree before serialization and rejects unsupported renderer versions", async () => {
   const document = await documentFor([await textSlice()]);
   const unsupportedVersion = structuredClone(document) as Record<string, unknown>;
-  unsupportedVersion.renderer_contract_version = 2;
+  unsupportedVersion.renderer_contract_version = 3;
   assert.equal(await parse(unsupportedVersion), null);
 
   const unknownBlock = await documentFor([{ kind: "FUTURE_INTERACTIVE_WIDGET", payload: { command: "run" } }]);
@@ -350,15 +454,21 @@ test("the view uses validated rich content by default and exposes an accessible 
   assert.ok(view.indexOf("data-testid=\"rich-answer\"") < view.indexOf("className=\"rich-response-semantic-fallback\""));
 });
 
-test("the semantic Markdown fallback treats unsafe links and unsupported media as inert text", () => {
+test("semantic Markdown degrades locally, stays inert and shares the TEXT_SLICE renderer", () => {
   const markdown = readFileSync(new URL("../src/artifacts/StructuredTextPreview.tsx", import.meta.url), "utf8");
-  const inlinePattern = markdown.split("const INLINE_PATTERN = ")[1]?.split(";")[0] ?? "";
-  assert.ok(inlinePattern.startsWith("/(") && inlinePattern.includes("https:") && !inlinePattern.includes("javascript:"));
-  assert.ok(markdown.includes('url.protocol !== "https:" || url.username || url.password'));
+  const parser = readFileSync(new URL("../src/artifacts/markdown-document.ts", import.meta.url), "utf8");
+  const richView = readFileSync(new URL("../src/presentation/RichResponseView.tsx", import.meta.url), "utf8");
+  const hostile = parseMarkdownDocument("# Safe\n\n    unsupported\n\n<img src=x onerror=run()> [bad](javascript:run())");
+  assert.deepEqual(hostile.blocks.map(block => block.kind), ["heading", "literal", "paragraph"]);
+  const paragraph = hostile.blocks[2];
+  assert.equal(paragraph?.kind === "paragraph" ? paragraph.lines.flat().some(token => token.kind === "link") : true, false);
+  assert.ok(parser.includes('url.protocol !== "https:" || url.username || url.password'));
   assert.ok(markdown.includes("window.confirm("));
   assert.ok(markdown.includes('window.open(part.href, "_blank", "noopener,noreferrer")'));
-  assert.ok(markdown.includes("if (!blocks) return <div className=\"artifact-markdown-fallback\""));
-  assert.ok(markdown.includes("<pre tabIndex={0}>{text}</pre>"));
+  assert.ok(markdown.includes('import("./markdown-highlighter")'));
+  assert.ok(markdown.includes('aria-label="Copy code"'));
+  assert.ok(!markdown.includes("dangerouslySetInnerHTML"));
+  assert.ok(richView.includes('<StructuredTextPreview text={block.text} mediaType="text/markdown" />'));
 });
 
 test("fails closed if Web Crypto is unavailable", async () => {

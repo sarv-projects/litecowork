@@ -39,3 +39,32 @@ test("does not promote an unvalidated presentation over semantic content", () =>
   assert.equal(resolved.presentation, null);
   assert.equal(resolved.semanticText, semanticText);
 });
+
+test("a disabled rich-presentation preference always selects the complete semantic response", async () => {
+  const bytes = new TextEncoder().encode(semanticText);
+  const digestBytes = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  const sliceDigest = `sha256:${Array.from(new Uint8Array(digestBytes), byte => byte.toString(16).padStart(2, "0")).join("")}`;
+  const document = {
+    schema_version: 1, renderer_contract_version: 1, presentation_id: "p1", message_id: "m1",
+    semantic_content_digest: `sha256:${"a".repeat(64)}`,
+    root_blocks: [{ kind: "TEXT_SLICE", source: { start_utf8_byte: 0, end_utf8_byte_exclusive: bytes.byteLength, slice_digest: sliceDigest } }],
+    citations: [], actions: [], block_provenance: [{ block_path: "/0", origin: "SEMANTIC_MESSAGE", resource_refs: [], artifact_refs: [], evidence_refs: [], verification_refs: [] }],
+  };
+  const { parseRichPresentationDocument } = await import("../src/presentation/rich-presentation.ts");
+  const presentation = await parseRichPresentationDocument(document, semanticText, "m1", document.semantic_content_digest);
+  assert.ok(presentation && isValidatedRichPresentation(presentation));
+
+  const resolved = resolveRichResponseContent(semanticText, presentation, false);
+  assert.equal(resolved.primary, "SEMANTIC");
+  assert.equal(resolved.presentation, null);
+  assert.equal(resolved.semanticText, semanticText);
+});
+
+test("Conversation presentation reads require the enabled preference before every load path", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/conversations/ConversationsPage.tsx", import.meta.url), "utf8");
+  assert.match(source, /if \(!richPresentationEnabled \|\| !autoLoadRich/);
+  assert.match(source, /if \(!richPresentationEnabled \|\| !shouldLoad/);
+  assert.match(source, /richPresentationEnabled && availability === "AVAILABLE"/);
+  assert.match(source, /richPresentationEnabled=\{richPresentationEnabled\}/);
+});

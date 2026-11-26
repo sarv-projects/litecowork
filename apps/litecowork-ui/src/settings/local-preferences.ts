@@ -7,6 +7,8 @@ export type LocalPreferences = {
   density: DensityPreference;
   textScale: TextScalePreference;
   reducedMotion: boolean;
+  /** Local display-only choice; it never changes the semantic answer or provider request. */
+  richPresentationEnabled: boolean;
 };
 
 export const LOCAL_PREFERENCES_STORAGE_KEY = "litecowork.local-preferences.v1";
@@ -16,6 +18,7 @@ export const DEFAULT_LOCAL_PREFERENCES: LocalPreferences = {
   density: "comfortable",
   textScale: "100",
   reducedMotion: false,
+  richPresentationEnabled: true,
 };
 
 export type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
@@ -42,6 +45,10 @@ export function parseLocalPreferences(raw: string | null | undefined): LocalPref
     density: DENSITIES.find(item => item === record.density) ?? DEFAULT_LOCAL_PREFERENCES.density,
     textScale: TEXT_SCALES.find(item => item === record.textScale) ?? DEFAULT_LOCAL_PREFERENCES.textScale,
     reducedMotion: typeof record.reducedMotion === "boolean" ? record.reducedMotion : DEFAULT_LOCAL_PREFERENCES.reducedMotion,
+    // Older local preference snapshots predate this field and keep the default-on behavior.
+    richPresentationEnabled: typeof record.richPresentationEnabled === "boolean"
+      ? record.richPresentationEnabled
+      : DEFAULT_LOCAL_PREFERENCES.richPresentationEnabled,
   };
 }
 

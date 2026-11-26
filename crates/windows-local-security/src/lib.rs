@@ -265,9 +265,11 @@ impl VerifiedDirectory {
         win32::mark_handle_read_only(&self._handle)
     }
 
-    #[cfg(all(test, windows))]
-    pub(crate) fn has_protected_system_owner_dacl(&self) -> io::Result<bool> {
-        win32::has_protected_system_owner_dacl(&self._handle)
+    /// Reports whether this directory has a protected DACL containing only explicit
+    /// SYSTEM and Owner Rights allow entries.
+    #[cfg(windows)]
+    pub fn has_protected_system_owner_dacl(&self) -> io::Result<bool> {
+        win32::directory_has_protected_system_owner_dacl(&self._handle)
     }
 }
 
@@ -278,6 +280,16 @@ pub fn open_directory_path_without_reparse(
     path: &std::path::Path,
 ) -> io::Result<VerifiedDirectory> {
     win32::open_directory_path_without_reparse(path)
+}
+
+/// Reports whether an already-open local file has a protected DACL containing only
+/// explicit SYSTEM and Owner Rights allow entries. The file handle remains owned by
+/// the caller and is never logged or retained.
+#[cfg(windows)]
+pub fn file_has_protected_system_owner_dacl(file: &std::fs::File) -> io::Result<bool> {
+    use std::os::windows::io::AsRawHandle;
+
+    win32::has_protected_system_owner_dacl(file.as_raw_handle(), 0)
 }
 
 /// Returns whether two validated absolute local-drive paths overlap by directory
@@ -1692,22 +1704,30 @@ mod win32 {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(super) fn has_protected_system_owner_dacl(handle: &OwnedHandle) -> io::Result<bool> {
+    pub(super) fn directory_has_protected_system_owner_dacl(
+        directory: &OwnedHandle,
+    ) -> io::Result<bool> {
+        has_protected_system_owner_dacl(directory.0, 0x03)
+    }
+
+    pub(super) fn has_protected_system_owner_dacl(
+        handle: HANDLE,
+        expected_ace_flags: u8,
+    ) -> io::Result<bool> {
         use windows_sys::Win32::{
             Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
             Security::{
-                ACL_SIZE_INFORMATION, AclSizeInformation, GetAclInformation,
-                GetSecurityDescriptorControl, SE_DACL_PROTECTED,
+                ACL_SIZE_INFORMATION, AclSizeInformation, GetAce, GetAclInformation, GetLengthSid,
+                GetSecurityDescriptorControl, IsValidSid, SE_DACL_PROTECTED,
             },
         };
         let mut dacl = ptr::null_mut();
         let mut descriptor = ptr::null_mut();
-        // SAFETY: handle is owned/live and all output slots are initialized. The returned
+        // SAFETY: handle is a live caller-owned handle and all output slots are initialized. The returned
         // security descriptor is released with LocalFree below; the DACL points within it.
         let status = unsafe {
             GetSecurityInfo(
-                handle.0,
+                handle,
                 SE_FILE_OBJECT,
                 DACL_SECURITY_INFORMATION,
                 ptr::null_mut(),
@@ -1742,7 +1762,80 @@ mod win32 {
         {
             return Err(redacted_error());
         }
-        Ok(control & SE_DACL_PROTECTED != 0 && acl_size.AceCount == 2)
+        if control & SE_DACL_PROTECTED == 0 || acl_size.AceCount != 2 {
+            return Ok(false);
+        }
+
+        let mut system_allowed = false;
+        let mut owner_rights_allowed = false;
+        for index in 0..acl_size.AceCount {
+            let mut ace = ptr::null_mut();
+            // SAFETY: `dacl` is live for this scope and `ace` is a writable output slot.
+            if unsafe { GetAce(dacl, index, &mut ace) } == 0 || ace.is_null() {
+                return Err(redacted_error());
+            }
+            let ace_bytes = ace.cast::<u8>();
+            // SAFETY: a valid ACE begins with ACE_HEADER: type, flags, and size.
+            let (ace_type, ace_flags, ace_size) = unsafe {
+                (
+                    *ace_bytes,
+                    *ace_bytes.add(1),
+                    u16::from_le_bytes([*ace_bytes.add(2), *ace_bytes.add(3)]) as usize,
+                )
+            };
+            if ace_type != 0 || ace_flags != expected_ace_flags || ace_size < 16 {
+                return Ok(false);
+            }
+            // ACCESS_ALLOWED_ACE stores its mask after the four-byte ACE_HEADER and its SID
+            // immediately after the four-byte access mask.
+            // SAFETY: the ACL reported this ACE size and the minimum length above covers both.
+            let (access_mask, sid) = unsafe {
+                (
+                    u32::from_le_bytes([
+                        *ace_bytes.add(4),
+                        *ace_bytes.add(5),
+                        *ace_bytes.add(6),
+                        *ace_bytes.add(7),
+                    ]),
+                    ace_bytes.add(8).cast::<std::ffi::c_void>(),
+                )
+            };
+            if access_mask == 0 {
+                return Ok(false);
+            }
+            // SAFETY: SID begins inside this live allowed ACE; IsValidSid validates its layout
+            // before GetLengthSid reads the sub-authority count.
+            if unsafe { IsValidSid(sid) } == 0 {
+                return Ok(false);
+            }
+            // SAFETY: IsValidSid succeeded for the SID pointer inside the live ACE.
+            let sid_length = unsafe { GetLengthSid(sid) } as usize;
+            if sid_length == 0 || ace_size != 8 + sid_length {
+                return Ok(false);
+            }
+            // SAFETY: GetLengthSid bounded this slice to the SID embedded in the live ACE.
+            let sid_bytes = unsafe { slice::from_raw_parts(sid.cast::<u8>(), sid_length) };
+            if sid_bytes.len() < SID_HEADER_BYTES || sid_bytes[0] != 1 {
+                return Ok(false);
+            }
+            let subauthority_count = sid_bytes[1] as usize;
+            if SID_HEADER_BYTES + subauthority_count * 4 != sid_length {
+                return Ok(false);
+            }
+            let identifier_authority = sid_bytes[2..SID_HEADER_BYTES]
+                .iter()
+                .fold(0_u64, |value, byte| (value << 8) | u64::from(*byte));
+            let subauthorities = sid_bytes[SID_HEADER_BYTES..]
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect::<Vec<_>>();
+            match format_sid(identifier_authority, &subauthorities).as_str() {
+                "S-1-5-18" if !system_allowed => system_allowed = true,
+                "S-1-3-4" if !owner_rights_allowed => owner_rights_allowed = true,
+                _ => return Ok(false),
+            }
+        }
+        Ok(system_allowed && owner_rights_allowed)
     }
 
     #[cfg(test)]
@@ -3109,7 +3202,10 @@ mod contained_child_tests {
 
 #[cfg(all(test, windows))]
 mod workspace_root_directory_tests {
-    use super::{open_directory_path_without_reparse, win32::validate_relative_file_path};
+    use super::{
+        file_has_protected_system_owner_dacl, open_directory_path_without_reparse,
+        secure_current_user_file, win32::validate_relative_file_path,
+    };
     use std::{
         fs, io,
         process::Command,
@@ -3239,6 +3335,17 @@ mod workspace_root_directory_tests {
             .expect("create protected child directory");
 
         assert!(child.has_protected_system_owner_dacl().unwrap());
+    }
+
+    #[test]
+    fn current_user_state_file_dacl_is_verified_from_its_open_handle() {
+        let temporary = TempDir::new();
+        let path = temporary.path().join("runtime-state-probe");
+        fs::write(&path, b"private state probe").expect("create state-file fixture");
+        secure_current_user_file(&path).expect("apply Runtime private-file DACL");
+        let file = fs::File::open(&path).expect("open protected state file");
+
+        assert!(file_has_protected_system_owner_dacl(&file).unwrap());
     }
 
     #[test]

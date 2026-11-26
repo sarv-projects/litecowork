@@ -2,7 +2,7 @@ feature_id: "016"
 name: "Intelligent Workspace Presentation Runtime"
 status: "IN_REVIEW"
 spec_revision: "0.4-proposed"
-notes: "Revision 0.4 is a TARGET proposal. The product owner directed Saved Views to remain in V1 and Feature 007 B-21 to be amended; its cross-owner review, T01 whole-scope acceptance and T02 contract promotion remain open. Existing reads/stream are SERVED; validators are partial CODE. No production publisher, media ingestion, interactive renderer, Canvas controller, remembered-state route or Saved View route exists. Saved Views preserve declared defaults only; B-40 changed-input state remains transient."
+notes: "Revision 0.4 is a TARGET proposal. A-84 (2026-11-24) directs implementation of the complete current proposal without changing formal IN_REVIEW lifecycle status; cross-owner review and T01 acceptance remain open. T03/T04/T05 are scoped CODE: Rust and TypeScript validators share renderer-v1/v2 corpus; CalcAst is bounded and pure. T06 is CODE/UI for source-bound renderer-v2 METRIC and CHART components, with host SVG, exact table fallback, keyboard access and closed unit/scale/time-interval/aggregation context grounded in the exact semantic summary; displayed source values remain unchanged. T07 is now CODE/UI for SAFE_CALCULATOR: the parser emits an immutable model only after exact input/result binding, and the React component uses bounded local input state, pure evaluation, labelled controls, formula text, polite result announcement, reset and visible semantic fallback. The component makes no IPC/provider call or durable write; focused browser evidence includes a zero-host-call assertion and no serious/critical axe finding. Metric context does not fact-check provider-authored claims or complete T20/T24 derived-metric behavior. T08 wires a production table-only publisher after semantic settlement; provider structured-intent ingress and CHART/SAFE_CALCULATOR publication remain open. Existing reads/stream are SERVED. No provider structured-intent ingress, media ingestion, Canvas controller, remembered-state route or Saved View route exists; the production publisher currently emits TABLE/TEXT_SLICE only. Saved Views default to declared inputs; an explicit opt-in may save bounded validated numeric values inside immutable ArtifactVersion content. Component state remains transient/non-submitting under B-40."
 nodes:
   - id: "session-supervisor"
     owner: "AgentSessionSupervisor (Feature 001)"
@@ -13,21 +13,22 @@ nodes:
   - id: "presentation-binder"
     owner: "PresentationBinder"
     kind: "daemon service"
-    responsibility: "Derive a RichPresentation from committed semantic text and validated PresentationIntent after commit"
-    implementation_status: "TARGET_ONLY"
+    responsibility: "After semantic commit, derive exact TABLE and UTF-8-bound TEXT_SLICE blocks; future chart/calculation blocks require canonical validated intent from T20; publish independently"
+    implementation_status: "CODE: T08 wires the semantic table baseline after commit; provider intent ingress and CHART/SAFE_CALCULATOR intent binding remain T20"
     inputs: ["committed AGENT message"]
     outputs: ["candidate document"]
   - id: "presentation-validator"
     owner: "domain-presentation crate"
     kind: "pure library"
-    responsibility: "Bounds, V1 allowlist, canonical bytes, digests, slice bindings, chart bindings, CalcAst"
-    implementation_status: "PARTIAL: checks exist inside storage-sqlite rich_presentations.rs for five baseline kinds"
+    responsibility: "Pure canonical-document, v1/v2 profile, source/provenance, chart and bounded CalcAst validation; initial calculator output must match an exact semantic numeric cell"
+    implementation_status: "CODE: domain-presentation owns renderer-v1/v2 Rust validation and SQLite calls it for publish/read; TypeScript parity is CODE through the shared corpus"
     inputs: ["document bytes", "semantic context"]
     outputs: ["validated document or typed rejection"]
   - id: "presentation-store"
     owner: "RichPresentationStore (Storage)"
     kind: "transaction boundary"
     responsibility: "Publish, idempotent replay, reads"
+    implementation_status: "CODE: exact deterministic replay returns the stored record/event; changed publication identity or document conflicts. New publish requires an active Workspace. Combined Conversation/publisher failure and blob crash-window coverage remain under T13."
     inputs: ["validated document"]
     outputs: ["committed presentation"]
   - id: "media-ingestion"
@@ -58,7 +59,7 @@ nodes:
   - id: "desktop-validator"
     owner: "rich-presentation.ts"
     kind: "component"
-    responsibility: "Defensive re-validation mirroring the Rust validator; fallback decision"
+    responsibility: "Defensive renderer-v1/v2 validation and parsing; map fully validated source-bound METRIC/CHART/SAFE_CALCULATOR blocks to registered host components, otherwise preserve complete semantic fallback"
     inputs: ["envelope", "semantic text", "preference"]
     outputs: ["validated presentation or null"]
   - id: "rich-view"
@@ -121,7 +122,9 @@ edges:
 transactions:
   - id: "tx-publish-presentation"
     owner: "RichPresentationStore"
-    atomic_records: ["rich_presentations row", "blob reference", "rich.presentation.published.v1", "idempotency receipt"]
+    atomic_records: ["rich_presentations row", "blob reference", "rich.presentation.published.v1"]
+    replay_identity: "deterministic presentation_id and event_id derived from the exact committed Workspace/message identity; the immutable row/event are the receipt; exact replay returns them, changed bytes or bindings conflict"
+    schema_migration: "none; reuse existing unique one-record-per-message storage"
     external_calls_inside: false
   - id: "tx-record-rejection"
     owner: "PresentationBinder via Storage"
@@ -137,6 +140,11 @@ external_boundaries:
     input_trust: "untrusted"
     timeout: "turn-bounded (Feature 001)"
     retry: "binder failure never retries the turn"
+  - id: "presentation-commit-boundary"
+    owner: "AgentSessionSupervisor and PresentationBinder"
+    input_trust: "committed AGENT message only; no uncommitted provider buffer"
+    ordering: "commit_conversation_agent_response succeeds before any presentation parsing or publication begins"
+    failure: "presentation failure is counted without content and dropped; committed message/turn/events remain unchanged"
   - id: "harness-file-output"
     owner: "MediaIngestionService"
     input_trust: "untrusted"
@@ -153,7 +161,7 @@ revision_0_3_review:
   status: "TARGET_PROPOSAL_BLOCKED"
   authority: "Feature 016 SPEC section 20; docs/ACP-PRESENTATION-PIPELINE-LLD.md; canonical owner schemas only"
   acceptance_gate: ["T25 completes cross-owner review of the selected Feature 007 Saved View direction", "T01 accepts/revises complete V1 AC set", "T02 promotes canonical contracts before implementation"]
-  baseline: "B-40 SAFE_CALCULATOR posture remains; executable Interactive Artifact Runtime stays PREVIEW_ONLY"
+  baseline: "B-40 SAFE_CALCULATOR posture remains; executable Interactive Artifact Runtime stays PREVIEW_ONLY. Rust validator CODE now checks renderer-v1/v2 and original calculator result binding; TypeScript parity and renderer-v2 publication remain unavailable"
   nodes:
     - id: "qualified-intent-ingress"
       owner: "AgentModule and Conversation"
@@ -179,7 +187,7 @@ revision_0_3_review:
       authority: "proposal only; Feature 007 decides whether its Artifact model can represent this without weakening Artifact invariants"
     - id: "contextual-canvas"
       owner: "Workbench (Feature 008)"
-      inputs: ["authorized current view or exact Saved View version", "source object identity", "declared RichPresentation defaults only"]
+      inputs: ["authorized current view or exact Saved View version", "source object identity", "declared RichPresentation defaults by default", "optional consented numeric input_snapshot matching exact input declarations"]
       outputs: ["contextual right-side Canvas tab", "focus/scroll return point"]
       authority: "proposal only; no new permanent sidebar destination or provider start"
   edges:

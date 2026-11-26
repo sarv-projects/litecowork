@@ -1,11 +1,11 @@
 # Implementation Plan - Intelligent Workspace Presentation Runtime
 
 **Feature:** 016 | **Spec revision:** 0.4 (proposed)
-**Status:** IN_REVIEW - revised end-to-end V1 proposal. The Saved View direction is owner-decided, but cross-owner review, T01 whole-scope acceptance and T02 contract promotion remain required before implementation.
+**Status:** IN_REVIEW - revised end-to-end V1 proposal. The Saved View direction is owner-decided, and A-84 records user-delegated implementation direction for the full current proposal. Scoped implementation proceeds under task-level contracts and allowed paths without changing lifecycle status. Feature 007 cross-owner ratification and T01 whole-scope formal acceptance remain open; T02 promotes the directed target contracts before affected code paths are implemented.
 
 ## 1. Delivery strategy
 
-Deliver one safe answer-to-view journey rather than a disconnected rich-renderer baseline followed by an optional extension. Record the owner scope, review the Feature 007 Saved View contract, then promote one canonical declarative profile and prove Rust/TypeScript parity. Implement semantic fallback and deterministic composition before optional provider ingress. Add bounded local interactions and the inline-to-Canvas controller. Saved Views persist only the committed view and declared defaults; changed calculator values remain transient under B-40. Optional Remember/Forget behavior remains separately gated by B-46/T22. Finish with replay, deletion, recovery, accessibility and packaged provider evidence. The approach remains local-first, chat-first and BYOA-first; no Environment provider is required for this presentation feature, but exact native provider/version rows still require qualification.
+Deliver one safe answer-to-view journey rather than a disconnected rich-renderer baseline followed by an optional extension. Record the user-directed scope, promote one canonical declarative profile and prove Rust/TypeScript parity. Implement semantic fallback and deterministic composition before any provider-specific ingress. Add bounded local interactions and the inline-to-Canvas controller. Saved Views persist the committed view by default; an explicit opt-in may include validated numeric inputs in immutable ArtifactVersion content without changing B-40 component behavior. Device-local Remember/Forget and ordinary-turn input sharing remain separately designed host operations. Finish with replay, deletion, recovery, accessibility and packaged provider evidence. The approach remains local-first, chat-first and BYOA-first; no Environment provider is required for this presentation feature, but exact native provider/version rows still require qualification.
 
 ### Language and module placement (optimization)
 
@@ -25,19 +25,19 @@ Existing `serde_json`, `serde_json_canonicalizer` and `sha2` cover the Rust need
 
 ```mermaid
 flowchart LR
-  T25[T25 owner direction + Saved View contract] --> REVIEW[Cross-owner review]
-  REVIEW --> T01[T01 revised V1 owner acceptance]
-  T01 --> T02[T02 cross-owner contract promotion]
+  A84[A-84 user-delegated implementation direction] --> T02[T02 canonical target contract promotion]
+  T25[T25 Saved View direction + contract] --> T02
+  T01[T01 formal whole-scope acceptance] -. release/lifecycle gate .-> T19[T19 VERIFIED]
   T02 --> T03[T03 Rust validator crate]
   T03 --> T04[T04 corpus parity]
   T03 --> T05[T05 CalcAst + reducer]
   T04 --> T06[T06 chart]
   T05 --> T07[T07 SAFE_CALCULATOR]
   T06 --> T07
-  T05 --> T08[T08 binder]
+  T05 --> T08[T08 binder: exact TABLE + TEXT_SLICE]
   T04 --> T09[T09 disable preference]
   T02 --> T10[T10 media Artifacts]
-  T01 --> T11[T11 inert interactive preview]
+  T02 --> T11[T11 inert interactive preview]
   T07 --> T12[T12 no-exec gate]
   T08 --> T13[T13 recovery]
   T10 --> T13
@@ -45,10 +45,11 @@ flowchart LR
   T12 & T13 & T14 --> T15[T15 traces]
   T15 --> T16[T16 E2E-11 both rows]
   T16 --> T17[T17 docs]
-  T17 & T18 & T24 --> T19[T19 revised V1 VERIFIED]
-  T06 --> T18[T18 Markdown degradation]
+  T17 & T18 & T24 & T01 --> T19
+  F001[Feature 001 committed semantic AGENT text] -.-> T18[T18 Markdown degradation]
   T18 --> T19
   T02 --> T20[T20 qualified ingress and intent contract]
+  T20 -->|validated ChartIntent / CalcIntent only| T08
   T20 --> T21[T21 shared Canvas controller]
   T21 --> T22[T22 optional persistence]
   T21 --> T23[T23 Saved View lifecycle + explicit new-turn modification]
@@ -62,10 +63,10 @@ flowchart LR
 
 | Phase | Tasks | Exit gate |
 |---|---|---|
-| 0 Saved View owner boundary | T25 | Product direction is decided; Feature 007 and cross-owner reviewers confirm the Artifact/Library representation, update/archive/retention contract and recovery details before T01/T02 |
-| 1 Revised V1 acceptance | T01 | Owner records accept/revise/defer for AC-001..AC-041 and B-40/B-46; no code begins before acceptance |
-| 2 Cross-owner contracts | T02 | RichPresentation, intent, errors/events, Saved View Artifact, Canvas/UI, privacy/deletion/backup and release contracts are promoted together |
-| 3 Validation and semantic output | T03-T05, T08-T09, T18, T20 | Shared Rust/TypeScript corpus, deterministic text fallback, bound data/metrics and qualified ingress work |
+| 0 Saved View design and user direction | T25 | Saved View product direction and bounded contract are recorded; cross-owner ratification continues in parallel and remains a release gate |
+| 1 Canonical target contract promotion | T02 | Under A-84, RichPresentation, intent, errors/events, Saved View Artifact, Canvas/UI and privacy/deletion/backup target contracts are aligned before their code paths; lifecycle status remains IN_REVIEW |
+| 2 Formal whole-scope acceptance | T01 | Repository owner records accept/revise/defer for AC-001..AC-041 and B-40/B-46. Implementation can proceed under A-84 without claiming acceptance; this gate is required before VERIFIED/release |
+| 3 Validation and semantic output | T03-T05, T08-T09, T18, T20 | Shared Rust/TypeScript corpus and deterministic committed-text publisher: T08 first emits exact TABLE and UTF-8-bound TEXT_SLICE blocks. T20 must separately provide qualified, validated ChartIntent/CalcIntent before T08 may emit CHART/SAFE_CALCULATOR. T18 is independent of chart rendering and consumes only committed semantic AGENT text. |
 | 4 Native registered views | T06-T07, T12, T14 | Chart/table, calculator and approved local controls meet accessibility/security/performance gates |
 | 5 Contextual Canvas and durable continuity | T21-T23 | Same controller across inline/Canvas; consented state and Saved View create/reopen/update receipts recover correctly |
 | 6 Media, Artifact posture and recovery | T10-T13 | Provenance media through Feature 007; inert executable-app preview; crash/replay/deletion recovery |
@@ -84,7 +85,7 @@ flowchart LR
 
 ## 5. Persistence, migration, rollout
 
-No migration or store choice is accepted by this proposal. `rich_presentations` remains immutable and message-bound. Remembered answer state and Saved View ArtifactVersion are separate records/owners. T22 must obtain an allocated migration and reconcile Workspace/Conversation deletion, Feature 017 backup/restore, consent, quota, authorization, receipts and old-write fences before persistent state can ship. T23 uses Feature 007 create/version/Library owner routes; Feature 016 never writes Artifact tables or blobs itself. Rollout requires a promoted renderer profile; older or unsupported clients use semantic fallback and never partially hydrate unknown state.
+No new migration is required for the optional Saved View `input_snapshot`: it is bounded content inside the existing immutable ArtifactVersion, not a second record. `rich_presentations` remains immutable and message-bound. Device-local remembered answer state and Saved View ArtifactVersion are separate records/owners. T22 still requires an explicitly allocated migration and reconciles Workspace/Conversation deletion, Feature 017 backup/restore, consent, quota, authorization, receipts and old-write fences before persistent device-local state can ship. T23 uses Feature 007 create/version/Library owner routes; Feature 016 never writes Artifact tables or blobs itself. Rollout requires a promoted renderer profile; older or unsupported clients use semantic fallback and never partially hydrate unknown state.
 
 ## 6. Operational risks
 

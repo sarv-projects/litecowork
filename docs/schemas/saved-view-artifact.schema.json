@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://litecowork.dev/schemas/saved-view-artifact-v1.schema.json",
   "title": "LiteCowork Saved View Artifact v1",
-  "$comment": "TARGET contract, 2026-11-17. The product owner selected Saved Views for V1 and authorized the Feature 007 B-21 amendment direction. The envelope intentionally contains no session-modified calculator values, preserving Feature 016 B-40's transient-only state boundary. Feature 016 T01/T02 and Feature 007 cross-owner review must promote the profile and its Rust/TypeScript validators before this schema is treated as executable or implementation-authoritative. Cross-field checks listed in Feature 007 contracts/saved-view.md are required in addition to JSON Schema.",
+  "$comment": "TARGET contract, updated 2026-11-24 under user-delegated direction A-84. Saved Views remain V1 under Feature 007 B-21. An optional input_snapshot is allowed only when the user explicitly opts in while saving; it contains declared numeric inputs only and is part of immutable ArtifactVersion content. It is absent by default. The component never persists or sends input state. Feature 007/016 cross-owner review and canonical Rust/TypeScript validators remain required before this schema is implementation-authoritative. Cross-field checks listed in Feature 007 contracts/saved-view.md are required in addition to JSON Schema.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -25,7 +25,22 @@
       "maxLength": 1048576
     },
     "rich_presentation": {
-      "$ref": "https://litecowork.dev/schemas/rich-presentation-v1.schema.json"
+      "$ref": "https://litecowork.dev/schemas/rich-presentation.schema.json"
+    },
+    "input_snapshot": {
+      "type": "array",
+      "description": "Optional, explicitly user-saved numeric control values. Omitted unless the user opts in. The owner validator must match each entry to exactly one declared numeric input in rich_presentation, require its declaration_digest to match, and enforce the input's minimum/maximum/step before accepting the ArtifactVersion.",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["input_id", "declaration_digest", "value"],
+        "properties": {
+          "input_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-]+$"},
+          "declaration_digest": {"$ref": "#/$defs/sha256_digest"},
+          "value": {"type": "number"}
+        },
+        "additionalProperties": false
+      }
     }
   },
   "$defs": {

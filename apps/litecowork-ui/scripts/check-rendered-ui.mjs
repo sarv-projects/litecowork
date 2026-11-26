@@ -70,10 +70,25 @@ function processIsRunning(child) {
 async function stopProcess(child) {
   if (!child?.pid) return;
   const signalTarget = process.platform === "win32" ? child.pid : -child.pid;
-  try {
-    process.kill(signalTarget, "SIGTERM");
-  } catch (error) {
-    if (error.code !== "ESRCH") throw error;
+  if (process.platform === "win32") {
+    // Chrome's renderer/network children can keep its isolated profile open after
+    // terminating only the parent PID. Kill this test-owned process tree before
+    // removing the temporary profile, so Windows does not leave Cookies locked.
+    const terminator = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    const result = await new Promise(resolveExit => {
+      terminator.once("error", error => resolveExit({ error }));
+      terminator.once("exit", (code, signal) => resolveExit({ code, signal }));
+    });
+    if (result.error && processIsRunning(child)) throw result.error;
+    if (result.code !== undefined && result.code !== 0 && processIsRunning(child)) {
+      throw new Error(`taskkill failed for test-owned process tree ${child.pid} (${result.code}).`);
+    }
+  } else {
+    try {
+      process.kill(signalTarget, "SIGTERM");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
   }
   await Promise.race([
     new Promise(resolveExit => {
@@ -729,6 +744,36 @@ async function runResourceChecks() {
   return checks;
 }
 
+async function runMarkdownChecks() {
+  const checks = [];
+  assert.equal(await evaluate("window.litecoworkHarness.mountMarkdownPreview()"), true);
+  await waitFor(() => evaluate("document.querySelector('.artifact-markdown-preview h1')?.textContent === 'Revenue summary'"), "Markdown renderer fixture");
+  assert.equal(await evaluate("document.querySelector('.artifact-markdown-table th[scope=col]')?.textContent"), "Month");
+  assert.equal(await evaluate("document.querySelector('.artifact-markdown-table td.align-right')?.textContent"), "12");
+  assert.equal(await evaluate("Boolean(document.querySelector('.artifact-markdown-preview ul li ul li'))"), true, "nested list retains its parent/child structure");
+  assert.equal(await evaluate("document.querySelectorAll('.artifact-markdown-preview hr').length"), 1);
+  await waitFor(() => evaluate("document.querySelector('.artifact-code-token-keyword')?.textContent === 'const'"), "lazy code highlighting");
+  assert.equal(await evaluate("document.querySelector('.artifact-markdown-code-toolbar > span')?.textContent"), "typescript");
+  assert.equal(await evaluate("document.querySelectorAll('.artifact-markdown-preview img, .artifact-markdown-preview a').length"), 0, "HTML/image syntax and unsafe links must remain inert text");
+  assert.equal(await evaluate("document.querySelector('.artifact-markdown-preview')?.textContent?.includes('[bad](javascript:run())')"), true);
+  checks.push("T18 Markdown renderer: GFM table, nested lists, rule, lazy highlighting and hostile text verified");
+
+  await evaluate(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async value => { window.__markdownCopiedText = value; } } })`);
+  await evaluate("window.litecoworkHarness.clearCalls()");
+  await clickButton("Copy");
+  await waitFor(() => evaluate("document.querySelector('.artifact-markdown-code-toolbar [role=status]')?.textContent === 'Copied'"), "clipboard success status");
+  assert.equal(await evaluate("window.__markdownCopiedText"), "const answer = 42; // total");
+  assert.deepEqual(await evaluate("window.litecoworkHarness.calls()"), [], "copy must not call the Operator or provider");
+  checks.push("T18 copy control: copies only the exact block after click and uses no IPC/provider call");
+
+  await evaluate(`Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("denied"); } } })`);
+  await clickButton("Copy");
+  await waitFor(() => evaluate("document.querySelector('.artifact-markdown-code-toolbar [role=status]')?.textContent === 'Copy unavailable'"), "clipboard denial status");
+  assert.equal(await evaluate("document.querySelector('.artifact-markdown-code-block pre code')?.textContent"), "const answer = 42; // total", "copy denial keeps source visible");
+  checks.push("T18 copy denial: reports unavailable and leaves exact code visible");
+  return checks;
+}
+
 async function runContextDocumentDeletionChecks() {
   const checks = [];
   await clickHarness("resetResource");
@@ -1134,6 +1179,67 @@ async function runConversationChecks() {
   await waitFor(() => evaluate("document.querySelector('.sidebar-recent-chats-wrap')?.textContent.includes('Conversation A')"), "saved Conversation in Recent Chats");
   assert.equal(await evaluate("document.querySelector('.sidebar-chat-item-row[aria-current=true]')?.textContent.includes('Conversation A')"), true, "the selected saved Conversation is marked in the compact sidebar");
   checks.push("the compact sidebar projects and marks the selected saved Conversation");
+
+  await clickButtonContaining(["settings"]);
+  await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'Settings'"), "Settings for presentation preference");
+  await evaluate("document.querySelector('button[data-control-id=nav-general]')?.click()");
+  await waitFor(() => evaluate("Boolean(document.querySelector('input[data-control-id=pref-rich-presentation]'))"), "formatted-answer display preference");
+  const preferenceAccessibility = await evaluate(`(() => {
+    const control = document.querySelector('input[data-control-id="pref-rich-presentation"]');
+    return {
+      checked: control?.checked ?? null,
+      label: document.getElementById(control?.getAttribute("aria-labelledby"))?.textContent.trim() ?? null,
+      described: Boolean(document.getElementById(control?.getAttribute("aria-describedby"))),
+    };
+  })()`);
+  assert.deepEqual(preferenceAccessibility, { checked: true, label: "Show formatted answers", described: true }, "the setting has a checked, named, described keyboard-operable control");
+  await evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.checked === false"), "keyboard disabling formatted answers");
+  assert.equal(await evaluate("JSON.parse(localStorage.getItem('litecowork.local-preferences.v1') ?? '{}').richPresentationEnabled"), false, "the disabled preference is saved locally");
+  await enterConversationPage({ richMode: "success" });
+  await waitFor(() => evaluate("document.querySelector('[data-testid=semantic-answer]')?.textContent.includes('Semantic answer remains available.')"), "saved Conversation opens with semantic answer while formatted views are disabled");
+  await new Promise(resolveDelay => setTimeout(resolveDelay, 150));
+  const disabledConversationCalls = await currentCalls();
+  assert.equal(disabledConversationCalls.filter(call => call.command === "get_rich_presentation").length, 0, "opening a saved Conversation with formatted answers disabled issues no optional presentation read");
+  assert.equal(await evaluate("document.querySelector('[data-testid=rich-answer]') === null"), true, "disabled preference keeps saved Conversation in semantic-only rendering");
+  checks.push("saved Conversation remains fully readable and issues no RichPresentation read while formatted answers are disabled");
+  await clickButtonContaining(["settings"]);
+  await waitFor(() => evaluate("document.querySelector('.breadcrumbs strong')?.textContent === 'Settings'"), "return to Settings after disabled saved Conversation check");
+  await evaluate("document.querySelector('button[data-control-id=nav-general]')?.click()");
+  await waitFor(() => evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.checked === false"), "disabled preference reloads in Settings");
+  await evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.checked === true"), "restoring formatted answers after the check");
+  assert.equal(await evaluate("JSON.parse(localStorage.getItem('litecowork.local-preferences.v1') ?? '{}').richPresentationEnabled"), true, "the setting can be re-enabled and remains local");
+  await evaluate(`(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+      if (key === 'litecowork.local-preferences.v1') throw new DOMException('blocked', 'QuotaExceededError');
+      return original.call(this, key, value);
+    };
+    window.__restoreLocalPreferenceStorage = () => { Storage.prototype.setItem = original; };
+  })()`);
+  await evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.checked === false"), "session-only preference after local storage rejection");
+  const persistenceFailure = await evaluate(`(() => ({
+    message: document.querySelector('[data-testid="local-preference-save-status"]')?.textContent.trim() ?? null,
+    role: document.querySelector('[data-testid="local-preference-save-status"]')?.getAttribute('role') ?? null,
+    savedValue: JSON.parse(localStorage.getItem('litecowork.local-preferences.v1') ?? '{}').richPresentationEnabled,
+  }))()`);
+  assert.deepEqual(persistenceFailure, {
+    message: 'This change is only active for this session because local storage is unavailable. It may reset when LiteCowork closes.',
+    role: 'status',
+    savedValue: true,
+  }, "a failed local write is disclosed without claiming it persisted");
+  await evaluate("window.__restoreLocalPreferenceStorage?.()");
+  await evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.focus()");
+  await pressKey("Space");
+  await waitFor(() => evaluate("document.querySelector('input[data-control-id=pref-rich-presentation]')?.checked === true"), "restoring the persisted preference after storage recovery");
+  assert.equal(await evaluate("document.querySelector('[data-testid=local-preference-save-status]') === null"), true, "a successful save clears the session-only warning");
+  checks.push("Settings exposes a named, described formatted-answer switch with keyboard, local persistence and truthful session-only failure feedback");
+
   return checks;
 }
 
@@ -1627,6 +1733,65 @@ async function openWorkspaceRootScanScenario(scenario) {
   await clickHarness("clearCalls");
 }
 
+async function runPresentationChecks() {
+  const checks = [];
+  await clickHarness("clearCalls");
+  await clickHarness("mountRichPresentation", "chart");
+  await waitFor(() => evaluate("Boolean(document.querySelector('[data-testid=rich-chart] svg[role=img]'))"), "validated v2 chart rendered in React");
+  assert.equal(await evaluate("document.querySelector('.rich-response-chart-summary')?.textContent"), "Revenue by Month is reported in INR at lakh scale for the monthly interval with sum aggregation.", "the chart exposes its exact semantic summary");
+  assert.equal(await evaluate("document.querySelector('[data-testid=rich-chart-context]')?.textContent.replace(/\\s+/g, ' ').trim()"), "Unit: INR; scale: lakh scale; interval: monthly; aggregation: sum aggregation.", "the chart displays every validated context field");
+  assert.equal(await evaluate("document.querySelector('.rich-response-chart-toggle')?.getAttribute('aria-expanded')"), "false", "the source table starts collapsed");
+  assert.equal(await evaluate("document.querySelector('.rich-response-chart-table')?.hidden"), true, "the source table is initially hidden");
+  await evaluate("document.querySelector('.rich-response-chart-toggle')?.focus()");
+  await pressKey("Enter", 0, true);
+  await waitFor(() => evaluate("document.querySelector('.rich-response-chart-toggle')?.getAttribute('aria-expanded') === 'true' && document.querySelector('.rich-response-chart-table')?.hidden === false"), "keyboard-operated exact chart data table");
+  assert.deepEqual(await evaluate(`(() => {
+    const table = document.querySelector('.rich-response-chart-table table');
+    return {
+      headers: [...table.querySelectorAll('thead th')].map(cell => cell.textContent),
+      rows: [...table.querySelectorAll('tbody tr')].map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent)),
+    };
+  })()`), { headers: ["Month", "Revenue"], rows: [["Jan", "12"], ["Feb", "18"]] }, "the accessible table shows exact source data in source order");
+  assert.equal(await evaluate("window.litecoworkHarness.calls().length"), 0, "chart display and its local table toggle make no host or provider calls");
+  await evaluate("document.querySelector('.rich-response-chart-toggle')?.focus()");
+  await pressKey("Enter", 0, true);
+  await waitFor(() => evaluate("document.querySelector('.rich-response-chart-toggle')?.getAttribute('aria-expanded') === 'false' && document.querySelector('.rich-response-chart-visual')?.hidden === false"), "keyboard return to chart");
+  checks.push("renderer-v2 source-bound chart renders as host SVG, exposes an accessible summary and keyboard-toggle exact source table, and performs no host calls");
+
+  await clickHarness("mountRichPresentation", "metric");
+  await waitFor(() => evaluate("Boolean(document.querySelector('[data-testid=rich-metric] data[value=\"18\"]'))"), "validated v2 metric rendered in React");
+  assert.equal(await evaluate("document.querySelector('.rich-response-metric-label')?.textContent"), "Revenue — Feb", "metric label comes from source header and row");
+  assert.equal(await evaluate("document.querySelector('.rich-response-metric-value')?.textContent"), "18", "metric value preserves the exact numeric value");
+  assert.equal(await evaluate("document.querySelector('[data-testid=rich-metric-context]')?.textContent.replace(/\\s+/g, ' ').trim()"), "Unit: INR; scale: lakh scale; interval: monthly; aggregation: sum aggregation.", "the metric displays every validated context field");
+  assert.equal(await evaluate("window.litecoworkHarness.calls().length"), 0, "metric rendering makes no host or provider calls");
+  checks.push("renderer-v2 metric renders only its bound source value with a host-derived label and no host calls");
+
+  await clickHarness("clearCalls");
+  await clickHarness("mountRichPresentation", "calculator");
+  await waitFor(() => evaluate("Boolean(document.querySelector('[data-testid=rich-calculator] input[type=number]'))"), "validated v2 calculator rendered in React");
+  assert.equal(await evaluate("document.querySelector('[data-testid=rich-calculator] label')?.textContent"), "Denominator", "the source-bound input has an explicit label");
+  assert.equal(await evaluate("document.querySelector('[data-testid=rich-calculator] output[aria-live=polite]')?.textContent.trim()"), "2", "initial output matches the validator-attested source result");
+  assert.equal(await evaluate("document.querySelector('[data-testid=rich-calculator-fallback]')?.textContent"), "The estimated amount is shown below.", "the complete semantic fallback stays visible below the calculator");
+  assert.equal(await evaluate("document.querySelector('.rich-response-calculator-formula')?.textContent.replace(/\\s+/g, ' ').trim()"), "Formula: (24 ÷ Denominator)", "the registered formula is shown as readable inert text");
+  assert.equal(await evaluate("window.litecoworkHarness.calls().length"), 0, "calculator initialization makes no host or provider calls");
+  await evaluate(`(() => {
+    const input = document.querySelector('[data-testid="rich-calculator"] input[type="number"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "0");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor(() => evaluate("document.querySelector('[data-testid=rich-calculator] output')?.textContent.trim() === 'Cannot calculate with these values'"), "divide-by-zero calculator fallback");
+  assert.equal(await evaluate("document.querySelector('[data-testid=rich-calculator-fallback]')?.textContent"), "The estimated amount is shown below.", "invalid arithmetic preserves the complete fallback");
+  await evaluate("document.querySelector('.rich-response-calculator-reset')?.focus()");
+  await pressKey("Enter", 0, true);
+  await waitFor(() => evaluate("document.querySelector('[data-testid=rich-calculator] input')?.value === '12' && document.querySelector('[data-testid=rich-calculator] output')?.textContent.trim() === '2'"), "keyboard reset to exact initial input and result");
+  const calculatorA11y = await evaluate("window.litecoworkHarness.auditRichCalculatorA11y()");
+  assert.deepEqual(calculatorA11y.seriousOrCritical, [], `axe reports no serious or critical calculator issues: ${JSON.stringify(calculatorA11y.seriousOrCritical)}`);
+  assert.equal(await evaluate("window.litecoworkHarness.calls().length"), 0, "input changes, reset and accessibility audit make no host or provider calls");
+  checks.push("validated v2 calculator recalculates locally, handles division by zero, resets by keyboard, keeps fallback visible, passes serious/critical axe checks, and makes no host calls");
+  return checks;
+}
+
 async function runWorkspaceRootScanChecks() {
   const checks = [];
   const limitationCopy = await (async () => {
@@ -2073,6 +2238,8 @@ try {
   await waitFor(() => evaluate("Boolean(document.querySelector('.harness-ready'))"), "rendered React harness", 60_000);
 
   const checkGroups = new Map([
+    ["markdown", runMarkdownChecks],
+    ["presentation", runPresentationChecks],
     ["resource", runResourceChecks],
     ["context-document-deletion", runContextDocumentDeletionChecks],
     ["conversation", runConversationChecks],
@@ -2107,7 +2274,14 @@ try {
 } finally {
   socket?.close();
   await Promise.allSettled([stopProcess(browser), stopProcess(vite)]);
-  await rm(userData, { recursive: true, force: true });
+  try {
+    await rm(userData, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
+  } catch (error) {
+    const cleanupMessage = `Temporary rendered-UI profile cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
+    failure = failure
+      ? new Error(`${failure.message}\n${cleanupMessage}`, { cause: failure })
+      : new Error(cleanupMessage, { cause: error });
+  }
 }
 
 if (failure) throw failure;

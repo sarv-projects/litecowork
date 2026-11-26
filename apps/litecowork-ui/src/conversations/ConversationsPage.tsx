@@ -255,12 +255,13 @@ function ConversationTaskPromotionDialog({
   </dialog>;
 }
 
-function ConversationMessageContent({ workspaceId, conversationId, message, autoLoadRich, presentationEpoch }: {
+function ConversationMessageContent({ workspaceId, conversationId, message, autoLoadRich, presentationEpoch, richPresentationEnabled }: {
   workspaceId: string;
   conversationId: string;
   message: ConversationMessageView;
   autoLoadRich: boolean;
   presentationEpoch: number;
+  richPresentationEnabled: boolean;
 }) {
   const element = useRef<HTMLDivElement | null>(null);
   const [requestedKey, setRequestedKey] = useState<string | null>(null);
@@ -278,7 +279,7 @@ function ConversationMessageContent({ workspaceId, conversationId, message, auto
   const presentation = cacheKey !== null && loadedPresentation?.key === cacheKey ? loadedPresentation.presentation : null;
 
   useEffect(() => {
-    if (!autoLoadRich || cacheKey === null || !element.current || typeof IntersectionObserver === "undefined") return;
+    if (!richPresentationEnabled || !autoLoadRich || cacheKey === null || !element.current || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) {
         setRequestedKey(current => current === cacheKey ? current : cacheKey);
@@ -287,11 +288,11 @@ function ConversationMessageContent({ workspaceId, conversationId, message, auto
     }, { rootMargin: "320px" });
     observer.observe(element.current);
     return () => observer.disconnect();
-  }, [autoLoadRich, cacheKey]);
+  }, [autoLoadRich, cacheKey, richPresentationEnabled]);
 
-  const shouldLoad = Boolean(cacheKey && requested);
+  const shouldLoad = Boolean(richPresentationEnabled && cacheKey && requested);
   useEffect(() => {
-    if (!shouldLoad || !reference || !presentationId || !semanticContentDigest || cacheKey === null || status !== "IDLE") return;
+    if (!richPresentationEnabled || !shouldLoad || !reference || !presentationId || !semanticContentDigest || cacheKey === null || status !== "IDLE") return;
     let current = true;
     setLoadState({ key: cacheKey, status: "LOADING" });
     void invoke<unknown>("get_rich_presentation", {
@@ -326,23 +327,29 @@ function ConversationMessageContent({ workspaceId, conversationId, message, auto
   // auto-load message may move out of the recent viewport set while its fetch is in
   // flight; neither event should strand its state at LOADING.
   // `status` is intentionally omitted: IDLE -> LOADING must not cancel itself.
-  }, [cacheKey, conversationId, message.message_id, presentationId, requestedKey, retry, semanticContentDigest, text, workspaceId]);
+  }, [cacheKey, conversationId, message.message_id, presentationId, requestedKey, retry, richPresentationEnabled, semanticContentDigest, text, workspaceId]);
 
   useEffect(() => {
+    if (!richPresentationEnabled) {
+      setLoadedPresentation(null);
+      setLoadState(null);
+      setRequestedKey(null);
+      return;
+    }
     setLoadedPresentation(current => current?.key === cacheKey ? current : null);
     setLoadState(current => current?.key === cacheKey ? current : null);
     setRequestedKey(current => current === cacheKey ? current : null);
-  }, [cacheKey]);
+  }, [cacheKey, richPresentationEnabled]);
 
   if (!reference || message.role !== "AGENT") return <div className="conversation-message-body">{messageText(message)}</div>;
   const availability = reference.availability;
-  const canFetch = availability === "AVAILABLE";
+  const canFetch = richPresentationEnabled && availability === "AVAILABLE";
   return <div className="conversation-message-body" ref={element}>
-    <RichResponseView semanticText={text || messageText(message)} presentation={presentation} />
-    {!presentation && canFetch && status === "IDLE" && !shouldLoad && <button type="button" className="conversation-rich-load" onClick={() => cacheKey && setRequestedKey(cacheKey)}>Show formatted response</button>}
-    {status === "LOADING" && <p className="conversation-rich-status" role="status">Loading formatted response…</p>}
-    {status === "FAILED" && <p className="conversation-rich-status" role="note">Formatted view unavailable; the complete text response is still shown. <button type="button" onClick={() => { if (!cacheKey) return; setLoadState(null); setRequestedKey(cacheKey); setRetry(value => value + 1); }}>Retry</button></p>}
-    {!canFetch && <p className="conversation-rich-status" role="note">Formatted view unavailable; the complete text response is still shown.</p>}
+    <RichResponseView semanticText={text || messageText(message)} presentation={presentation} richPresentationEnabled={richPresentationEnabled} />
+    {richPresentationEnabled && !presentation && canFetch && status === "IDLE" && !shouldLoad && <button type="button" className="conversation-rich-load" onClick={() => cacheKey && setRequestedKey(cacheKey)}>Show formatted response</button>}
+    {richPresentationEnabled && status === "LOADING" && <p className="conversation-rich-status" role="status">Loading formatted response…</p>}
+    {richPresentationEnabled && status === "FAILED" && <p className="conversation-rich-status" role="note">Formatted view unavailable; the complete text response is still shown. <button type="button" onClick={() => { if (!cacheKey) return; setLoadState(null); setRequestedKey(cacheKey); setRetry(value => value + 1); }}>Retry</button></p>}
+    {richPresentationEnabled && !canFetch && <p className="conversation-rich-status" role="note">Formatted view unavailable; the complete text response is still shown.</p>}
   </div>;
 }
 
@@ -371,6 +378,7 @@ type ConversationAgentMutationNotice = {
 export function ConversationsPage({
   workspaceId,
   workspaceName,
+  richPresentationEnabled = true,
   operatorReady,
   executionReady,
   runtimeLifecycleLoading,
@@ -396,6 +404,7 @@ export function ConversationsPage({
 }: {
   workspaceId: string;
   workspaceName: string;
+  richPresentationEnabled?: boolean;
   operatorReady: boolean;
   executionReady: boolean;
   runtimeLifecycleLoading: boolean;
@@ -1227,7 +1236,7 @@ export function ConversationsPage({
   const transientTurns = Object.values(currentPresentationStream?.turns ?? {})
     .filter((turn): turn is TransientTurn => turn.conversationId === selectedId)
     .sort((a, b) => a.turnId.localeCompare(b.turnId) || a.retryOrdinal - b.retryOrdinal);
-  const automaticRichIds = new Set((currentSnapshot?.messages ?? []).filter(message => message.role === "AGENT" && message.rich_presentation?.availability === "AVAILABLE").slice(-6).map(message => message.message_id));
+  const automaticRichIds = new Set(richPresentationEnabled ? (currentSnapshot?.messages ?? []).filter(message => message.role === "AGENT" && message.rich_presentation?.availability === "AVAILABLE").slice(-6).map(message => message.message_id) : []);
   const activeStatus = currentSnapshot?.active_turn?.status;
   const [sendingTurn, setSendingTurn] = useState(false);
   const [turnError, setTurnError] = useState<string | null>(null);
@@ -1841,6 +1850,7 @@ export function ConversationsPage({
                           message={message}
                           autoLoadRich={automaticRichIds.has(message.message_id)}
                           presentationEpoch={richPresentationEpochs.get(message.message_id) ?? 0}
+                          richPresentationEnabled={richPresentationEnabled}
                         />
                         {source && <button
                           ref={element => {

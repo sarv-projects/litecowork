@@ -3,20 +3,33 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { createServer, createServerModuleRunnerTransport } from "vite";
+import { ModuleRunner } from "vite/module-runner";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const vite = await createServer({
   configFile: false,
   root: packageRoot,
-  plugins: [react()],
+  // Static SSR assertions need TSX conversion, not React Refresh/Babel work.
+  plugins: [],
   server: { middlewareMode: true, hmr: false, ws: false },
   optimizeDeps: { noDiscovery: true, include: [] },
   appType: "custom",
 });
-const { AgentCatalogSettings } = await vite.ssrLoadModule("/src/agents/AgentCatalogSettings.tsx");
-after(async () => vite.close());
+const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+// This Windows Node worker can exceed Vite's default fetchModule timeout on the full UI graph.
+transport.timeout = 120_000;
+const runner = new ModuleRunner({
+  transport,
+  hmr: false,
+  root: vite.config.root,
+  sourcemapInterceptor: false,
+});
+after(async () => {
+  await runner.close();
+  await vite.close();
+});
+const { AgentCatalogSettings } = await runner.import("/src/agents/AgentCatalogSettings.tsx");
 
 const profiles = [
   { agentProfileId: "profile-primary", providerKey: "PRIMARY", displayName: "Primary Agent", endpoints: [], discoveredAt: "2026-10-15T00:00:00Z", observations: [] },

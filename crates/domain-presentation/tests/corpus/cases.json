@@ -1,0 +1,125 @@
+{
+  "corpus_version": 1,
+  "cases": [
+    {
+      "id": "v1-table-valid",
+      "scenario": "V1_TABLE_VALID",
+      "expected": { "accept": true, "reason": "renderer-v1 table exactly repeats committed semantic Markdown" }
+    },
+    {
+      "id": "v2-metric-and-chart-valid",
+      "scenario": "V2_METRIC_CHART_VALID",
+      "expected": { "accept": true, "reason": "renderer-v2 metric and chart bind exact data and source-grounded unit, scale, interval and aggregation" }
+    },
+    {
+      "id": "v2-metric-and-chart-missing-context-rejected",
+      "scenario": "V2_METRIC_CHART_MISSING_CONTEXT",
+      "expected": { "accept": false, "reason": "raw-cell metrics and charts without explicit context are not renderable" }
+    },
+    {
+      "id": "v2-metric-and-chart-ungrounded-context-rejected",
+      "scenario": "V2_METRIC_CHART_UNGROUNDED_CONTEXT",
+      "expected": { "accept": false, "reason": "context and source measure labels must occur in the exact committed semantic summary" }
+    },
+    {
+      "id": "v2-metric-and-chart-unsafe-context-rejected",
+      "scenario": "V2_METRIC_CHART_UNSAFE_CONTEXT",
+      "expected": { "accept": false, "reason": "context labels containing control or bidirectional override characters are refused" }
+    },
+    {
+      "id": "v2-metric-and-chart-invalid-enum-rejected",
+      "scenario": "V2_METRIC_CHART_INVALID_ENUM",
+      "expected": { "accept": false, "reason": "scale and aggregation come from the closed registered profile" }
+    },
+    {
+      "id": "v2-metric-and-chart-context-token-substring-rejected",
+      "scenario": "V2_METRIC_CHART_TOKEN_SUBSTRING",
+      "expected": { "accept": false, "reason": "a unit substring inside another token does not ground the declared unit" }
+    },
+    {
+      "id": "v2-calculator-valid",
+      "scenario": "V2_CALCULATOR_VALID",
+      "expected": { "accept": true, "reason": "bounded calculator initial value matches its exact semantic result cell" }
+    },
+    {
+      "id": "v1-hostile-semantic-text-valid",
+      "scenario": "V1_HOSTILE_TEXT_VALID",
+      "expected": { "accept": true, "reason": "semantic text remains authoritative and is rendered by the inert Markdown path" }
+    },
+    {
+      "id": "v1-unknown-kind-rejected",
+      "scenario": "V1_UNKNOWN_KIND",
+      "expected": { "accept": false, "reason": "unknown renderer kinds fail closed" }
+    },
+    {
+      "id": "v1-host-bound-kinds-rejected",
+      "scenario": "V1_REJECTED_KINDS",
+      "expected": { "accept": false, "reason": "host projections, actions, media, MCP apps and renderer-v2 blocks are not renderer-v1 blocks" }
+    },
+    {
+      "id": "v2-unsupported-kinds-rejected",
+      "scenario": "V2_REJECTED_KINDS",
+      "expected": { "accept": false, "reason": "unregistered, host-bound and not-yet-supported v2 kinds fail closed" }
+    },
+    {
+      "id": "v2-metric-out-of-range-rejected",
+      "scenario": "V2_METRIC_BAD_INDEX",
+      "expected": { "accept": false, "reason": "metric source cell indexes must be within the exact semantic table" }
+    },
+    {
+      "id": "v2-calculator-mismatched-result-rejected",
+      "scenario": "V2_CALCULATOR_BAD_RESULT",
+      "expected": { "accept": false, "reason": "initial calculator output must match the bound semantic result within the canonical tolerance" }
+    },
+    {
+      "id": "maximum-nesting-valid",
+      "scenario": "MAX_NESTING_VALID",
+      "expected": { "accept": true, "reason": "the maximum supported block depth is inclusive" }
+    },
+    {
+      "id": "excess-nesting-rejected",
+      "scenario": "EXCESS_NESTING_REJECTED",
+      "expected": { "accept": false, "reason": "block nesting beyond the shared depth limit is rejected" }
+    },
+    {
+      "id": "maximum-block-count-valid",
+      "scenario": "MAX_BLOCK_COUNT_VALID",
+      "expected": { "accept": true, "reason": "the maximum supported block count is inclusive" }
+    },
+    {
+      "id": "excess-block-count-rejected",
+      "scenario": "EXCESS_BLOCK_COUNT_REJECTED",
+      "expected": { "accept": false, "reason": "block count beyond the shared limit is rejected" }
+    },
+    {
+      "id": "maximum-document-bytes-valid",
+      "scenario": "MAX_DOCUMENT_BYTES_VALID",
+      "expected": { "accept": true, "reason": "a canonical document exactly at 512 KiB is accepted" }
+    },
+    {
+      "id": "excess-document-bytes-rejected",
+      "scenario": "EXCESS_DOCUMENT_BYTES_REJECTED",
+      "expected": { "accept": false, "reason": "documents above the shared 512 KiB cap are rejected" }
+    },
+    {
+      "id": "non-finite-number-rejected",
+      "scenario": "NON_FINITE_JSON_REJECTED",
+      "expected": { "accept": false, "reason": "JSON numbers that become non-finite in binary64 are rejected" }
+    },
+    {
+      "id": "maximum-safe-integer-valid",
+      "scenario": "MAX_SAFE_INTEGER_VALID",
+      "expected": { "accept": true, "reason": "the exact binary64 safe-integer endpoint remains valid" }
+    },
+    {
+      "id": "unsafe-integer-token-rejected",
+      "scenario": "UNSAFE_INTEGER_TOKEN_REJECTED",
+      "expected": { "accept": false, "reason": "integer-valued JSON numbers outside binary64 safe-integer range are rejected" }
+    },
+    {
+      "id": "unsafe-exponent-integer-rejected",
+      "scenario": "UNSAFE_EXPONENT_INTEGER_REJECTED",
+      "expected": { "accept": false, "reason": "integer-valued exponent numbers follow the same safe-integer boundary" }
+    }
+  ]
+}

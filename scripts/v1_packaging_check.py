@@ -117,17 +117,37 @@ def check_icons(report: Report) -> None:
     )
 
 
-def check_daemon_binary(report: Report) -> None:
-    candidates = [
-        REPOSITORY_ROOT / "target" / "release" / "litecoworkd",
-        REPOSITORY_ROOT / "target" / "debug" / "litecoworkd",
+def daemon_binary_candidates(platform_name: str | None = None) -> list[Path]:
+    """Return expected daemon outputs for the selected native build host."""
+    selected_platform = platform_name or sys.platform
+    if selected_platform.startswith("win") or selected_platform.lower().startswith("windows"):
+        executable = "litecoworkd.exe"
+        sidecar = "litecoworkd-x86_64-pc-windows-msvc.exe"
+    else:
+        executable = "litecoworkd"
+        sidecar = "litecoworkd-x86_64-unknown-linux-gnu"
+    return [
+        TAURI_DIRECTORY / "binaries" / sidecar,
+        TAURI_DIRECTORY / "target" / "release" / executable,
+        REPOSITORY_ROOT / "target" / "release" / executable,
+        REPOSITORY_ROOT / "target" / "debug" / executable,
     ]
-    built = next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def find_built_daemon(platform_name: str | None = None) -> Path | None:
+    return next(
+        (candidate for candidate in daemon_binary_candidates(platform_name) if candidate.is_file()),
+        None,
+    )
+
+
+def check_daemon_binary(report: Report) -> None:
+    built = find_built_daemon()
     if built is None:
         report.add(
             "daemon binary",
             False,
-            "no built litecoworkd binary was found under target/release or target/debug",
+            "no built litecoworkd binary or platform sidecar was found",
         )
         return
     completed = subprocess.run(
@@ -153,11 +173,7 @@ def check_daemon_binary(report: Report) -> None:
 
 def check_recovery_surface(report: Report) -> None:
     """The backup/restore recovery surface must be reachable from the daemon."""
-    candidates = [
-        REPOSITORY_ROOT / "target" / "release" / "litecoworkd",
-        REPOSITORY_ROOT / "target" / "debug" / "litecoworkd",
-    ]
-    built = next((candidate for candidate in candidates if candidate.is_file()), None)
+    built = find_built_daemon()
     if built is None:
         report.add("backup recovery surface", False, "no built litecoworkd binary was found")
         return
@@ -183,20 +199,44 @@ def check_recovery_surface(report: Report) -> None:
     )
 
 
-def check_state_directory_permissions(report: Report) -> None:
-    """The local state directory must be private to the owning OS user."""
-    runtime_source = (REPOSITORY_ROOT / "apps" / "litecoworkd" / "src" / "runtime.rs").read_text(
-        encoding="utf-8"
-    )
-    problems: list[str] = []
-    if "0o700" not in runtime_source:
-        problems.append("runtime.rs does not create a 0700 state directory")
-    if "0o600" not in runtime_source:
-        problems.append("runtime.rs does not restrict the database file to 0600")
+def check_state_directory_permissions(report: Report, built: Path | None = None) -> None:
+    """Ask the native daemon to inspect its disposable directory and file."""
+    selected_daemon = built or find_built_daemon()
+    if selected_daemon is None:
+        report.add(
+            "state directory permissions",
+            False,
+            "no native daemon binary is available to run the privacy self-check",
+        )
+        return
+    try:
+        completed = subprocess.run(
+            [str(selected_daemon), "self-test-state-directory"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        report.add(
+            "state directory permissions",
+            False,
+            "the daemon privacy self-check could not complete",
+        )
+        return
+    try:
+        result = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        result = None
+    directory_private = isinstance(result, dict) and result.get("state_directory_private") is True
+    state_file_private = isinstance(result, dict) and result.get("state_file_private") is True
+    passed = completed.returncode == 0 and directory_private and state_file_private
     report.add(
         "state directory permissions",
-        not problems,
-        "; ".join(problems) if problems else "the daemon creates a 0700 state directory and a 0600 database",
+        passed,
+        "daemon verified a disposable private directory and state file"
+        if passed
+        else "daemon could not verify a disposable private directory and state file",
     )
 
 

@@ -2892,6 +2892,7 @@ mod tests {
         child.resume().expect("resume disposable child");
         let mut server = OpenCodeServer {
             child,
+            process_identity_ref: String::new(),
             address,
             password: b"test-password".to_vec(),
             request_timeout: Duration::from_secs(15),

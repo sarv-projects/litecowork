@@ -8,6 +8,9 @@ import { ResourceRevisionEditor } from "../../src/resources/ResourceRevisionEdit
 import { LibraryNavigationDialog, libraryNavigationMainIsInert, useLibraryNavigation } from "../../src/resources/library-navigation";
 import { WorkspaceFirstRun } from "../../src/workspaces/WorkspaceFirstRun";
 import { AgentCatalogSettings } from "../../src/agents/AgentCatalogSettings";
+import { StructuredTextPreview } from "../../src/artifacts/StructuredTextPreview";
+import { RichResponseView } from "../../src/presentation/RichResponseView";
+import { parseRichPresentationDocument, type ValidatedRichPresentation } from "../../src/presentation/rich-presentation";
 import "../../src/styles.css";
 
 type WorkspaceFirstRunProps = ComponentProps<typeof WorkspaceFirstRun>;
@@ -161,6 +164,72 @@ const richDocument = async (messageId = "message-a") => {
     },
   };
 };
+
+async function richPresentationFixture(kind: "metric" | "chart" | "calculator"):
+  Promise<{ semanticText: string; presentation: ValidatedRichPresentation | null }> {
+  const messageId = "presentation-fixture-message";
+  const metricSummary = "Revenue for Feb is reported in INR at lakh scale for the monthly interval with sum aggregation.";
+  const chartSummary = "Revenue by Month is reported in INR at lakh scale for the monthly interval with sum aggregation.";
+  const semanticText = kind === "calculator"
+    ? "Denominator\n| Input | Value |\n| --- | --- |\n| Denominator | 12 |\n| Estimated amount | 2 |\nThe estimated amount is shown below."
+    : `${kind === "metric" ? metricSummary : chartSummary}\n\n| Month | Revenue |\n| --- | --- |\n| Jan | 12 |\n| Feb | 18 |`;
+  const table = kind === "calculator"
+    ? "| Input | Value |\n| --- | --- |\n| Denominator | 12 |\n| Estimated amount | 2 |"
+    : "| Month | Revenue |\n| --- | --- |\n| Jan | 12 |\n| Feb | 18 |";
+  const allBytes = new TextEncoder().encode(semanticText);
+  const slice = (text: string, occurrence = 0) => {
+    let startCharacter = -1;
+    let cursor = 0;
+    for (let index = 0; index <= occurrence; index += 1) {
+      startCharacter = semanticText.indexOf(text, cursor);
+      if (startCharacter < 0) throw new Error("Presentation fixture source table is missing.");
+      cursor = startCharacter + text.length;
+    }
+    const start = new TextEncoder().encode(semanticText.slice(0, startCharacter)).byteLength;
+    const end = start + new TextEncoder().encode(text).byteLength;
+    return { start_utf8_byte: start, end_utf8_byte_exclusive: end, slice_digest: "" };
+  };
+  const bind = async (text: string, key: "table_slice" | "semantic_table_slice", occurrence = 0) => {
+    const range = slice(text, occurrence);
+    range.slice_digest = await bytesToDigest(allBytes.subarray(range.start_utf8_byte, range.end_utf8_byte_exclusive));
+    return { source: "SEMANTIC_TABLE", [key]: range };
+  };
+  let block: Record<string, unknown>;
+  if (kind === "metric") {
+    block = {
+      kind: "METRIC", binding: { ...await bind(table, "table_slice"), row_index: 1, column_index: 1 },
+      semantics: { unit: "INR", scale: "LAKH", time_interval: "monthly", aggregation: "SUM" },
+      accessible_summary: metricSummary,
+    };
+  } else if (kind === "chart") {
+    block = {
+      kind: "CHART", chart_kind: "LINE", binding: await bind(table, "semantic_table_slice"),
+      category_column_index: 0, series_column_indexes: [1], accessible_summary: chartSummary,
+      semantics: { unit: "INR", scale: "LAKH", time_interval: "monthly", aggregation: "SUM" },
+    };
+  } else {
+    const inputTable = "| Input | Value |\n| --- | --- |\n| Denominator | 12 |";
+    block = {
+      kind: "SAFE_CALCULATOR",
+      inputs: [{ id: "denominator", label: "Denominator", binding: { ...await bind(inputTable, "table_slice"), row_index: 0, column_index: 1 }, min_value: 0, max_value: 100, step: 1 }],
+      formula_ast: { kind: "BINARY_OP", operator: "/", left: { kind: "LITERAL", value: 24 }, right: { kind: "VARIABLE", input_id: "denominator" } },
+      result_binding: { ...await bind(table, "table_slice"), row_index: 1, column_index: 1 },
+      output_format: { style: "NUMBER" }, fallback_text: "The estimated amount is shown below.",
+    };
+  }
+  const document = {
+    schema_version: 1,
+    renderer_contract_version: 2,
+    presentation_id: "presentation-fixture",
+    message_id: messageId,
+    semantic_content_digest: semanticDigest,
+    root_blocks: [block],
+    citations: [],
+    actions: [],
+    block_provenance: [{ block_path: "/0", origin: "MODEL_INTENT", resource_refs: [], artifact_refs: [], evidence_refs: [], verification_refs: [] }],
+  };
+  return { semanticText, presentation: await parseRichPresentationDocument(document, semanticText, messageId, semanticDigest) };
+}
 
 const resourceA = {
   resourceId: "resource-a",
@@ -1101,6 +1170,9 @@ type HarnessApi = {
   configureWorkspaceFirstRun: (scenario: WorkspaceFirstRunScenario) => true;
   workspaceActionCounts: () => { startRuntime: number; refreshRuntime: number; refreshWorkspaces: number; createWorkspace: number };
   mountProductionApp: (scenario: WorkspaceAppScenario) => true;
+  mountRichPresentation: (kind: "metric" | "chart" | "calculator") => Promise<true>;
+  auditRichCalculatorA11y: () => Promise<{ seriousOrCritical: Array<{ id: string; impact: string; description: string }> }>;
+  mountMarkdownPreview: () => true;
   mountAgentCatalogDefaultPrompt: () => true;
   selectAgentCatalogWorkspace: (workspaceId: string) => true;
   setResourceUploadState: (state: "FAILED" | "EXPIRED" | "ELAPSED_OPEN") => true;
@@ -1154,6 +1226,8 @@ function Harness() {
   const [showLibraryNavigationGuard, setShowLibraryNavigationGuard] = useState(false);
   const [workspaceFirstRunProps, setWorkspaceFirstRunProps] = useState<WorkspaceFirstRunProps | null>(null);
   const [showProductionApp, setShowProductionApp] = useState(false);
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+  const [presentationFixture, setPresentationFixture] = useState<{ semanticText: string; presentation: ValidatedRichPresentation | null } | null>(null);
   const [productionAppMount, setProductionAppMount] = useState(0);
   const [agentCatalogFixture, setAgentCatalogFixture] = useState<AgentCatalogSettingsProps | null>(null);
   const [lastDisabledAgentBindingId, setLastDisabledAgentBindingId] = useState<string | null>(null);
@@ -1279,6 +1353,7 @@ function Harness() {
       state.emptyConversationSnapshot = emptySnapshot;
       state.appScenario = null;
       setShowProductionApp(false);
+      setPresentationFixture(null);
       setConversationWorkspace(workspaceId);
       setConversationOperatorReady(operatorReady);
       setConversationMount(value => value + 1);
@@ -1424,6 +1499,7 @@ function Harness() {
       return true;
     },
     mountProductionApp(scenario) {
+      setPresentationFixture(null);
       state.appScenario = scenario;
       state.appRuntimeStatusCalls = 0;
       state.appWorkspaceListCalls = 0;
@@ -1503,6 +1579,36 @@ function Harness() {
       setShowProductionApp(true);
       setProductionAppMount(value => value + 1);
       return true;
+    },
+    mountMarkdownPreview() {
+      setShowLibraryNavigationGuard(false);
+      setShowProductionApp(false);
+      setWorkspaceFirstRunProps(null);
+      setAgentCatalogFixture(null);
+      setPresentationFixture(null);
+      setShowMarkdownPreview(true);
+      return true;
+    },
+    async mountRichPresentation(kind) {
+      setShowLibraryNavigationGuard(false);
+      setShowProductionApp(false);
+      setShowMarkdownPreview(false);
+      setWorkspaceFirstRunProps(null);
+      setAgentCatalogFixture(null);
+      const fixture = await richPresentationFixture(kind);
+      setPresentationFixture(fixture);
+      return true;
+    },
+    async auditRichCalculatorA11y() {
+      const target = document.querySelector('[data-testid="rich-calculator"]');
+      if (!target) throw new Error("The validated calculator is not mounted.");
+      const { default: axe } = await import("axe-core");
+      const report = await axe.run(target);
+      return {
+        seriousOrCritical: report.violations
+          .filter(item => item.impact === "serious" || item.impact === "critical")
+          .map(item => ({ id: item.id, impact: item.impact ?? "unknown", description: item.description })),
+      };
     },
     mountAgentCatalogDefaultPrompt() {
       setShowLibraryNavigationGuard(false);
@@ -1751,6 +1857,14 @@ function Harness() {
   };
 
   if (showLibraryNavigationGuard) return <LibraryNavigationFixture />;
+  if (presentationFixture) return <main className="harness-ready" data-presentation-fixture>
+    <h1>Validated presentation fixture</h1>
+    <RichResponseView semanticText={presentationFixture.semanticText} presentation={presentationFixture.presentation} />
+  </main>;
+  if (showMarkdownPreview) return <main className="harness-ready">
+    <h1>Markdown renderer fixture</h1>
+    <StructuredTextPreview text={'# Revenue summary\n\nRevenue is **up** in the sample.\n\n| Month | Value |\n| :--- | ---: |\n| Jan | 12 |\n| Feb | 18 |\n\n- Drivers\n  - Repeat purchases\n\n---\n\n```typescript\nconst answer = 42; // total\n```\n\n<img src=x onerror="run()"> ![remote](https://tracker.invalid/pixel) [bad](javascript:run())'} mediaType="text/markdown" />
+  </main>;
   if (showProductionApp) return <App key={productionAppMount} />;
   if (agentCatalogFixture) return <main className="harness-ready" data-agent-catalog-workspace={agentCatalogFixture.workspaceId}>
     <output data-last-disabled-agent-binding={lastDisabledAgentBindingId ?? ""}>{lastDisabledAgentBindingId ?? ""}</output>

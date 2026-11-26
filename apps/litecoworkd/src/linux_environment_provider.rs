@@ -7,15 +7,18 @@
 //! Environment state, produce an attestation, admit an Attempt, or persist a Resource.
 
 use crate::environment_isolation::{
-    IsolationIdentity, PreparedRootDigests, normalized_policy_digest_from_json,
+    HeldProviderScopeIdentity, IsolationIdentity, IsolationStoreError, PreparationJournalEntry,
+    PreparationJournalPhase, PreparedRootDigests, RuntimeLocalPreparationJournal,
+    normalized_policy_digest_from_json,
 };
 use domain_environment::environment::{
     EnvironmentClass, EnvironmentHealth, EnvironmentLifetime, EnvironmentRecord,
     EnvironmentSharingScope, EnvironmentStatus, FilesystemIsolation, NetworkMode, ProcessIsolation,
 };
 use linux_process_scope::{
-    AgentEnvironment, BubblewrapLaunchSpec, CandidateCaptureSpec, LaunchSpec, MAX_SCRATCH_BYTES,
-    ManagedScope, ReadOnlyRuntimeMount, ResourceLimits, ScopeError, SystemdCommands,
+    AgentEnvironment, BubblewrapLaunchSpec, CandidateCaptureSpec, HeldEnvironmentScope, LaunchSpec,
+    MAX_SCRATCH_BYTES, ManagedScope, ProcessScopeIdentity, ReadOnlyRuntimeMount, ResourceLimits,
+    ScopeError, SystemdCommands,
     output_channel::{CandidateFrame, CandidateRejection, FrameError},
 };
 use local_environment_staging::{PreparationStatus, PreparedEnvironment, PreparedResourcePin};
@@ -459,6 +462,117 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
+/// Narrow process-scope surface needed to bind a live held Environment to the private
+/// preparation journal. The abstraction also lets the daemon test the journal bridge
+/// without claiming that a fake process scope proves Linux enforcement.
+trait HeldScopeIdentitySource {
+    fn unit_name(&self) -> &str;
+    fn capture_process_scope_identity(&self) -> Result<ProcessScopeIdentity, ScopeError>;
+    fn recheck_process_scope_identity(
+        &self,
+        expected: &ProcessScopeIdentity,
+    ) -> Result<(), ScopeError>;
+}
+
+impl HeldScopeIdentitySource for HeldEnvironmentScope {
+    fn unit_name(&self) -> &str {
+        HeldEnvironmentScope::unit_name(self)
+    }
+
+    fn capture_process_scope_identity(&self) -> Result<ProcessScopeIdentity, ScopeError> {
+        HeldEnvironmentScope::capture_process_scope_identity(self)
+    }
+
+    fn recheck_process_scope_identity(
+        &self,
+        expected: &ProcessScopeIdentity,
+    ) -> Result<(), ScopeError> {
+        HeldEnvironmentScope::recheck_process_scope_identity(self, expected)
+    }
+}
+
+#[derive(Debug)]
+enum HeldScopeJournalError {
+    Journal(IsolationStoreError),
+    Scope(ScopeError),
+}
+
+impl From<IsolationStoreError> for HeldScopeJournalError {
+    fn from(error: IsolationStoreError) -> Self {
+        Self::Journal(error)
+    }
+}
+
+impl From<ScopeError> for HeldScopeJournalError {
+    fn from(error: ScopeError) -> Self {
+        Self::Scope(error)
+    }
+}
+
+/// Capture the exact live held-scope process/cgroup identity and durably bind it to the
+/// existing Runtime-private journal entry. The borrowed scope remains owned by the
+/// caller if capture or journal persistence fails; callers must retain it until cleanup
+/// has positive quiescence evidence.
+fn record_held_scope_identity<S: HeldScopeIdentitySource>(
+    journal: &RuntimeLocalPreparationJournal,
+    attempt_id: &str,
+    scope: &S,
+) -> Result<PreparationJournalEntry, HeldScopeJournalError> {
+    let process = scope.capture_process_scope_identity()?;
+    let held = HeldProviderScopeIdentity {
+        unit_name: scope.unit_name().to_owned(),
+        leader_pid: process.leader_pid,
+        leader_start_time_ticks: process.leader_start_time_ticks,
+        process_scope_digest: process.process_scope_digest,
+    };
+    let entry = journal.record_scope_held(attempt_id, held.clone())?;
+    if entry.phase != PreparationJournalPhase::ScopeHeld || entry.held_scope.as_ref() != Some(&held)
+    {
+        return Err(HeldScopeJournalError::Journal(
+            IsolationStoreError::JournalConflict,
+        ));
+    }
+    Ok(entry)
+}
+
+/// Reload the journaled held identity and re-observe the same live scope immediately
+/// before the Attempt admission transaction. The caller must not insert a provider or
+/// storage side effect between this check and the admission commit.
+fn recheck_journaled_held_scope_before_admission<S: HeldScopeIdentitySource>(
+    journal: &RuntimeLocalPreparationJournal,
+    attempt_id: &str,
+    scope: &S,
+) -> Result<(), HeldScopeJournalError> {
+    let entry = journal.load(attempt_id)?.ok_or_else(|| {
+        HeldScopeJournalError::Journal(IsolationStoreError::JournalTransition(
+            "held-scope identity is missing before admission",
+        ))
+    })?;
+    if entry.phase != PreparationJournalPhase::ScopeHeld {
+        return Err(HeldScopeJournalError::Journal(
+            IsolationStoreError::JournalTransition(
+                "process identity recheck requires the pre-admission held-scope phase",
+            ),
+        ));
+    }
+    let Some(held) = entry.held_scope else {
+        return Err(HeldScopeJournalError::Journal(
+            IsolationStoreError::JournalConflict,
+        ));
+    };
+    if scope.unit_name() != held.unit_name {
+        return Err(HeldScopeJournalError::Journal(
+            IsolationStoreError::JournalConflict,
+        ));
+    }
+    scope.recheck_process_scope_identity(&ProcessScopeIdentity {
+        leader_pid: held.leader_pid,
+        leader_start_time_ticks: held.leader_start_time_ticks,
+        process_scope_digest: held.process_scope_digest,
+    })?;
+    Ok(())
+}
+
 /// Prepare a bounded candidate-capture launch plan from canonical Environment state.
 ///
 /// The `EnvironmentRecord` and `PreparedEnvironment` must already have been loaded or
@@ -658,6 +772,7 @@ fn valid_identity(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment_isolation::PreparationJournalIntent;
     use domain_environment::environment::{
         AttemptId, BudgetCeiling, BudgetEnforcement, BudgetEnforcementPolicy,
         EnvironmentBackupPolicy, EnvironmentClass, EnvironmentConfig, EnvironmentHealth,
@@ -667,7 +782,7 @@ mod tests {
         ResourceId, ResourceLimits as DomainResourceLimits, ResourceRevisionId, ResourceScope,
         RuntimeId, RuntimeIncarnationId, TaskId, WorkspaceId,
     };
-    use linux_process_scope::ReadOnlyRuntimeMount;
+    use linux_process_scope::{ProcessScopeIdentity, ReadOnlyRuntimeMount, ScopeError};
     use local_environment_staging::{PinnedInput, StagingLimits, stage_inputs};
     use sha2::{Digest, Sha256};
     use std::{
@@ -1182,5 +1297,148 @@ mod tests {
             .cancel_and_wait(Duration::from_secs(1))
             .expect("cancel waits for scope cleanup");
         assert!(state.lock().unwrap().killed);
+    }
+
+    fn preparation_journal_test_intent() -> PreparationJournalIntent {
+        let digest = |value: &[u8]| format!("sha256:{}", hex::encode(Sha256::digest(value)));
+        PreparationJournalIntent {
+            attempt_id: "attempt-journal-1".to_owned(),
+            environment_id: "environment-journal-1".to_owned(),
+            workspace_id: "workspace-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            step_id: "step-1".to_owned(),
+            runtime_id: "runtime-1".to_owned(),
+            runtime_incarnation_id: "incarnation-1".to_owned(),
+            provider_scope_id: "0123456789abcdef0123456789abcdef".to_owned(),
+            admission_idempotency_key: "admit-journal-1".to_owned(),
+            request_digest: digest(b"request"),
+            normalized_policy_digest: digest(b"policy"),
+            pinned_input_set_digest: digest(b"inputs"),
+            readable_root_set_digest: digest(b"readable"),
+            writable_root_set_digest: digest(b"writable"),
+        }
+    }
+
+    fn preparation_process_identity() -> ProcessScopeIdentity {
+        ProcessScopeIdentity {
+            leader_pid: 1234,
+            leader_start_time_ticks: 5678,
+            process_scope_digest: content_digest(b"held process scope"),
+        }
+    }
+
+    struct FakeHeldScopeIdentitySource {
+        unit_name: String,
+        identity: Mutex<ProcessScopeIdentity>,
+        last_rechecked: Mutex<Option<ProcessScopeIdentity>>,
+    }
+
+    impl FakeHeldScopeIdentitySource {
+        fn new(unit_name: String, identity: ProcessScopeIdentity) -> Self {
+            Self {
+                unit_name,
+                identity: Mutex::new(identity),
+                last_rechecked: Mutex::new(None),
+            }
+        }
+    }
+
+    impl HeldScopeIdentitySource for FakeHeldScopeIdentitySource {
+        fn unit_name(&self) -> &str {
+            &self.unit_name
+        }
+
+        fn capture_process_scope_identity(&self) -> Result<ProcessScopeIdentity, ScopeError> {
+            Ok(self.identity.lock().unwrap().clone())
+        }
+
+        fn recheck_process_scope_identity(
+            &self,
+            expected: &ProcessScopeIdentity,
+        ) -> Result<(), ScopeError> {
+            *self.last_rechecked.lock().unwrap() = Some(expected.clone());
+            if &*self.identity.lock().unwrap() == expected {
+                Ok(())
+            } else {
+                Err(ScopeError::Unsupported(
+                    "fake held process identity changed".to_owned(),
+                ))
+            }
+        }
+    }
+
+    #[test]
+    fn journaled_held_scope_identity_is_persisted_and_rechecked_before_admission() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1").unwrap();
+        let intent = preparation_journal_test_intent();
+        journal.begin(intent.clone()).unwrap();
+        let scope_identity = preparation_process_identity();
+        let scope = FakeHeldScopeIdentitySource::new(
+            format!("litecowork-attempt-{}.scope", intent.provider_scope_id),
+            scope_identity.clone(),
+        );
+
+        let entry = record_held_scope_identity(&journal, &intent.attempt_id, &scope).unwrap();
+
+        assert_eq!(entry.phase, PreparationJournalPhase::ScopeHeld);
+        assert_eq!(
+            entry.held_scope,
+            Some(HeldProviderScopeIdentity {
+                unit_name: scope.unit_name.clone(),
+                leader_pid: scope_identity.leader_pid,
+                leader_start_time_ticks: scope_identity.leader_start_time_ticks,
+                process_scope_digest: scope_identity.process_scope_digest.clone(),
+            })
+        );
+        recheck_journaled_held_scope_before_admission(&journal, &intent.attempt_id, &scope)
+            .unwrap();
+        assert_eq!(*scope.last_rechecked.lock().unwrap(), Some(scope_identity));
+    }
+
+    #[test]
+    fn journaled_held_scope_recheck_refuses_changed_live_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1").unwrap();
+        let intent = preparation_journal_test_intent();
+        journal.begin(intent.clone()).unwrap();
+        let original_identity = preparation_process_identity();
+        let scope = FakeHeldScopeIdentitySource::new(
+            format!("litecowork-attempt-{}.scope", intent.provider_scope_id),
+            original_identity,
+        );
+        record_held_scope_identity(&journal, &intent.attempt_id, &scope).unwrap();
+        scope.identity.lock().unwrap().leader_start_time_ticks += 1;
+
+        let result =
+            recheck_journaled_held_scope_before_admission(&journal, &intent.attempt_id, &scope);
+
+        assert!(matches!(
+            result,
+            Err(HeldScopeJournalError::Scope(ScopeError::Unsupported(_)))
+        ));
+    }
+
+    #[test]
+    fn journaled_held_scope_recheck_requires_scope_held_phase() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = RuntimeLocalPreparationJournal::open(temp.path(), "runtime-1").unwrap();
+        let intent = preparation_journal_test_intent();
+        journal.begin(intent.clone()).unwrap();
+        let scope = FakeHeldScopeIdentitySource::new(
+            format!("litecowork-attempt-{}.scope", intent.provider_scope_id),
+            preparation_process_identity(),
+        );
+
+        let result =
+            recheck_journaled_held_scope_before_admission(&journal, &intent.attempt_id, &scope);
+
+        assert!(matches!(
+            result,
+            Err(HeldScopeJournalError::Journal(
+                IsolationStoreError::JournalTransition(_)
+            ))
+        ));
+        assert_eq!(*scope.last_rechecked.lock().unwrap(), None);
     }
 }

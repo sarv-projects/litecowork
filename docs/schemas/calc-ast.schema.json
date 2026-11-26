@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://litecowork.dev/schemas/calc-ast.schema.json",
+  "title": "LiteCowork bounded CalcAst v1",
+  "description": "Canonical declarative arithmetic AST referenced by RichPresentation SAFE_CALCULATOR. Structural validation is supplemented by the owner validator: maximum 64 nodes and depth 12, finite literals, declared input references, function arity, CLAMP lower <= upper, ROUND digits an integer from -6 through 6 when supplied, and finite intermediate/result checks. ROUND uses nearest value with ties away from zero.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "LITERAL"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "input_id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "VARIABLE"
+        },
+        "input_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "operator",
+        "left",
+        "right"
+      ],
+      "properties": {
+        "kind": {
+          "const": "BINARY_OP"
+        },
+        "operator": {
+          "enum": [
+            "+",
+            "-",
+            "*",
+            "/",
+            "%"
+          ]
+        },
+        "left": {
+          "$ref": "#"
+        },
+        "right": {
+          "$ref": "#"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "operator",
+        "operand"
+      ],
+      "properties": {
+        "kind": {
+          "const": "UNARY_OP"
+        },
+        "operator": {
+          "const": "-"
+        },
+        "operand": {
+          "$ref": "#"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "function",
+        "arguments"
+      ],
+      "properties": {
+        "kind": {
+          "const": "FUNCTION"
+        },
+        "function": {
+          "enum": [
+            "MIN",
+            "MAX",
+            "ROUND",
+            "ABS",
+            "CLAMP"
+          ]
+        },
+        "arguments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "function": {
+                "enum": [
+                  "MIN",
+                  "MAX"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "minItems": 2,
+                "maxItems": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "function": {
+                "const": "ROUND"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "minItems": 1,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "function": {
+                "const": "ABS"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "minItems": 1,
+                "maxItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "function": {
+                "const": "CLAMP"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "arguments": {
+                "minItems": 3,
+                "maxItems": 3
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

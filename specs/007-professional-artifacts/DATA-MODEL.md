@@ -14,7 +14,7 @@ Identities and lifecycles stay in the canonical owner documents. This file lists
 - Format capability matrix (accepted target interface, not yet in source): daemon-owned static table per media type (SPEC §5); not persisted per Artifact.
 - Saved View (TARGET amendment): an Artifact with `kind=SAVED_VIEW`, media type `application/vnd.litecowork.saved-view+json`, and canonical content described in [`contracts/saved-view.md`](contracts/saved-view.md) and [`docs/schemas/saved-view-artifact.schema.json`](../../docs/schemas/saved-view-artifact.schema.json). It has no separate table or ID.
 - Saved View source lineage (TARGET amendment): exact Workspace, Conversation, committed Message and RichPresentation IDs/digests; the semantic fallback and RichPresentation snapshot are content bytes, while the source link remains provenance only and is not a live dependency edge.
-- Saved View input state (TARGET amendment): the immutable RichPresentation's declared defaults are part of its snapshot. No session-modified calculator values or separate input-state record are captured; this preserves Feature 016 B-40.
+- Saved View input state (TARGET amendment; USER-DELEGATED direction A-84, cross-owner review open): by default the ArtifactVersion carries only declared RichPresentation defaults. If the user explicitly opts into `Include current numeric values` or `Save current values`, the envelope may carry up to eight `{input_id, declaration_digest, value}` items matching exact closed numeric input declarations and bounds. Component-local state remains transient; no separate input-state table or event is created. A new-answer update clears the prior snapshot unless compatible declarations and values are explicitly reviewed and re-saved.
 
 ## Relations
 
@@ -22,7 +22,7 @@ Workspace is the security boundary. Child records carry workspace id. A Conversa
 
 ## Lifecycle
 
-Create and settle through the transactions in WIRING.yaml. External effects happen after commit. Terminal states are explicit. Unknown is not success. A Saved View create uses the existing B-30 atomic transaction and may start `SAVED` only for the explicit `RICH_PRESENTATION_SAVED_VIEW` source; updates from a new committed presentation append ArtifactVersion/ResourceRevision pairs using both expected versions and the owner receipt. Calculator values changed during a session remain transient under B-40.
+Create and settle through the transactions in WIRING.yaml. External effects happen after commit. Terminal states are explicit. Unknown is not success. A Saved View create uses the existing B-30 atomic transaction and may start `SAVED` only for the explicit `RICH_PRESENTATION_SAVED_VIEW` source. Creation or explicit `Save current values` appends ArtifactVersion/ResourceRevision pairs using both expected versions and the owner receipt. The current numeric snapshot is optional Artifact content; saving/opening never grants agent-send authority.
 
 ## Persistence and events
 

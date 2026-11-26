@@ -1,21 +1,29 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { transformWithEsbuild } from "vite";
 
-const vite = await createServer({
-  configFile: false,
-  root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
-  server: { middlewareMode: true, hmr: false, ws: false },
-  optimizeDeps: { noDiscovery: true, include: [] },
-  appType: "custom",
-});
-const { NativePermissionCard } = await vite.ssrLoadModule("/src/needs-you/NativePermissionCard.tsx");
-after(async () => vite.close());
+const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+const tempDir = await mkdtemp(join(projectRoot, ".tmp-native-permission-card-"));
+after(async () => rm(tempDir, { recursive: true, force: true }));
+
+// This is a static-markup contract test. Remove only the component's stylesheet import so
+// Vite does not need to start a server or process CSS; the production build owns CSS coverage.
+const componentPath = join(projectRoot, "src/needs-you/NativePermissionCard.tsx");
+const componentSource = await readFile(componentPath, "utf8");
+assert.ok(componentSource.includes('import "./native-permission.css";'));
+const { code } = await transformWithEsbuild(
+  componentSource.replace('import "./native-permission.css";', ""),
+  "NativePermissionCard.tsx",
+  { loader: "tsx", jsx: "automatic" },
+);
+const compiledPath = join(tempDir, "NativePermissionCard.mjs");
+await writeFile(compiledPath, code);
+const { NativePermissionCard } = await import(pathToFileURL(compiledPath).href);
 
 const prompt = {
   workspaceId: "workspace-1",

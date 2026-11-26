@@ -416,6 +416,7 @@ fn spawned_daemon_replays_conversation_create_after_lost_ack_and_journal_reopen(
         workspace_id: workspace_id.clone(),
         title: normalized_title,
         request_id: CONVERSATION_CREATE_KEY.to_owned(),
+        first_turn: None,
     };
     let first_journal = ConversationCreateJournal::new(&app_data_directory);
     first_journal

@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { createServer, createServerModuleRunnerTransport } from "vite";
+import { ModuleRunner } from "vite/module-runner";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const panelPath = "/src/workbench/WorkbenchPanel.tsx";
@@ -14,13 +14,25 @@ const panelPath = "/src/workbench/WorkbenchPanel.tsx";
 const vite = await createServer({
   configFile: false,
   root: packageRoot,
-  plugins: [react()],
+  // Static SSR needs Vite's TSX conversion, not React Refresh/Babel work.
+  plugins: [],
   optimizeDeps: { noDiscovery: true },
   server: { middlewareMode: true, hmr: false, ws: false },
   appType: "custom",
 });
-const { WorkbenchPanel, TerminalPane, ReviewPane, ActivityPane } = await vite.ssrLoadModule(panelPath);
-after(async () => vite.close());
+const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+transport.timeout = 120_000;
+const runner = new ModuleRunner({
+  transport,
+  hmr: false,
+  root: vite.config.root,
+  sourcemapInterceptor: false,
+});
+after(async () => {
+  await runner.close();
+  await vite.close();
+});
+const { WorkbenchPanel, TerminalPane, ReviewPane, ActivityPane } = await runner.import(panelPath);
 
 const render = node => renderToStaticMarkup(createElement(Fragment, null, node));
 

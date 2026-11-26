@@ -3,19 +3,21 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
 import { createServer } from "vite";
 
 const vite = await createServer({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
+  // SSR tests only need Vite's built-in esbuild TSX transform. The React
+  // refresh plugin adds Babel work that can push this large import graph past
+  // Vite's module-runner transport timeout in the Node test worker.
+  plugins: [],
   server: { middlewareMode: true, hmr: false },
   optimizeDeps: { noDiscovery: true, include: [] },
   appType: "custom",
 });
-const { AgentCatalogSettings } = await vite.ssrLoadModule("/src/agents/AgentCatalogSettings.tsx");
 after(async () => vite.close());
+const { AgentCatalogSettings } = await vite.ssrLoadModule("/src/agents/AgentCatalogSettings.tsx");
 
 function renderOpenCodeCatalog(bindings = [], selectedDefaultLeadBindingId = null) {
   return renderToStaticMarkup(createElement(AgentCatalogSettings, {

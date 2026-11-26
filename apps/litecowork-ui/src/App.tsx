@@ -587,7 +587,7 @@ function App() {
   }, [localPreferences]);
   const changeLocalPreferences = useCallback((next: LocalPreferences) => {
     setLocalPreferences(next);
-    saveLocalPreferences(browserPreferenceStorage(), next);
+    return saveLocalPreferences(browserPreferenceStorage(), next);
   }, []);
   const [isDraggingWorkbench, setIsDraggingWorkbench] = useState(false);
 
@@ -2653,6 +2653,7 @@ function App() {
             key={selectedWorkspaceId}
             workspaceId={selectedWorkspaceId}
             workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"}
+            richPresentationEnabled={localPreferences.richPresentationEnabled}
             workspaceDefaultAgentBindingId={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.defaultAgentBindingId ?? null}
             operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)}
             executionReady={isRuntimeExecutionReady({

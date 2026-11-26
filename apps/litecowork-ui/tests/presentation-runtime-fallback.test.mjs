@@ -3,24 +3,36 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { createServer, createServerModuleRunnerTransport } from "vite";
+import { ModuleRunner } from "vite/module-runner";
 
 // The production component and its validator are loaded through Vite so the test exercises
-// the real module graph (CSS imports included) rather than a re-implemented copy.
+// the real module graph (CSS imports included) rather than a re-implemented copy. Static SSR
+// needs TSX conversion, not the React Refresh/Babel transform used by browser HMR.
 const vite = await createServer({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
+  plugins: [],
   server: { middlewareMode: true, hmr: false },
   optimizeDeps: { noDiscovery: true, include: [] },
   appType: "custom",
 });
-const { PresentationRuntime } = await vite.ssrLoadModule("/src/presentation/PresentationRuntime.tsx");
-const { parsePresentationItem, projectPresentationEntries } = await vite.ssrLoadModule(
+const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+transport.timeout = 120_000;
+const runner = new ModuleRunner({
+  transport,
+  hmr: false,
+  root: vite.config.root,
+  sourcemapInterceptor: false,
+});
+after(async () => {
+  await runner.close();
+  await vite.close();
+});
+const { PresentationRuntime } = await runner.import("/src/presentation/PresentationRuntime.tsx");
+const { parsePresentationItem, projectPresentationEntries } = await runner.import(
   "/src/presentation/presentation-types.ts",
 );
-after(async () => vite.close());
 
 function item(overrides = {}) {
   return {

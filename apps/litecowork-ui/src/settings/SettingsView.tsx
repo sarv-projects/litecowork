@@ -32,7 +32,7 @@ export type SettingsCategory =
 
 export type SettingsViewProps = {
   localPreferences: LocalPreferences;
-  onChangeLocalPreferences: (next: LocalPreferences) => void;
+  onChangeLocalPreferences: (next: LocalPreferences) => boolean | void;
   runtime: RuntimeStatus | null;
   runtimeLifecycle: RuntimeLifecycleView | null;
   runtimeLifecycleLoading: boolean;
@@ -107,6 +107,7 @@ export function SettingsView(props: SettingsViewProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("workspaces");
   const [archiveConfirmationFor, setArchiveConfirmationFor] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<{ workspaceId: string; text: string } | null>(null);
+  const [localPreferenceSaveFailed, setLocalPreferenceSaveFailed] = useState(false);
   const runtimeHealth = deriveRuntimeHealthRows(
     {
       operatorReady: props.runtime?.operatorReady ?? false,
@@ -117,9 +118,11 @@ export function SettingsView(props: SettingsViewProps) {
   );
 
   // General display preferences are LOCAL_PREF: applied at the document root by App and persisted locally.
-  const { theme, density, textScale, reducedMotion } = props.localPreferences;
-  const updatePreference = (patch: Partial<LocalPreferences>) =>
-    props.onChangeLocalPreferences({ ...props.localPreferences, ...patch });
+  const { theme, density, textScale, reducedMotion, richPresentationEnabled } = props.localPreferences;
+  const updatePreference = (patch: Partial<LocalPreferences>) => {
+    const persisted = props.onChangeLocalPreferences({ ...props.localPreferences, ...patch });
+    setLocalPreferenceSaveFailed(persisted === false);
+  };
 
   const selectedWorkspace = props.workspaces.find(ws => ws.workspaceId === props.selectedWorkspaceId);
   const renameDraftText =
@@ -210,6 +213,10 @@ export function SettingsView(props: SettingsViewProps) {
                 </p>
               </header>
 
+              {localPreferenceSaveFailed && <p role="status" className="settings-badge warning" data-testid="local-preference-save-status">
+                This change is only active for this session because local storage is unavailable. It may reset when LiteCowork closes.
+              </p>}
+
               <ShortcutList />
 
               <section className="settings-card">
@@ -284,6 +291,27 @@ export function SettingsView(props: SettingsViewProps) {
                         type="checkbox"
                         checked={reducedMotion}
                         onChange={e => updatePreference({ reducedMotion: e.target.checked })}
+                      />
+                      <span className="settings-toggle-slider" />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="settings-row">
+                  <div className="settings-row-info">
+                    <span className="settings-row-label" id="pref-rich-presentation-label">Show formatted answers</span>
+                    <span className="settings-row-desc" id="pref-rich-presentation-description">
+                      Show charts, tables, and other validated views when available. Turn this off to read the complete answer as text. Your messages and provider requests do not change.
+                    </span>
+                  </div>
+                  <div className="settings-row-action">
+                    <label className="settings-toggle">
+                      <input data-control-id="pref-rich-presentation"
+                        type="checkbox"
+                        aria-labelledby="pref-rich-presentation-label"
+                        aria-describedby="pref-rich-presentation-description"
+                        checked={richPresentationEnabled}
+                        onChange={e => updatePreference({ richPresentationEnabled: e.target.checked })}
                       />
                       <span className="settings-toggle-slider" />
                     </label>

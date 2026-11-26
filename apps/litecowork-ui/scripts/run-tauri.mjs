@@ -8,6 +8,20 @@ export function tauriBuildArgs(args, hostPlatform = process.platform) {
   const result = [...args];
   const target = targetArgument(args);
   const targetPlatform = target ? platformForRustTarget(target) ?? hostPlatform : hostPlatform;
+  if (targetPlatform === 'win32' && !args.includes('--no-bundle')) {
+    const requested = bundleArguments(args);
+    if (requested.present) {
+      if (requested.values.length === 0) {
+        throw new Error('Windows bundles must select nsis or msi explicitly');
+      }
+      const unsupported = requested.values.filter((value) => !['nsis', 'msi'].includes(value));
+      if (unsupported.length > 0) {
+        throw new Error(`Windows bundles support nsis and msi only; unsupported: ${unsupported.join(', ')}`);
+      }
+    } else {
+      result.push('--bundles', 'nsis', 'msi');
+    }
+  }
   if (targetPlatform === 'linux' && !args.includes('--no-bundle')) {
     const requested = bundleArguments(args);
     if (requested.present) {

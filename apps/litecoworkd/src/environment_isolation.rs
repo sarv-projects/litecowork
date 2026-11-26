@@ -1051,7 +1051,16 @@ fn open_existing_preparation_journal_file(path: &Path) -> Result<File, Isolation
             path,
             rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
             rustix::fs::Mode::empty(),
-        )?;
+        )
+        .map_err(|error| {
+            if error == rustix::io::Errno::LOOP {
+                IsolationStoreError::InvalidRecord(
+                    "preparation journal file is not a regular file".into(),
+                )
+            } else {
+                IsolationStoreError::Io(std::io::Error::from(error))
+            }
+        })?;
         Ok(File::from(descriptor))
     }
     #[cfg(windows)]
@@ -1885,14 +1894,16 @@ mod tests {
         fs::rename(&canonical, &saved).expect("move original entry");
         symlink(&saved, &canonical).expect("replace canonical entry with symlink");
 
-        assert!(matches!(
-            journal.list_pending(),
-            Err(IsolationStoreError::InvalidRecord(_))
-        ));
-        assert!(matches!(
-            journal.load(&intent.attempt_id),
-            Err(IsolationStoreError::InvalidRecord(_))
-        ));
+        let listed = journal.list_pending();
+        assert!(
+            matches!(listed, Err(IsolationStoreError::InvalidRecord(_))),
+            "symlink entry returned an unexpected listing error: {listed:?}"
+        );
+        let loaded = journal.load(&intent.attempt_id);
+        assert!(
+            matches!(loaded, Err(IsolationStoreError::InvalidRecord(_))),
+            "symlink entry returned an unexpected load error: {loaded:?}"
+        );
     }
 
     #[test]

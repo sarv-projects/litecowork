@@ -123,7 +123,8 @@ def main() -> int:
         "get_task_planning_readiness",
         "connectOrInstallCapability",
         "Simulated output",
-        "Component-local useState values",
+        "pref-rich-presentation",
+        "session-only",
         "settleAutomationTriggers",
     ):
         if required not in semantic:

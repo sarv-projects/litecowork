@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { parseMarkdownDocument, type MarkdownBlock, type MarkdownList, type MarkdownToken } from "./markdown-document";
+import type { CodeToken } from "./markdown-highlighter";
 import "./structured-text-preview.css";
 
 const MAX_ROWS = 500;
@@ -63,38 +65,6 @@ function normalizedType(mediaType: string): string {
   return mediaType.split(";", 1)[0].trim().toLowerCase();
 }
 
-type InlinePart = { kind: "text" | "strong" | "em" | "code" | "link"; text: string; href?: string };
-const INLINE_PATTERN = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|`[^`\n]+`|\[[^\]\n]+\]\(https:\/\/[^\s)]+\))/g;
-
-function parseInline(text: string): InlinePart[] | null {
-  const parts: InlinePart[] = [];
-  let offset = 0;
-  for (const match of text.matchAll(INLINE_PATTERN)) {
-    const token = match[0];
-    const start = match.index ?? 0;
-    if (start > offset) parts.push({ kind: "text", text: text.slice(offset, start) });
-    if (token.startsWith("**")) parts.push({ kind: "strong", text: token.slice(2, -2) });
-    else if (token.startsWith("*")) parts.push({ kind: "em", text: token.slice(1, -1) });
-    else if (token.startsWith("`")) parts.push({ kind: "code", text: token.slice(1, -1) });
-    else {
-      const link = /^\[([^\]]+)\]\((https:\/\/[^\s)]+)\)$/.exec(token);
-      if (!link) return null;
-      try {
-        const url = new URL(link[2]);
-        if (url.protocol !== "https:" || url.username || url.password) return null;
-        parts.push({ kind: "link", text: link[1], href: url.href });
-      } catch { return null; }
-    }
-    offset = start + token.length;
-  }
-  if (offset < text.length) parts.push({ kind: "text", text: text.slice(offset) });
-  // Markdown punctuation we do not implement must never be presented as partially parsed.
-  const residue = parts.filter(part => part.kind === "text").map(part => part.text).join("");
-  if (/[*_`~\[\]{}]/.test(residue) || /!\[/.test(text)) return null;
-  return parts;
-}
-
-type Block = { kind: "heading" | "paragraph" | "quote" | "ul" | "ol" | "code"; level?: number; lines: string[] };
 type HeadingTag = "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
 function headingTag(level: number | undefined): HeadingTag {
   switch (level) {
@@ -107,72 +77,8 @@ function headingTag(level: number | undefined): HeadingTag {
     default: return "h1";
   }
 }
-function parseMarkdown(text: string): Block[] | null {
-  if (text.length > 1_048_576) return null;
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  if (lines.length > 20_000 || lines.some(line => line.length > 16_384)) return null;
-  const blocks: Block[] = [];
-  let index = 0;
-  const pushInline = (kind: Block["kind"], line: string, level?: number) => {
-    if (!parseInline(line)) return false;
-    blocks.push({ kind, level, lines: [line] });
-    return true;
-  };
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) { index++; continue; }
-    if (/^\s*</.test(line) || /^\s{4,}\S/.test(line) || /^\s*(?:---+|\*\*\*+)\s*$/.test(line)) return null;
-    if (/^\s*\|/.test(line)) return null;
-    if (/^```/.test(line)) {
-      if (!/^```(?:[A-Za-z0-9_+-]+)?$/.test(line)) return null;
-      const body: string[] = [];
-      index++;
-      while (index < lines.length && lines[index] !== "```") body.push(lines[index++]);
-      if (index >= lines.length) return null;
-      blocks.push({ kind: "code", lines: body }); index++; continue;
-    }
-    const heading = /^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$/.exec(line);
-    if (heading) { if (!pushInline("heading", heading[2], heading[1].length)) return null; index++; continue; }
-    if (/^#{1,6}(?:\s|$)/.test(line)) return null;
-    const list = /^(\s*)([-+*]|\d+[.)])\s+(.+)$/.exec(line);
-    if (list) {
-      if (list[1].length > 3) return null;
-      const kind = /^\d/.test(list[2]) ? "ol" : "ul";
-      const indent = list[1].length;
-      const items: string[] = [];
-      while (index < lines.length) {
-        const item = /^(\s*)([-+*]|\d+[.)])\s+(.+)$/.exec(lines[index]);
-        if (!item) break;
-        // Nested or differently indented lists are outside this renderer's subset.
-        // Fall back to the exact source instead of flattening their structure.
-        if (item[1].length !== indent) return null;
-        if ((/^\d/.test(item[2]) ? "ol" : "ul") !== kind) break;
-        if (!parseInline(item[3])) return null;
-        items.push(item[3]); index++;
-      }
-      blocks.push({ kind, lines: items }); continue;
-    }
-    if (/^\s*(?:[-+*]|\d+[.)])(?:\s|$)/.test(line)) return null;
-    if (/^>\s?/.test(line)) {
-      const quotes: string[] = [];
-      while (index < lines.length && /^>\s?/.test(lines[index])) {
-        const quote = lines[index++].replace(/^>\s?/, "");
-        if (!parseInline(quote)) return null;
-        quotes.push(quote);
-      }
-      blocks.push({ kind: "quote", lines: quotes }); continue;
-    }
-    const paragraph = [line]; index++;
-    while (index < lines.length && lines[index].trim() && !/^(?:#{1,6}\s|```|>\s?|\s*(?:[-+*]|\d+[.)])\s+)/.test(lines[index])) paragraph.push(lines[index++]);
-    if (!paragraph.every(part => parseInline(part))) return null;
-    blocks.push({ kind: "paragraph", lines: paragraph });
-  }
-  return blocks;
-}
 
-function renderInline(text: string, keyPrefix: string) {
-  const parts = parseInline(text);
-  if (!parts) return text;
+function renderInline(parts: MarkdownToken[], keyPrefix: string): ReactNode {
   return parts.map((part, index) => {
     const key = `${keyPrefix}-${index}`;
     if (part.kind === "strong") return <strong key={key}>{part.text}</strong>;
@@ -186,19 +92,77 @@ function renderInline(text: string, keyPrefix: string) {
   });
 }
 
+function CodeBlock({ code, language }: { code: string; language: string | null }) {
+  const [tokens, setTokens] = useState<CodeToken[] | null>(null);
+  const [copyStatus, setCopyStatus] = useState("");
+  useEffect(() => {
+    let active = true;
+    if (!language || code.length > 100_000) return () => { active = false; };
+    void import("./markdown-highlighter").then(module => {
+      if (active) setTokens(module.highlightCode(code, language));
+    }).catch(() => {
+      if (active) setTokens(null);
+    });
+    return () => { active = false; };
+  }, [code, language]);
+  const copy = () => {
+    try {
+      const writeText = navigator.clipboard?.writeText;
+      if (!writeText) { setCopyStatus("Copy unavailable"); return; }
+      setCopyStatus("Copying");
+      void writeText.call(navigator.clipboard, code).then(
+        () => setCopyStatus("Copied"),
+        () => setCopyStatus("Copy unavailable"),
+      );
+    } catch {
+      setCopyStatus("Copy unavailable");
+    }
+  };
+  return <section className="artifact-markdown-code-block" aria-label={language ? `${language} code` : "Code block"}>
+    <div className="artifact-markdown-code-toolbar">
+      <span>{language ?? "Plain text"}</span>
+      <button type="button" onClick={copy} aria-label="Copy code">Copy</button>
+      {copyStatus && <span role="status">{copyStatus}</span>}
+    </div>
+    <pre tabIndex={0}><code>{tokens ? tokens.map((token, index) => token.kind === "text"
+      ? token.text
+      : <span className={`artifact-code-token-${token.kind}`} key={index}>{token.text}</span>) : code}</code></pre>
+  </section>;
+}
+
+function renderList(list: MarkdownList, key: string): ReactNode {
+  const Tag = list.ordered ? "ol" : "ul";
+  return <Tag key={key} start={list.ordered ? list.start : undefined}>
+    {list.items.map((item, index) => <li key={`${key}-${index}`}>
+      {renderInline(item.content, `${key}-${index}`)}
+      {item.children.map((child, childIndex) => renderList(child, `${key}-${index}-${childIndex}`))}
+    </li>)}
+  </Tag>;
+}
+
+function renderBlock(block: MarkdownBlock, index: number): ReactNode {
+  if (block.kind === "heading") { const Tag = headingTag(block.level); return <Tag key={index}>{renderInline(block.content, `${index}`)}</Tag>; }
+  if (block.kind === "paragraph" || block.kind === "quote") {
+    const content = block.lines.map((line, lineIndex) => <span key={lineIndex}>{renderInline(line, `${index}-${lineIndex}`)}{lineIndex < block.lines.length - 1 && <br />}</span>);
+    return block.kind === "quote" ? <blockquote key={index}>{content}</blockquote> : <p key={index}>{content}</p>;
+  }
+  if (block.kind === "list") return renderList(block, `${index}`);
+  if (block.kind === "table") return <div className="artifact-markdown-table-scroll" role="region" aria-label="Markdown table" tabIndex={0} key={index}>
+    <table className="artifact-markdown-table"><thead><tr>{block.headers.map((cell, column) => <th key={column} scope="col" className={block.alignments[column] ? `align-${block.alignments[column]}` : undefined}>{renderInline(cell, `${index}-head-${column}`)}</th>)}</tr></thead>
+      <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, column) => <td key={column} className={block.alignments[column] ? `align-${block.alignments[column]}` : undefined}>{renderInline(cell, `${index}-${rowIndex}-${column}`)}</td>)}</tr>)}</tbody>
+    </table>
+  </div>;
+  if (block.kind === "code") return <CodeBlock key={index} code={block.code} language={block.language} />;
+  if (block.kind === "rule") return <hr key={index} />;
+  if (block.kind === "literal") return <pre className="artifact-markdown-literal" tabIndex={0} key={index}>{block.text}</pre>;
+  return null;
+}
+
 function MarkdownPreview({ text }: { text: string }) {
-  const blocks = useMemo(() => parseMarkdown(text), [text]);
-  if (!blocks) return <div className="artifact-markdown-fallback" role="status"><p>Some Markdown syntax is unsupported. Showing the original text.</p><pre tabIndex={0}>{text}</pre></div>;
+  const document = useMemo(() => parseMarkdownDocument(text), [text]);
   return <article className="artifact-markdown-preview" aria-label="Markdown preview">
-    {blocks.map((block, index) => {
-      const content = block.lines.map((line, lineIndex) => <span key={lineIndex}>{renderInline(line, `${index}-${lineIndex}`)}{lineIndex < block.lines.length - 1 && <br />}</span>);
-      if (block.kind === "heading") { const Tag = headingTag(block.level); return <Tag key={index}>{content}</Tag>; }
-      if (block.kind === "paragraph") return <p key={index}>{content}</p>;
-      if (block.kind === "quote") return <blockquote key={index}>{content}</blockquote>;
-      if (block.kind === "code") return <pre key={index}><code>{block.lines.join("\n")}</code></pre>;
-      const Tag = block.kind === "ol" ? "ol" : "ul";
-      return <Tag key={index}>{block.lines.map((item, itemIndex) => <li key={itemIndex}>{renderInline(item, `${index}-${itemIndex}`)}</li>)}</Tag>;
-    })}
+    {document.limited && <p className="artifact-markdown-limit" role="status">This answer exceeds the formatting limit. The original text is shown below.</p>}
+    {document.blocks.map(renderBlock)}
   </article>;
 }
 

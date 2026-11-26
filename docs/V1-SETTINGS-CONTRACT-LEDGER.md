@@ -208,7 +208,7 @@ Only the rows below may be interactive in V1 (AC-020). A control not listed here
 
 | Category | Control | Class | Owner operation or store | V1 state |
 |---|---|---|---|---|
-| General | Theme, density, text scale, reduced motion | LOCAL_PREF | desktop LocalPreferenceStore (011-T07) | interactive; applied at the document root and persisted locally (011-T07, CODE) |
+| General | Theme, density, text scale, reduced motion, Show formatted answers | LOCAL_PREF | desktop LocalPreferenceStore (011-T07) | interactive; appearance is applied at the document root; formatted-answer preference controls only optional projection reads/rendering, defaults on for legacy snapshots, and persists locally when storage is available. If storage rejects a write, Settings identifies the choice as session-only (CODE/UI); neither setting changes grants, bindings or provider requests. |
 | General | Keep-awake mode (OFF, WHILE_WORK_RUNS, WHILE_WORK_RUNS_ON_POWER) | NATIVE_MUTATION | RuntimeLifecycleView.power_assertion (target) | read-only text until 011-T12; HELD only after OS confirmation |
 | Workspaces | Select Workspace, view status | OPERATOR_READ | getWorkspace, listWorkspaces (served) | interactive |
 | Workspaces | Archive Workspace | OPERATOR_CAS | archive_workspace (served) | interactive with two-step confirm |

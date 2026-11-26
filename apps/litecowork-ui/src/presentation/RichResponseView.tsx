@@ -1,12 +1,15 @@
 import type { ReactNode } from "react";
 import { StructuredTextPreview } from "../artifacts/StructuredTextPreview";
+import { ChartBlock } from "./ChartBlock";
+import { MetricBlock } from "./MetricBlock";
+import { SafeCalculatorBlock } from "./SafeCalculatorBlock";
 import { resolveRichResponseContent, type RichBlock, type ValidatedRichPresentation } from "./rich-presentation";
 import "./rich-response.css";
 
 function renderBlock(block: RichBlock, key: string): ReactNode {
   switch (block.kind) {
     case "TEXT_SLICE":
-      return <p className={`rich-response-text width-${(block.width ?? "READABLE").toLowerCase()}`} key={key}>{block.text}</p>;
+      return <div className={`rich-response-text width-${(block.width ?? "READABLE").toLowerCase()}`} key={key}><StructuredTextPreview text={block.text} mediaType="text/markdown" /></div>;
     case "LAYOUT":
       return <div className={`rich-response-layout layout-${block.layout.toLowerCase()} width-${(block.width ?? "READABLE").toLowerCase()}`} key={key}>{block.children.map((child, index) => renderBlock(child, `${key}.${index}`))}</div>;
     case "CARD":
@@ -22,6 +25,12 @@ function renderBlock(block: RichBlock, key: string): ReactNode {
           </table>
         </div>
       </figure>;
+    case "METRIC":
+      return <MetricBlock key={key} model={block} />;
+    case "CHART":
+      return <ChartBlock key={key} model={block} />;
+    case "SAFE_CALCULATOR":
+      return <SafeCalculatorBlock key={key} model={block} />;
   }
 }
 
@@ -35,11 +44,12 @@ function renderPlainText(text: string): ReactNode {
  * missing, unsupported, or rejected presentation data falls back to it directly.
  * Rich content is display-only and intentionally has no action or host-state bindings.
  */
-export function RichResponseView({ semanticText, presentation }: {
+export function RichResponseView({ semanticText, presentation, richPresentationEnabled = true }: {
   semanticText: string;
   presentation?: ValidatedRichPresentation | null;
+  richPresentationEnabled?: boolean;
 }) {
-  const response = resolveRichResponseContent(semanticText, presentation);
+  const response = resolveRichResponseContent(semanticText, presentation, richPresentationEnabled);
   const safePresentation = response.primary === "RICH" ? response.presentation : null;
   return <section className="rich-response" aria-label="Assistant response">
     {safePresentation && safePresentation.rootBlocks.length > 0 ? <>

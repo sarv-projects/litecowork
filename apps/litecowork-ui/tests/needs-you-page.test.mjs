@@ -3,24 +3,37 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { createServer, createServerModuleRunnerTransport } from "vite";
+import { ModuleRunner } from "vite/module-runner";
 
 const vite = await createServer({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
+  // Static SSR assertions need TSX conversion, not React Refresh/Babel work.
+  plugins: [],
   optimizeDeps: { noDiscovery: true, include: [] },
   server: { middlewareMode: true, hmr: false },
   appType: "custom",
 });
-const { isValidNeedsYouPage, mergeNeedsYouPage } = await vite.ssrLoadModule(
+const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+// Concurrent UI test workers can delay the Needs You component graph beyond Vite's default.
+transport.timeout = 120_000;
+const runner = new ModuleRunner({
+  transport,
+  hmr: false,
+  root: vite.config.root,
+  sourcemapInterceptor: false,
+});
+after(async () => {
+  await runner.close();
+  await vite.close();
+});
+const { isValidNeedsYouPage, mergeNeedsYouPage } = await runner.import(
   "/src/needs-you/task-attention-state.ts",
 );
-const { NeedsYouFilter, NeedsYouItemCard } = await vite.ssrLoadModule(
+const { NeedsYouFilter, NeedsYouItemCard } = await runner.import(
   "/src/needs-you/TaskAttentionPage.tsx",
 );
-after(async () => vite.close());
 
 function item(overrides = {}) {
   return {

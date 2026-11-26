@@ -27,10 +27,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "msi", "deb"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
     "category": "Productivity",
     "shortDescription": "A workspace for getting work done",
     "longDescription": "LiteCowork desktop workspace",
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "wix": { "upgradeCode": "e78dd61b-7205-5b2c-91f7-3000affa1659" },
+      "nsis": { "installMode": "currentUser" }
+    },
     "linux": {
       "deb": {
         "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"],

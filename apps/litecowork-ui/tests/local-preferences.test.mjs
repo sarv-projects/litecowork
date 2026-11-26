@@ -29,11 +29,16 @@ function fakeRoot() {
   };
 }
 
-test("a saved preference survives a restart (new load from the same storage)", () => {
+test("a saved preference survives a reload from the same available storage", () => {
   const storage = memoryStorage();
-  const chosen = { theme: "dark", density: "compact", textScale: "125", reducedMotion: true };
+  const chosen = { theme: "dark", density: "compact", textScale: "125", reducedMotion: true, richPresentationEnabled: false };
   assert.equal(saveLocalPreferences(storage, chosen), true);
   assert.deepEqual(loadLocalPreferences(storage), chosen);
+});
+
+test("older preference snapshots keep rich presentation enabled by default", () => {
+  const older = JSON.stringify({ theme: "dark", density: "compact", textScale: "110", reducedMotion: true });
+  assert.equal(parseLocalPreferences(older).richPresentationEnabled, true);
 });
 
 test("changing a value applies it to the document root immediately", () => {
@@ -75,6 +80,13 @@ test("preferences module and App wiring make no Operator call (AC-004)", async (
   const handler = app.match(/const changeLocalPreferences = useCallback\([\s\S]*?\}, \[\]\);/);
   assert.ok(handler, "changeLocalPreferences handler present");
   assert.doesNotMatch(handler[0], /operator|fetch|invoke|request/i);
+  assert.match(app, /richPresentationEnabled=\{localPreferences\.richPresentationEnabled\}/, "the saved local display choice reaches the Conversation view");
+  const settings = await readFile(new URL("../src/settings/SettingsView.tsx", import.meta.url), "utf8");
+  assert.match(settings, /data-control-id="pref-rich-presentation"/);
+  assert.match(settings, /aria-labelledby="pref-rich-presentation-label"/);
+  assert.match(settings, /localPreferenceSaveFailed/);
+  assert.match(settings, /only active for this session/i);
+  assert.match(app, /return saveLocalPreferences\(browserPreferenceStorage\(\), next\)/);
 });
 
 test("Settings no longer shows display-only shortcut labels or component-local appearance state", async () => {

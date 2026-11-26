@@ -3,20 +3,33 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { createServer, createServerModuleRunnerTransport } from "vite";
+import { ModuleRunner } from "vite/module-runner";
 
 const vite = await createServer({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
+  // Static SSR assertions need TSX conversion, not React Refresh/Babel work.
+  plugins: [],
   server: { middlewareMode: true, hmr: false },
   optimizeDeps: { noDiscovery: true, include: [] },
   appType: "custom",
 });
-const { DelegationProfileHistory } = await vite.ssrLoadModule("/src/agents/DelegationProfileHistory.tsx");
-const { DelegationProfilePerformance, WorkerPerformanceSummary } = await vite.ssrLoadModule("/src/agents/DelegationProfilePerformance.tsx");
-after(async () => vite.close());
+const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+// This Windows Node worker can exceed Vite's default fetchModule timeout on the full UI graph.
+transport.timeout = 120_000;
+const runner = new ModuleRunner({
+  transport,
+  hmr: false,
+  root: vite.config.root,
+  sourcemapInterceptor: false,
+});
+after(async () => {
+  await runner.close();
+  await vite.close();
+});
+const { DelegationProfileHistory } = await runner.import("/src/agents/DelegationProfileHistory.tsx");
+const { DelegationProfilePerformance, WorkerPerformanceSummary } = await runner.import("/src/agents/DelegationProfilePerformance.tsx");
 
 test("worker profile history starts collapsed and makes no Runtime request", () => {
   let requests = 0;

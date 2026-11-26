@@ -502,7 +502,7 @@ test("RichPresentation cache bindings are stable across equivalent live snapshot
 test("Conversation UI wires stable rich bindings, Workspace response fencing, retry identity, and cursor pagination", () => {
   const page = readFileSync(new URL("../src/conversations/ConversationsPage.tsx", import.meta.url), "utf8");
   assert.match(page, /richPresentationCacheKey\(workspaceId, conversationId, message\.message_id, reference\)/);
-  assert.match(page, /\}, \[cacheKey, conversationId, message\.message_id, presentationId, requestedKey, retry, semanticContentDigest, text, workspaceId\]\)/);
+  assert.match(page, /\}, \[cacheKey, conversationId, message\.message_id, presentationId, requestedKey, retry, richPresentationEnabled, semanticContentDigest, text, workspaceId\]\)/);
   assert.match(page, /auto-load message may move out of the recent viewport set while its fetch is in/);
   assert.doesNotMatch(page, /\}, \[[^\]]*\breference\b[^\]]*\]\)/);
   assert.doesNotMatch(page, /optimisticMessage|user-msg-\$\{Date\.now\(\)\}/);

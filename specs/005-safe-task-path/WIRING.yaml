@@ -373,9 +373,24 @@ recovery:
 # TARGET wiring edge is upgraded to SERVED, INTEGRATED or QUALIFIED by this code.
 # A separate RuntimeLocalPreparationJournal storage primitive has CODE tests for bounded,
 # no-follow/canonical pending-entry reads and cross-process phase serialization, but there
-# is no provider/startup caller. Same-scope probes and exact receipt lookup remain absent;
-# the held protocol is still only a lower-level launch-order primitive and no TARGET wiring
-# edge is promoted by this evidence.
-# A WSL-only Bubblewrap probe runs the production command builder directly, reads back its fixed 1 MiB cap, and observes
-# ENOSPC across output and `/tmp` writes sharing one scratch tmpfs; this does not exercise EnvironmentConfig mapping, ManagedScope,
-# systemd/cgroup supervision, or any attestation/admission edge.
+# is no provider/startup caller. The scope-gate now performs a private filesystem
+# observation before held readiness: exact tmpfs capacity, shared writable aliases,
+# EROFS for root/input create attempts, and tiny create/unlink canaries. It does not
+# produce or persist an IsolationAttestation. Process/network probes, exact receipt lookup,
+# provider/startup wiring and admission remain absent; no TARGET wiring edge is promoted.
+# Scratch limits round down to kernel page size so tmpfs cannot exceed the configured
+# maximum. A separate WSL disposable 1 MiB Bubblewrap scope observes ENOSPC across output
+# and `/tmp` writes; production-sized live scopes are never filled to test exhaustion.
+# These direct tests bypass EnvironmentConfig-to-admission, ManagedScope and systemd/cgroup.
+# 2026-11-25: linux-process-scope now has CODE-only ManagedScope/HeldEnvironmentScope
+# identity capture/recheck. It binds the host launcher boot/start identity, exact cgroup
+# membership/directory, executable inode, UID and observed memory/pids/cpu configuration.
+# Focused fake-proc tests cover stable identity, changed start, movement and changed limits.
+# A daemon-private adapter now persists the captured unit/PID/start/digest in the existing
+# HeldProviderScopeIdentity journal field, then reloads that exact ScopeHeld record and
+# invokes the live scope recheck before admission. Three fake-scope tests cover persistence,
+# phase refusal and changed identity. There is still no production Task Runtime caller, so
+# this adapter is CODE plumbing only and cannot claim a pre-commit fence. Bubblewrap
+# namespace/network policy probes, receipt lookup, attestation, startup recovery and the
+# packaged systemd/cgroup path remain unproven; no TARGET edge above is promoted to SERVED,
+# INTEGRATED or QUALIFIED.

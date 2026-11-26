@@ -67,6 +67,18 @@ fn runtime_bootstrap_protects_state_directory_and_lifecycle_files() {
 }
 
 #[test]
+fn release_security_self_check_verifies_disposable_state_directory_and_file() {
+    let (directory_private, state_file_private) =
+        super::self_test_state_directory_security().expect("run local security self-check");
+
+    assert!(
+        directory_private,
+        "temporary Runtime directory DACL is private"
+    );
+    assert!(state_file_private, "temporary Runtime file DACL is private");
+}
+
+#[test]
 fn runtime_state_directory_rejects_a_junction_reparse_point() {
     let temporary = tempfile::tempdir().expect("temporary Runtime state parent");
     let target = temporary.path().join("actual-directory");

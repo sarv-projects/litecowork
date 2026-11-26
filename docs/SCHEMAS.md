@@ -33,12 +33,9 @@ Closed local Runtime wire formats are defined separately from Core domain values
 [interactive app package manifest](schemas/interactive-artifact-package.schema.json) and
 [interactive Artifact Runtime IPC](schemas/interactive-artifact-runtime.schema.json). These schemas describe untrusted package metadata and volatile host/renderer messages; they do not add a persisted RuntimeRun entity or DomainEvent.
 
-The [Saved View Artifact envelope](schemas/saved-view-artifact.schema.json) is a TARGET
-contract for Feature 007 revision 1.1, not a served or source-validated write format. It
-reuses the canonical RichPresentation schema and carries no session-modified calculator
-state, preserving Feature 016 B-40. Feature 007/016 cross-owner review and T01/T02
-promotion must align the schema, API, generated types and both validators before code can
-accept it.
+The [Saved View Artifact envelope](schemas/saved-view-artifact.schema.json) is a TARGET contract for Feature 007 revision 1.1, not a served or source-validated write format. It reuses the canonical RichPresentation schema and may carry an optional explicit numeric `input_snapshot` as immutable ArtifactVersion content; the default remains omitted. It does not change the component's transient/non-submitting behavior. Saving/opening alone never sends values; a separate Ask-a-follow-up host action may include user-selected values only as visible ordinary composer text after exact preview and Send. Under A-84, T02 promotes the target schema, API, generated types and validators for implementation. Feature 007/016 cross-owner review and T01 formal acceptance remain package/release gates; they are not relabeled as complete by user-directed code.
+
+The canonical [RichPresentation schema](schemas/rich-presentation.schema.json) and its [CalcAst schema](schemas/calc-ast.schema.json) are one format family; one schema ID describes both renderer profiles. Renderer contract v1 is the established five-kind profile. Renderer v2 adds source-bound `METRIC`, static `CHART` and bounded `SAFE_CALCULATOR` under B-40/A-84. T03/T04 provide Rust/TypeScript contract-parity CODE through a shared corpus, including exact source/result bindings for the calculator and grounded METRIC/CHART context; T05 provides the bounded pure CalcAst reducer; T06 provides CODE/UI for source-bound METRIC/CHART components; T07 provides CODE/UI for the transient local calculator renderer. T08 now provides a CODE-level post-settlement publisher for exact TABLE/TEXT_SLICE blocks. No structured provider-intent ingress is wired, so renderer-v2 METRIC/CHART/SAFE_CALCULATOR is not reachable from native-agent answers. The closed metric context prevents renderer-added unit/scale/interval/aggregation claims, but does not fact-check the provider's semantic answer or finish T20/T24 derived-metric behavior. JSON Schema shape validation alone does not enable a block.
 
 ## Identifiers
 

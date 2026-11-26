@@ -3,19 +3,19 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
 import { createServer } from "vite";
 
 const vite = await createServer({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
+  // Static SSR assertions use Vite's built-in TSX transform.
+  plugins: [],
   server: { middlewareMode: true, hmr: false },
   optimizeDeps: { noDiscovery: true, include: [] },
   appType: "custom",
 });
-const { AgentCatalogSettings } = await vite.ssrLoadModule("/src/agents/AgentCatalogSettings.tsx");
 after(async () => vite.close());
+const { AgentCatalogSettings } = await vite.ssrLoadModule("/src/agents/AgentCatalogSettings.tsx");
 
 function render(extra = {}) {
   return renderToStaticMarkup(createElement(AgentCatalogSettings, {

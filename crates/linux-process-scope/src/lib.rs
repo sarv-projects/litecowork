@@ -24,7 +24,11 @@
 #![forbid(unsafe_code)]
 
 #[cfg(target_os = "linux")]
+pub mod environment_probe;
+
+#[cfg(target_os = "linux")]
 mod linux {
+    use sha2::{Digest, Sha256};
     use std::{
         ffi::{OsStr, OsString},
         fs,
@@ -71,6 +75,18 @@ mod linux {
         pub memory_max_bytes: u64,
         pub cpu_quota_percent: u32,
         pub tasks_max: u32,
+    }
+
+    /// Runtime-private identity for one exact live Linux process scope.
+    ///
+    /// The digest binds the process start, boot, cgroup location and inode, executable
+    /// inode, and resource limits observed from that same scope. It is suitable for a
+    /// Runtime-private recovery journal only; it is not an attestation or authority.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct ProcessScopeIdentity {
+        pub leader_pid: u32,
+        pub leader_start_time_ticks: u64,
+        pub process_scope_digest: String,
     }
 
     #[derive(Clone, Debug)]
@@ -143,6 +159,8 @@ mod linux {
         unit: String,
         slice_unit: String,
         cgroup_events: PathBuf,
+        cgroup_relative: PathBuf,
+        cgroup_mount_root: PathBuf,
         cgroup_observer: CgroupPopulatedObserver,
         child: Child,
         limits: ResourceLimits,
@@ -297,6 +315,36 @@ mod linux {
             &self.unit
         }
 
+        /// Observe the exact launcher process and its live cgroup configuration.
+        /// Call again immediately before the owning storage transaction commits.
+        /// This operation does not itself admit an Attempt or produce attestation.
+        pub fn capture_process_scope_identity(&self) -> Result<ProcessScopeIdentity, ScopeError> {
+            observe_process_scope_identity(
+                self.child.id(),
+                &self.unit,
+                &self.cgroup_events,
+                &self.cgroup_relative,
+                &self.cgroup_mount_root,
+                self.limits,
+            )
+        }
+
+        /// Re-observe and compare the exact process/cgroup/configuration identity.
+        /// Any disappearance, PID reuse, movement, or limit change fails closed.
+        pub fn recheck_process_scope_identity(
+            &self,
+            expected: &ProcessScopeIdentity,
+        ) -> Result<(), ScopeError> {
+            let actual = self.capture_process_scope_identity()?;
+            if &actual == expected {
+                Ok(())
+            } else {
+                Err(ScopeError::Unsupported(
+                    "held Environment process or cgroup identity changed".into(),
+                ))
+            }
+        }
+
         /// Wait for a trusted in-scope runner to announce that the exact Bubblewrap
         /// Environment is live and idle. Any malformed, missing, or timed-out marker
         /// aborts the owned scope and retains cleanup ownership if quiescence is unknown.
@@ -383,16 +431,7 @@ mod linux {
                 .cgroup_events
                 .parent()
                 .ok_or(ScopeError::QuiescenceUnobservable)?;
-            let memory = read_trimmed(dir.join("memory.max"))?;
-            let pids = read_trimmed(dir.join("pids.max"))?;
-            let cpu = read_trimmed(dir.join("cpu.max"))?;
-            let memory_ok = memory.parse::<u64>().ok() == Some(self.limits.memory_max_bytes);
-            let pids_ok = pids.parse::<u32>().ok() == Some(self.limits.tasks_max);
-            let mut fields = cpu.split_ascii_whitespace();
-            let quota = fields.next().and_then(|x| x.parse::<u64>().ok());
-            let period = fields.next().and_then(|x| x.parse::<u64>().ok());
-            let cpu_ok = matches!((quota, period), (Some(q), Some(p)) if p > 0 && u128::from(q) * 100 == u128::from(p) * u128::from(self.limits.cpu_quota_percent));
-            Ok(memory_ok && pids_ok && cpu_ok)
+            read_process_limits(dir, self.limits)
         }
     }
 
@@ -546,6 +585,8 @@ mod linux {
             unit,
             slice_unit,
             cgroup_events,
+            cgroup_relative: relative,
+            cgroup_mount_root: mount.root.clone(),
             cgroup_observer,
             child,
             limits: spec.limits,
@@ -1008,8 +1049,17 @@ mod linux {
     }
 
     fn verify_membership(pid: u32, expected: &Path, mount_root: &Path) -> Result<(), ScopeError> {
-        let membership =
-            fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(ScopeError::Io)?;
+        verify_membership_at(Path::new("/proc"), pid, expected, mount_root)
+    }
+
+    fn verify_membership_at(
+        proc_root: &Path,
+        pid: u32,
+        expected: &Path,
+        mount_root: &Path,
+    ) -> Result<(), ScopeError> {
+        let membership = fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup"))
+            .map_err(ScopeError::Io)?;
         let observed = membership
             .lines()
             .find_map(|line| line.strip_prefix("0::"))
@@ -1025,6 +1075,233 @@ mod linux {
             ));
         }
         Ok(())
+    }
+
+    fn process_stat_observation(stat: &str) -> Option<(char, u64)> {
+        // `comm` is parenthesized but may itself contain spaces and closing
+        // parentheses, so split only after the final `)` before parsing fields.
+        let close = stat.rfind(')')?;
+        let fields = stat
+            .get(close + 1..)?
+            .split_ascii_whitespace()
+            .collect::<Vec<_>>();
+        let state = fields.first()?.chars().next()?;
+        // The tail begins at field 3 (state); field 22 starttime is index 19.
+        let start_time_ticks = fields.get(19)?.parse().ok()?;
+        Some((state, start_time_ticks))
+    }
+
+    #[cfg(test)]
+    fn process_start_time_ticks(stat: &str) -> Option<u64> {
+        process_stat_observation(stat).map(|(_, ticks)| ticks)
+    }
+
+    fn require_live_process_stat(
+        stat: &str,
+        expected_start_time_ticks: Option<u64>,
+    ) -> Result<u64, ScopeError> {
+        let (state, start_time_ticks) =
+            process_stat_observation(stat).ok_or(ScopeError::QuiescenceUnobservable)?;
+        if matches!(state, 'Z' | 'X' | 'x')
+            || expected_start_time_ticks.is_some_and(|expected| expected != start_time_ticks)
+        {
+            return Err(ScopeError::QuiescenceUnobservable);
+        }
+        Ok(start_time_ticks)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_scope_digest(
+        boot_id: &str,
+        unit_name: &str,
+        pid: u32,
+        start_time_ticks: u64,
+        effective_uid: u32,
+        cgroup_relative: &Path,
+        cgroup_device: u64,
+        cgroup_inode: u64,
+        executable_device: u64,
+        executable_inode: u64,
+        limits: ResourceLimits,
+    ) -> String {
+        use std::os::unix::ffi::OsStrExt;
+
+        fn append_bytes(target: &mut Vec<u8>, value: &[u8]) {
+            target.extend_from_slice(&(value.len() as u64).to_be_bytes());
+            target.extend_from_slice(value);
+        }
+
+        let mut material = b"LiteCowork/LinuxProcessScopeIdentity/v1\0".to_vec();
+        append_bytes(&mut material, boot_id.as_bytes());
+        append_bytes(&mut material, unit_name.as_bytes());
+        append_bytes(&mut material, cgroup_relative.as_os_str().as_bytes());
+        for value in [
+            u64::from(pid),
+            start_time_ticks,
+            u64::from(effective_uid),
+            cgroup_device,
+            cgroup_inode,
+            executable_device,
+            executable_inode,
+            limits.memory_max_bytes,
+            u64::from(limits.cpu_quota_percent),
+            u64::from(limits.tasks_max),
+        ] {
+            material.extend_from_slice(&value.to_be_bytes());
+        }
+        format!("sha256:{:x}", Sha256::digest(material))
+    }
+
+    fn observe_process_scope_identity(
+        pid: u32,
+        unit_name: &str,
+        cgroup_events: &Path,
+        cgroup_relative: &Path,
+        cgroup_mount_root: &Path,
+        limits: ResourceLimits,
+    ) -> Result<ProcessScopeIdentity, ScopeError> {
+        let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .map_err(ScopeError::Io)?
+            .trim()
+            .to_ascii_lowercase();
+        observe_process_scope_identity_at(
+            pid,
+            unit_name,
+            cgroup_events,
+            cgroup_relative,
+            cgroup_mount_root,
+            limits,
+            Path::new("/proc"),
+            &boot_id,
+        )
+    }
+
+    fn observe_process_scope_identity_at(
+        pid: u32,
+        unit_name: &str,
+        cgroup_events: &Path,
+        cgroup_relative: &Path,
+        cgroup_mount_root: &Path,
+        limits: ResourceLimits,
+        proc_root: &Path,
+        boot_id: &str,
+    ) -> Result<ProcessScopeIdentity, ScopeError> {
+        use rustix::process::{Pid, PidfdFlags, pidfd_open};
+        use std::os::unix::fs::MetadataExt;
+
+        let raw_pid = Pid::from_raw(pid as rustix::process::RawPid)
+            .ok_or(ScopeError::QuiescenceUnobservable)?;
+        // Pin the PID while all /proc and cgroup observations are read. A later
+        // recheck opens a fresh pidfd and compares the durable boot/start identity.
+        let _pidfd = pidfd_open(raw_pid, PidfdFlags::empty())
+            .map_err(|_| ScopeError::QuiescenceUnobservable)?;
+        if boot_id.len() != 36
+            || !boot_id.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            })
+        {
+            return Err(ScopeError::QuiescenceUnobservable);
+        }
+
+        let process_directory = proc_root.join(pid.to_string());
+        let stat_path = process_directory.join("stat");
+        let stat = fs::read_to_string(&stat_path).map_err(ScopeError::Io)?;
+        let start_time_ticks = require_live_process_stat(&stat, None)?;
+        verify_membership_at(proc_root, pid, cgroup_relative, cgroup_mount_root)?;
+
+        let status =
+            fs::read_to_string(process_directory.join("status")).map_err(ScopeError::Io)?;
+        let effective_uid = status
+            .lines()
+            .find(|line| line.starts_with("Uid:"))
+            .and_then(|line| line.split_ascii_whitespace().nth(2))
+            .and_then(|value| value.parse::<u32>().ok())
+            .ok_or(ScopeError::QuiescenceUnobservable)?;
+        let executable = fs::metadata(process_directory.join("exe")).map_err(ScopeError::Io)?;
+        let cgroup_directory = cgroup_events
+            .parent()
+            .ok_or(ScopeError::QuiescenceUnobservable)?;
+        let cgroup_metadata = fs::symlink_metadata(cgroup_directory).map_err(ScopeError::Io)?;
+        if !cgroup_metadata.is_dir() || cgroup_metadata.file_type().is_symlink() {
+            return Err(ScopeError::QuiescenceUnobservable);
+        }
+        if !read_populated(cgroup_events).map_err(ScopeError::Io)? {
+            return Err(ScopeError::QuiescenceUnobservable);
+        }
+        if !read_process_limits(cgroup_directory, limits)? {
+            return Err(ScopeError::Unsupported(
+                "held Environment resource limits no longer match the requested values".into(),
+            ));
+        }
+
+        // Re-read mutable procfs membership and process start after cgroup inspection.
+        // This prevents accepting a PID that exited or moved while the first snapshot
+        // was being assembled.
+        let final_stat = fs::read_to_string(&stat_path).map_err(ScopeError::Io)?;
+        require_live_process_stat(&final_stat, Some(start_time_ticks))?;
+        verify_membership_at(proc_root, pid, cgroup_relative, cgroup_mount_root)?;
+
+        let final_status =
+            fs::read_to_string(process_directory.join("status")).map_err(ScopeError::Io)?;
+        let final_effective_uid = final_status
+            .lines()
+            .find(|line| line.starts_with("Uid:"))
+            .and_then(|line| line.split_ascii_whitespace().nth(2))
+            .and_then(|value| value.parse::<u32>().ok())
+            .ok_or(ScopeError::QuiescenceUnobservable)?;
+        let final_executable =
+            fs::metadata(process_directory.join("exe")).map_err(ScopeError::Io)?;
+        let final_cgroup_metadata =
+            fs::symlink_metadata(cgroup_directory).map_err(ScopeError::Io)?;
+        if !final_cgroup_metadata.is_dir()
+            || final_cgroup_metadata.file_type().is_symlink()
+            || final_effective_uid != effective_uid
+            || final_executable.dev() != executable.dev()
+            || final_executable.ino() != executable.ino()
+            || final_cgroup_metadata.dev() != cgroup_metadata.dev()
+            || final_cgroup_metadata.ino() != cgroup_metadata.ino()
+            || !read_populated(cgroup_events).map_err(ScopeError::Io)?
+            || !read_process_limits(cgroup_directory, limits)?
+        {
+            return Err(ScopeError::QuiescenceUnobservable);
+        }
+
+        Ok(ProcessScopeIdentity {
+            leader_pid: pid,
+            leader_start_time_ticks: start_time_ticks,
+            process_scope_digest: process_scope_digest(
+                boot_id,
+                unit_name,
+                pid,
+                start_time_ticks,
+                effective_uid,
+                cgroup_relative,
+                cgroup_metadata.dev(),
+                cgroup_metadata.ino(),
+                executable.dev(),
+                executable.ino(),
+                limits,
+            ),
+        })
+    }
+
+    fn read_process_limits(directory: &Path, expected: ResourceLimits) -> Result<bool, ScopeError> {
+        let memory = read_trimmed(directory.join("memory.max"))?;
+        let pids = read_trimmed(directory.join("pids.max"))?;
+        let cpu = read_trimmed(directory.join("cpu.max"))?;
+        let mut fields = cpu.split_ascii_whitespace();
+        let quota = fields.next().and_then(|value| value.parse::<u64>().ok());
+        let period = fields.next().and_then(|value| value.parse::<u64>().ok());
+        let no_extra_cpu_fields = fields.next().is_none();
+        let memory_ok = memory.parse::<u64>().ok() == Some(expected.memory_max_bytes);
+        let pids_ok = pids.parse::<u32>().ok() == Some(expected.tasks_max);
+        let cpu_ok = no_extra_cpu_fields
+            && matches!((quota, period), (Some(q), Some(p)) if p > 0 && u128::from(q) * 100 == u128::from(p) * u128::from(expected.cpu_quota_percent));
+        Ok(memory_ok && pids_ok && cpu_ok)
     }
 
     fn safe_environment(env: &AgentEnvironment) -> Result<Vec<(&'static str, String)>, ScopeError> {
@@ -1438,14 +1715,200 @@ mod linux {
     pub use {
         AgentEnvironment as PublicAgentEnvironment, LaunchSpec as PublicLaunchSpec,
         ManagedScope as PublicManagedScope, PendingCleanup as PublicPendingCleanup,
-        ResourceLimits as PublicResourceLimits, ScopeError as PublicScopeError,
-        SystemdCommands as PublicSystemdCommands,
+        ProcessScopeIdentity as PublicProcessScopeIdentity, ResourceLimits as PublicResourceLimits,
+        ScopeError as PublicScopeError, SystemdCommands as PublicSystemdCommands,
     };
 
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        #[test]
+        fn process_start_time_parser_handles_parentheses_in_command_name() {
+            let mut fields = vec!["1"; 20];
+            fields[0] = "S";
+            fields[19] = "4242";
+            let stat = format!("123 (worker ) with ) chars) {}", fields.join(" "));
+
+            assert_eq!(process_start_time_ticks(&stat), Some(4242));
+        }
+
+        #[test]
+        fn process_start_time_parser_rejects_truncated_or_invalid_stat() {
+            assert_eq!(process_start_time_ticks("123 (worker) S 1 2"), None);
+            let mut fields = vec!["1"; 20];
+            fields[0] = "S";
+            fields[19] = "not-a-tick-count";
+            assert_eq!(
+                process_start_time_ticks(&format!("123 (worker) {}", fields.join(" "))),
+                None
+            );
+        }
+
+        #[test]
+        fn process_identity_requires_a_live_matching_start_time() {
+            let stat = |state: &str, start_ticks: u64| {
+                let mut fields = vec!["1".to_owned(); 20];
+                fields[0] = state.to_owned();
+                fields[19] = start_ticks.to_string();
+                format!("123 (worker) {}", fields.join(" "))
+            };
+
+            assert_eq!(
+                require_live_process_stat(&stat("S", 4242), Some(4242)).unwrap(),
+                4242
+            );
+            assert!(matches!(
+                require_live_process_stat(&stat("Z", 4242), Some(4242)),
+                Err(ScopeError::QuiescenceUnobservable)
+            ));
+            assert!(matches!(
+                require_live_process_stat(&stat("S", 4243), Some(4242)),
+                Err(ScopeError::QuiescenceUnobservable)
+            ));
+        }
+
+        #[test]
+        fn process_scope_digest_binds_process_cgroup_and_limits() {
+            let identity = process_scope_digest(
+                "01234567-89ab-cdef-0123-456789abcdef",
+                "litecowork-attempt-test.scope",
+                123,
+                456,
+                1000,
+                Path::new("user.slice/litecowork.scope"),
+                11,
+                22,
+                33,
+                44,
+                ResourceLimits {
+                    memory_max_bytes: 1024,
+                    cpu_quota_percent: 100,
+                    tasks_max: 32,
+                },
+            );
+            let changed_limit = process_scope_digest(
+                "01234567-89ab-cdef-0123-456789abcdef",
+                "litecowork-attempt-test.scope",
+                123,
+                456,
+                1000,
+                Path::new("user.slice/litecowork.scope"),
+                11,
+                22,
+                33,
+                44,
+                ResourceLimits {
+                    memory_max_bytes: 2048,
+                    cpu_quota_percent: 100,
+                    tasks_max: 32,
+                },
+            );
+
+            assert!(identity.starts_with("sha256:"));
+            assert_ne!(identity, changed_limit);
+        }
+
+        #[test]
+        fn process_limit_observation_requires_exact_memory_cpu_and_task_values() {
+            let directory = tempfile::tempdir().expect("temporary cgroup directory");
+            fs::write(directory.path().join("memory.max"), "1024\n").expect("memory limit");
+            fs::write(directory.path().join("pids.max"), "32\n").expect("task limit");
+            fs::write(directory.path().join("cpu.max"), "100000 100000\n").expect("cpu limit");
+            let expected = ResourceLimits {
+                memory_max_bytes: 1024,
+                cpu_quota_percent: 100,
+                tasks_max: 32,
+            };
+
+            assert!(read_process_limits(directory.path(), expected).expect("read exact limits"));
+            fs::write(directory.path().join("pids.max"), "33\n").expect("change task limit");
+            assert!(!read_process_limits(directory.path(), expected).expect("read changed limit"));
+            fs::write(directory.path().join("pids.max"), "32\n").expect("restore task limit");
+            fs::write(directory.path().join("cpu.max"), "100000 100000 extra\n")
+                .expect("add unexpected cpu field");
+            assert!(!read_process_limits(directory.path(), expected).expect("reject extra field"));
+        }
+
+        #[test]
+        fn process_scope_observation_rechecks_start_membership_and_limits() {
+            let directory = tempfile::tempdir().expect("temporary identity fixture");
+            let pid = std::process::id();
+            let proc_directory = directory.path().join("proc").join(pid.to_string());
+            fs::create_dir_all(&proc_directory).expect("fake proc entry");
+            let cgroup_directory = directory.path().join("scope/worker");
+            fs::create_dir_all(&cgroup_directory).expect("fake cgroup");
+            fs::write(cgroup_directory.join("cgroup.events"), "populated 1\n")
+                .expect("active cgroup");
+            fs::write(cgroup_directory.join("memory.max"), "1024\n").expect("memory limit");
+            fs::write(cgroup_directory.join("pids.max"), "32\n").expect("task limit");
+            fs::write(cgroup_directory.join("cpu.max"), "100000 100000\n").expect("cpu limit");
+            fs::write(proc_directory.join("cgroup"), "0::/scope/worker\n")
+                .expect("process membership");
+            let uid = rustix::process::geteuid().as_raw();
+            fs::write(
+                proc_directory.join("status"),
+                format!("Uid:\t{uid}\t{uid}\t{uid}\t{uid}\n"),
+            )
+            .expect("process status");
+            symlink(
+                std::env::current_exe().expect("test executable"),
+                proc_directory.join("exe"),
+            )
+            .expect("process executable link");
+
+            let stat_path = proc_directory.join("stat");
+            let stat = |start_ticks: u64| {
+                let mut fields = vec!["1".to_owned(); 20];
+                fields[0] = "S".to_owned();
+                fields[19] = start_ticks.to_string();
+                format!("{pid} (held supervisor) {}", fields.join(" "))
+            };
+            fs::write(&stat_path, stat(4242)).expect("live process stat");
+
+            let limits = ResourceLimits {
+                memory_max_bytes: 1024,
+                cpu_quota_percent: 100,
+                tasks_max: 32,
+            };
+            let observe = || {
+                observe_process_scope_identity_at(
+                    pid,
+                    "litecowork-attempt-test.scope",
+                    &cgroup_directory.join("cgroup.events"),
+                    Path::new("scope/worker"),
+                    Path::new("/"),
+                    limits,
+                    &directory.path().join("proc"),
+                    "01234567-89ab-cdef-0123-456789abcdef",
+                )
+            };
+
+            let original = observe().expect("capture exact active scope identity");
+            assert_eq!(original.leader_pid, pid);
+            assert_eq!(original.leader_start_time_ticks, 4242);
+            assert_eq!(observe().expect("identical recheck"), original);
+
+            fs::write(&stat_path, stat(4243)).expect("simulate PID identity change");
+            assert_ne!(
+                observe()
+                    .expect("observe changed start")
+                    .leader_start_time_ticks,
+                4242
+            );
+
+            fs::write(&stat_path, stat(4242)).expect("restore process identity");
+            fs::write(proc_directory.join("cgroup"), "0::/scope/other\n")
+                .expect("simulate cgroup movement");
+            assert!(matches!(observe(), Err(ScopeError::Unsupported(_))));
+
+            fs::write(proc_directory.join("cgroup"), "0::/scope/worker\n")
+                .expect("restore membership");
+            fs::write(cgroup_directory.join("memory.max"), "2048\n")
+                .expect("change live configuration");
+            assert!(matches!(observe(), Err(ScopeError::Unsupported(_))));
+        }
 
         fn test_systemctl(directory: &Path) -> (PathBuf, PathBuf) {
             let path = directory.join("systemctl-test");
@@ -1573,6 +2036,8 @@ mod linux {
                     .parent()
                     .expect("parent cgroup directory exists")
                     .join("worker/cgroup.events"),
+                cgroup_relative: PathBuf::from("slice/worker"),
+                cgroup_mount_root: PathBuf::from("/"),
                 cgroup_observer: CgroupPopulatedObserver {
                     events_path: parent_events,
                 },
@@ -2205,8 +2670,8 @@ mod linux {
 pub use linux::{
     PublicAgentEnvironment as AgentEnvironment, PublicLaunchSpec as LaunchSpec,
     PublicManagedScope as ManagedScope, PublicPendingCleanup as PendingCleanup,
-    PublicResourceLimits as ResourceLimits, PublicScopeError as ScopeError,
-    PublicSystemdCommands as SystemdCommands, spawn,
+    PublicProcessScopeIdentity as ProcessScopeIdentity, PublicResourceLimits as ResourceLimits,
+    PublicScopeError as ScopeError, PublicSystemdCommands as SystemdCommands, spawn,
 };
 
 #[cfg(target_os = "linux")]

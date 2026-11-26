@@ -429,9 +429,34 @@ Built-in renderer families:
 | USER_REQUEST / APPROVAL | Dedicated typed card and exact action | Resolve through owning service only |
 | ARTIFACT | Type-aware card with version and verification state | Open supported preview/editor; show bounded recent history and, for supported plain text only, prepare an explicitly confirmed restore draft that publishes as a new version |
 | CODE / DIFF | Syntax-aware code and reviewable change | Open read-only or provider-owned editor |
-| TABLE / CHART / IMAGE | TABLE renders bounded data with a text alternative; CHART and IMAGE are explanatory text placeholders today | Open qualified renderer (target) |
+| TABLE / CHART / IMAGE | TABLE renders bounded data; renderer-v2 CHART has CODE/UI as host-generated static SVG plus exact keyboard-toggle data table; IMAGE remains an explanatory placeholder | Chart presentation is not provider-reachable until production publication/ingress is wired; image renderer remains target |
 | BROWSER / TERMINAL | Explicitly labeled placeholder text today (“Browser controls are available from the owning Task.”) | Acquire applicable control/read lease before interaction (target) |
 | MCP_APP | Placeholder text today (“Interactive app content is unavailable in this renderer.”) | Use the separate MCP App security contract |
+
+### Source-bound metric profile (renderer contract v2)
+
+The desktop METRIC component is implemented in CODE/UI but is not provider-reachable until a
+production publisher and ingress exist. Each metric binds one finite numeric cell from an exact
+committed semantic table slice. The host derives the measure label from its source header and
+row; the canonical `semantics` object requires bounded `unit` and `time_interval`, a closed
+`scale` and closed `aggregation`. The exact semantic summary must ground those declarations and
+the exact source labels. The UI displays the unchanged number and declarations; it does no unit
+conversion, rescaling or aggregation. This guards against adding meaning in the presentation,
+but does not fact-check provider-authored semantic claims or implement T20/T24 derived metrics.
+Missing/contradictory context falls back to the complete semantic answer.
+
+### Static chart target profile (renderer contract v2)
+
+The renderer-v2 CHART component is implemented in desktop CODE/UI and exercised with focused
+model/parser and rendered Chrome checks. The table-only post-settlement publisher is CODE; structured provider intent is not wired, so METRIC/CHART/SAFE_CALCULATOR are not provider-reachable. Its profile is a host-
+rendered SVG for BAR, LINE and AREA bound to one exact committed semantic TABLE slice. The
+document provides a zero-based category-column index and 1–6 unique numeric-series column
+indexes; series labels come from source headers and row order is preserved. Categories are
+non-empty strings, values are finite JSON numbers, and all indexes must be in-range and distinct.
+Malformed chart geometry falls back to the same independently verified table; a source binding,
+message or digest failure keeps the complete semantic answer. The chart and keyboard-accessible
+table view use identical rows and values. No model SVG, script, CSS,
+external URL, chart-library configuration or free-form axis expression is interpreted.
 | ERROR | Safe message, source, recovery action | Open the owning domain's recovery flow |
 
 Renderer selection uses declared item kind/version and Operator capabilities, not
@@ -480,11 +505,17 @@ Current desktop scope is narrower than the target above: the Workbench can edit 
 restore only managed UTF-8 `text/plain` content up to 1 MiB. Restore uses the existing
 user text-append operation to create a new immutable version after explicit confirmation
 and publication; it does not support external content or other media types, and the
-current append provenance has no dedicated restored-from relation. Managed Markdown has
-a bounded preview-only renderer for headings, paragraphs, simple lists, quotes, fenced
-code, inline emphasis/code, and owner-confirmed HTTPS links. It uses React text nodes,
-does not execute HTML or load remote images, and falls back to the original text for
-unsupported/malformed syntax. It is not a full CommonMark renderer or an editor. Managed
+current append provenance has no dedicated restored-from relation. Managed Markdown and
+committed semantic answers use a bounded preview-only renderer for headings, paragraphs,
+quotes, nested ordered/unordered lists, GFM tables, horizontal rules, fenced code, inline
+emphasis/code, and owner-confirmed HTTPS links. Unsupported syntax falls back to literal
+text for that block while sibling blocks continue to render. Code is visible before
+optional lazy syntax highlighting; highlighting returns React text/token nodes, never
+HTML. A code-copy control writes only after a user click and reports clipboard denial
+without claiming success. Raw HTML is never interpreted, remote images are never loaded,
+and TEXT_SLICE uses the same renderer as the complete semantic answer. Parser and
+highlighting limits are defined by Feature 016 T18 and its UI behavior contract. This is
+not a full CommonMark renderer or an editor. Managed
 text comparisons also offer a bounded literal line-diff display (400 lines per side,
 160,000 line-pairs, and 16,384 characters per line). Larger inputs retain the existing
 side-by-side renderer. This diff does not claim semantic change analysis and creates no
@@ -565,6 +596,6 @@ Do not use RichPresentation v1 as an executable UI container. The versioned decl
 
 ### Saved Views in Library — TARGET, owner direction recorded 2026-11-17
 
-The owner selected Saved Views for V1 and directed a Feature 007 B-21 amendment. Feature 007 revision 1.1 proposes an ArtifactVersion-backed, non-executable snapshot of one eligible committed RichPresentation, with exact Conversation/message/presentation lineage and a semantic fallback. It preserves only the immutable presentation's declared defaults; session-modified calculator values remain transient under B-40. Saved Views live as a filter/group inside Library, use explicit Save/Open/Update/Archive actions, and add no permanent navigation destination or second store. The detailed contract is [Feature 007 Saved View](../specs/007-professional-artifacts/contracts/saved-view.md).
+The owner selected Saved Views for V1 and directed a Feature 007 B-21 amendment. Feature 007 revision 1.1 proposes an ArtifactVersion-backed, non-executable snapshot of one eligible committed RichPresentation, with exact Conversation/message/presentation lineage and a semantic fallback. It preserves declared defaults unless the user explicitly opts to save compatible numeric inputs into immutable ArtifactVersion content. The component remains transient and non-submitting under B-40; values are not sent to an agent or included in events/receipts. Saved Views live as a filter/group inside Library, use explicit Save/Open/Update/Archive actions, and add no permanent navigation destination or second store. The detailed contract is [Feature 007 Saved View](../specs/007-professional-artifacts/contracts/saved-view.md).
 
-This is TARGET only. Cross-owner review, Feature 016 T01/T02 promotion, API/schema promotion, handlers, projection, receipt recovery and packaged qualification remain open. The current source has no Saved View route or Library control; capability-based UI must remain unavailable until the owning path is served and qualified.
+This is TARGET only. A-84 records user-delegated implementation direction; cross-owner review, formal Feature 016 T01 acceptance, canonical API/schema promotion, handlers, projection, receipt recovery and packaged qualification remain open. The current source has no Saved View route or Library control; capability-based UI must remain unavailable until the owning path is served, reauthorized and recoverable. Implementation code alone does not establish qualification.

@@ -22,6 +22,7 @@ export const SETTINGS_CONTROL_MAP: Readonly<Record<string, SettingsControlEntry>
   "pref-density": { class: "LocalOnly", effect: "LocalPreferenceStore density applied at document root" },
   "pref-text-scale": { class: "LocalOnly", effect: "LocalPreferenceStore text scale applied at document root" },
   "pref-reduced-motion": { class: "LocalOnly", effect: "LocalPreferenceStore reduced motion applied at document root" },
+  "pref-rich-presentation": { class: "LocalOnly", effect: "LocalPreferenceStore render-only RichPresentation preference gates optional projection reads and rendering" },
   "workspaces-refresh": { class: "OperatorServed", effect: "listWorkspaces" },
   "workspaces-select": { class: "LocalOnly", effect: "selected Workspace in desktop state" },
   "workspaces-create-name": { class: "OperatorServed", effect: "createWorkspace draft" },

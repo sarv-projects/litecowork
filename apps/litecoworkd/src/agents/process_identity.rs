@@ -312,7 +312,7 @@ fn prepare_linux_recovery(
     session_id: u32,
 ) -> Result<PreparedProcessRecovery, ProcessRecoveryError> {
     use rustix::process::{Pid, PidfdFlags, pidfd_open};
-    use std::os::fd::OwnedFd;
+    use std::{os::fd::OwnedFd, os::unix::fs::MetadataExt};
 
     let pid_value = Pid::from_raw(pid as rustix::process::RawPid)
         .ok_or(ProcessRecoveryError::InvalidIdentity)?;
@@ -658,13 +658,12 @@ mod tests {
         use super::{AgentChild, PreparedProcessRecovery, capture};
         use std::process::{Command, Stdio};
 
-        let mut child = AgentChild::spawn(
-            Command::new("/bin/sleep")
-                .arg("30")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
-        )
-        .expect("spawn an isolated process-group child");
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn an isolated process-group child");
         child.resume().expect("resume child");
 
         let identity = capture(&child).expect("capture the spawned child's identity");
@@ -685,13 +684,12 @@ mod tests {
         use super::{AgentChild, ProcessIdentity, capture};
         use std::process::{Command, Stdio};
 
-        let mut child = AgentChild::spawn(
-            Command::new("/bin/sleep")
-                .arg("30")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null()),
-        )
-        .expect("spawn an isolated process-group child");
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = AgentChild::spawn(command).expect("spawn an isolated process-group child");
         child.resume().expect("resume child");
 
         let identity = capture(&child).expect("capture the spawned child's identity");

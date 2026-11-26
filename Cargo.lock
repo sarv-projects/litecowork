@@ -645,6 +645,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain-presentation"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+]
+
+[[package]]
 name = "domain-rag"
 version = "0.1.0"
 dependencies = [
@@ -1377,6 +1386,7 @@ name = "linux-process-scope"
 version = "0.1.0"
 dependencies = [
  "rustix",
+ "sha2",
  "tempfile",
 ]
 
@@ -1395,6 +1405,7 @@ dependencies = [
  "comrak",
  "ctrlc",
  "domain-environment",
+ "domain-presentation",
  "domain-rag",
  "domain-responsibility",
  "domain-task",
@@ -2407,6 +2418,7 @@ dependencies = [
  "domain-effects",
  "domain-environment",
  "domain-invocations",
+ "domain-presentation",
  "domain-responsibility",
  "domain-workspace",
  "ed25519-dalek",

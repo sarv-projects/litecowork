@@ -843,6 +843,44 @@ fn set_blocks(request: &mut PublishRichPresentation, blocks: Value, paths: &[&st
         );
     });
 }
+fn bind_two_row_semantic_table(
+    dir: &tempfile::TempDir,
+    request: &mut PublishRichPresentation,
+) -> (String, usize, usize) {
+    let lines = [
+        "Hello 🌍",
+        "Revenue by Month is reported in INR at lakh scale for the monthly interval with sum aggregation.",
+        "| Month | Revenue |",
+        "| --- | --- |",
+        "| Jan | 12 |",
+        "| Feb | 18 |",
+    ];
+    let text = lines.join("\n");
+    let blocks: Vec<Value> = lines
+        .iter()
+        .map(|line| json!({"kind":"TEXT","text":line}))
+        .collect();
+    let content_json = serde_json::to_string(&blocks).unwrap();
+    let conn = Connection::open(state_database(dir)).unwrap();
+    conn.execute(
+        "UPDATE conversation_messages SET content_json=?1 WHERE message_id=?2",
+        params![content_json, request.presentation.message_id],
+    )
+    .unwrap();
+    let semantic = json!({"content":blocks,"resource_refs":[]});
+    let semantic_digest = digest(&canonical_json(&semantic).unwrap());
+    request.presentation.semantic_content_digest = semantic_digest.clone();
+    request.event.payload["semantic_content_digest"] = json!(semantic_digest);
+    let start = text.find("| Month | Revenue |").unwrap();
+    let end = text.len();
+    update_document(request, |document| {
+        document["semantic_content_digest"] = json!(semantic_digest);
+        document["renderer_contract_version"] = json!(2);
+    });
+    request.presentation.renderer_contract_version = 2;
+    request.event.payload["renderer_contract_version"] = json!(2);
+    (text, start, end)
+}
 fn hello_slice() -> Value {
     json!({"kind":"TEXT_SLICE","source":{"start_utf8_byte":0,"end_utf8_byte_exclusive":10,
         "slice_digest":digest("Hello 🌍".as_bytes())}})
@@ -910,6 +948,44 @@ fn rich_publication_accepts_card_callout_and_table_which_the_desktop_renders() {
         .unwrap();
     assert_eq!(read.canonical_document, request.canonical_document);
 }
+
+#[test]
+fn rich_publication_accepts_renderer_v2_chart_bound_to_two_semantic_rows() {
+    let (dir, store, mut request) = fixture();
+    let (text, start, end) = bind_two_row_semantic_table(&dir, &mut request);
+    let source = text.as_bytes().get(start..end).unwrap();
+    set_blocks(
+        &mut request,
+        json!([{
+            "kind":"CHART",
+            "chart_kind":"BAR",
+            "binding":{
+                "source":"SEMANTIC_TABLE",
+                "semantic_table_slice":{
+                    "start_utf8_byte":start,
+                    "end_utf8_byte_exclusive":end,
+                    "slice_digest":digest(source)
+                }
+            },
+            "category_column_index":0,
+            "series_column_indexes":[1],
+            "accessible_summary":"Revenue by Month is reported in INR at lakh scale for the monthly interval with sum aggregation.",
+            "semantics":{"unit":"INR","scale":"LAKH","time_interval":"monthly","aggregation":"SUM"}
+        }]),
+        &["/0"],
+    );
+
+    let committed = adapter(&store)
+        .publish_rich_presentation(request.clone())
+        .expect("renderer v2 accepts a bounded chart bound to exact semantic table bytes");
+    assert_eq!(committed.presentation.renderer_contract_version, 2);
+    let read = adapter(&store)
+        .read_rich_presentation("owner-local", "workspace-rich", "presentation-rich")
+        .unwrap()
+        .unwrap();
+    assert_eq!(read.canonical_document, request.canonical_document);
+}
+
 #[test]
 fn rich_publication_refuses_a_card_summary_or_table_that_invents_a_fact() {
     let (_dir, store, request) = fixture();
@@ -1174,16 +1250,25 @@ fn rich_publication_rejects_event_identity_or_payload_mismatch_atomically() {
     assert_no_publication(&dir);
 }
 #[test]
-fn rich_publication_duplicate_and_database_mutations_are_rejected() {
+fn rich_publication_exact_replay_returns_the_stored_row_and_database_mutations_are_rejected() {
     let (dir, store, request) = fixture();
-    adapter(&store)
+    let first = adapter(&store)
         .publish_rich_presentation(request.clone())
         .unwrap();
-    assert!(matches!(
-        adapter(&store).publish_rich_presentation(request),
-        Err(StoreError::Invalid(ref message)) if message == "presentation identity unavailable"
-    ));
+    let replay = adapter(&store)
+        .publish_rich_presentation(request.clone())
+        .unwrap();
+    assert_eq!(replay.presentation, first.presentation);
+    assert_eq!(replay.event, first.event);
     let c = Connection::open(state_database(&dir)).unwrap();
+    let (presentations, events) = c
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM rich_presentations), (SELECT COUNT(*) FROM domain_events WHERE event_id='event-rich')",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .unwrap();
+    assert_eq!((presentations, events), (1, 1));
     assert!(
         c.execute(
             "UPDATE rich_presentations SET renderer_contract_version=2",
@@ -1203,6 +1288,11 @@ fn rich_publication_duplicate_and_database_mutations_are_rejected() {
         [],
     )
     .unwrap();
+    let archived_replay = adapter(&store).publish_rich_presentation(request).unwrap();
+    assert_eq!(
+        archived_replay.presentation.presentation_id,
+        "presentation-rich"
+    );
     assert!(
         adapter(&store)
             .read_rich_presentation("owner-local", "workspace-rich", "presentation-rich")
@@ -1210,6 +1300,36 @@ fn rich_publication_duplicate_and_database_mutations_are_rejected() {
             .is_some()
     );
 }
+
+#[test]
+fn rich_publication_rejects_changed_document_under_the_same_message_identity() {
+    let (dir, store, request) = fixture();
+    adapter(&store)
+        .publish_rich_presentation(request.clone())
+        .unwrap();
+    let mut changed = request;
+    update_document(&mut changed, |doc| {
+        doc["accessibility_summary"] = json!("Hello 🌍")
+    });
+    assert!(matches!(
+        adapter(&store).publish_rich_presentation(changed),
+        Err(StoreError::Invalid(ref message)) if message == "presentation identity unavailable"
+    ));
+    assert_no_additional_publication(&dir);
+}
+
+fn assert_no_additional_publication(dir: &tempfile::TempDir) {
+    let connection = Connection::open(state_database(dir)).unwrap();
+    let (presentations, rich_events): (i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM rich_presentations), (SELECT COUNT(*) FROM domain_events WHERE type='rich.presentation.published.v1')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((presentations, rich_events), (1, 1));
+}
+
 #[test]
 fn rich_publication_missing_blob_does_not_remove_or_change_semantic_message() {
     let (dir, store, request) = fixture();
@@ -1343,8 +1463,15 @@ fn rich_publication_duplicate_identity_error_does_not_reveal_scope_or_revision()
     adapter(&store)
         .publish_rich_presentation(request.clone())
         .unwrap();
+    let mut conflicting = request.clone();
+    conflicting.presentation.presentation_id = "presentation-other".into();
+    conflicting.event.entity_id = "presentation-other".into();
+    conflicting.event.payload["presentation_id"] = json!("presentation-other");
+    update_document(&mut conflicting, |doc| {
+        doc["presentation_id"] = json!("presentation-other")
+    });
     let own_error = adapter(&store)
-        .publish_rich_presentation(request.clone())
+        .publish_rich_presentation(conflicting)
         .unwrap_err();
     let c = Connection::open(state_database(&dir)).unwrap();
     c.execute("INSERT INTO workspaces(workspace_id,name,owner_principal_id,replication_policy,status,created_at,updated_at,version) VALUES('workspace-second','Second','owner-local','LOCAL_ONLY','ACTIVE',?1,?1,1)",[AT]).unwrap();

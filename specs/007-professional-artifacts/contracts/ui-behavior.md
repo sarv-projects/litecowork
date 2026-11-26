@@ -1,6 +1,6 @@
 # UI behavior - Professional Artifacts One Format
 
-**Status:** Base revision 1.0 ACCEPTED/LOCKED; Saved View UI amendment IN_REVIEW after owner direction 2026-11-17. All Saved View controls below are TARGET and must remain unavailable until their typed owner handlers and receipts exist.
+**Status:** Base revision 1.0 ACCEPTED/LOCKED; Saved View UI amendment IN_REVIEW after owner direction 2026-11-17. Optional numeric input snapshots have USER-DELEGATED design direction A-84 (2026-11-24), but cross-owner contract review and served handlers remain open. All Saved View controls below are TARGET and unavailable until typed owner handlers and receipts exist.
 
 Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs/V1-UI-SCREEN-CONTRACT.md). Control classes: [V1-SETTINGS-CONTRACT-LEDGER.md](../../../docs/V1-SETTINGS-CONTRACT-LEDGER.md) and [SEMANTIC-SERVED-UI-MAP.md](../../../docs/SEMANTIC-SERVED-UI-MAP.md). Action states: [V1-UI-ACTION-STATE-LEDGER.md](../../../docs/V1-UI-ACTION-STATE-LEDGER.md).
 
@@ -16,8 +16,8 @@ Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs
 
 8. Every view/edit/export/compare control reads the daemon capability matrix (SPEC §5). DOCX, XLSX, PPTX and PDF show a metadata card with "Read-only" or "Not supported in this version" and Save original; no editor or export button is rendered for them (AC-016).
 9. Library offers "New Markdown document"; a committed Conversation message offers "Save as Artifact". The Artifact shows "From conversation" with a link, and the Conversation lists its Artifacts (AC-017, AC-018).
-10. An eligible committed structured answer may expose **Save to Library** only after Feature 007/016 validation and its durable create handler are served. The control is absent for streaming/uncommitted messages, invalid/unsupported profile, unresolved external data, denied sources or stale digests. The user sees that the saved snapshot includes its semantic answer and current declared numeric values.
-11. Library presents Saved Views as a filter/group inside the existing Library, never a new persistent navigation tab. Open loads and reauthorizes the exact version; controls operate locally and reset to saved defaults on reopen. **Update from answer** requires a same-Conversation committed answer and a review step; another Conversation creates a new Saved View.
+10. An eligible committed structured answer may expose **Save to Library** only after Feature 007/016 validation and its durable create handler are served. The control is absent for streaming/uncommitted messages, invalid/unsupported profile, unresolved external data, denied sources or stale digests. The user sees that the semantic answer and presentation will be saved. A separate unchecked-by-default **Include current numeric values** option saves only exact declared finite in-range/on-step number inputs as immutable ArtifactVersion content; values never enter events, receipts or an agent request.
+11. Library presents Saved Views as a filter/group inside the existing Library, never a new persistent navigation tab. Open loads and reauthorizes the exact version; controls operate locally and restore that version's optional validated numeric snapshot or declared defaults. A distinct **Save current values** action appends an immutable ArtifactVersion only after explicit confirmation and receipt. **Update from answer** requires a same-Conversation committed answer and a review step; it clears old values unless exact input declarations remain compatible and the user opts in again. Another Conversation creates a new Saved View.
 12. Saved View offers **Archive** through the existing Artifact lifecycle. It does not offer hard Delete, Export, generic JSON edit, or native Save As of its internal machine format. Unsupported buttons are absent or explicitly disabled with a reason.
 
 ## Current implementation crosswalk (not the target)
@@ -40,7 +40,7 @@ Behavior, not pixels. Screen inventory: [V1-UI-SCREEN-CONTRACT.md](../../../docs
 - Stale Artifact/Resource head preserves the draft; identical idempotent retry replays the same receipt; changed-payload key reuse conflicts.
 - Native Save As says “saved locally” and never shows a provider export receipt. Cancelled Save As fetches no content and changes no destination.
 - Rendering failure retains semantic content/source and an accessible text fallback.
-- Saved View: exact-source eligibility; committed receipt before success; stable replay; cross-Workspace/stale/uncommitted-source denial; declared-default validation with no session-state snapshot; archive-only removal; update conflict draft preservation; restart exact-version reopen; source-Conversation delete race with retained self-contained content and masked provenance; malformed/unknown-schema semantic fallback.
+- Saved View: exact-source eligibility; committed receipt before success; stable replay; cross-Workspace/stale/uncommitted-source denial; defaults when no snapshot is saved; exact numeric declaration/digest/range/step validation when opt-in is selected; no partial snapshot application; explicit Save current values appends an immutable version; archive-only removal; update conflict draft preservation; restart exact-version reopen; source-Conversation delete race with retained self-contained content and masked provenance; malformed/unknown-schema semantic fallback.
 
 ## Validation
 

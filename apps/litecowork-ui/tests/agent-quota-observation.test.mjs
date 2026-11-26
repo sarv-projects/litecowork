@@ -3,27 +3,40 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import react from "@vitejs/plugin-react";
-import { createServer } from "vite";
+import { createServer, createServerModuleRunnerTransport } from "vite";
+import { ModuleRunner } from "vite/module-runner";
 
 const vite = await createServer({
   configFile: false,
   root: fileURLToPath(new URL("..", import.meta.url)),
-  plugins: [react()],
+  // Static SSR assertions need TSX conversion, not React Refresh/Babel work.
+  plugins: [],
   server: { middlewareMode: true, hmr: false },
   optimizeDeps: { noDiscovery: true, include: [] },
   appType: "custom",
 });
-const { createAgentQuotaObservationApi, decodeQuotaObservation, isQuotaObservationExpired } = await vite.ssrLoadModule("/src/agents/agent-quota-api.ts");
-const { AgentQuotaObservation, QuotaObservationSummary } = await vite.ssrLoadModule("/src/agents/QuotaObservation.tsx");
-const { AgentCatalogSettings } = await vite.ssrLoadModule("/src/agents/AgentCatalogSettings.tsx");
+const transport = createServerModuleRunnerTransport({ channel: vite.environments.ssr.hot });
+// Concurrent UI test workers can delay this shared Agent Settings module graph beyond Vite's default.
+transport.timeout = 120_000;
+const runner = new ModuleRunner({
+  transport,
+  hmr: false,
+  root: vite.config.root,
+  sourcemapInterceptor: false,
+});
+after(async () => {
+  await runner.close();
+  await vite.close();
+});
+const { createAgentQuotaObservationApi, decodeQuotaObservation, isQuotaObservationExpired } = await runner.import("/src/agents/agent-quota-api.ts");
+const { AgentQuotaObservation, QuotaObservationSummary } = await runner.import("/src/agents/QuotaObservation.tsx");
+const { AgentCatalogSettings } = await runner.import("/src/agents/AgentCatalogSettings.tsx");
 const observedInvokes = [];
 globalThis.window = { __TAURI_INTERNALS__: { async invoke(command, args) {
   observedInvokes.push({ command, args });
   return null;
 } } };
-const { desktopAgentQuotaObservationApi } = await vite.ssrLoadModule("/src/agents/desktop-agent-quota-api.ts");
-after(async () => vite.close());
+const { desktopAgentQuotaObservationApi } = await runner.import("/src/agents/desktop-agent-quota-api.ts");
 
 const observation = {
   agent_binding_id: "binding-1",

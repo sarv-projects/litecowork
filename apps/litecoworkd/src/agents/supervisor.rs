@@ -1323,6 +1323,7 @@ impl Drop for CancelRegistration {
 pub struct AgentSessionSupervisor {
     store: SqliteWorkspaceStore,
     runtime_id: String,
+    presentation_binder: crate::presentation_binder::PresentationBinder,
     cancels: CancelRegistry,
     dispatches: DispatchRegistry,
     native_permissions: NativePermissionRegistry,
@@ -1331,9 +1332,12 @@ pub struct AgentSessionSupervisor {
 
 impl AgentSessionSupervisor {
     pub fn new(store: SqliteWorkspaceStore, runtime_id: String) -> Self {
+        let presentation_binder =
+            crate::presentation_binder::PresentationBinder::new(store.clone());
         Self {
             store,
             runtime_id,
+            presentation_binder,
             cancels: Arc::new(Mutex::new(HashMap::new())),
             dispatches: DispatchRegistry::default(),
             native_permissions: NativePermissionRegistry::default(),
@@ -1697,6 +1701,7 @@ impl AgentSessionSupervisor {
                     &cancel,
                     &supervisor.native_permissions,
                     &supervisor.host_supervisor,
+                    &supervisor.presentation_binder,
                 );
                 // Transient presentation control frame: a committed message supersedes the
                 // transient text; any other end leaves it marked incomplete in the UI.
@@ -2373,6 +2378,7 @@ fn execute_agent_turn(
     cancel: &CancelSignal,
     native_permissions: &NativePermissionRegistry,
     host_supervisor: &AgentHostSupervisor<OpenCodeServer>,
+    presentation_binder: &crate::presentation_binder::PresentationBinder,
 ) -> Result<TurnOutcome, String> {
     let conv_store = SqliteConversationStore::new(store.clone());
 
@@ -2882,10 +2888,16 @@ fn execute_agent_turn(
                 },
             };
 
-            retry_transient_store_commit(3, Duration::from_millis(100), || {
-                conv_store.commit_conversation_agent_response(commit_resp.clone())
-            })
-            .map_err(|e| format!("Commit response error: {e:?}"))?;
+            let committed_response =
+                retry_transient_store_commit(3, Duration::from_millis(100), || {
+                    conv_store.commit_conversation_agent_response(commit_resp.clone())
+                })
+                .map_err(|e| format!("Commit response error: {e:?}"))?;
+
+            // Rich output is a best-effort immutable companion. The binder sees only
+            // the exact committed record and runs after the Conversation transaction.
+            // Its failure cannot roll back or retry the provider turn.
+            let _ = presentation_binder.bind_after_commit(principal_id, &committed_response);
 
             // The response transaction closes the AgentSession and returns its
             // host row to READY. The process remains owned until after this commit;

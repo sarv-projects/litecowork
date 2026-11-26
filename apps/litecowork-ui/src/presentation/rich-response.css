@@ -24,6 +24,58 @@
 .rich-response-table-scroll th, .rich-response-table-scroll td { min-width: 7rem; padding: 9px 11px; border-bottom: 1px solid var(--color-border, #dce2ea); vertical-align: top; overflow-wrap: anywhere; }
 .rich-response-table-scroll th { background: var(--color-surface-muted, #f6f8fb); font-weight: 650; }
 .rich-response-table-scroll tr:last-child td { border-bottom: 0; }
+.rich-response [hidden] { display: none !important; }
+.rich-response-metric { min-width: 0; max-width: 34rem; margin: 0; padding: 16px 18px; border: 1px solid var(--color-border, #dce2ea); border-radius: 12px; background: var(--color-surface, #fff); }
+.rich-response-metric-label { color: var(--color-text-muted, #515c6c); font-size: .9rem; overflow-wrap: anywhere; }
+.rich-response-metric-value { margin: 5px 0 12px; font-size: clamp(1.8rem, 5vw, 2.6rem); font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.rich-response-metric-context, .rich-response-chart-context { margin: 0 0 8px; color: var(--color-text-muted, #515c6c); font-size: .875rem; line-height: 1.45; overflow-wrap: anywhere; }
+.rich-response-metric-summary { margin: 0 0 10px; color: var(--color-text, #171d27); font-size: .9rem; line-height: 1.45; overflow-wrap: anywhere; }
+.rich-response-metric-source > summary, .rich-response-chart-toggle { width: fit-content; min-height: 36px; color: var(--color-primary, #2457d6); cursor: pointer; }
+.rich-response-metric-source > summary:focus-visible, .rich-response-chart-toggle:focus-visible { outline: 2px solid var(--color-focus, #2457d6); outline-offset: 2px; }
+.rich-response-metric-source .rich-response-table-scroll { margin-top: 10px; }
+.rich-response-chart { min-width: 0; max-width: 72rem; margin: 0; padding: 14px; border: 1px solid var(--color-border, #dce2ea); border-radius: 12px; background: var(--color-surface, #fff); }
+.rich-response-chart-summary { margin-bottom: 10px; color: var(--color-text, #171d27); font-weight: 600; overflow-wrap: anywhere; }
+.rich-response-chart-visual { min-width: 0; }
+.rich-response-chart-svg { display: block; width: 100%; height: auto; min-height: 160px; overflow: visible; font: 11px/1.2 system-ui, sans-serif; }
+.rich-response-chart-grid { stroke: var(--color-border, #dce2ea); stroke-width: 1; }
+.rich-response-chart-axis-label { fill: var(--color-text-muted, #515c6c); }
+.rich-response-chart-bar, .rich-response-chart-point { fill: currentColor; }
+.rich-response-chart-line { fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.rich-response-chart-area { fill: currentColor; opacity: .12; }
+.chart-series-0 { color: #2457d6; }
+.chart-series-1 { color: #b54708; }
+.chart-series-2 { color: #087e69; }
+.chart-series-3 { color: #8b3fc7; }
+.chart-series-4 { color: #b42342; }
+.chart-series-5 { color: #566b26; }
+.chart-series-1 .rich-response-chart-line, .chart-series-1 .rich-response-chart-legend-mark { stroke-dasharray: 7 4; }
+.chart-series-2 .rich-response-chart-line, .chart-series-2 .rich-response-chart-legend-mark { stroke-dasharray: 2 3; }
+.chart-series-3 .rich-response-chart-line, .chart-series-3 .rich-response-chart-legend-mark { stroke-dasharray: 9 3 2 3; }
+.chart-series-4 .rich-response-chart-line, .chart-series-4 .rich-response-chart-legend-mark { stroke-dasharray: 4 2; }
+.chart-series-5 .rich-response-chart-line, .chart-series-5 .rich-response-chart-legend-mark { stroke-dasharray: 1 2; }
+.rich-response-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0 0; padding: 0; list-style: none; }
+.rich-response-chart-legend li { display: inline-flex; align-items: center; gap: 7px; color: var(--color-text, #171d27); font-size: .875rem; overflow-wrap: anywhere; }
+.rich-response-chart-legend-mark { display: inline-block; width: 18px; height: 0; border-top: 3px solid currentColor; }
+.rich-response-chart-toggle { margin-top: 8px; }
+.rich-response-chart-table { margin-top: 8px; }
+.rich-response-calculator { display: grid; gap: 10px; min-width: 0; max-width: 42rem; padding: 16px; border: 1px solid var(--color-border, #dce2ea); border-radius: 12px; background: var(--color-surface, #fff); }
+.rich-response-calculator-inputs { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.rich-response-calculator-inputs legend { margin-bottom: 2px; font-weight: 650; }
+.rich-response-calculator-instructions { margin: 0; color: var(--color-text-muted, #515c6c); font-size: .875rem; line-height: 1.45; }
+.rich-response-calculator-field { display: grid; gap: 5px; min-width: 0; }
+.rich-response-calculator-field label { font-weight: 550; overflow-wrap: anywhere; }
+.rich-response-calculator-field input { width: min(100%, 22rem); min-height: 40px; padding: 8px 10px; border: 1px solid var(--color-border-strong, #aab4c2); border-radius: 7px; background: var(--color-surface, #fff); color: var(--color-text, #171d27); font: inherit; font-variant-numeric: tabular-nums; }
+.rich-response-calculator-field input:focus-visible, .rich-response-calculator-reset:focus-visible { outline: 2px solid var(--color-focus, #2457d6); outline-offset: 2px; }
+.rich-response-calculator-field input[aria-invalid="true"] { border-color: #b42318; }
+.rich-response-calculator-bounds { color: var(--color-text-muted, #515c6c); font-size: .8rem; line-height: 1.4; }
+.rich-response-calculator-formula, .rich-response-calculator-result-label, .rich-response-calculator-fallback { margin: 0; overflow-wrap: anywhere; }
+.rich-response-calculator-formula { color: var(--color-text-muted, #515c6c); font-size: .875rem; }
+.rich-response-calculator-formula span { color: var(--color-text, #171d27); font-variant-numeric: tabular-nums; }
+.rich-response-calculator-result-label { margin-top: 2px; color: var(--color-text-muted, #515c6c); font-size: .875rem; }
+.rich-response-calculator-result { display: block; min-height: 1.5em; font-size: clamp(1.5rem, 4vw, 2rem); font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.rich-response-calculator-reset { width: fit-content; min-height: 36px; color: var(--color-primary, #2457d6); cursor: pointer; }
+.rich-response-calculator-reset:focus-visible { outline: 2px solid var(--color-focus, #2457d6); outline-offset: 2px; }
+.rich-response-calculator-fallback { padding-top: 10px; border-top: 1px solid var(--color-border, #dce2ea); line-height: 1.5; }
 @media (max-width: 900px) {
   .rich-response-layout.layout-row { grid-auto-flow: row; grid-auto-columns: auto; }
 }

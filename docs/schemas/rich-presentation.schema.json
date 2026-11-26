@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://litecowork.dev/schemas/rich-presentation-v1.schema.json",
-  "title": "LiteCowork RichPresentationDocument v1",
+  "$id": "https://litecowork.dev/schemas/rich-presentation.schema.json",
+  "title": "LiteCowork RichPresentationDocument",
+  "description": "A versioned, closed RichPresentation document. Rust and TypeScript owner validators reject non-finite numbers and integer-valued numbers with magnitude above 9007199254740991, including exponent notation. Generic JSON Schema number validation does not express this semantic constraint; clients must use the owner validator.",
   "type": "object",
   "required": [
     "schema_version",
@@ -19,7 +20,11 @@
     },
     "renderer_contract_version": {
       "type": "integer",
-      "minimum": 1
+      "enum": [
+        1,
+        2
+      ],
+      "description": "Renderer contract profile. Version 1 is the established five-kind profile. Version 2 adds user-directed static METRIC, CHART and SAFE_CALCULATOR blocks. Rust and TypeScript contract validators agree through a shared corpus; desktop CODE/UI renders validated source-bound METRIC, CHART and SAFE_CALCULATOR models when a document is supplied. METRIC/CHART require closed unit/scale/time-interval/aggregation context grounded in the exact semantic summary; rendered values remain source-bound and unchanged. SAFE_CALCULATOR uses bounded local inputs and deterministic CalcAst evaluation with no host action or persistence. This does not fact-check semantic claims or complete T20/T24 derived analytics. The production publisher currently emits TABLE/TEXT_SLICE only after settlement; no structured provider-intent ingress serves renderer-v2."
     },
     "presentation_id": {
       "type": "string",
@@ -71,6 +76,52 @@
     "digest": {
       "type": "string",
       "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "metric_semantics": {
+      "type": "object",
+      "required": [
+        "unit",
+        "scale",
+        "time_interval",
+        "aggregation"
+      ],
+      "properties": {
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Exact unit label repeated in the semantic summary; displayed as text only."
+        },
+        "scale": {
+          "enum": [
+            "UNIT",
+            "THOUSAND",
+            "MILLION",
+            "BILLION",
+            "LAKH",
+            "CRORE"
+          ]
+        },
+        "time_interval": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Exact interval label repeated in the semantic summary; displayed as text only."
+        },
+        "aggregation": {
+          "enum": [
+            "NONE",
+            "SUM",
+            "AVERAGE",
+            "COUNT",
+            "MINIMUM",
+            "MAXIMUM",
+            "LAST"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "Closed display context. Values are not executable instructions and never change the bound numeric data. Control and bidirectional override characters are rejected by runtime validators."
     },
     "slice": {
       "type": "object",
@@ -137,29 +188,56 @@
       "oneOf": [
         {
           "type": "object",
-          "required": ["source", "invocation_id", "result_binding"],
+          "required": [
+            "source",
+            "invocation_id",
+            "result_binding"
+          ],
           "properties": {
-            "source": {"const": "CAPABILITY_RESULT"},
-            "invocation_id": {"type": "string", "minLength": 1},
-            "result_binding": {"type": "string", "minLength": 1, "maxLength": 200}
+            "source": {
+              "const": "CAPABILITY_RESULT"
+            },
+            "invocation_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result_binding": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           },
           "additionalProperties": false
         },
         {
           "type": "object",
-          "required": ["source", "resource_ref"],
+          "required": [
+            "source",
+            "resource_ref"
+          ],
           "properties": {
-            "source": {"const": "PINNED_RESOURCE"},
-            "resource_ref": {"$ref": "#/$defs/resource_ref"}
+            "source": {
+              "const": "PINNED_RESOURCE"
+            },
+            "resource_ref": {
+              "$ref": "#/$defs/resource_ref"
+            }
           },
           "additionalProperties": false
         },
         {
           "type": "object",
-          "required": ["source", "semantic_table_slice"],
+          "required": [
+            "source",
+            "semantic_table_slice"
+          ],
           "properties": {
-            "source": {"const": "SEMANTIC_TABLE"},
-            "semantic_table_slice": {"$ref": "#/$defs/slice"}
+            "source": {
+              "const": "SEMANTIC_TABLE"
+            },
+            "semantic_table_slice": {
+              "$ref": "#/$defs/slice"
+            }
           },
           "additionalProperties": false
         }
@@ -450,9 +528,39 @@
           "type": "object",
           "required": [
             "kind",
+            "binding",
+            "semantics",
+            "accessible_summary"
+          ],
+          "properties": {
+            "kind": {
+              "const": "METRIC"
+            },
+            "binding": {
+              "$ref": "#/$defs/semantic_table_cell_binding"
+            },
+            "semantics": {
+              "$ref": "#/$defs/metric_semantics"
+            },
+            "accessible_summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "additionalProperties": false,
+          "description": "Renderer-v2 only. Displays one exact finite numeric cell from the bound committed semantic Markdown table. The host derives the measure from source headers/row labels, requires those labels and all declared context in an exact committed semantic summary, displays the unchanged number and context, and retains the source table as the accessible fallback."
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
             "chart_kind",
             "binding",
-            "accessible_summary"
+            "category_column_index",
+            "series_column_indexes",
+            "accessible_summary",
+            "semantics"
           ],
           "properties": {
             "kind": {
@@ -462,21 +570,38 @@
               "enum": [
                 "LINE",
                 "BAR",
-                "AREA",
-                "SCATTER",
-                "PIE"
+                "AREA"
               ]
             },
-            "binding": {"$ref": "#/$defs/structured_data_binding"},
+            "binding": {
+              "$ref": "#/$defs/semantic_table_binding"
+            },
             "accessible_summary": {
               "type": "string",
               "maxLength": 2000
             },
-            "fallback_slice": {
-              "$ref": "#/$defs/slice"
+            "semantics": {
+              "$ref": "#/$defs/metric_semantics"
+            },
+            "category_column_index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 19
+            },
+            "series_column_indexes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 6,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 19
+              }
             }
           },
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "Renderer-v2 only. Host renders a static SVG from the exact bound semantic table. Column indexes are zero-based; the category index and 1–6 unique series indexes must be in range and pairwise distinct. A chart is rendered only for 2–60 consistent data rows, non-empty string categories, finite JSON numeric series values, and a supported BAR/LINE/AREA kind. Series labels come from source headers, row order is preserved, and all plotted series share one closed context that must be repeated with the category and series labels in an exact committed semantic summary. Invalid or ungrounded charts fall back to the complete semantic answer."
         },
         {
           "type": "object",
@@ -752,6 +877,101 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "inputs",
+            "formula_ast",
+            "result_binding",
+            "output_format",
+            "fallback_text"
+          ],
+          "properties": {
+            "kind": {
+              "const": "SAFE_CALCULATOR"
+            },
+            "inputs": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "label",
+                  "binding",
+                  "min_value",
+                  "max_value",
+                  "step"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "binding": {
+                    "$ref": "#/$defs/semantic_table_cell_binding"
+                  },
+                  "min_value": {
+                    "type": "number"
+                  },
+                  "max_value": {
+                    "type": "number"
+                  },
+                  "step": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "formula_ast": {
+              "$ref": "calc-ast.schema.json"
+            },
+            "result_binding": {
+              "$ref": "#/$defs/semantic_table_cell_binding",
+              "description": "Exact semantic table cell containing the original-value result of formula_ast. The Rust validator evaluates the bounded AST with the bound initial inputs and rejects a mismatch before publication."
+            },
+            "output_format": {
+              "type": "object",
+              "required": ["style"],
+              "properties": {
+                "style": {
+                  "enum": ["NUMBER", "INTEGER", "PERCENTAGE", "CURRENCY"]
+                },
+                "currency_code": {
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                }
+              },
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {"style": {"const": "CURRENCY"}},
+                    "required": ["style"]
+                  },
+                  "then": {"required": ["currency_code"]},
+                  "else": {"not": {"required": ["currency_code"]}}
+                }
+              ]
+            },
+            "fallback_text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "additionalProperties": false,
+            "description": "Renderer-v2 only. Inputs are view-local, initialized from exact numeric semantic table cells, constrained to declared finite bounds and never persisted or submitted by this component. The Rust validator validates the bounded AST and evaluates it at the exact initial inputs; result_binding must point to the matching finite numeric result in the semantic table within the documented binary64 tolerance. The UI must display the registered formula expression and keep fallback_text as semantic text. PERCENTAGE formatting and explicit three-letter CURRENCY formatting are presentation only; currency_code must appear in the answer. Unsupported formatting shows fallback_text."
         }
       ]
     },
@@ -968,6 +1188,53 @@
           "additionalProperties": false
         }
       ]
+    },
+    "semantic_table_binding": {
+      "type": "object",
+      "required": [
+        "source",
+        "semantic_table_slice"
+      ],
+      "properties": {
+        "source": {
+          "const": "SEMANTIC_TABLE"
+        },
+        "semantic_table_slice": {
+          "$ref": "#/$defs/slice"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Exact UTF-8 byte slice and digest of one committed semantic Markdown table."
+    },
+    "semantic_table_cell_binding": {
+      "type": "object",
+      "required": [
+        "source",
+        "table_slice",
+        "row_index",
+        "column_index"
+      ],
+      "properties": {
+        "source": {
+          "const": "SEMANTIC_TABLE"
+        },
+        "table_slice": {
+          "$ref": "#/$defs/slice"
+        },
+        "row_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 499
+        },
+        "column_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 19
+        }
+      },
+      "additionalProperties": false,
+      "description": "Exact cell in a committed semantic Markdown table. row_index is zero-based among data rows, excluding the header and separator; column_index is zero-based including the header column. Host validation checks the exact table and numeric cell."
     }
-  }
+  },
+  "description": "Canonical declarative RichPresentation contract. JSON Schema shape validation is necessary but not sufficient: owner validators enforce exact source slices, renderer-version allowlists and cross-field bounds. Renderer contract version 1 is the served profile. Renderer-v2 has Rust/TypeScript contract-parity CODE but remains USER-DIRECTED TARGET and unavailable until renderers, fallback and a production publisher are implemented and enabled together."
 }

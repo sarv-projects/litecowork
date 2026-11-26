@@ -70,6 +70,10 @@ edges:
     from: "settings-ui"
     to: "local-preferences"
     kind: local-presentation-preference-no-domain-authority
+  - id: "e-rich-presentation-display-preference"
+    from: "local-preferences"
+    to: "conversation-ui"
+    kind: "render-only; default-on for old snapshots; when disabled do not start projection reads and discard late in-flight results; never changes turn intent or provider request"
   - id: "e-settings-runtime"
     from: "operator"
     to: "runtime"

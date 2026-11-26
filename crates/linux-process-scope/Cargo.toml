@@ -6,7 +6,8 @@ rust-version.workspace = true
 publish = false
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1", features = ["fs", "process"] }
+rustix = { version = "1.1", features = ["fs", "param", "process"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3.23"

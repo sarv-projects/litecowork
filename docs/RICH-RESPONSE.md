@@ -19,6 +19,15 @@ can be omitted or arrive later without blocking the answer.
 
 ## User preference and policy
 
+The shell also has a separate device-local **Show formatted answers** display preference
+owned by Feature 011. It controls whether the desktop reads/renders the optional
+RichPresentation projection; when disabled, the full semantic message remains visible and
+new optional projection reads are suppressed. It defaults on for older local preference
+snapshots. This setting is not the turn's `PresentationPreference`: it is not sent to an
+agent, does not change a retry, and does not modify semantic message or domain state. If
+local storage cannot save it, Settings reports that the choice is session-only. See the
+Feature 011 local-preference contract and Feature 016-T09.
+
 ```text
 PresentationPreference = AUTO | SIMPLE | RICH
 PresentationPolicyDecision = PLAIN | RICH_PREFERRED
@@ -49,10 +58,14 @@ Conversation turn, is bounded and ephemeral, creates no CapabilityInvocation, Ef
 Artifact, Grant, or DomainEvent, and is not available to Task planning or worker Attempts
 by default.
 
-Implementation status (source audit 2026-11-12): `litecowork.presentation.propose` has no
+Implementation status (source rechecked 2026-11-24): `litecowork.presentation.propose` has no
 implementation (no route, adapter or client call), and no production caller publishes a
 RichPresentation document. Read projections can return a stored presentation if one exists;
-the storage publication validator is exercised by tests, not a mounted write path.
+the storage publication validator is exercised by tests, not a mounted write path. Renderer-v2
+METRIC, CHART and SAFE_CALCULATOR have desktop CODE/UI components. SAFE_CALCULATOR is a
+bounded, labelled, view-local calculator with inert formula text, deterministic local
+recomputation/reset and an always-visible semantic fallback. The absent publisher/provider
+ingress still keeps all renderer-v2 blocks out of provider answers.
 
 ```text
 RichPresentationIntent {
@@ -165,9 +178,9 @@ schema/renderer-contract revision and owner review.
 
 ### Block schema and renderer status
 
-`docs/schemas/rich-presentation.schema.json` is the canonical v1 document vocabulary. The
-table separates the schema declaration from current desktop support; it does not claim a
-component exists merely because the schema names a kind.
+`docs/schemas/rich-presentation.schema.json` is the canonical versioned document vocabulary.
+The table separates profile declaration from current desktop support and Rust CODE; it does not
+claim a component exists merely because the schema names a kind or a storage validator accepts it.
 
 | Block kind | v1 schema | Current desktop and Rust validator |
 |---|---|---|
@@ -176,7 +189,9 @@ component exists merely because the schema names a kind.
 | `CARD` | Declared | Supported |
 | `CALLOUT` | Declared | Supported |
 | `TABLE` | Declared | Supported |
-| `CHART` | Declared | Not supported by the current validators/renderer |
+| `METRIC` | Renderer-v2 CODE/UI | Rust/TypeScript contract validator and desktop component; exact source cell with visible grounded unit/scale/interval/aggregation context; unchanged value; provider structured-intent ingress not wired |
+| `CHART` | Renderer-v2 CODE/UI | Rust/TypeScript contract validator and desktop static SVG/table component; provider structured-intent ingress not wired |
+| `SAFE_CALCULATOR` | Renderer-v2 CODE/UI | Rust/schema/TypeScript reducer and desktop calculator; bounded local inputs, no host calls or persistence; provider structured-intent ingress not wired |
 | `DIAGRAM` | Declared | Not supported by the current validators/renderer |
 | `MEDIA` | Declared | Not supported by the current validators/renderer |
 | `CHECKLIST` | Declared | Not supported by the current validators/renderer |
@@ -189,15 +204,43 @@ The detailed behavior below for CHART, DIAGRAM, MEDIA, deliverable, checklist, c
 action families is target contract material unless the table marks the kind as supported.
 Schema declaration alone does not make those features available in the current desktop.
 
-The Rust storage validator and desktop TypeScript parser currently accept the same five
-display-only kinds listed above under a 512 KiB document limit and maximum block nesting
-depth of 8. The recursive JSON Schema documents the broader target vocabulary, but it does
-not replace owner-side source binding, provenance checks, or runtime qualification. If a
-document contains a schema-declared kind that the current validators do not support, either
-validator rejects the complete RichPresentation and the client renders the complete
-semantic message. The promised per-block isolation/fallback is not implemented and is not
-the current v1 behavior; introduce it only with an explicit contract/version and compatible
-Rust, TypeScript, schema, stream, and acceptance updates.
+The pure `domain-presentation` Rust validator, called by SQLite on publish/read, accepts the
+five renderer-v1 display-only kinds and the user-directed renderer-v2 METRIC, CHART and
+SAFE_CALCULATOR profile under a 512 KiB document limit and maximum block nesting depth of 8.
+Both owner validators reject non-finite numbers and integer-valued numbers outside the exact
+binary64 safe-integer range, regardless of whether JSON uses integer or exponent notation;
+the JSON Schema's generic `number` type cannot enforce that semantic restriction on its own.
+The desktop TypeScript parser/React renderer can render v2 METRIC and CHART but cannot make
+them provider-visible: the production binder emits TABLE/TEXT_SLICE only and structured provider intent is not wired. Renderer-v2 METRIC
+binds one finite numeric cell to an exact committed semantic Markdown table; the host derives
+its label from the column header and row label and does not change units or derive arithmetic.
+METRIC also requires a closed unit/scale/time-interval/aggregation context grounded with the
+source header and row label in an exact committed semantic line. The renderer displays those
+declarations beside the unchanged source value and does no conversion or aggregation. This
+integrity check prevents the presentation from adding context absent from the answer; it does
+not independently verify provider-authored claims or implement derived analytics in T20/T24.
+Renderer-v2 CHART binds to exactly one committed semantic Markdown table slice. It names a
+category column and 1–6 unique numeric series columns by zero-based index; the host derives
+series labels from exact header cells and keeps source row order. It accepts BAR, LINE and
+AREA only, with 2–60 rows, non-empty string categories and finite JSON numbers. Malformed
+rows, duplicate/out-of-range columns or unsupported kinds fall back to the same table. The
+renderer uses host SVG primitives, never model markup, and its accessible table is the
+complete data equivalent. SAFE_CALCULATOR uses exact numeric table-cell bindings and the
+bounded CalcAst; Rust evaluates the AST at original input values and requires an exact
+semantic numeric result cell to match within `1e-9 * max(1, |calculated|, |expected|)`.
+Output formatting never changes calculation semantics, and failure shows semantic fallback
+text. T03/T04 provide Rust/TypeScript contract-parity CODE; T05 provides the pure reducer;
+T06 provides METRIC/CHART components and T07 now provides the local SAFE_CALCULATOR renderer.
+Calculator fields are bounded and transient, use the pure reducer, expose a polite result and
+keyboard reset, and keep fallback text visible. Contract completion of the broader derived-metric cases owned by T20/T24 and a production
+publisher/provider ingress remain prerequisites before renderer-v2 reaches provider answers.
+Schema declaration does not replace owner-side source binding, provenance checks, or runtime
+qualification. A document containing a schema-declared kind that the current validators do
+not support is rejected as a complete RichPresentation and the client renders the complete
+semantic message. The per-block Markdown fallback in T18 applies to semantic text only; it
+does not yet provide per-block RichPresentation fallback. Introduce such behavior only with
+an explicit contract/version and compatible Rust, TypeScript, schema, stream and acceptance
+updates.
 
 Agents may request a host-bound projection by kind only where the host API permits it;
 the compiler resolves the actual projection from authenticated Core state. Agents cannot

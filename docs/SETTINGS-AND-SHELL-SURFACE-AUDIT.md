@@ -1,5 +1,7 @@
 # Settings and shell surface audit
 
+> **Current-source addendum — 2026-11-25:** the older General-control findings below are historical. App-owned local preferences now apply and persist appearance settings. `Settings > General > Show formatted answers` is a local display-only RichPresentation preference; disabling it preserves the complete semantic response and suppresses subsequent presentation reads without changing the Conversation send or provider request. A failed storage write leaves the choice active for the current session and is announced as session-only. Focused and rendered browser checks provide CODE/UI evidence only; packaged restart and E2E-11 remain open. See Feature 011-T07, Feature 016-T09 and CURRENT-RUN.md.
+
 **Checked:** 2026-11-06 against the active Tauri/React mount path and source files.
 **Purpose:** source-backed inventory of what the owner can actually see and invoke; this is not the target Settings design.
 
